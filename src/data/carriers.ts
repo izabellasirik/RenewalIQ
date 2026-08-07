@@ -24,6 +24,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     lastVerifiedDate: '2026-07-08',
     sourceContact: 'Underwriting Desk — commercial.auto@northfieldmutual.example (614-555-0142)',
     confidence: 'high',
+    underwritingNotes: 'Prefers fleets with 3+ years continuous coverage and no more than one at-fault loss in the trailing 12 months. Will consider monthly reporting for seasonal freight swings.',
   },
   {
     id: 'appetite_vanguard',
@@ -44,6 +45,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     lastVerifiedDate: '2026-06-23',
     sourceContact: 'MGA Submissions — submissions@vanguardtransportmga.example (877-555-0199)',
     confidence: 'medium',
+    underwritingNotes: 'Binds fast for accounts already carrying dashcams — supply footage samples with the submission to speed up the quote.',
   },
   {
     id: 'appetite_continental',
@@ -63,6 +65,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     lastVerifiedDate: '2026-07-18',
     sourceContact: 'Regional UW Team — trucking@continentalcasualtygroup.example (800-555-0133)',
     confidence: 'high',
+    underwritingNotes: 'Long-haul-only book with a hard 20-unit cap — steer larger regional fleets to their MGA facility (Vanguard Transport MGA) instead.',
   },
   {
     id: 'appetite_heartland',
@@ -83,6 +86,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     lastVerifiedDate: '2026-06-08',
     sourceContact: 'New Business — newbiz@heartlandunderwritersmga.example (866-555-0177)',
     confidence: 'medium',
+    underwritingNotes: 'Strict 10-year-minimum shop — will not consider exceptions for younger operations regardless of loss history.',
   },
   {
     id: 'appetite_pinnacle',
@@ -102,6 +106,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     lastVerifiedDate: '2026-07-23',
     sourceContact: 'Fleet Programs — fleet@pinnacleassurance.example (855-555-0161)',
     confidence: 'high',
+    underwritingNotes: 'Dashcam requirement is negotiable with a signed telematics-monitoring agreement in lieu of hardware — ask underwriting before declining on this alone.',
   },
   {
     id: 'appetite_crossroads',
@@ -122,6 +127,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     lastVerifiedDate: '2026-07-28',
     sourceContact: 'MGA Desk — submissions@crossroadsspecialtymga.example (844-555-0188)',
     confidence: 'high',
+    underwritingNotes: 'Fast-track facility for small-to-mid regional fleets — typically turns quotes in 48 hours when loss runs are attached at submission.',
   },
   {
     id: 'appetite_atlas',
@@ -141,6 +147,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     lastVerifiedDate: '2026-07-13',
     sourceContact: 'Underwriting — uw@atlasindemnity.example (877-555-0122)',
     confidence: 'medium',
+    underwritingNotes: 'Building-materials specialist — accounts hauling primarily construction freight get priority pricing over general-freight mixes.',
   },
   {
     id: 'appetite_meridian',
@@ -160,5 +167,6 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     lastVerifiedDate: '2025-11-20',
     sourceContact: 'Legacy Program Contact — partners@meridiantrucking.example (unresponsive since late 2025)',
     confidence: 'low',
+    underwritingNotes: 'This appetite record hasn\'t been reconfirmed in a while — treat the underwriting terms below as a starting point, not current guidance, until the market responds.',
   },
 ];

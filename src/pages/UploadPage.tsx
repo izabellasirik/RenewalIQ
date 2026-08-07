@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowRight, Sparkles } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
+import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Dropzone } from '../components/upload/Dropzone';
 import { DocumentList } from '../components/upload/DocumentList';
 import { Button, Card, CardBody, ProgressBar } from '../components/ui';
@@ -15,17 +16,7 @@ export function UploadPage() {
   const loadSampleDocuments = useAccountsStore((s) => s.loadSampleDocuments);
 
   if (!account) {
-    return (
-      <PageContainer title="Account not found">
-        <p className="text-sm text-[var(--color-ink-500)]">
-          This submission doesn't exist yet.{' '}
-          <button className="text-[var(--color-brand-700)] underline" onClick={() => navigate('/accounts/new')}>
-            Create one
-          </button>
-          .
-        </p>
-      </PageContainer>
-    );
+    return <AccountNotFound />;
   }
 
   const processedCount = documents.filter((d) => d.status === 'processed').length;

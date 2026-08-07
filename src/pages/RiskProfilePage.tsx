@@ -1,14 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowRight, Compass, FileText as FileTextIcon } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { ArrowRight, ListChecks } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
+import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, Tabs } from '../components/ui';
 import { SectionCard } from '../components/riskProfile/SectionCard';
 import { FieldRow } from '../components/riskProfile/FieldRow';
 import { ConflictBanner } from '../components/riskProfile/ConflictBanner';
 import { MissingFieldsPanel } from '../components/riskProfile/MissingFieldsPanel';
 import { useAccountsStore } from '../state/useAccountsStore';
-import { BUSINESS_FIELDS, TRANSPORTATION_FIELDS } from './riskProfileFieldConfig';
+import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
+import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { COVERAGE_LABELS } from '../types';
 import { formatDate } from '../utils/dates';
 
@@ -19,37 +22,15 @@ export function RiskProfilePage() {
   const navigate = useNavigate();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
+  const documents = useAccountsStore((s) => s.documents[accountId] ?? []);
   const updateField = useAccountsStore((s) => s.updateField);
   const [tab, setTab] = useState<TabKey>('details');
 
-  const stats = useMemo(() => {
-    if (!profile) return { missing: [] as string[], conflicts: 0, total: 0, filled: 0 };
-    const missing: string[] = [];
-    let conflicts = 0;
-    let filled = 0;
-    const total = BUSINESS_FIELDS.length + TRANSPORTATION_FIELDS.length;
-
-    for (const f of BUSINESS_FIELDS) {
-      const field = (profile.business as unknown as Record<string, { isMissing: boolean; isConflicting: boolean }>)[f.key];
-      if (field.isMissing) missing.push(f.label);
-      else filled++;
-      if (field.isConflicting) conflicts++;
-    }
-    for (const f of TRANSPORTATION_FIELDS) {
-      const field = (profile.transportation as unknown as Record<string, { isMissing: boolean; isConflicting: boolean }>)[f.key];
-      if (field.isMissing) missing.push(f.label);
-      else filled++;
-      if (field.isConflicting) conflicts++;
-    }
-    return { missing, conflicts, total, filled };
-  }, [profile]);
+  const stats = useRiskProfileStats(profile);
+  const anyProcessing = documents.some((d) => d.status === 'processing');
 
   if (!account || !profile) {
-    return (
-      <PageContainer title="Account not found">
-        <p className="text-sm text-[var(--color-ink-500)]">This submission doesn't exist yet.</p>
-      </PageContainer>
-    );
+    return <AccountNotFound />;
   }
 
   return (
@@ -57,14 +38,9 @@ export function RiskProfilePage() {
       title={`Risk Profile — ${account.namedInsured}`}
       description="Unified, editable view of everything extracted from uploaded documents. Every value shows its confidence and source."
       actions={
-        <>
-          <Button variant="secondary" icon={<FileTextIcon size={15} />} onClick={() => navigate(`/accounts/${accountId}/submission-assistant`)}>
-            Submission Assistant
-          </Button>
-          <Button icon={<Compass size={15} />} onClick={() => navigate(`/accounts/${accountId}/carrier-appetite`)}>
-            Carrier Appetite
-          </Button>
-        </>
+        <Button icon={<ListChecks size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
+          Review Submission
+        </Button>
       }
     >
       <div className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3">
@@ -79,8 +55,8 @@ export function RiskProfilePage() {
         </div>
       </div>
 
-      <ConflictBanner count={stats.conflicts} />
-      <MissingFieldsPanel fields={stats.missing} />
+      <ConflictBanner count={stats.conflicting.length} />
+      <MissingFieldsPanel fields={stats.missing.map((m) => m.field.label)} />
 
       <Tabs
         items={[
@@ -94,29 +70,22 @@ export function RiskProfilePage() {
 
       {tab === 'details' && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <SectionCard title="Business Information">
-            {BUSINESS_FIELDS.map((f) => (
-              <FieldRow
-                key={f.key}
-                label={f.label}
-                valueType={f.type}
-                field={profile.business[f.key as keyof typeof profile.business] as any}
-                onSave={(value) => updateField(accountId, 'business', f.key, value)}
-              />
-            ))}
-          </SectionCard>
-
-          <SectionCard title="Transportation & Fleet">
-            {TRANSPORTATION_FIELDS.map((f) => (
-              <FieldRow
-                key={f.key}
-                label={f.label}
-                valueType={f.type}
-                field={profile.transportation[f.key as keyof typeof profile.transportation] as any}
-                onSave={(value) => updateField(accountId, 'transportation', f.key, value)}
-              />
-            ))}
-          </SectionCard>
+          {RISK_PROFILE_GROUPS.map((group, gi) => (
+            <motion.div key={group.key} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: gi * 0.05, duration: 0.25 }}>
+              <SectionCard title={group.title}>
+                {group.fields.map((f) => (
+                  <FieldRow
+                    key={f.key}
+                    label={f.label}
+                    valueType={f.type}
+                    pending={anyProcessing}
+                    field={profile[f.section][f.key as keyof (typeof profile)[typeof f.section]] as any}
+                    onSave={(value) => updateField(accountId, f.section, f.key, value)}
+                  />
+                ))}
+              </SectionCard>
+            </motion.div>
+          ))}
         </div>
       )}
 
@@ -191,8 +160,8 @@ export function RiskProfilePage() {
       )}
 
       <div className="flex justify-end">
-        <Button icon={<ArrowRight size={15} />} onClick={() => navigate(`/accounts/${accountId}/submission-assistant`)}>
-          Continue to Submission Assistant
+        <Button icon={<ArrowRight size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
+          Continue to Review
         </Button>
       </div>
     </PageContainer>

@@ -32,6 +32,8 @@ export interface AppetiteRecord {
   sourceContact: string;
   /** Reliability/freshness confidence of this appetite record itself, independent of extraction confidence. */
   confidence: Confidence;
+  /** Free-text underwriting guidance shown on the recommendation card and detail view. */
+  underwritingNotes: string;
 }
 
 export type ReasonStatus = 'pass' | 'fail' | 'warning';
@@ -49,8 +51,12 @@ export interface MatchResult {
   availableThrough?: string;
   verdict: Verdict;
   reasons: MatchReason[];
+  /** 0-100. Measures overall fit strength; the verdict measures confidence to proceed — a high score can still carry a "Verify" verdict. */
+  matchScore: number;
   isStale: boolean;
   staleWarning?: string;
   lastVerifiedDate: string;
   sourceContact: string;
+  confidence: Confidence;
+  underwritingNotes: string;
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp } from 'lucide-react';
 import type { FieldValue } from '../../types';
-import { ConfidenceBadge } from '../ui';
+import { ConfidenceBadge, Skeleton } from '../ui';
 import { cn } from '../../utils/cn';
 
 export type FieldValueType = 'text' | 'textarea' | 'number' | 'boolean' | 'list';
@@ -12,16 +12,18 @@ interface FieldRowProps<T> {
   valueType: FieldValueType;
   onSave: (value: T) => void;
   readOnly?: boolean;
+  /** Show a skeleton instead of "Not provided" — used while a document that might fill this field is still processing. */
+  pending?: boolean;
 }
 
-function displayReadValue(value: unknown): string {
+export function displayReadValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   return String(value);
 }
 
-export function FieldRow<T>({ label, field, valueType, onSave, readOnly }: FieldRowProps<T>) {
+export function FieldRow<T>({ label, field, valueType, onSave, readOnly, pending }: FieldRowProps<T>) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<string>(displayReadValue(field.value));
   const [showDetail, setShowDetail] = useState(false);
@@ -45,7 +47,9 @@ export function FieldRow<T>({ label, field, valueType, onSave, readOnly }: Field
 
           {!isEditing ? (
             <div className="mt-1 flex items-center gap-2">
-              {field.isMissing ? (
+              {field.isMissing && pending ? (
+                <Skeleton width="60%" />
+              ) : field.isMissing ? (
                 <span className="text-sm italic text-[var(--color-ink-400)]">Not provided</span>
               ) : valueType === 'boolean' ? (
                 <button

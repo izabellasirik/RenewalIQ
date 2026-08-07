@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Compass, Printer } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
+import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button } from '../components/ui';
 import { ApplicationPreview } from '../components/submission/ApplicationPreview';
 import { useAccountsStore } from '../state/useAccountsStore';
@@ -17,11 +18,7 @@ export function SubmissionAssistantPage() {
   const application = useMemo(() => (profile ? generateApplication(profile) : null), [profile]);
 
   if (!account || !profile || !application) {
-    return (
-      <PageContainer title="Account not found">
-        <p className="text-sm text-[var(--color-ink-500)]">This submission doesn't exist yet.</p>
-      </PageContainer>
-    );
+    return <AccountNotFound />;
   }
 
   const totalFields = application.sections.reduce((sum, s) => sum + s.fields.length, 0);

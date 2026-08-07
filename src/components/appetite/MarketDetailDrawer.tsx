@@ -1,6 +1,6 @@
-import { CircleCheck, CircleX, TriangleAlert, Mail } from 'lucide-react';
+import { CircleCheck, CircleX, TriangleAlert, Mail, NotebookPen } from 'lucide-react';
 import type { AppetiteRecord, MatchResult } from '../../types';
-import { Drawer, Badge, VerdictBadge, ConfidenceBadge } from '../ui';
+import { Drawer, Badge, VerdictBadge, ConfidenceBadge, ScoreRing } from '../ui';
 import { AvailableThroughTag } from './AvailableThroughTag';
 import { FreshnessWarning } from './FreshnessWarning';
 import { formatDate } from '../../utils/dates';
@@ -47,12 +47,32 @@ export function MarketDetailDrawer({
       subtitle={record.marketType === 'direct' ? 'Direct Carrier' : `MGA${record.availableThrough ? ` · available through ${record.availableThrough}` : ''}`}
     >
       <div className="flex flex-col gap-6">
+        <div className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)] p-4">
+          <ScoreRing score={result.matchScore} size={72} />
+          <div>
+            <p className="text-xs font-medium text-[var(--color-ink-500)]">Match Score</p>
+            <p className="text-sm text-[var(--color-ink-600)]">
+              Reflects overall fit against this account's risk profile. The verdict below reflects confidence to proceed — a high score can still need one detail confirmed.
+            </p>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between">
           <VerdictBadge verdict={result.verdict} className="text-sm" />
           {record.availableThrough && <AvailableThroughTag carrierName={record.availableThrough} />}
         </div>
 
         {result.staleWarning && <FreshnessWarning message={result.staleWarning} />}
+
+        {record.underwritingNotes && (
+          <div className="flex items-start gap-2.5 rounded-lg border border-[var(--color-ink-100)] bg-white p-4">
+            <NotebookPen size={16} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />
+            <div>
+              <p className="text-sm font-semibold text-[var(--color-ink-900)]">Underwriting Notes</p>
+              <p className="mt-1 text-sm text-[var(--color-ink-600)]">{record.underwritingNotes}</p>
+            </div>
+          </div>
+        )}
 
         <div>
           <h4 className="mb-2 text-sm font-semibold text-[var(--color-ink-900)]">Why this market {result.verdict === 'not_eligible' ? 'did not' : ''} match{result.verdict !== 'not_eligible' ? 'ed' : ''}</h4>
