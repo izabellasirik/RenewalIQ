@@ -1,7 +1,9 @@
 import { Check } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import type { MatchResult, RiskProfile, UploadedDocument } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
-import { useRiskProfileStats } from '../../hooks/useRiskProfileStats';
+import { computeRiskProfileStats } from '../../hooks/useRiskProfileStats';
+import { EMPTY_DOCUMENTS, EMPTY_MATCH_RESULTS } from '../../utils/emptyArrays';
 import { cn } from '../../utils/cn';
 
 export type StepStatus = 'not_started' | 'in_progress' | 'done';
@@ -13,14 +15,14 @@ export interface WorkflowStep {
   status: StepStatus;
 }
 
-export function useWorkflowStatus(accountId: string | undefined): WorkflowStep[] {
-  const documents = useAccountsStore((s) => (accountId ? s.documents[accountId] : undefined)) ?? [];
-  const profile = useAccountsStore((s) => (accountId ? s.riskProfiles[accountId] : undefined));
-  const matchResults = useAccountsStore((s) => (accountId ? s.matchResults[accountId] : undefined)) ?? [];
-  const stats = useRiskProfileStats(profile);
-
-  if (!accountId) return [];
-
+/** Pure computation — safe to call per-account in a loop (e.g. cross-account analytics), unlike the hook below. */
+export function computeWorkflowSteps(
+  accountId: string,
+  documents: UploadedDocument[],
+  profile: RiskProfile | undefined,
+  matchResults: MatchResult[]
+): WorkflowStep[] {
+  const stats = computeRiskProfileStats(profile);
   const hasDocs = documents.length > 0;
   const anyProcessing = documents.some((d) => d.status === 'processing');
 
@@ -39,6 +41,26 @@ export function useWorkflowStatus(accountId: string | undefined): WorkflowStep[]
     { key: 'submission-assistant', label: 'Submission Assistant', path: `/accounts/${accountId}/submission-assistant`, status: hasDocs ? 'done' : 'not_started' },
     { key: 'carrier-appetite', label: 'Carrier Appetite', path: `/accounts/${accountId}/carrier-appetite`, status: appetiteStatus },
   ];
+}
+
+export function useWorkflowStatus(accountId: string | undefined): WorkflowStep[] {
+  const documents = useAccountsStore((s) => (accountId ? s.documents[accountId] : undefined)) ?? EMPTY_DOCUMENTS;
+  const profile = useAccountsStore((s) => (accountId ? s.riskProfiles[accountId] : undefined));
+  const matchResults = useAccountsStore((s) => (accountId ? s.matchResults[accountId] : undefined)) ?? EMPTY_MATCH_RESULTS;
+
+  if (!accountId) return [];
+  return computeWorkflowSteps(accountId, documents, profile, matchResults);
+}
+
+/** Single-glance submission status for the Dashboard, derived from the same live workflow data as the stepper — no separately-maintained status field to drift out of sync. */
+export function deriveSubmissionStatusLabel(steps: WorkflowStep[]): { label: string; tone: 'neutral' | 'warning' | 'success' } {
+  const byKey = Object.fromEntries(steps.map((s) => [s.key, s.status]));
+
+  if (!byKey.upload || byKey.upload === 'not_started') return { label: 'New', tone: 'neutral' };
+  if (byKey.upload === 'in_progress') return { label: 'Extracting Documents', tone: 'warning' };
+  if (byKey['risk-profile'] === 'in_progress') return { label: 'In Review', tone: 'warning' };
+  if (byKey['carrier-appetite'] === 'done') return { label: 'Ready for Market', tone: 'success' };
+  return { label: 'Documents Uploaded', tone: 'neutral' };
 }
 
 export function StepStatusDot({ status }: { status: StepStatus }) {

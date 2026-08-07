@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { FeedbackWidget } from '../feedback/FeedbackWidget';
 
 export function AppShell() {
   const location = useLocation();
@@ -18,19 +19,15 @@ export function AppShell() {
       <div className="flex flex-1 flex-col overflow-hidden">
         <TopBar />
         <main ref={mainRef} className="flex-1 overflow-y-auto scrollbar-thin [overflow-anchor:none]">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
-            >
-              <Outlet />
-            </motion.div>
-          </AnimatePresence>
+          {/* No AnimatePresence/mode="wait" here: combined with StrictMode it caused a delayed phantom
+              remount ~180ms after navigation, silently resetting page-local state (e.g. an active tab)
+              right as a user's first click landed. Plain enter-only animation avoids it. */}
+          <motion.div key={location.pathname} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}>
+            <Outlet />
+          </motion.div>
         </main>
       </div>
+      <FeedbackWidget />
     </div>
   );
 }

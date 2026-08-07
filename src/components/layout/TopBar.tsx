@@ -1,7 +1,8 @@
-import { Bell } from 'lucide-react';
+import { Bell, Check } from 'lucide-react';
 import { useLocation, useParams } from 'react-router-dom';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, WorkflowStepsBar } from './WorkflowSteps';
+import { relativeTime } from '../../utils/dates';
 
 export function TopBar() {
   const { accountId } = useParams();
@@ -15,6 +16,12 @@ export function TopBar() {
       <div className="min-w-0">{account && <WorkflowStepsBar steps={steps} activeKey={activeKey} />}</div>
 
       <div className="flex shrink-0 items-center gap-4">
+        {account && (
+          <span className="flex items-center gap-1.5 text-xs text-[var(--color-ink-400)]" title="Autosaved to this browser">
+            <Check size={13} className="text-[var(--color-success-500)]" />
+            Saved {relativeTime(account.updatedAt)}
+          </span>
+        )}
         <button className="rounded-full p-2 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-50)] hover:text-[var(--color-ink-600)]" aria-label="Notifications">
           <Bell size={17} />
         </button>

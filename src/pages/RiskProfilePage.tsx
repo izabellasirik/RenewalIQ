@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, ListChecks } from 'lucide-react';
+import { ArrowRight, History, ListChecks } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, Tabs } from '../components/ui';
@@ -9,11 +9,13 @@ import { SectionCard } from '../components/riskProfile/SectionCard';
 import { FieldRow } from '../components/riskProfile/FieldRow';
 import { ConflictBanner } from '../components/riskProfile/ConflictBanner';
 import { MissingFieldsPanel } from '../components/riskProfile/MissingFieldsPanel';
+import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { COVERAGE_LABELS } from '../types';
 import { formatDate } from '../utils/dates';
+import { EMPTY_ACTIVITY_EVENTS, EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 
 type TabKey = 'details' | 'loss-history' | 'coverage';
 
@@ -22,9 +24,12 @@ export function RiskProfilePage() {
   const navigate = useNavigate();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
-  const documents = useAccountsStore((s) => s.documents[accountId] ?? []);
+  const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
+  const activityLog = useAccountsStore((s) => s.activityLog[accountId]) ?? EMPTY_ACTIVITY_EVENTS;
   const updateField = useAccountsStore((s) => s.updateField);
+  const updateCoverage = useAccountsStore((s) => s.updateCoverage);
   const [tab, setTab] = useState<TabKey>('details');
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const stats = useRiskProfileStats(profile);
   const anyProcessing = documents.some((d) => d.status === 'processing');
@@ -38,9 +43,14 @@ export function RiskProfilePage() {
       title={`Risk Profile — ${account.namedInsured}`}
       description="Unified, editable view of everything extracted from uploaded documents. Every value shows its confidence and source."
       actions={
-        <Button icon={<ListChecks size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
-          Review Submission
-        </Button>
+        <>
+          <Button variant="secondary" icon={<History size={15} />} onClick={() => setHistoryOpen(true)}>
+            History
+          </Button>
+          <Button icon={<ListChecks size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
+            Review Submission
+          </Button>
+        </>
       }
     >
       <div className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3">
@@ -148,11 +158,15 @@ export function RiskProfilePage() {
                 <FieldRow
                   label="Current Limit"
                   valueType="text"
-                  readOnly
                   field={line.currentLimit ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false }}
-                  onSave={() => {}}
+                  onSave={(value) => updateCoverage(accountId, line.type, 'currentLimit', value)}
                 />
-                <FieldRow label="Requested Limit" valueType="text" readOnly field={line.requestedLimit} onSave={() => {}} />
+                <FieldRow
+                  label="Requested Limit"
+                  valueType="text"
+                  field={line.requestedLimit}
+                  onSave={(value) => updateCoverage(accountId, line.type, 'requestedLimit', value)}
+                />
               </div>
             </div>
           ))}
@@ -164,6 +178,8 @@ export function RiskProfilePage() {
           Continue to Review
         </Button>
       </div>
+
+      <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} accountName={account.namedInsured} events={activityLog} />
     </PageContainer>
   );
 }

@@ -7,4 +7,6 @@ export interface Account {
   createdAt: string;
   updatedAt: string;
   status: AccountStatus;
+  /** Soft-delete flag — archived accounts are hidden from the main Dashboard list but not destroyed. */
+  archived: boolean;
 }

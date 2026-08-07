@@ -9,4 +9,5 @@ export const sampleAccount: Account = {
   createdAt: '2026-07-28T14:00:00.000Z',
   updatedAt: '2026-07-28T14:00:00.000Z',
   status: 'new',
+  archived: false,
 };

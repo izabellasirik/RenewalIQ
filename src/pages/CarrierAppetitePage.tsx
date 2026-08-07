@@ -11,7 +11,8 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { sampleAppetiteRecords } from '../data/carriers';
 import type { MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
-import { Compass } from 'lucide-react';
+import { EMPTY_DOCUMENTS, EMPTY_MATCH_RESULTS } from '../utils/emptyArrays';
+import { Compass, Search } from 'lucide-react';
 
 type FilterKey = 'all' | Verdict;
 
@@ -19,10 +20,11 @@ export function CarrierAppetitePage() {
   const { accountId = '' } = useParams();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
-  const documents = useAccountsStore((s) => s.documents[accountId] ?? []);
-  const matchResults = useAccountsStore((s) => s.matchResults[accountId] ?? []);
+  const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
+  const matchResults = useAccountsStore((s) => s.matchResults[accountId]) ?? EMPTY_MATCH_RESULTS;
   const runMatching = useAccountsStore((s) => s.runMatching);
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<MatchResult | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const isAnalyzing = matchResults.length === 0 && documents.some((d) => d.status === 'processing');
@@ -33,7 +35,9 @@ export function CarrierAppetitePage() {
     return c;
   }, [matchResults]);
 
-  const filtered = filter === 'all' ? matchResults : matchResults.filter((r) => r.verdict === filter);
+  const filtered = (filter === 'all' ? matchResults : matchResults.filter((r) => r.verdict === filter))
+    .filter((r) => r.marketName.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => b.matchScore - a.matchScore);
   const selectedRecord = selected ? sampleAppetiteRecords.find((r) => r.id === selected.appetiteRecordId) ?? null : null;
 
   if (!account || !profile) {
@@ -77,31 +81,46 @@ export function CarrierAppetitePage() {
         />
       ) : (
         <>
-          <Tabs
-            items={[
-              { key: 'all', label: 'All Markets', count: matchResults.length },
-              { key: 'strong_match', label: VERDICT_LABELS.strong_match, count: counts.strong_match },
-              { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
-              { key: 'verify', label: VERDICT_LABELS.verify, count: counts.verify },
-              { key: 'not_eligible', label: VERDICT_LABELS.not_eligible, count: counts.not_eligible },
-            ]}
-            active={filter}
-            onChange={(k) => setFilter(k as FilterKey)}
-          />
-
-          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((result, i) => (
-              <motion.div key={result.appetiteRecordId} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04, duration: 0.2 }}>
-                <MarketCard
-                  result={result}
-                  onClick={() => {
-                    setSelected(result);
-                    setDrawerOpen(true);
-                  }}
-                />
-              </motion.div>
-            ))}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <Tabs
+              items={[
+                { key: 'all', label: 'All Markets', count: matchResults.length },
+                { key: 'strong_match', label: VERDICT_LABELS.strong_match, count: counts.strong_match },
+                { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
+                { key: 'verify', label: VERDICT_LABELS.verify, count: counts.verify },
+                { key: 'not_eligible', label: VERDICT_LABELS.not_eligible, count: counts.not_eligible },
+              ]}
+              active={filter}
+              onChange={(k) => setFilter(k as FilterKey)}
+            />
+            <div className="relative w-full max-w-[220px] shrink-0 sm:mb-2">
+              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-ink-400)]" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search markets…"
+                className="w-full rounded-lg border border-[var(--color-ink-200)] py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15"
+              />
+            </div>
           </div>
+
+          {filtered.length === 0 ? (
+            <EmptyState icon={<Search size={22} strokeWidth={1.5} />} title="No markets match" description="Try a different search term or filter." />
+          ) : (
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map((result, i) => (
+                <motion.div key={result.appetiteRecordId} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04, duration: 0.2 }}>
+                  <MarketCard
+                    result={result}
+                    onClick={() => {
+                      setSelected(result);
+                      setDrawerOpen(true);
+                    }}
+                  />
+                </motion.div>
+              ))}
+            </div>
+          )}
         </>
       )}
 

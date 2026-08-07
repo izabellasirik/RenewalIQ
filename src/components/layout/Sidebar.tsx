@@ -1,5 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, ListChecks, FileText, Compass } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, ListChecks, FileText, Compass, BarChart3 } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
@@ -50,6 +50,21 @@ export function Sidebar() {
         >
           <LayoutGrid size={17} />
           Dashboard
+        </NavLink>
+
+        <NavLink
+          to="/analytics"
+          className={({ isActive }) =>
+            cn(
+              navItemClass,
+              isActive
+                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+            )
+          }
+        >
+          <BarChart3 size={17} />
+          Analytics
         </NavLink>
 
         {account && (

@@ -28,6 +28,9 @@ export interface AppetiteRecord {
   telematicsRequired: boolean;
   dashcamRequired: boolean;
   majorExclusions: string[];
+  /** Loss-history thresholds. Undefined = market has no stated constraint on this criterion. */
+  maxClaimsPast3Years?: number;
+  maxIncurredPerUnit?: number;
   lastVerifiedDate: string;
   sourceContact: string;
   /** Reliability/freshness confidence of this appetite record itself, independent of extraction confidence. */
@@ -42,6 +45,13 @@ export interface MatchReason {
   criterion: string;
   status: ReasonStatus;
   explanation: string;
+  /**
+   * True when a 'warning' means the account's own data is missing/unconfirmed (drives the
+   * "Verify" verdict). False/absent means a soft market-fit mismatch where the data is fully
+   * known (drives "Possible Match" instead). Set explicitly by the rule, not inferred from
+   * the explanation text — inferring from wording is brittle against future copy edits.
+   */
+  isDataGap?: boolean;
 }
 
 export interface MatchResult {

@@ -9,3 +9,4 @@ export * from './Drawer';
 export * from './Tabs';
 export * from './Skeleton';
 export * from './ScoreRing';
+export * from './OverflowMenu';

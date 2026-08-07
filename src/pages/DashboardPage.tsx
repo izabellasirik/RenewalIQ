@@ -1,36 +1,54 @@
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ArrowRight, Sparkles, Building2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Plus, Sparkles, Building2, Search, Archive, ArrowLeft } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Button, Card, CardBody, EmptyState, Badge } from '../components/ui';
+import { Button, EmptyState } from '../components/ui';
+import { AccountCard } from '../components/dashboard/AccountCard';
+import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { useAccountsStore } from '../state/useAccountsStore';
-import { formatDate } from '../utils/dates';
-
-const STATUS_LABELS: Record<string, string> = {
-  new: 'New',
-  documents_uploaded: 'Documents Uploaded',
-  profile_in_review: 'Profile In Review',
-  ready_for_market: 'Ready for Market',
-};
 
 export function DashboardPage() {
   const navigate = useNavigate();
   const accounts = useAccountsStore((s) => s.accounts);
-  const documents = useAccountsStore((s) => s.documents);
-  const matchResults = useAccountsStore((s) => s.matchResults);
+  const activityLog = useAccountsStore((s) => s.activityLog);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
+
+  const [search, setSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [historyAccountId, setHistoryAccountId] = useState<string | null>(null);
+
+  const archivedCount = useMemo(() => accounts.filter((a) => a.archived).length, [accounts]);
+
+  const visible = useMemo(() => {
+    return accounts
+      .filter((a) => a.archived === showArchived)
+      .filter((a) => a.namedInsured.toLowerCase().includes(search.toLowerCase()))
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  }, [accounts, showArchived, search]);
+
+  const historyAccount = historyAccountId ? accounts.find((a) => a.id === historyAccountId) : null;
 
   return (
     <PageContainer
-      title="Submissions"
-      description="Every account and renewal you're working, in one place."
+      title={showArchived ? 'Archived Submissions' : 'Submissions'}
+      description={showArchived ? 'Restore an archived submission or remove it for good.' : "Every account and renewal you're working, in one place."}
       actions={
-        <Button
-          icon={<Plus size={16} />}
-          onClick={() => navigate('/accounts/new')}
-        >
-          New Submission
-        </Button>
+        showArchived ? (
+          <Button variant="secondary" icon={<ArrowLeft size={15} />} onClick={() => setShowArchived(false)}>
+            Back to Submissions
+          </Button>
+        ) : (
+          <>
+            {archivedCount > 0 && (
+              <Button variant="secondary" icon={<Archive size={15} />} onClick={() => setShowArchived(true)}>
+                Archived ({archivedCount})
+              </Button>
+            )}
+            <Button icon={<Plus size={16} />} onClick={() => navigate('/accounts/new')}>
+              New Submission
+            </Button>
+          </>
+        )
       }
     >
       {accounts.length === 0 ? (
@@ -57,53 +75,41 @@ export function DashboardPage() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {accounts.map((account, i) => {
-            const docs = documents[account.id] ?? [];
-            const matches = matchResults[account.id] ?? [];
-            const strongMatches = matches.filter((m) => m.verdict === 'strong_match').length;
-            return (
-              <motion.div
-                key={account.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04, duration: 0.25 }}
-              >
-                <Card
-                  className="group cursor-pointer transition-shadow hover:[box-shadow:var(--shadow-card-hover)]"
-                  onClick={() => navigate(`/accounts/${account.id}/risk-profile`)}
-                >
-                  <CardBody className="pt-5">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-semibold text-[var(--color-ink-900)]">{account.namedInsured}</p>
-                        <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{account.state} · Commercial Auto</p>
-                      </div>
-                      <Badge tone="neutral">{STATUS_LABELS[account.status]}</Badge>
-                    </div>
+        <>
+          {!showArchived && (
+            <div className="relative max-w-sm">
+              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-ink-400)]" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search submissions…"
+                className="w-full rounded-lg border border-[var(--color-ink-200)] py-2 pl-9 pr-3 text-sm outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15"
+              />
+            </div>
+          )}
 
-                    <div className="mt-4 flex items-center gap-4 text-xs text-[var(--color-ink-500)]">
-                      <span>{docs.length} document{docs.length === 1 ? '' : 's'}</span>
-                      {matches.length > 0 && (
-                        <span>
-                          {strongMatches} strong match{strongMatches === 1 ? '' : 'es'}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="mt-4 flex items-center justify-between border-t border-[var(--color-ink-100)] pt-3 text-xs">
-                      <span className="text-[var(--color-ink-400)]">Updated {formatDate(account.updatedAt)}</span>
-                      <span className="flex items-center gap-1 font-medium text-[var(--color-brand-700)] opacity-0 transition-opacity group-hover:opacity-100">
-                        Open <ArrowRight size={13} />
-                      </span>
-                    </div>
-                  </CardBody>
-                </Card>
-              </motion.div>
-            );
-          })}
-        </div>
+          {visible.length === 0 ? (
+            <EmptyState
+              icon={<Search size={24} strokeWidth={1.5} />}
+              title={showArchived ? 'No archived submissions' : 'No matching submissions'}
+              description={showArchived ? undefined : 'Try a different search term.'}
+            />
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {visible.map((account, i) => (
+                <AccountCard key={account.id} account={account} index={i} onOpenHistory={() => setHistoryAccountId(account.id)} />
+              ))}
+            </div>
+          )}
+        </>
       )}
+
+      <HistoryDrawer
+        open={!!historyAccount}
+        onClose={() => setHistoryAccountId(null)}
+        accountName={historyAccount?.namedInsured ?? ''}
+        events={historyAccount ? (activityLog[historyAccount.id] ?? []) : []}
+      />
     </PageContainer>
   );
 }

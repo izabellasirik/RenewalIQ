@@ -9,3 +9,5 @@ export * from './extraction';
 export * from './appetite';
 export * from './application';
 export * from './account';
+export * from './activity';
+export * from './feedback';

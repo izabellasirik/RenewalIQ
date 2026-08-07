@@ -6,12 +6,13 @@ import { Dropzone } from '../components/upload/Dropzone';
 import { DocumentList } from '../components/upload/DocumentList';
 import { Button, Card, CardBody, ProgressBar } from '../components/ui';
 import { useAccountsStore } from '../state/useAccountsStore';
+import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 
 export function UploadPage() {
   const { accountId = '' } = useParams();
   const navigate = useNavigate();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
-  const documents = useAccountsStore((s) => s.documents[accountId] ?? []);
+  const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
   const addFiles = useAccountsStore((s) => s.addFiles);
   const loadSampleDocuments = useAccountsStore((s) => s.loadSampleDocuments);
 

@@ -2,11 +2,6 @@ import type { AppetiteRecord, MatchReason, MatchResult, RiskProfile, Verdict } f
 import { ALL_RULES } from './rules';
 import { buildStaleWarning, isStale } from './freshness';
 
-function isDataGapWarning(reason: MatchReason): boolean {
-  const t = reason.explanation.toLowerCase();
-  return t.includes('unconfirmed') || (t.includes('not') && t.includes('confirm'));
-}
-
 function deriveVerdict(reasons: MatchReason[]): Verdict {
   const hasFail = reasons.some((r) => r.status === 'fail');
   if (hasFail) return 'not_eligible';
@@ -14,7 +9,7 @@ function deriveVerdict(reasons: MatchReason[]): Verdict {
   const warnings = reasons.filter((r) => r.status === 'warning');
   if (warnings.length === 0) return 'strong_match';
 
-  const hasDataGap = warnings.some(isDataGapWarning);
+  const hasDataGap = warnings.some((r) => r.isDataGap);
   return hasDataGap ? 'verify' : 'possible_match';
 }
 
