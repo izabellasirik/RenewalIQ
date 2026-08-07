@@ -1,6 +1,14 @@
 /** Confidence level of a value. 'manual' means a broker entered/edited it directly and it is treated as ground truth. */
 export type Confidence = 'high' | 'medium' | 'low' | 'manual';
 
+/**
+ * How a value was populated. 'deterministic_import' is reserved for a future structured-API
+ * source (per the product principle that APIs should be preferred over AI when data can be
+ * transferred reliably) — nothing produces it yet, but the type accommodates it without a
+ * breaking change later.
+ */
+export type ExtractionMethod = 'ai_extraction' | 'deterministic_import' | 'manual_entry';
+
 export interface FieldSource {
   documentId: string;
   documentName: string;
@@ -19,6 +27,10 @@ export interface FieldValue<T> {
   isMissing: boolean;
   isConflicting: boolean;
   alternateValues?: { value: T; source: FieldSource }[];
+  /** How this value was populated. Undefined only for a field that has never been set. */
+  extractionMethod?: ExtractionMethod;
+  /** ISO timestamp this specific field was last populated/edited — distinct from the whole-profile updatedAt. */
+  lastUpdatedAt?: string;
 }
 
 export function emptyField<T>(): FieldValue<T> {
@@ -26,5 +38,5 @@ export function emptyField<T>(): FieldValue<T> {
 }
 
 export function manualField<T>(value: T): FieldValue<T> {
-  return { value, confidence: 'manual', isMissing: false, isConflicting: false };
+  return { value, confidence: 'manual', isMissing: false, isConflicting: false, extractionMethod: 'manual_entry', lastUpdatedAt: new Date().toISOString() };
 }

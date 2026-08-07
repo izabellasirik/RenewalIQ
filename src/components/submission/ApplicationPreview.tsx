@@ -1,12 +1,13 @@
-import type { ApplicationForm } from '../../types';
-import { Card, CardBody, CardHeader } from '../ui';
+import { TriangleAlert } from 'lucide-react';
+import type { MappedApplication } from '../../types';
+import { Card, CardBody, CardHeader, ConfidenceBadge } from '../ui';
 
 export function ApplicationPreview({
   application,
   values,
   onChange,
 }: {
-  application: ApplicationForm;
+  application: MappedApplication;
   values: Record<string, string>;
   onChange: (fieldId: string, value: string) => void;
 }) {
@@ -20,19 +21,29 @@ export function ApplicationPreview({
           <CardBody className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
             {section.fields.map((field, fIdx) => {
               const id = `${sIdx}-${fIdx}`;
+              const needsReview = field.status === 'needs_review';
               return (
                 <div key={id} className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-[var(--color-ink-500)]">{field.label}</label>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-medium text-[var(--color-ink-500)]">{field.targetLabel}</label>
+                    {field.confidence && <ConfidenceBadge confidence={field.confidence} className="print:hidden" />}
+                  </div>
                   {field.editable ? (
                     <input
                       value={values[id] ?? field.value}
                       onChange={(e) => onChange(id, e.target.value)}
                       placeholder="Not provided"
-                      className="rounded-md border border-[var(--color-ink-200)] px-2.5 py-2 text-sm text-[var(--color-ink-900)] outline-none placeholder:italic placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15 print:border-0 print:p-0"
+                      className={`rounded-md border px-2.5 py-2 text-sm text-[var(--color-ink-900)] outline-none placeholder:italic placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15 print:border-0 print:p-0 ${needsReview ? 'border-[var(--color-warning-300)] bg-[var(--color-warning-100)]/20' : 'border-[var(--color-ink-200)]'}`}
                     />
                   ) : (
-                    <p className="rounded-md bg-[var(--color-ink-50)] px-2.5 py-2 text-sm text-[var(--color-ink-800)] print:bg-transparent print:p-0">
+                    <p className={`rounded-md px-2.5 py-2 text-sm text-[var(--color-ink-800)] print:bg-transparent print:p-0 ${needsReview ? 'bg-[var(--color-warning-100)]/20' : 'bg-[var(--color-ink-50)]'}`}>
                       {values[id] ?? field.value}
+                    </p>
+                  )}
+                  {needsReview && (
+                    <p className="flex items-start gap-1.5 text-xs text-[var(--color-warning-600)] print:hidden">
+                      <TriangleAlert size={12} className="mt-0.5 shrink-0" />
+                      {field.reviewReason}
                     </p>
                   )}
                 </div>

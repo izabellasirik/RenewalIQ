@@ -1,4 +1,4 @@
-import type { Confidence, FieldSource } from './common';
+import type { Confidence, ExtractionMethod, FieldSource } from './common';
 import type { UploadedDocument } from './document';
 
 /** Dot-path into RiskProfile, e.g. "business.namedInsured" or "transportation.fleetSize" */
@@ -9,6 +9,8 @@ export interface ExtractedFieldResult {
   value: unknown;
   confidence: Confidence;
   source: FieldSource;
+  /** Defaults to 'ai_extraction' when omitted — set explicitly if a provider distinguishes OCR/LLM/API-sourced results. */
+  extractionMethod?: ExtractionMethod;
 }
 
 export interface ExtractionProvider {

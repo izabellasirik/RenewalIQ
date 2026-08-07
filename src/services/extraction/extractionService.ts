@@ -32,6 +32,8 @@ export function mergeFieldValue<T>(
     source: result.source,
     isMissing: false,
     isConflicting: false,
+    extractionMethod: result.extractionMethod ?? 'ai_extraction',
+    lastUpdatedAt: new Date().toISOString(),
   };
 
   if (!existing || existing.isMissing || existing.value === null) {
@@ -106,6 +108,8 @@ export function applyManualEdit<T>(
     confidence: 'manual' as Confidence,
     isMissing: value === null || (Array.isArray(value) && value.length === 0),
     isConflicting: false,
+    extractionMethod: 'manual_entry',
+    lastUpdatedAt: new Date().toISOString(),
   };
   profile.updatedAt = new Date().toISOString();
   return profile;

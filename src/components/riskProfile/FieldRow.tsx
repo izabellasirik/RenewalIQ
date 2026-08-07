@@ -1,10 +1,17 @@
 import { useState } from 'react';
 import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp } from 'lucide-react';
-import type { FieldValue } from '../../types';
+import type { ExtractionMethod, FieldValue } from '../../types';
 import { ConfidenceBadge, Skeleton } from '../ui';
 import { cn } from '../../utils/cn';
+import { relativeTime } from '../../utils/dates';
 
 export type FieldValueType = 'text' | 'textarea' | 'number' | 'boolean' | 'list';
+
+const EXTRACTION_METHOD_LABELS: Record<ExtractionMethod, string> = {
+  ai_extraction: 'AI-extracted',
+  deterministic_import: 'Imported from API',
+  manual_entry: 'Entered by broker',
+};
 
 interface FieldRowProps<T> {
   label: string;
@@ -153,6 +160,13 @@ export function FieldRow<T>({ label, field, valueType, onSave, readOnly, pending
                 {field.source.excerpt && <p className="mt-0.5 italic text-[var(--color-ink-500)]">"{field.source.excerpt}"</p>}
               </div>
             </div>
+          )}
+          {(field.extractionMethod || field.lastUpdatedAt) && (
+            <p className="text-[var(--color-ink-400)]">
+              {field.extractionMethod && EXTRACTION_METHOD_LABELS[field.extractionMethod]}
+              {field.extractionMethod && field.lastUpdatedAt && ' · '}
+              {field.lastUpdatedAt && `updated ${relativeTime(field.lastUpdatedAt)}`}
+            </p>
           )}
           {field.alternateValues?.map((alt, i) => (
             <div key={i} className="flex items-start gap-2 rounded-md bg-white px-2 py-1.5 text-[var(--color-ink-500)]">

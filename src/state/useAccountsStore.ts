@@ -198,7 +198,7 @@ export const useAccountsStore = create<AccountsState>()(
           if (!profile) return {};
           const coverage = profile.coverage.map((line) =>
             line.type === coverageType
-              ? { ...line, [field]: { value, confidence: 'manual' as const, isMissing: value.trim() === '', isConflicting: false } }
+              ? { ...line, [field]: { value, confidence: 'manual' as const, isMissing: value.trim() === '', isConflicting: false, extractionMethod: 'manual_entry' as const, lastUpdatedAt: new Date().toISOString() } }
               : line
           );
           return {

@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import type { FieldValue, RiskProfile } from '../types';
+import { emptyField } from '../types';
 import { RISK_PROFILE_GROUPS, type RiskFieldConfig } from '../pages/riskProfileFieldConfig';
+import { getFieldValueByPath } from '../utils/riskProfilePath';
 
 export interface FieldStatEntry {
   field: RiskFieldConfig;
@@ -18,8 +20,7 @@ export interface RiskProfileStats {
 }
 
 function getField(profile: RiskProfile, config: RiskFieldConfig): FieldValue<unknown> {
-  const bucket = profile[config.section] as unknown as Record<string, FieldValue<unknown>>;
-  return bucket[config.key];
+  return getFieldValueByPath(profile, `${config.section}.${config.key}`) ?? emptyField();
 }
 
 /** Pure computation — safe to call per-account in a loop (e.g. cross-account analytics), unlike the hook below. */
