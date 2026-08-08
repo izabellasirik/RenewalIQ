@@ -1,6 +1,6 @@
 import type { Confidence } from '../../../types';
 import { parseCount, parseMoney } from './money';
-import { parseStateList, parseStateFromPhrase } from './usStates';
+import { parseStateList, parseStateFromPhrase } from '../../../utils/usStates';
 
 export type ScalarCoerce = (raw: string) => unknown | null;
 

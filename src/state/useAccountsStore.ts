@@ -31,6 +31,8 @@ interface AccountsState {
   activeAccountId: string | null;
 
   createAccount: (namedInsured: string, state: string) => string;
+  /** Commits an account whose documents were already parsed/extracted (e.g. by the upload-first New Submission flow) in one transaction, instead of creating an empty account and processing files afterward. */
+  createAccountFromExtraction: (namedInsured: string, state: string, documents: Omit<UploadedDocument, 'accountId'>[], profile: RiskProfile) => string;
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
   addFiles: (accountId: string, files: File[]) => void;
@@ -90,6 +92,36 @@ export const useAccountsStore = create<AccountsState>()(
           activityLog: appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`),
           activeAccountId: account.id,
         }));
+        return account.id;
+      },
+
+      createAccountFromExtraction: (namedInsured, state, documents, profile) => {
+        const account = { ...newAccount(namedInsured, state), status: 'documents_uploaded' as const };
+        const finalDocs: UploadedDocument[] = documents.map((d) => ({ ...d, accountId: account.id }));
+        const finalProfile: RiskProfile = { ...profile, accountId: account.id };
+
+        set((s) => {
+          let log = appendEvent(
+            s.activityLog,
+            account.id,
+            'account_created',
+            `Submission created for ${namedInsured} from ${documents.length} uploaded document${documents.length === 1 ? '' : 's'}.`
+          );
+          for (const doc of finalDocs) {
+            log = appendEvent(log, account.id, 'document_uploaded', `Uploaded ${doc.name}.`);
+            if (doc.status === 'processed') {
+              log = appendEvent(log, account.id, 'document_processed', `Extracted ${doc.fieldsExtracted ?? 0} field${doc.fieldsExtracted === 1 ? '' : 's'} from ${doc.name}.`);
+            }
+          }
+          return {
+            accounts: [...s.accounts, account],
+            riskProfiles: { ...s.riskProfiles, [account.id]: finalProfile },
+            documents: { ...s.documents, [account.id]: finalDocs },
+            activityLog: log,
+            activeAccountId: account.id,
+          };
+        });
+        get().runMatching(account.id);
         return account.id;
       },
 

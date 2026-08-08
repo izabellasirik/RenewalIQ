@@ -21,6 +21,20 @@ export const US_STATE_NAMES: Record<string, string> = {
   'district of columbia': 'DC',
 };
 
+const TITLE_CASE_MINOR_WORDS = new Set(['of']);
+
+function titleCase(name: string): string {
+  return name
+    .split(' ')
+    .map((word, i) => (i > 0 && TITLE_CASE_MINOR_WORDS.has(word) ? word : word.charAt(0).toUpperCase() + word.slice(1)))
+    .join(' ');
+}
+
+/** All 50 states + DC, standard two-letter codes, alphabetical by name — the one source every state dropdown/select should render from. */
+export const US_STATES: { code: string; name: string }[] = Object.entries(US_STATE_NAMES)
+  .map(([name, code]) => ({ code, name: titleCase(name) }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
 /** Resolves a single state reference — 2-letter code or full name — to its code, or null if unrecognized. */
 export function parseStateName(raw: string): string | null {
   const trimmed = raw.trim();
