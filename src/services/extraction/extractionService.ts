@@ -2,12 +2,12 @@ import type {
   RiskProfile,
   ExtractedFieldResult,
   FieldValue,
-  Confidence,
   CoverageType,
   LossEntry,
   VehicleEntry,
   DriverEntry,
 } from '../../types';
+import { emptyField } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { generateId } from '../../utils/id';
 
@@ -64,8 +64,57 @@ export function mergeFieldValue<T>(
     isConflicting: true,
     alternateValues: [
       ...(existing.alternateValues ?? []),
-      ...(loser.value !== null && loser.source ? [{ value: loser.value, source: loser.source }] : []),
+      ...(loser.value !== null && loser.source ? [{ value: loser.value, source: loser.source, extractionMethod: loser.extractionMethod }] : []),
     ],
+  };
+}
+
+export type FieldResolution<T> = { type: 'primary' } | { type: 'alternate'; index: number } | { type: 'manual'; value: T };
+
+/**
+ * Resolves a conflicting (or any) field per the broker's explicit choice — pick the current
+ * primary, pick one of the alternates (swapping it in, preserving its own source/extractionMethod),
+ * or type a brand-new value. In every case the field becomes 'manual' confidence (broker-confirmed)
+ * and isConflicting clears, but nothing is discarded: whichever options aren't chosen are kept in
+ * alternateValues as history, so provenance survives resolution.
+ */
+export function resolveFieldConflict<T>(existing: FieldValue<T>, resolution: FieldResolution<T>): FieldValue<T> {
+  const now = new Date().toISOString();
+
+  if (resolution.type === 'primary') {
+    return { ...existing, confidence: 'manual', isConflicting: false, lastUpdatedAt: now };
+  }
+
+  if (resolution.type === 'alternate') {
+    const alternates = existing.alternateValues ?? [];
+    const chosen = alternates[resolution.index];
+    if (!chosen) return existing;
+    const demotedPrimary = existing.value !== null && existing.source ? [{ value: existing.value, source: existing.source, extractionMethod: existing.extractionMethod }] : [];
+    const remaining = [...alternates.slice(0, resolution.index), ...alternates.slice(resolution.index + 1), ...demotedPrimary];
+    return {
+      value: chosen.value,
+      confidence: 'manual',
+      isMissing: false,
+      isConflicting: false,
+      source: chosen.source,
+      extractionMethod: chosen.extractionMethod ?? 'ai_extraction',
+      alternateValues: remaining.length > 0 ? remaining : undefined,
+      lastUpdatedAt: now,
+    };
+  }
+
+  // type === 'manual': a genuinely new, typed value — still keeps every prior option as history.
+  const priorAlternates = existing.alternateValues ?? [];
+  const demotedPrimary = existing.value !== null && existing.source ? [{ value: existing.value, source: existing.source, extractionMethod: existing.extractionMethod }] : [];
+  const history = [...priorAlternates, ...demotedPrimary];
+  return {
+    value: resolution.value,
+    confidence: 'manual',
+    isMissing: resolution.value === null || (Array.isArray(resolution.value) && resolution.value.length === 0),
+    isConflicting: false,
+    extractionMethod: 'manual_entry',
+    alternateValues: history.length > 0 ? history : undefined,
+    lastUpdatedAt: now,
   };
 }
 
@@ -116,6 +165,14 @@ function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFie
     return;
   }
 
+  if (fieldPath === 'coverageLine') {
+    const coverageType = result.value as CoverageType;
+    if (!profile.coverage.find((c) => c.type === coverageType)) {
+      profile.coverage.push({ type: coverageType, requestedLimit: { value: null, confidence: 'low', isMissing: true, isConflicting: false } });
+    }
+    return;
+  }
+
   const parts = fieldPath.split('.');
 
   if (parts[0] === 'coverage') {
@@ -143,22 +200,30 @@ export function mergeIntoRiskProfile(profile: RiskProfile, results: ExtractedFie
   return profile;
 }
 
-/** Sets a field value from a manual broker edit — always treated as ground truth. */
+/** Sets a field value from a manual broker edit — always treated as ground truth. Preserves whatever was there before (source, extracted alternates) as history rather than discarding it. */
 export function applyManualEdit<T>(
   profile: RiskProfile,
   section: 'business' | 'transportation',
   key: string,
   value: T
 ): RiskProfile {
-  const bucket = profile[section] as unknown as Record<string, FieldValue<unknown>>;
-  bucket[key] = {
-    value,
-    confidence: 'manual' as Confidence,
-    isMissing: value === null || (Array.isArray(value) && value.length === 0),
-    isConflicting: false,
-    extractionMethod: 'manual_entry',
-    lastUpdatedAt: new Date().toISOString(),
-  };
+  const bucket = profile[section] as unknown as Record<string, FieldValue<T>>;
+  const existing = bucket[key] ?? emptyField<T>();
+  bucket[key] = resolveFieldConflict(existing, { type: 'manual', value });
+  profile.updatedAt = new Date().toISOString();
+  return profile;
+}
+
+/** Applies a broker's explicit conflict resolution (pick primary / pick an alternate / type manually) to one field. */
+export function applyFieldResolution<T>(
+  profile: RiskProfile,
+  section: 'business' | 'transportation',
+  key: string,
+  resolution: FieldResolution<T>
+): RiskProfile {
+  const bucket = profile[section] as unknown as Record<string, FieldValue<T>>;
+  const existing = bucket[key] ?? emptyField<T>();
+  bucket[key] = resolveFieldConflict(existing, resolution);
   profile.updatedAt = new Date().toISOString();
   return profile;
 }

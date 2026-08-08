@@ -1,6 +1,6 @@
 import type { Confidence } from '../../../types';
 import { parseCount, parseMoney } from './money';
-import { US_STATE_CODES, parseStateList } from './usStates';
+import { parseStateList, parseStateFromPhrase } from './usStates';
 
 export type ScalarCoerce = (raw: string) => unknown | null;
 
@@ -56,6 +56,9 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
           /company name\s*:\s*(.+)/i,
           /applicant(?:'s)? name\s*:\s*(.+)/i,
           /^applicant\s*:\s*(.+)/i,
+          /^company\s*:\s*(.+)/i,
+          /^insured\s*:\s*(.+)/i,
+          /^client\s*:\s*(.+)/i,
         ],
       },
     ],
@@ -88,17 +91,14 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
   },
   {
     fieldPath: 'business.state',
-    coerce: (raw) => {
-      const code = raw.trim().toUpperCase();
-      return US_STATE_CODES.has(code) ? code : null;
-    },
+    coerce: parseStateFromPhrase,
     groups: [
       {
         confidence: 'high',
         patterns: [
-          /(?:domicile|mailing|home|principal|operating)\s+state\s*:\s*([a-z]{2})\b/i,
-          /state of (?:domicile|incorporation|formation)\s*:\s*([a-z]{2})\b/i,
-          /^state\s*:\s*([a-z]{2})\b/i,
+          /(?:domicile|mailing|home|principal|operating)\s+state\s*:\s*(.+)/i,
+          /state of (?:domicile|incorporation|formation)\s*:\s*(.+)/i,
+          /^state\s*:\s*(.+)/i,
         ],
       },
     ],
@@ -178,7 +178,16 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
       return codes.length > 0 ? codes : null;
     },
     groups: [
-      { confidence: 'high', patterns: [/states?\s+of\s+operation\s*:\s*(.+)/i, /operating\s+states?\s*:\s*(.+)/i, /states?\s+(?:traveled|serviced)\s*:\s*(.+)/i] },
+      {
+        confidence: 'high',
+        patterns: [
+          /states?\s+of\s+operation\s*:\s*(.+)/i,
+          /operating\s+states?\s*:\s*(.+)/i,
+          /states?\s+operated\s*:\s*(.+)/i,
+          /states?\s+(?:traveled|serviced)\s*:\s*(.+)/i,
+          /^states\s*:\s*(.+)/i,
+        ],
+      },
       {
         confidence: 'medium',
         patterns: [/(?:haul(?:ing)?|operat(?:e|ing)|run(?:ning)?|travel(?:ing)?)\b[^.]*?\b(?:throughout|across|in|through)\s+([A-Z]{2}(?:\s*,\s*[A-Z]{2})*(?:\s*,?\s*and\s+[A-Z]{2})?)/],

@@ -1,14 +1,21 @@
 import type { CoverageType, DriverEntry, LossStatus, VehicleEntry } from '../../../types';
 import type { RawTable } from '../../ingestion';
 import { parseCount, parseMoney } from './money';
+import { COVERAGE_TYPE_ALIASES } from './coveragePatterns';
+import { normalizeVehicleBodyType } from './vehicleBodyType';
 
 function normalizeHeader(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function findColumn(headers: string[], synonyms: string[]): number {
+/**
+ * `exactOnly` synonyms are single common words ("driver", "type") that would false-positive if
+ * matched as a substring of an unrelated header ("Driver License Number" is not a name column) —
+ * they're only ever considered as a whole-header match, never via the partial/"includes" fallback.
+ */
+function findColumn(headers: string[], synonyms: string[], exactOnly: string[] = []): number {
   const normalized = headers.map(normalizeHeader);
-  for (const syn of synonyms) {
+  for (const syn of [...synonyms, ...exactOnly]) {
     const exact = normalized.indexOf(syn);
     if (exact !== -1) return exact;
   }
@@ -25,15 +32,20 @@ const VEHICLE_SYNONYMS: Record<keyof Omit<VehicleEntry, 'id' | 'source'>, string
   model: ['model'],
   year: ['year', 'model year', 'vehicle year'],
   value: ['value', 'vehicle value', 'stated value', 'acv', 'actual cash value'],
+  bodyType: ['vehicle type', 'body type', 'unit type'],
 };
+/** Bare single-word headers only safe as a whole-header match, never a substring. */
+const VEHICLE_BODY_TYPE_EXACT_ONLY = ['type'];
 
 const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source'>, string[]> = {
-  name: ['driver name', 'name'],
+  name: ['driver name', 'employee name', 'name'],
   dob: ['dob', 'date of birth'],
   licenseState: ['license state', 'lic state', 'state license', 'licensing state'],
-  yearsExperience: ['years experience', 'years of experience', 'yrs experience', 'experience'],
+  yearsExperience: ['years experience', 'years of experience', 'yrs experience', 'driving experience', 'experience'],
   violations: ['violations', 'mvr violations', 'violation history'],
 };
+/** Bare single-word headers that are only safe to match as a whole header, never as a substring. */
+const DRIVER_NAME_EXACT_ONLY = ['driver'];
 
 const LOSS_SYNONYMS = {
   lossDate: ['loss date', 'date of loss', 'date'],
@@ -48,13 +60,6 @@ const COVERAGE_SYNONYMS = {
   coverageType: ['coverage', 'coverage type', 'line', 'line of business'],
   requestedLimit: ['requested limit', 'limit requested', 'limit'],
 };
-
-const COVERAGE_TYPE_ALIASES: { match: RegExp; type: CoverageType }[] = [
-  { match: /auto\s*liability|csl|combined single limit/i, type: 'auto_liability' },
-  { match: /cargo/i, type: 'motor_truck_cargo' },
-  { match: /physical\s*damage/i, type: 'physical_damage' },
-  { match: /general\s*liability/i, type: 'general_liability' },
-];
 
 export type TableKind = 'vehicles' | 'drivers' | 'losses' | 'coverage' | 'unrecognized';
 
@@ -79,6 +84,7 @@ export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
     model: findColumn(table.headers, VEHICLE_SYNONYMS.model),
     year: findColumn(table.headers, VEHICLE_SYNONYMS.year),
     value: findColumn(table.headers, VEHICLE_SYNONYMS.value),
+    bodyType: findColumn(table.headers, VEHICLE_SYNONYMS.bodyType, VEHICLE_BODY_TYPE_EXACT_ONLY),
   };
 
   const results: MappedVehicleRow[] = [];
@@ -95,6 +101,11 @@ export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
       const value = parseMoney(row[col.value]);
       if (value !== null) entry.value = value;
     }
+    if (col.bodyType !== -1 && row[col.bodyType]) {
+      // Only ever derived from an explicit type/body-type column — never guessed from make/model.
+      const bodyType = normalizeVehicleBodyType(row[col.bodyType]);
+      if (bodyType !== null) entry.bodyType = bodyType;
+    }
     if (Object.keys(entry).length > 0) results.push({ row: i, entry });
   });
   return results;
@@ -107,7 +118,7 @@ export interface MappedDriverRow {
 
 export function mapDriverTable(table: RawTable): MappedDriverRow[] {
   const col = {
-    name: findColumn(table.headers, DRIVER_SYNONYMS.name),
+    name: findColumn(table.headers, DRIVER_SYNONYMS.name, DRIVER_NAME_EXACT_ONLY),
     dob: findColumn(table.headers, DRIVER_SYNONYMS.dob),
     licenseState: findColumn(table.headers, DRIVER_SYNONYMS.licenseState),
     yearsExperience: findColumn(table.headers, DRIVER_SYNONYMS.yearsExperience),

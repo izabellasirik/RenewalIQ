@@ -1,9 +1,10 @@
 import type { ExtractedFieldResult, FieldSource } from '../../../types';
 import type { RawDocument } from '../../ingestion';
-import { toTextLines, toExcerpt } from './textLines';
+import { toTextLines, toExcerpt, type TextLine } from './textLines';
 import { SCALAR_FIELD_PATTERNS } from './scalarPatterns';
 import { extractBooleanFields } from './booleanPatterns';
-import { extractLossRows } from './lossPatterns';
+import { extractLossRows, extractLossBlocks } from './lossPatterns';
+import { extractDesiredCoverageLine } from './coveragePatterns';
 import { classifyTable, mapVehicleTable, mapDriverTable, mapLossTable, mapCoverageTable } from './tableMappers';
 
 export interface ExtractionSourceMeta {
@@ -20,8 +21,33 @@ function tableSource(meta: ExtractionSourceMeta, sheetName: string | undefined, 
   return { documentId: meta.documentId, documentName: meta.documentName, excerpt: `${location} — ${description}` };
 }
 
+/**
+ * Some questionnaires lay business fields out as a 2-column "Label | Value" table instead of
+ * "Label: value" paragraphs — very common in Word forms. Scalar extraction otherwise never looks
+ * at doc.tables at all, so those fields would silently stay missing. Rather than a second pattern
+ * set, this synthesizes a "Label: Value" line per row and feeds it through the exact same
+ * SCALAR_FIELD_PATTERNS matching used for paragraph text — one label vocabulary, two document shapes.
+ * Only tables classifyTable doesn't already own (vehicles/drivers/losses/coverage) and with a
+ * plausible key-value shape (2-3 columns) are considered, so this can't collide with itemized-row tables.
+ */
+function synthesizeKeyValueLines(doc: RawDocument): TextLine[] {
+  if (!doc.tables) return [];
+  const lines: TextLine[] = [];
+  for (const table of doc.tables) {
+    if (classifyTable(table.headers) !== 'unrecognized') continue;
+    if (table.headers.length < 2 || table.headers.length > 3) continue;
+    const allRows: string[][] = [table.headers, ...table.rows];
+    for (const row of allRows) {
+      const label = row[0]?.trim();
+      const value = row[1]?.trim();
+      if (label && value) lines.push({ text: `${label}: ${value}` });
+    }
+  }
+  return lines;
+}
+
 function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedFieldResult[] {
-  const lines = toTextLines(doc);
+  const lines = [...toTextLines(doc), ...synthesizeKeyValueLines(doc)];
   const results: ExtractedFieldResult[] = [];
 
   for (const field of SCALAR_FIELD_PATTERNS) {
@@ -56,7 +82,7 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
     });
   }
 
-  const lossRows = extractLossRows(lines);
+  const lossRows = [...extractLossRows(lines), ...extractLossBlocks(lines)];
   for (const l of lossRows) {
     results.push({
       fieldPath: 'lossHistory',
@@ -65,6 +91,19 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
       source: scalarSource(meta, l.page, l.matchedText),
       extractionMethod: 'ai_extraction',
     });
+  }
+
+  const desiredCoverage = extractDesiredCoverageLine(lines);
+  if (desiredCoverage) {
+    for (const coverageType of desiredCoverage.coverageTypes) {
+      results.push({
+        fieldPath: 'coverageLine',
+        value: coverageType,
+        confidence: 'high',
+        source: scalarSource(meta, desiredCoverage.page, desiredCoverage.matchedText),
+        extractionMethod: 'ai_extraction',
+      });
+    }
   }
 
   return results;
@@ -80,7 +119,7 @@ function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedF
     if (kind === 'vehicles') {
       const rows = mapVehicleTable(table);
       for (const { row, entry } of rows) {
-        const desc = [entry.vin && `VIN ${entry.vin}`, entry.make, entry.model, entry.year].filter(Boolean).join(' ');
+        const desc = [entry.vin && `VIN ${entry.vin}`, entry.make, entry.model, entry.year, entry.bodyType].filter(Boolean).join(' ');
         results.push({ fieldPath: 'vehicles', value: entry, confidence: 'high', source: tableSource(meta, table.sheetName, row, desc || 'vehicle'), extractionMethod: 'deterministic_import' });
       }
       if (rows.length > 0) {
@@ -91,13 +130,14 @@ function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedF
           source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `${rows.length} vehicle${rows.length === 1 ? '' : 's'} listed in ${table.sheetName ?? 'the vehicle schedule'}` },
           extractionMethod: 'deterministic_import',
         });
-        const vehicleTypes = Array.from(new Set(rows.map((r) => [r.entry.make, r.entry.model].filter(Boolean).join(' ')).filter((t) => t.length > 0)));
+        // Only from an explicit body-type column, never guessed from make/model — absent when the schedule doesn't say.
+        const vehicleTypes = Array.from(new Set(rows.map((r) => r.entry.bodyType).filter((t): t is string => !!t)));
         if (vehicleTypes.length > 0) {
           results.push({
             fieldPath: 'transportation.vehicleTypes',
             value: vehicleTypes,
             confidence: 'high',
-            source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `Distinct make/model across ${table.sheetName ?? 'the vehicle schedule'}: ${vehicleTypes.join(', ')}` },
+            source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `Distinct vehicle types across ${table.sheetName ?? 'the vehicle schedule'}: ${vehicleTypes.join(', ')}` },
             extractionMethod: 'deterministic_import',
           });
         }

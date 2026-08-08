@@ -13,9 +13,10 @@ export function parseMoney(raw: string): number | null {
   return n;
 }
 
-/** Parses a plain integer/decimal count ("24", "1,200") — no currency suffix handling. */
+/** Parses the leading number out of a count-ish string ("24", "1,200", "15 years", "8 yrs") — no currency suffix handling. */
 export function parseCount(raw: string): number | null {
-  const cleaned = raw.replace(/,/g, '').trim();
-  const n = Number(cleaned);
+  const match = raw.trim().match(/^-?[\d,]+(?:\.\d+)?/);
+  if (!match) return null;
+  const n = Number(match[0].replace(/,/g, ''));
   return Number.isFinite(n) ? n : null;
 }

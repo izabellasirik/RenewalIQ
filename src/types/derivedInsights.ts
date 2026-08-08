@@ -4,15 +4,23 @@
  * sync with the underlying data and never need their own conflict-merge logic.
  */
 
+export interface VehicleYearHighlight {
+  year: number;
+  make?: string;
+  model?: string;
+}
+
 export interface VehicleScheduleSummary {
   totalVehicleCount: number;
-  /** Distinct "Make Model" combinations, e.g. "Freightliner Cascadia". */
+  /** Distinct normalized body-type categories (Tractor / Power Unit, Trailer, ...) — only from an explicit type column, never guessed from make/model. */
   vehicleTypes: string[];
   /** Current-year minus model year, averaged across vehicles with a known year. Undefined if no vehicle has a year. */
   averageVehicleAge: number | null;
   /** Sum of every vehicle's stated value. Null if no vehicle has a value. */
   totalInsuredValue: number | null;
   manufacturers: string[];
+  oldestVehicle: VehicleYearHighlight | null;
+  newestVehicle: VehicleYearHighlight | null;
 }
 
 export interface ViolationsSummary {

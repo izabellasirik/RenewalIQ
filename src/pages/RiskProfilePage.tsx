@@ -10,6 +10,7 @@ import { FieldRow } from '../components/riskProfile/FieldRow';
 import { ConflictBanner } from '../components/riskProfile/ConflictBanner';
 import { MissingFieldsPanel } from '../components/riskProfile/MissingFieldsPanel';
 import { InsightStrip } from '../components/riskProfile/InsightStrip';
+import { AccountSummary } from '../components/riskProfile/AccountSummary';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
@@ -18,6 +19,7 @@ import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { COVERAGE_LABELS } from '../types';
 import { formatDate } from '../utils/dates';
 import { EMPTY_ACTIVITY_EVENTS, EMPTY_DOCUMENTS } from '../utils/emptyArrays';
+import { cn } from '../utils/cn';
 
 const TREND_ICON = { increasing: TrendingUp, decreasing: TrendingDown, stable: Minus, insufficient_data: Minus };
 const TREND_LABEL = { increasing: 'Increasing', decreasing: 'Decreasing', stable: 'Stable', insufficient_data: 'Not enough data' };
@@ -38,9 +40,21 @@ export function RiskProfilePage() {
   const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
   const activityLog = useAccountsStore((s) => s.activityLog[accountId]) ?? EMPTY_ACTIVITY_EVENTS;
   const updateField = useAccountsStore((s) => s.updateField);
+  const resolveField = useAccountsStore((s) => s.resolveField);
   const updateCoverage = useAccountsStore((s) => s.updateCoverage);
   const [tab, setTab] = useState<TabKey>('details');
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [highlightFieldId, setHighlightFieldId] = useState<string | null>(null);
+
+  function focusField(section: 'business' | 'transportation', key: string) {
+    const id = `field-${section}-${key}`;
+    setTab('details');
+    setHighlightFieldId(id);
+    requestAnimationFrame(() => {
+      setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+    });
+    setTimeout(() => setHighlightFieldId((current) => (current === id ? null : current)), 2200);
+  }
 
   const stats = useRiskProfileStats(profile);
   const anyProcessing = documents.some((d) => d.status === 'processing');
@@ -48,6 +62,7 @@ export function RiskProfilePage() {
   const vehicleSummary = useMemo(() => deriveVehicleSummary(profile?.vehicles ?? []), [profile?.vehicles]);
   const driverSummary = useMemo(() => deriveDriverSummary(profile?.drivers ?? []), [profile?.drivers]);
   const lossSummary = useMemo(() => deriveLossSummary(profile?.lossHistory ?? []), [profile?.lossHistory]);
+  const lossRunDocs = documents.filter((d) => d.category === 'loss_run' && d.status === 'processed');
 
   if (!account || !profile) {
     return <AccountNotFound />;
@@ -68,6 +83,8 @@ export function RiskProfilePage() {
         </>
       }
     >
+      <AccountSummary account={account} profile={profile} />
+
       <div className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3">
         <div className="flex-1">
           <div className="flex items-center justify-between text-xs">
@@ -81,7 +98,10 @@ export function RiskProfilePage() {
       </div>
 
       <ConflictBanner count={stats.conflicting.length} />
-      <MissingFieldsPanel fields={stats.missing.map((m) => m.field.label)} />
+      <MissingFieldsPanel
+        fields={stats.missing.map((m) => ({ label: m.field.label, section: m.field.section, key: m.field.key }))}
+        onFieldClick={focusField}
+      />
 
       <Tabs
         items={[
@@ -101,14 +121,20 @@ export function RiskProfilePage() {
             <motion.div key={group.key} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: gi * 0.05, duration: 0.25 }}>
               <SectionCard title={group.title}>
                 {group.fields.map((f) => (
-                  <FieldRow
+                  <div
                     key={f.key}
-                    label={f.label}
-                    valueType={f.type}
-                    pending={anyProcessing}
-                    field={profile[f.section][f.key as keyof (typeof profile)[typeof f.section]] as any}
-                    onSave={(value) => updateField(accountId, f.section, f.key, value)}
-                  />
+                    id={`field-${f.section}-${f.key}`}
+                    className={cn('rounded-lg transition-shadow', highlightFieldId === `field-${f.section}-${f.key}` && 'ring-2 ring-[var(--color-brand-500)]')}
+                  >
+                    <FieldRow
+                      label={f.label}
+                      valueType={f.type}
+                      pending={anyProcessing}
+                      field={profile[f.section][f.key as keyof (typeof profile)[typeof f.section]] as any}
+                      onSave={(value) => updateField(accountId, f.section, f.key, value)}
+                      onResolve={(resolution) => resolveField(accountId, f.section, f.key, resolution)}
+                    />
+                  </div>
                 ))}
               </SectionCard>
             </motion.div>
@@ -133,6 +159,16 @@ export function RiskProfilePage() {
                   { label: 'Average Age', value: vehicleSummary.averageVehicleAge !== null ? `${vehicleSummary.averageVehicleAge.toFixed(1)} yrs` : '—' },
                   { label: 'Total Insured Value', value: vehicleSummary.totalInsuredValue !== null ? `$${vehicleSummary.totalInsuredValue.toLocaleString('en-US')}` : '—' },
                   { label: 'Manufacturers', value: vehicleSummary.manufacturers.length > 0 ? vehicleSummary.manufacturers.join(', ') : '—' },
+                  {
+                    label: 'Oldest Vehicle',
+                    value: vehicleSummary.oldestVehicle ? String(vehicleSummary.oldestVehicle.year) : '—',
+                    caption: vehicleSummary.oldestVehicle ? [vehicleSummary.oldestVehicle.make, vehicleSummary.oldestVehicle.model].filter(Boolean).join(' ') || undefined : undefined,
+                  },
+                  {
+                    label: 'Newest Vehicle',
+                    value: vehicleSummary.newestVehicle ? String(vehicleSummary.newestVehicle.year) : '—',
+                    caption: vehicleSummary.newestVehicle ? [vehicleSummary.newestVehicle.make, vehicleSummary.newestVehicle.model].filter(Boolean).join(' ') || undefined : undefined,
+                  },
                 ]}
               />
               <div className="overflow-x-auto">
@@ -226,7 +262,20 @@ export function RiskProfilePage() {
       {tab === 'loss-history' && (
         <SectionCard title="Loss History" description="Consolidated from uploaded loss run documents.">
           {profile.lossHistory.length === 0 ? (
-            <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No loss runs uploaded yet.</p>
+            lossRunDocs.length > 0 ? (
+              <div className="px-2 py-6 text-center">
+                <p className="text-sm font-medium text-[var(--color-warning-600)]">
+                  {lossRunDocs.length === 1 ? 'A loss run document was' : `${lossRunDocs.length} loss run documents were`} uploaded, but no claims could be extracted.
+                </p>
+                <p className="mx-auto mt-1 max-w-md text-xs text-[var(--color-ink-500)]">
+                  {lossRunDocs.some((d) => d.warnings?.length)
+                    ? lossRunDocs.flatMap((d) => d.warnings ?? []).join(' ')
+                    : "The document's layout wasn't recognized (expected a claims table, or one labeled claim per block with a date and amount). Try re-uploading a clearer copy."}
+                </p>
+              </div>
+            ) : (
+              <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No loss runs uploaded yet.</p>
+            )
           ) : (
             <>
               <InsightStrip
@@ -236,6 +285,7 @@ export function RiskProfilePage() {
                   { label: 'Closed', value: String(lossSummary.closedClaims) },
                   { label: 'Total Paid', value: `$${lossSummary.totalPaid.toLocaleString('en-US')}` },
                   { label: 'Total Reserved', value: `$${lossSummary.totalReserved.toLocaleString('en-US')}` },
+                  { label: 'Total Incurred', value: `$${lossSummary.totalIncurred.toLocaleString('en-US')}` },
                   {
                     label: 'Largest Loss',
                     value: lossSummary.largestLoss ? `$${lossSummary.largestLoss.amount.toLocaleString('en-US')}` : '—',

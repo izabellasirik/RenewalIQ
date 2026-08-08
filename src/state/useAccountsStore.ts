@@ -10,7 +10,8 @@ import type {
   RiskProfile,
   UploadedDocument,
 } from '../types';
-import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, extractInsuranceFields } from '../services/extraction';
+import type { FieldResolution } from '../services/extraction';
+import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, applyFieldResolution, extractInsuranceFields } from '../services/extraction';
 import { matchAllMarkets } from '../services/appetite';
 import { sampleAppetiteRecords } from '../data/carriers';
 import { sampleAccount } from '../data/sampleAccounts';
@@ -35,6 +36,7 @@ interface AccountsState {
   addFiles: (accountId: string, files: File[]) => void;
   loadSampleDocuments: (accountId: string) => Promise<void>;
   updateField: (accountId: string, section: 'business' | 'transportation', key: string, value: unknown) => void;
+  resolveField: (accountId: string, section: 'business' | 'transportation', key: string, resolution: FieldResolution<unknown>) => void;
   updateCoverage: (accountId: string, coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
   runMatching: (accountId: string) => void;
   renameAccount: (accountId: string, namedInsured: string) => void;
@@ -195,6 +197,24 @@ export const useAccountsStore = create<AccountsState>()(
             riskProfiles: { ...s.riskProfiles, [accountId]: updated },
             accounts: touchAccount(s.accounts, accountId),
             activityLog: appendEvent(s.activityLog, accountId, type, message),
+          };
+        });
+        get().runMatching(accountId);
+      },
+
+      resolveField: (accountId, section, key, resolution) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const updated = applyFieldResolution({ ...profile }, section, key, resolution);
+          const message =
+            resolution.type === 'manual'
+              ? `Resolved a conflicting value for "${key}" by entering it manually.`
+              : `Resolved a conflicting value for "${key}".`;
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: updated },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'conflict_resolved', message),
           };
         });
         get().runMatching(accountId);

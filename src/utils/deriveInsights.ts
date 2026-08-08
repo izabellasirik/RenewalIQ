@@ -19,11 +19,14 @@ export function deriveVehicleSummary(vehicles: VehicleEntry[]): VehicleScheduleS
   const currentYear = new Date().getFullYear();
   const ages = vehicles.map((v) => (v.year ? currentYear - v.year : null)).filter((a): a is number => a !== null);
   const values = vehicles.map((v) => v.value).filter((v): v is number => v !== undefined);
+  const withYear = vehicles.filter((v): v is VehicleEntry & { year: number } => v.year !== undefined);
 
-  const vehicleTypes = Array.from(
-    new Set(vehicles.map((v) => [v.make, v.model].filter(Boolean).join(' ')).filter((t) => t.length > 0))
-  );
+  // Only from an explicit body-type column — never guessed from make/model.
+  const vehicleTypes = Array.from(new Set(vehicles.map((v) => v.bodyType).filter((t): t is string => !!t)));
   const manufacturers = Array.from(new Set(vehicles.map((v) => v.make).filter((m): m is string => !!m)));
+
+  const oldest = withYear.reduce<(VehicleEntry & { year: number }) | null>((min, v) => (!min || v.year < min.year ? v : min), null);
+  const newest = withYear.reduce<(VehicleEntry & { year: number }) | null>((max, v) => (!max || v.year > max.year ? v : max), null);
 
   return {
     totalVehicleCount: vehicles.length,
@@ -31,6 +34,8 @@ export function deriveVehicleSummary(vehicles: VehicleEntry[]): VehicleScheduleS
     averageVehicleAge: average(ages),
     totalInsuredValue: values.length > 0 ? values.reduce((sum, v) => sum + v, 0) : null,
     manufacturers,
+    oldestVehicle: oldest ? { year: oldest.year, make: oldest.make, model: oldest.model } : null,
+    newestVehicle: newest ? { year: newest.year, make: newest.make, model: newest.model } : null,
   };
 }
 

@@ -27,7 +27,7 @@ export interface FieldValue<T> {
   source?: FieldSource;
   isMissing: boolean;
   isConflicting: boolean;
-  alternateValues?: { value: T; source: FieldSource }[];
+  alternateValues?: { value: T; source: FieldSource; extractionMethod?: ExtractionMethod }[];
   /** How this value was populated. Undefined only for a field that has never been set. */
   extractionMethod?: ExtractionMethod;
   /** ISO timestamp this specific field was last populated/edited — distinct from the whole-profile updatedAt. */
