@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, History, ListChecks } from 'lucide-react';
+import { ArrowRight, History, ListChecks, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, Tabs } from '../components/ui';
@@ -9,13 +9,24 @@ import { SectionCard } from '../components/riskProfile/SectionCard';
 import { FieldRow } from '../components/riskProfile/FieldRow';
 import { ConflictBanner } from '../components/riskProfile/ConflictBanner';
 import { MissingFieldsPanel } from '../components/riskProfile/MissingFieldsPanel';
+import { InsightStrip } from '../components/riskProfile/InsightStrip';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
+import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { COVERAGE_LABELS } from '../types';
 import { formatDate } from '../utils/dates';
 import { EMPTY_ACTIVITY_EVENTS, EMPTY_DOCUMENTS } from '../utils/emptyArrays';
+
+const TREND_ICON = { increasing: TrendingUp, decreasing: TrendingDown, stable: Minus, insufficient_data: Minus };
+const TREND_LABEL = { increasing: 'Increasing', decreasing: 'Decreasing', stable: 'Stable', insufficient_data: 'Not enough data' };
+const TREND_COLOR = {
+  increasing: 'text-[var(--color-danger-600)]',
+  decreasing: 'text-[var(--color-success-600)]',
+  stable: 'text-[var(--color-ink-700)]',
+  insufficient_data: 'text-[var(--color-ink-400)]',
+};
 
 type TabKey = 'details' | 'fleet' | 'drivers' | 'loss-history' | 'coverage';
 
@@ -33,6 +44,10 @@ export function RiskProfilePage() {
 
   const stats = useRiskProfileStats(profile);
   const anyProcessing = documents.some((d) => d.status === 'processing');
+
+  const vehicleSummary = useMemo(() => deriveVehicleSummary(profile?.vehicles ?? []), [profile?.vehicles]);
+  const driverSummary = useMemo(() => deriveDriverSummary(profile?.drivers ?? []), [profile?.drivers]);
+  const lossSummary = useMemo(() => deriveLossSummary(profile?.lossHistory ?? []), [profile?.lossHistory]);
 
   if (!account || !profile) {
     return <AccountNotFound />;
@@ -106,7 +121,21 @@ export function RiskProfilePage() {
           {profile.vehicles.length === 0 ? (
             <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No vehicle schedule uploaded yet.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              <InsightStrip
+                stats={[
+                  { label: 'Total Vehicles', value: String(vehicleSummary.totalVehicleCount) },
+                  {
+                    label: 'Vehicle Types',
+                    value: vehicleSummary.vehicleTypes.length > 3 ? `${vehicleSummary.vehicleTypes.length} types` : vehicleSummary.vehicleTypes.join(', ') || '—',
+                    caption: vehicleSummary.vehicleTypes.length > 3 ? vehicleSummary.vehicleTypes.join(', ') : undefined,
+                  },
+                  { label: 'Average Age', value: vehicleSummary.averageVehicleAge !== null ? `${vehicleSummary.averageVehicleAge.toFixed(1)} yrs` : '—' },
+                  { label: 'Total Insured Value', value: vehicleSummary.totalInsuredValue !== null ? `$${vehicleSummary.totalInsuredValue.toLocaleString('en-US')}` : '—' },
+                  { label: 'Manufacturers', value: vehicleSummary.manufacturers.length > 0 ? vehicleSummary.manufacturers.join(', ') : '—' },
+                ]}
+              />
+              <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-[var(--color-ink-100)] text-xs text-[var(--color-ink-500)]">
@@ -131,7 +160,8 @@ export function RiskProfilePage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </SectionCard>
       )}
@@ -141,7 +171,28 @@ export function RiskProfilePage() {
           {profile.drivers.length === 0 ? (
             <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No driver schedule uploaded yet.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              <InsightStrip
+                stats={[
+                  { label: 'Driver Count', value: String(driverSummary.driverCount) },
+                  { label: 'Min. Age', value: driverSummary.minDriverAge !== null ? String(driverSummary.minDriverAge) : '—' },
+                  { label: 'Avg. Age', value: driverSummary.averageDriverAge !== null ? driverSummary.averageDriverAge.toFixed(1) : '—' },
+                  { label: 'Min. Experience', value: driverSummary.minExperience !== null ? `${driverSummary.minExperience} yrs` : '—' },
+                  { label: 'Avg. Experience', value: driverSummary.averageExperience !== null ? `${driverSummary.averageExperience.toFixed(1)} yrs` : '—' },
+                  {
+                    label: 'Violations',
+                    value: `${driverSummary.violations.driversWithViolations} of ${driverSummary.violations.totalDrivers} drivers`,
+                  },
+                ]}
+                footer={
+                  driverSummary.violations.details.length > 0 ? (
+                    <span>{driverSummary.violations.details.join(' · ')}</span>
+                  ) : (
+                    <span>No violations reported.</span>
+                  )
+                }
+              />
+              <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-[var(--color-ink-100)] text-xs text-[var(--color-ink-500)]">
@@ -166,7 +217,8 @@ export function RiskProfilePage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </SectionCard>
       )}
@@ -176,7 +228,32 @@ export function RiskProfilePage() {
           {profile.lossHistory.length === 0 ? (
             <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No loss runs uploaded yet.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              <InsightStrip
+                stats={[
+                  { label: 'Total Claims', value: String(lossSummary.totalClaims) },
+                  { label: 'Open', value: String(lossSummary.openClaims) },
+                  { label: 'Closed', value: String(lossSummary.closedClaims) },
+                  { label: 'Total Paid', value: `$${lossSummary.totalPaid.toLocaleString('en-US')}` },
+                  { label: 'Total Reserved', value: `$${lossSummary.totalReserved.toLocaleString('en-US')}` },
+                  {
+                    label: 'Largest Loss',
+                    value: lossSummary.largestLoss ? `$${lossSummary.largestLoss.amount.toLocaleString('en-US')}` : '—',
+                    caption: lossSummary.largestLoss ? `${lossSummary.largestLoss.claimType} — ${formatDate(lossSummary.largestLoss.lossDate)}` : undefined,
+                  },
+                ]}
+                footer={
+                  <span className={`inline-flex items-center gap-1.5 font-medium ${TREND_COLOR[lossSummary.trend]}`}>
+                    {(() => {
+                      const TrendIcon = TREND_ICON[lossSummary.trend];
+                      return <TrendIcon size={13} />;
+                    })()}
+                    Loss Trend: {TREND_LABEL[lossSummary.trend]}
+                    <span className="font-normal text-[var(--color-ink-500)]">— {lossSummary.trendDescription}</span>
+                  </span>
+                }
+              />
+              <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-[var(--color-ink-100)] text-xs text-[var(--color-ink-500)]">
@@ -216,7 +293,8 @@ export function RiskProfilePage() {
                     ))}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </SectionCard>
       )}

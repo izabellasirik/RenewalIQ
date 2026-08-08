@@ -6,6 +6,7 @@ export * from './coverage';
 export * from './vehicle';
 export * from './driver';
 export * from './riskProfile';
+export * from './derivedInsights';
 export * from './document';
 export * from './extraction';
 export * from './appetite';

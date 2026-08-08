@@ -69,21 +69,49 @@ export function mergeFieldValue<T>(
   };
 }
 
+/** Loose equality for itemized-row scalar fields — ignores case/whitespace, same spirit as isEqualValue. */
+function isEqualField(a: unknown, b: unknown): boolean {
+  if (typeof a === 'string' && typeof b === 'string') return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return a === b;
+}
+
+/**
+ * True if `entry` is an exact re-statement of a row already in `existing` — same natural key
+ * (the field(s) that identify "the same real-world thing") and every other field equal too. This
+ * is what makes re-uploading the same schedule a no-op instead of silently doubling every derived
+ * total (fleet size, total insured value, claim counts, ...). Rows that share a key but disagree
+ * on other fields are NOT deduped — both are kept, same "don't silently pick one" principle the
+ * scalar-field merge already follows, just without a conflict badge since itemized rows don't have one yet.
+ */
+function isDuplicateRow<T extends Record<string, unknown>>(existing: T[], entry: T, keyFields: (keyof T)[]): boolean {
+  const hasKey = keyFields.some((k) => entry[k] !== undefined && entry[k] !== '');
+  if (!hasKey) return false;
+  return existing.some((row) => {
+    const sameKey = keyFields.every((k) => (entry[k] === undefined ? row[k] === undefined : isEqualField(row[k], entry[k])));
+    if (!sameKey) return false;
+    const allFields = Object.keys(entry) as (keyof T)[];
+    return allFields.every((k) => isEqualField(row[k], entry[k]));
+  });
+}
+
 function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFieldResult): void {
   if (fieldPath === 'lossHistory') {
     const entry = result.value as Omit<LossEntry, 'id' | 'source'>;
+    if (isDuplicateRow(profile.lossHistory, entry, ['lossDate', 'claimType', 'incurred'])) return;
     profile.lossHistory.push({ ...entry, id: generateId('loss'), source: result.source });
     return;
   }
 
   if (fieldPath === 'vehicles') {
     const entry = result.value as Omit<VehicleEntry, 'id' | 'source'>;
+    if (isDuplicateRow(profile.vehicles, entry, ['vin'])) return;
     profile.vehicles.push({ ...entry, id: generateId('veh'), source: result.source });
     return;
   }
 
   if (fieldPath === 'drivers') {
     const entry = result.value as Omit<DriverEntry, 'id' | 'source'>;
+    if (isDuplicateRow(profile.drivers, entry, ['name', 'dob'])) return;
     profile.drivers.push({ ...entry, id: generateId('drv'), source: result.source });
     return;
   }

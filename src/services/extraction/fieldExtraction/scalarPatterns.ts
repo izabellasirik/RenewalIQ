@@ -49,19 +49,42 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
     groups: [
       {
         confidence: 'high',
-        patterns: [/named insured\s*:\s*(.+)/i, /business name\s*:\s*(.+)/i, /insured name\s*:\s*(.+)/i, /company name\s*:\s*(.+)/i],
+        patterns: [
+          /named insured\s*:\s*(.+)/i,
+          /business name\s*:\s*(.+)/i,
+          /insured'?s? name\s*:\s*(.+)/i,
+          /company name\s*:\s*(.+)/i,
+          /applicant(?:'s)? name\s*:\s*(.+)/i,
+          /^applicant\s*:\s*(.+)/i,
+        ],
       },
     ],
   },
   {
     fieldPath: 'business.legalEntity',
     coerce: (raw) => raw.trim() || null,
-    groups: [{ confidence: 'high', patterns: [/legal entity(?:\s*type)?\s*:\s*(.+)/i, /entity type\s*:\s*(.+)/i, /form of business\s*:\s*(.+)/i] }],
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [
+          /legal entity(?:\s*type)?\s*:\s*(.+)/i,
+          /entity type\s*:\s*(.+)/i,
+          /form of business\s*:\s*(.+)/i,
+          /(?:type of|business) organization\s*:\s*(.+)/i,
+          /business (?:structure|type)\s*:\s*(.+)/i,
+        ],
+      },
+    ],
   },
   {
     fieldPath: 'business.address',
     coerce: (raw) => raw.trim() || null,
-    groups: [{ confidence: 'high', patterns: [/(?:mailing|business|physical)\s+address\s*:\s*(.+)/i, /^address\s*:\s*(.+)/i] }],
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [/(?:mailing|business|physical|principal)\s+address\s*:\s*(.+)/i, /^address\s*:\s*(.+)/i, /(?:business|company)\s+location\s*:\s*(.+)/i],
+      },
+    ],
   },
   {
     fieldPath: 'business.state',
@@ -69,13 +92,22 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
       const code = raw.trim().toUpperCase();
       return US_STATE_CODES.has(code) ? code : null;
     },
-    groups: [{ confidence: 'high', patterns: [/(?:domicile|mailing|home)\s+state\s*:\s*([a-z]{2})\b/i, /^state\s*:\s*([a-z]{2})\b/i] }],
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [
+          /(?:domicile|mailing|home|principal|operating)\s+state\s*:\s*([a-z]{2})\b/i,
+          /state of (?:domicile|incorporation|formation)\s*:\s*([a-z]{2})\b/i,
+          /^state\s*:\s*([a-z]{2})\b/i,
+        ],
+      },
+    ],
   },
   {
     fieldPath: 'business.yearsInBusiness',
     coerce: parseCount,
     groups: [
-      { confidence: 'high', patterns: [/years?\s+in\s+business\s*:\s*(\d+)/i] },
+      { confidence: 'high', patterns: [/years?\s+in\s+business\s*:\s*(\d+)/i, /(?:time|years)\s+operating\s*:\s*(\d+)/i, /business age(?: \(years\))?\s*:\s*(\d+)/i] },
       { confidence: 'medium', patterns: [/(?:in business|operating)\s+for\s+(\d+)\s+years?/i, /(\d+)\s+years?\s+in\s+business/i] },
     ],
   },
@@ -83,15 +115,27 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
     fieldPath: 'business.annualRevenue',
     coerce: parseMoney,
     groups: [
-      { confidence: 'high', patterns: [/(?:annual revenue|gross receipts|revenue)\s*:\s*\$?([\d,.]+\s*(?:million|mm|m|thousand|k)?)/i] },
-      { confidence: 'medium', patterns: [/(?:revenue|receipts)\s+(?:of|around|roughly|approximately)?\s*\$?([\d,.]+\s*(?:million|mm|m|thousand|k)?)/i] },
+      {
+        confidence: 'high',
+        patterns: [/(?:annual revenue|gross receipts|revenue|gross sales|annual sales|total revenue|yearly revenue)\s*:\s*\$?([\d,.]+\s*(?:million|mm|m|thousand|k)?)/i],
+      },
+      { confidence: 'medium', patterns: [/(?:revenue|receipts|sales)\s+(?:of|around|roughly|approximately|was|were)?\s*\$?([\d,.]+\s*(?:million|mm|m|thousand|k)?)/i] },
     ],
   },
   {
     fieldPath: 'business.descriptionOfOperations',
     coerce: (raw) => raw.trim() || null,
     groups: [
-      { confidence: 'high', patterns: [/description of operations\s*:\s*(.+)/i, /nature of operations\s*:\s*(.+)/i] },
+      {
+        confidence: 'high',
+        patterns: [
+          /description of operations\s*:\s*(.+)/i,
+          /nature of operations\s*:\s*(.+)/i,
+          /nature of business\s*:\s*(.+)/i,
+          /(?:type|description) of business\s*:\s*(.+)/i,
+          /business description\s*:\s*(.+)/i,
+        ],
+      },
       { confidence: 'medium', patterns: [/^operations\s*:\s*(.+)/i] },
     ],
   },
@@ -99,7 +143,10 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
     fieldPath: 'transportation.dotNumber',
     coerce: (raw) => raw.trim() || null,
     groups: [
-      { confidence: 'high', patterns: [/us\s*dot\s*(?:number|#|no\.?)?\s*:\s*(\d{5,8})/i, /dot\s*(?:number|#|no\.?)\s*:\s*(\d{5,8})/i] },
+      {
+        confidence: 'high',
+        patterns: [/us\s*dot\s*(?:number|#|no\.?)?\s*:\s*(\d{5,8})/i, /dot\s*(?:number|#|no\.?)\s*:\s*(\d{5,8})/i, /dot\s*id\s*:\s*(\d{5,8})/i],
+      },
       { confidence: 'medium', patterns: [/\bdot\s*(?:number|no\.?|#)?\s*(?:is)?\s*[:#]?\s*(\d{6,8})\b/i] },
     ],
   },

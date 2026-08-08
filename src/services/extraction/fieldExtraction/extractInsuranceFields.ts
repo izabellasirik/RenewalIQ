@@ -91,6 +91,16 @@ function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedF
           source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `${rows.length} vehicle${rows.length === 1 ? '' : 's'} listed in ${table.sheetName ?? 'the vehicle schedule'}` },
           extractionMethod: 'deterministic_import',
         });
+        const vehicleTypes = Array.from(new Set(rows.map((r) => [r.entry.make, r.entry.model].filter(Boolean).join(' ')).filter((t) => t.length > 0)));
+        if (vehicleTypes.length > 0) {
+          results.push({
+            fieldPath: 'transportation.vehicleTypes',
+            value: vehicleTypes,
+            confidence: 'high',
+            source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `Distinct make/model across ${table.sheetName ?? 'the vehicle schedule'}: ${vehicleTypes.join(', ')}` },
+            extractionMethod: 'deterministic_import',
+          });
+        }
       }
       continue;
     }
