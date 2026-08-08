@@ -1,8 +1,7 @@
-import { CircleCheck, TriangleAlert, CircleX, ChevronRight, Clock, NotebookPen } from 'lucide-react';
+import { CircleCheck, TriangleAlert, CircleX, ChevronRight, Clock, NotebookPen, ShieldQuestion } from 'lucide-react';
 import type { MatchReason, MatchResult } from '../../types';
 import { Card, CardBody, Badge, VerdictBadge, ScoreRing } from '../ui';
 import { AvailableThroughTag } from './AvailableThroughTag';
-import { formatDate } from '../../utils/dates';
 
 const REASON_ICON = { pass: CircleCheck, warning: TriangleAlert, fail: CircleX };
 const REASON_COLOR = {
@@ -14,6 +13,11 @@ const STATUS_PRIORITY: Record<MatchReason['status'], number> = { fail: 0, warnin
 
 function topReasons(reasons: MatchReason[], n: number): MatchReason[] {
   return [...reasons].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]).slice(0, n);
+}
+
+/** Numeric scores only mean something for markets that remain eligible with enough verified signal — hide the ring rather than imply false precision otherwise. */
+function showsScore(result: MatchResult): boolean {
+  return result.verdict !== 'not_eligible' && result.verdict !== 'needs_more_information';
 }
 
 export function MarketCard({ result, onClick }: { result: MatchResult; onClick: () => void }) {
@@ -28,7 +32,13 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
               <VerdictBadge verdict={result.verdict} />
             </div>
           </div>
-          <ScoreRing score={result.matchScore} />
+          {showsScore(result) ? (
+            <ScoreRing score={result.matchScore} />
+          ) : (
+            <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-[var(--color-ink-50)] text-[var(--color-ink-400)]">
+              {result.verdict === 'not_eligible' ? <CircleX size={20} /> : <ShieldQuestion size={20} />}
+            </div>
+          )}
         </div>
 
         {result.availableThrough && (
@@ -37,7 +47,17 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
           </div>
         )}
 
-        <ul className="mt-3.5 flex flex-1 flex-col gap-1.5">
+        <p className="mt-3 text-xs text-[var(--color-ink-500)]">
+          {result.verifiedMatchCount} verified criteri{result.verifiedMatchCount === 1 ? 'on' : 'a'} matched
+          {result.needsVerificationCount > 0 && (
+            <>
+              {' · '}
+              {result.needsVerificationCount} need{result.needsVerificationCount === 1 ? 's' : ''} verification
+            </>
+          )}
+        </p>
+
+        <ul className="mt-2.5 flex flex-1 flex-col gap-1.5">
           {topReasons(result.reasons, 2).map((reason) => {
             const Icon = REASON_ICON[reason.status];
             return (
@@ -57,10 +77,9 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
         )}
 
         <div className="mt-4 flex items-center justify-between border-t border-[var(--color-ink-100)] pt-3 text-xs">
-          <span className={`flex items-center gap-1 ${result.isStale ? 'font-medium text-[var(--color-warning-600)]' : 'text-[var(--color-ink-400)]'}`}>
+          <span className={`flex items-center gap-1 ${result.freshness === 'STALE' ? 'font-medium text-[var(--color-warning-600)]' : 'text-[var(--color-ink-400)]'}`}>
             <Clock size={12} />
-            Verified {formatDate(result.lastVerifiedDate)}
-            {result.isStale && ' · Verify'}
+            {result.freshness === 'UNKNOWN' ? 'Not yet verified' : result.freshness === 'STALE' ? 'Verification aging — recheck' : result.freshness === 'AGING' ? 'Verification aging' : 'Recently verified'}
           </span>
           <span className="flex items-center gap-1 font-medium text-[var(--color-brand-700)] opacity-0 transition-opacity group-hover:opacity-100">
             Details <ChevronRight size={13} />

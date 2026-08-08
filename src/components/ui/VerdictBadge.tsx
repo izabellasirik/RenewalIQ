@@ -4,8 +4,9 @@ import { Badge, type BadgeTone } from './Badge';
 
 const toneByVerdict: Record<Verdict, BadgeTone> = {
   strong_match: 'success',
+  good_match: 'success',
   possible_match: 'info',
-  verify: 'warning',
+  needs_more_information: 'warning',
   not_eligible: 'danger',
 };
 

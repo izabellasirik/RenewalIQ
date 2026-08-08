@@ -51,7 +51,7 @@ export function computeAnalytics(
     }
   }
 
-  const verdictBreakdown: Record<Verdict, number> = { strong_match: 0, possible_match: 0, verify: 0, not_eligible: 0 };
+  const verdictBreakdown: Record<Verdict, number> = { strong_match: 0, good_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
   const marketStrongCounts = new Map<string, number>();
   let totalMatchesRun = 0;
   for (const accountId of Object.keys(matchResults)) {

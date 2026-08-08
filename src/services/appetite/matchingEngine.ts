@@ -1,62 +1,66 @@
 import type { AppetiteRecord, MatchReason, MatchResult, RiskProfile, Verdict } from '../../types';
 import { ALL_RULES } from './rules';
-import { buildStaleWarning, isStale } from './freshness';
+import { computeRecordFreshness } from './freshness';
 
-function deriveVerdict(reasons: MatchReason[]): Verdict {
-  const hasFail = reasons.some((r) => r.status === 'fail');
-  if (hasFail) return 'not_eligible';
-
-  const warnings = reasons.filter((r) => r.status === 'warning');
-  if (warnings.length === 0) return 'strong_match';
-
-  const hasDataGap = warnings.some((r) => r.isDataGap);
-  return hasDataGap ? 'verify' : 'possible_match';
-}
+/** Below this many verified (not data-gap) pass criteria, there isn't enough real signal to make a call either way. */
+const MIN_VERIFIED_FOR_A_VERDICT = 2;
 
 /**
- * Score measures fit strength (0-100), independent of the verdict which measures confidence
- * to proceed — a market can score high but still be "Verify" pending one unconfirmed detail.
- * Any hard fail caps the score low since the account is disqualified regardless of how well
- * everything else lines up.
+ * Score measures fit strength (0-100) among verified criteria only — it does not penalize
+ * unknown market data the way it penalizes an actual soft mismatch. Only meaningful for markets
+ * that aren't a hard fail; not_eligible/needs_more_information verdicts hide it in the UI.
  */
 export function computeMatchScore(reasons: MatchReason[]): number {
   const total = reasons.length;
   const pass = reasons.filter((r) => r.status === 'pass').length;
   const warn = reasons.filter((r) => r.status === 'warning').length;
-  const fail = reasons.filter((r) => r.status === 'fail').length;
+  return Math.round((pass * 100 + warn * 55) / total);
+}
 
-  if (fail > 0) {
-    return Math.round(Math.min(35, (pass * 100) / total));
-  }
-  return Math.round((pass * 100 + warn * 60) / total);
+function deriveVerdict(reasons: MatchReason[], score: number): Verdict {
+  const hasFail = reasons.some((r) => r.status === 'fail');
+  if (hasFail) return 'not_eligible';
+
+  const verifiedPassCount = reasons.filter((r) => r.status === 'pass').length;
+  if (verifiedPassCount < MIN_VERIFIED_FOR_A_VERDICT) return 'needs_more_information';
+
+  if (score >= 90) return 'strong_match';
+  if (score >= 75) return 'good_match';
+  if (score >= 60) return 'possible_match';
+  return 'needs_more_information';
 }
 
 export function evaluateMarket(record: AppetiteRecord, profile: RiskProfile): MatchResult {
   const reasons = ALL_RULES.map((rule) => rule(record, profile));
-  const verdict = deriveVerdict(reasons);
+  const hasFail = reasons.some((r) => r.status === 'fail');
+  const score = computeMatchScore(reasons);
+  const verdict = deriveVerdict(reasons, score);
+  const freshness = computeRecordFreshness(record);
 
   return {
     appetiteRecordId: record.id,
     marketName: record.marketName,
+    parentCompany: record.parentCompany,
+    programName: record.programName,
     marketType: record.marketType,
     availableThrough: record.availableThrough,
     verdict,
     reasons,
-    matchScore: computeMatchScore(reasons),
-    isStale: isStale(record.lastVerifiedDate),
-    staleWarning: buildStaleWarning(record.lastVerifiedDate),
-    lastVerifiedDate: record.lastVerifiedDate,
-    sourceContact: record.sourceContact,
-    confidence: record.confidence,
+    matchScore: hasFail ? 0 : score,
+    verifiedMatchCount: reasons.filter((r) => r.status === 'pass').length,
+    needsVerificationCount: reasons.filter((r) => r.status === 'warning' && r.isDataGap).length,
+    freshness: freshness.state,
+    freshnessMessage: freshness.message,
     underwritingNotes: record.underwritingNotes,
   };
 }
 
-const VERDICT_RANK: Record<Verdict, number> = {
+export const VERDICT_RANK: Record<Verdict, number> = {
   strong_match: 0,
-  possible_match: 1,
-  verify: 2,
-  not_eligible: 3,
+  good_match: 1,
+  possible_match: 2,
+  needs_more_information: 3,
+  not_eligible: 4,
 };
 
 export function matchAllMarkets(records: AppetiteRecord[], profile: RiskProfile): MatchResult[] {

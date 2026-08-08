@@ -11,8 +11,9 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { sampleAppetiteRecords } from '../data/carriers';
 import type { MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
+import { VERDICT_RANK } from '../services/appetite/matchingEngine';
 import { EMPTY_DOCUMENTS, EMPTY_MATCH_RESULTS } from '../utils/emptyArrays';
-import { Compass, Search } from 'lucide-react';
+import { Compass, Search, Info } from 'lucide-react';
 
 type FilterKey = 'all' | Verdict;
 
@@ -30,14 +31,14 @@ export function CarrierAppetitePage() {
   const isAnalyzing = matchResults.length === 0 && documents.some((d) => d.status === 'processing');
 
   const counts = useMemo(() => {
-    const c: Record<Verdict, number> = { strong_match: 0, possible_match: 0, verify: 0, not_eligible: 0 };
+    const c: Record<Verdict, number> = { strong_match: 0, good_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
     for (const r of matchResults) c[r.verdict]++;
     return c;
   }, [matchResults]);
 
   const filtered = (filter === 'all' ? matchResults : matchResults.filter((r) => r.verdict === filter))
     .filter((r) => r.marketName.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => b.matchScore - a.matchScore);
+    .sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.matchScore - a.matchScore);
   const selectedRecord = selected ? sampleAppetiteRecords.find((r) => r.id === selected.appetiteRecordId) ?? null : null;
 
   if (!account || !profile) {
@@ -56,6 +57,11 @@ export function CarrierAppetitePage() {
         ) : undefined
       }
     >
+      <p className="mb-5 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
+        <Info size={13} className="mt-0.5 shrink-0" />
+        Carrier appetite changes frequently. Renewal IQ recommendations are based on the latest information available and should be confirmed with the market before binding.
+      </p>
+
       {isAnalyzing ? (
         <div className="flex flex-col gap-4">
           <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
@@ -86,8 +92,9 @@ export function CarrierAppetitePage() {
               items={[
                 { key: 'all', label: 'All Markets', count: matchResults.length },
                 { key: 'strong_match', label: VERDICT_LABELS.strong_match, count: counts.strong_match },
+                { key: 'good_match', label: VERDICT_LABELS.good_match, count: counts.good_match },
                 { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
-                { key: 'verify', label: VERDICT_LABELS.verify, count: counts.verify },
+                { key: 'needs_more_information', label: VERDICT_LABELS.needs_more_information, count: counts.needs_more_information },
                 { key: 'not_eligible', label: VERDICT_LABELS.not_eligible, count: counts.not_eligible },
               ]}
               active={filter}
