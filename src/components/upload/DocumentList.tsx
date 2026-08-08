@@ -1,4 +1,4 @@
-import { FileText, FileSpreadsheet, Loader2, CircleCheck } from 'lucide-react';
+import { FileText, FileSpreadsheet, Loader2, CircleCheck, TriangleAlert } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { UploadedDocument } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
@@ -34,6 +34,12 @@ export function DocumentList({ documents }: { documents: UploadedDocument[] }) {
               <p className="text-xs text-[var(--color-ink-400)]">
                 {DOCUMENT_CATEGORY_LABELS[doc.category]} · {formatSize(doc.sizeBytes)}
               </p>
+              {doc.warnings && doc.warnings.length > 0 && (
+                <p className="mt-1 flex items-start gap-1 text-xs text-[var(--color-warning-600)]">
+                  <TriangleAlert size={12} className="mt-0.5 shrink-0" />
+                  {doc.warnings.join(' ')}
+                </p>
+              )}
             </div>
             {doc.status === 'processing' ? (
               <Badge tone="info">
@@ -41,7 +47,7 @@ export function DocumentList({ documents }: { documents: UploadedDocument[] }) {
                 Extracting…
               </Badge>
             ) : (
-              <Badge tone="success">
+              <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'}>
                 <CircleCheck size={12} />
                 {doc.fieldsExtracted ?? 0} fields
               </Badge>

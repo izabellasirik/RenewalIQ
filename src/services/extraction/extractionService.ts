@@ -5,15 +5,23 @@ import type {
   Confidence,
   CoverageType,
   LossEntry,
+  VehicleEntry,
+  DriverEntry,
 } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { generateId } from '../../utils/id';
 
+function isEqualScalar(a: unknown, b: unknown): boolean {
+  if (typeof a === 'string' && typeof b === 'string') return a.trim().toLowerCase() === b.trim().toLowerCase();
+  return a === b;
+}
+
+/** Two documents disagreeing only in case/whitespace ("General Freight" vs "general freight") corroborate each other, not conflict. */
 function isEqualValue(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((v, i) => v === b[i]);
+    return a.length === b.length && a.every((v, i) => isEqualScalar(v, b[i]));
   }
-  return a === b;
+  return isEqualScalar(a, b);
 }
 
 /**
@@ -68,6 +76,18 @@ function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFie
     return;
   }
 
+  if (fieldPath === 'vehicles') {
+    const entry = result.value as Omit<VehicleEntry, 'id' | 'source'>;
+    profile.vehicles.push({ ...entry, id: generateId('veh'), source: result.source });
+    return;
+  }
+
+  if (fieldPath === 'drivers') {
+    const entry = result.value as Omit<DriverEntry, 'id' | 'source'>;
+    profile.drivers.push({ ...entry, id: generateId('drv'), source: result.source });
+    return;
+  }
+
   const parts = fieldPath.split('.');
 
   if (parts[0] === 'coverage') {
@@ -86,8 +106,8 @@ function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFie
   bucket[key] = mergeFieldValue(bucket[key], result);
 }
 
-/** Applies a batch of extracted field results (from one document) onto a risk profile draft, in place. */
-export function applyExtractionResults(profile: RiskProfile, results: ExtractedFieldResult[]): RiskProfile {
+/** Merges a batch of extracted field results (from one document) into a risk profile draft, in place. */
+export function mergeIntoRiskProfile(profile: RiskProfile, results: ExtractedFieldResult[]): RiskProfile {
   for (const result of results) {
     setByPath(profile, result.fieldPath, result);
   }

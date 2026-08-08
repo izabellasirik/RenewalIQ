@@ -1,16 +1,17 @@
 import type { AppetiteRecord } from '../types';
 
 /**
- * Seed appetite data for 8 sample markets (5 direct carriers, 3 MGAs), including
+ * Seed appetite data for 16 sample markets (10 direct carriers, 6 MGAs), including
  * "available through" relationships and a deliberately stale record so the
- * freshness-warning UI has something real to flag.
+ * freshness-warning UI has something real to flag. Most markets are Midwest/Northeast
+ * regional specialists; a handful also carry a South-Central (TX/OK/AR/LA) footprint.
  */
 export const sampleAppetiteRecords: AppetiteRecord[] = [
   {
     id: 'appetite_northfield',
     marketName: 'Northfield Mutual Insurance',
     marketType: 'direct',
-    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV'],
+    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV', 'TX', 'OK', 'AR', 'LA'],
     fleetSizeMin: 5,
     fleetSizeMax: 50,
     yearsInBusinessMin: 3,
@@ -72,7 +73,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     marketName: 'Heartland Underwriters MGA',
     marketType: 'mga',
     availableThrough: 'Pinnacle Assurance',
-    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV', 'TN'],
+    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV', 'TN', 'TX', 'OK', 'AR', 'LA'],
     fleetSizeMin: 1,
     fleetSizeMax: 25,
     yearsInBusinessMin: 10,
@@ -92,7 +93,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     id: 'appetite_pinnacle',
     marketName: 'Pinnacle Assurance',
     marketType: 'direct',
-    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV'],
+    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV', 'TX', 'OK', 'AR', 'LA'],
     fleetSizeMin: 5,
     fleetSizeMax: 35,
     yearsInBusinessMin: 5,
@@ -173,7 +174,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     id: 'appetite_ironclad',
     marketName: 'Ironclad Fleet Insurance Co.',
     marketType: 'direct',
-    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV', 'TN', 'GA'],
+    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV', 'TN', 'GA', 'TX', 'OK', 'AR', 'LA'],
     fleetSizeMin: 5,
     fleetSizeMax: 75,
     yearsInBusinessMin: 2,
@@ -279,7 +280,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     marketName: 'Redwood Underwriting Partners MGA',
     marketType: 'mga',
     availableThrough: 'Ironclad Fleet Insurance Co.',
-    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV', 'TN'],
+    eligibleStates: ['OH', 'IN', 'KY', 'MI', 'PA', 'IL', 'WV', 'TN', 'TX', 'OK', 'AR', 'LA'],
     fleetSizeMin: 5,
     fleetSizeMax: 60,
     yearsInBusinessMin: 1,

@@ -15,7 +15,7 @@ export const DOCUMENT_CATEGORY_LABELS: Record<DocumentCategory, string> = {
   other: 'Other',
 };
 
-export type DocumentFileType = 'pdf' | 'xlsx' | 'csv' | 'docx' | 'other';
+export type DocumentFileType = 'pdf' | 'xlsx' | 'csv' | 'docx' | 'txt' | 'other';
 
 export type DocumentStatus = 'processing' | 'processed' | 'error';
 
@@ -29,4 +29,6 @@ export interface UploadedDocument {
   status: DocumentStatus;
   sizeBytes: number;
   fieldsExtracted?: number;
+  /** Non-fatal parse warnings, e.g. a scanned PDF with no extractable text. */
+  warnings?: string[];
 }

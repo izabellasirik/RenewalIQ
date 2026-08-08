@@ -2,10 +2,11 @@
 export type Confidence = 'high' | 'medium' | 'low' | 'manual';
 
 /**
- * How a value was populated. 'deterministic_import' is reserved for a future structured-API
- * source (per the product principle that APIs should be preferred over AI when data can be
- * transferred reliably) — nothing produces it yet, but the type accommodates it without a
- * breaking change later.
+ * How a value was populated. 'deterministic_import' means an exact structured mapping with no
+ * interpretation involved — a spreadsheet/CSV column header matched directly to a field, or (in
+ * future) a structured API — per the product principle that exact structured sources should be
+ * preferred over interpretation when available. 'ai_extraction' means the value was read out of
+ * unstructured content (PDF/DOCX/TXT prose) via pattern matching or a real model.
  */
 export type ExtractionMethod = 'ai_extraction' | 'deterministic_import' | 'manual_entry';
 

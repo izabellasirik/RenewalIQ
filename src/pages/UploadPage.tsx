@@ -31,7 +31,7 @@ export function UploadPage() {
     >
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
-          <Dropzone onFiles={(files) => addFiles(accountId, files.map((f) => ({ name: f.name, size: f.size })))} />
+          <Dropzone onFiles={(files) => addFiles(accountId, files)} />
 
           {documents.length === 0 && (
             <button

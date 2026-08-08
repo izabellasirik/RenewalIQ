@@ -10,13 +10,13 @@ import type {
   RiskProfile,
   UploadedDocument,
 } from '../types';
-import { createEmptyRiskProfile, applyExtractionResults, applyManualEdit, mockExtractionProvider } from '../services/extraction';
+import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, extractInsuranceFields } from '../services/extraction';
 import { matchAllMarkets } from '../services/appetite';
 import { sampleAppetiteRecords } from '../data/carriers';
 import { sampleAccount } from '../data/sampleAccounts';
-import { sampleDocumentTemplates } from '../data/sampleDocuments';
+import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
-import { inferCategory, inferFileType, matchKnownSampleDocId } from '../utils/documents';
+import { inferCategory, inferFileType } from '../utils/documents';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
 
@@ -32,8 +32,8 @@ interface AccountsState {
   createAccount: (namedInsured: string, state: string) => string;
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
-  addFiles: (accountId: string, files: { name: string; size: number }[]) => void;
-  loadSampleDocuments: (accountId: string) => void;
+  addFiles: (accountId: string, files: File[]) => void;
+  loadSampleDocuments: (accountId: string) => Promise<void>;
   updateField: (accountId: string, section: 'business' | 'transportation', key: string, value: unknown) => void;
   updateCoverage: (accountId: string, coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
   runMatching: (accountId: string) => void;
@@ -111,7 +111,7 @@ export const useAccountsStore = create<AccountsState>()(
 
       addFiles: (accountId, files) => {
         const newDocs: UploadedDocument[] = files.map((f) => ({
-          id: matchKnownSampleDocId(f.name) ?? generateId('doc'),
+          id: generateId('doc'),
           accountId,
           name: f.name,
           fileType: inferFileType(f.name),
@@ -134,14 +134,18 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
 
-        for (const doc of newDocs) {
-          mockExtractionProvider.extract(doc).then((results) => {
+        newDocs.forEach((doc, i) => {
+          const file = files[i];
+          import('../services/ingestion').then(({ parseFile }) => parseFile(file)).then((raw) => {
+            const results = extractInsuranceFields(raw, { documentId: doc.id, documentName: doc.name });
             set((s) => {
               const profile = s.riskProfiles[accountId];
               if (!profile) return {};
-              const updatedProfile = applyExtractionResults({ ...profile }, results);
+              const updatedProfile = mergeIntoRiskProfile({ ...profile }, results);
               const updatedDocs = (s.documents[accountId] ?? []).map((d) =>
-                d.id === doc.id ? { ...d, status: 'processed' as const, fieldsExtracted: results.length } : d
+                d.id === doc.id
+                  ? { ...d, status: 'processed' as const, fieldsExtracted: results.length, warnings: raw.warnings.length > 0 ? raw.warnings : undefined }
+                  : d
               );
               return {
                 riskProfiles: { ...s.riskProfiles, [accountId]: updatedProfile },
@@ -151,14 +155,18 @@ export const useAccountsStore = create<AccountsState>()(
             });
             get().runMatching(accountId);
           });
-        }
+        });
       },
 
-      loadSampleDocuments: (accountId) => {
-        get().addFiles(
-          accountId,
-          sampleDocumentTemplates.map((t) => ({ name: t.name, size: t.sizeBytes }))
+      loadSampleDocuments: async (accountId) => {
+        const files = await Promise.all(
+          sampleDocumentFixtures.map(async (fixture) => {
+            const res = await fetch(fixture.url);
+            const blob = await res.blob();
+            return new File([blob], fixture.name, { type: blob.type });
+          })
         );
+        get().addFiles(accountId, files);
       },
 
       updateField: (accountId, section, key, value) => {

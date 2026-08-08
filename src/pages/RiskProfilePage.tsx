@@ -17,7 +17,7 @@ import { COVERAGE_LABELS } from '../types';
 import { formatDate } from '../utils/dates';
 import { EMPTY_ACTIVITY_EVENTS, EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 
-type TabKey = 'details' | 'loss-history' | 'coverage';
+type TabKey = 'details' | 'fleet' | 'drivers' | 'loss-history' | 'coverage';
 
 export function RiskProfilePage() {
   const { accountId = '' } = useParams();
@@ -71,6 +71,8 @@ export function RiskProfilePage() {
       <Tabs
         items={[
           { key: 'details', label: 'Business & Transportation' },
+          { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
+          { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
           { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
           { key: 'coverage', label: 'Coverage', count: profile.coverage.length },
         ]}
@@ -97,6 +99,76 @@ export function RiskProfilePage() {
             </motion.div>
           ))}
         </div>
+      )}
+
+      {tab === 'fleet' && (
+        <SectionCard title="Fleet" description="Itemized from uploaded vehicle schedules.">
+          {profile.vehicles.length === 0 ? (
+            <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No vehicle schedule uploaded yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--color-ink-100)] text-xs text-[var(--color-ink-500)]">
+                    <th className="py-2 pr-4 font-medium">VIN</th>
+                    <th className="py-2 pr-4 font-medium">Make</th>
+                    <th className="py-2 pr-4 font-medium">Model</th>
+                    <th className="py-2 pr-4 font-medium">Year</th>
+                    <th className="py-2 pr-4 font-medium">Value</th>
+                    <th className="py-2 font-medium">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profile.vehicles.map((v) => (
+                    <tr key={v.id} className="border-b border-[var(--color-ink-100)] last:border-0">
+                      <td className="py-2.5 pr-4 font-mono text-xs text-[var(--color-ink-800)]">{v.vin ?? '—'}</td>
+                      <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.make ?? '—'}</td>
+                      <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.model ?? '—'}</td>
+                      <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.year ?? '—'}</td>
+                      <td className="py-2.5 pr-4 font-medium text-[var(--color-ink-900)]">{v.value ? `$${v.value.toLocaleString('en-US')}` : '—'}</td>
+                      <td className="py-2.5 text-xs text-[var(--color-ink-400)]">{v.source.documentName}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
+      )}
+
+      {tab === 'drivers' && (
+        <SectionCard title="Drivers" description="Itemized from uploaded driver schedules.">
+          {profile.drivers.length === 0 ? (
+            <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No driver schedule uploaded yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--color-ink-100)] text-xs text-[var(--color-ink-500)]">
+                    <th className="py-2 pr-4 font-medium">Name</th>
+                    <th className="py-2 pr-4 font-medium">DOB</th>
+                    <th className="py-2 pr-4 font-medium">License State</th>
+                    <th className="py-2 pr-4 font-medium">Years Experience</th>
+                    <th className="py-2 pr-4 font-medium">Violations</th>
+                    <th className="py-2 font-medium">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {profile.drivers.map((d) => (
+                    <tr key={d.id} className="border-b border-[var(--color-ink-100)] last:border-0">
+                      <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.name ?? '—'}</td>
+                      <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.dob ?? '—'}</td>
+                      <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.licenseState ?? '—'}</td>
+                      <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.yearsExperience ?? '—'}</td>
+                      <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.violations ?? '—'}</td>
+                      <td className="py-2.5 text-xs text-[var(--color-ink-400)]">{d.source.documentName}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
       )}
 
       {tab === 'loss-history' && (

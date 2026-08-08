@@ -27,6 +27,7 @@ export function displayReadValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'number' && Math.abs(value) >= 1000) return value.toLocaleString('en-US');
   return String(value);
 }
 
@@ -37,7 +38,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, readOnly, pending
 
   function commit() {
     let parsed: unknown = draft;
-    if (valueType === 'number') parsed = draft.trim() === '' ? null : Number(draft);
+    if (valueType === 'number') parsed = draft.trim() === '' ? null : Number(draft.replace(/,/g, ''));
     if (valueType === 'list') parsed = draft.split(',').map((s) => s.trim()).filter(Boolean);
     if (valueType === 'boolean') parsed = draft === 'Yes';
     onSave(parsed as T);

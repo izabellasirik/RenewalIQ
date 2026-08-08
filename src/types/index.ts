@@ -3,6 +3,8 @@ export * from './business';
 export * from './transportation';
 export * from './loss';
 export * from './coverage';
+export * from './vehicle';
+export * from './driver';
 export * from './riskProfile';
 export * from './document';
 export * from './extraction';

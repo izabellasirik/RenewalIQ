@@ -31,6 +31,8 @@ export function createEmptyRiskProfile(accountId: string): RiskProfile {
     },
     lossHistory: [],
     coverage: [],
+    vehicles: [],
+    drivers: [],
     updatedAt: new Date().toISOString(),
   };
 }

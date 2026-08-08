@@ -1,0 +1,195 @@
+import type { Confidence } from '../../../types';
+import { parseCount, parseMoney } from './money';
+import { US_STATE_CODES, parseStateList } from './usStates';
+
+export type ScalarCoerce = (raw: string) => unknown | null;
+
+export interface ScalarPatternGroup {
+  confidence: Confidence;
+  /** Each regex must have exactly one capture group holding the raw value. */
+  patterns: RegExp[];
+}
+
+export interface ScalarFieldPattern {
+  fieldPath: string;
+  /** Turns the raw captured text into the typed value RiskProfile expects. Return null to reject the match (e.g. unparseable number) — never guess a replacement. */
+  coerce: ScalarCoerce;
+  /** Tried in order; the first group with a match on any line wins for this field. */
+  groups: ScalarPatternGroup[];
+}
+
+function asStringList(raw: string): string[] | null {
+  const items = raw
+    .split(/,|\band\b/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : null;
+}
+
+function asCoverageLimit(raw: string): string {
+  const n = Number(raw.replace(/,/g, ''));
+  return Number.isFinite(n) ? `$${n.toLocaleString('en-US')}` : raw.trim();
+}
+
+function asOperatingRadius(raw: string): string {
+  const trimmed = raw.trim();
+  return /^\d+$/.test(trimmed) ? `${trimmed} miles` : trimmed;
+}
+
+/**
+ * Deterministic label/regex patterns for scalar RiskProfile fields, applied line-by-line over a
+ * document's raw text. "high"-confidence groups match explicit "Label: value" formatting; "medium"
+ * groups are looser prose fallbacks for unstructured documents like emails. A field with no match
+ * anywhere simply isn't returned — the caller/merge layer treats that as missing, never guessed.
+ */
+export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
+  {
+    fieldPath: 'business.namedInsured',
+    coerce: (raw) => raw.trim() || null,
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [/named insured\s*:\s*(.+)/i, /business name\s*:\s*(.+)/i, /insured name\s*:\s*(.+)/i, /company name\s*:\s*(.+)/i],
+      },
+    ],
+  },
+  {
+    fieldPath: 'business.legalEntity',
+    coerce: (raw) => raw.trim() || null,
+    groups: [{ confidence: 'high', patterns: [/legal entity(?:\s*type)?\s*:\s*(.+)/i, /entity type\s*:\s*(.+)/i, /form of business\s*:\s*(.+)/i] }],
+  },
+  {
+    fieldPath: 'business.address',
+    coerce: (raw) => raw.trim() || null,
+    groups: [{ confidence: 'high', patterns: [/(?:mailing|business|physical)\s+address\s*:\s*(.+)/i, /^address\s*:\s*(.+)/i] }],
+  },
+  {
+    fieldPath: 'business.state',
+    coerce: (raw) => {
+      const code = raw.trim().toUpperCase();
+      return US_STATE_CODES.has(code) ? code : null;
+    },
+    groups: [{ confidence: 'high', patterns: [/(?:domicile|mailing|home)\s+state\s*:\s*([a-z]{2})\b/i, /^state\s*:\s*([a-z]{2})\b/i] }],
+  },
+  {
+    fieldPath: 'business.yearsInBusiness',
+    coerce: parseCount,
+    groups: [
+      { confidence: 'high', patterns: [/years?\s+in\s+business\s*:\s*(\d+)/i] },
+      { confidence: 'medium', patterns: [/(?:in business|operating)\s+for\s+(\d+)\s+years?/i, /(\d+)\s+years?\s+in\s+business/i] },
+    ],
+  },
+  {
+    fieldPath: 'business.annualRevenue',
+    coerce: parseMoney,
+    groups: [
+      { confidence: 'high', patterns: [/(?:annual revenue|gross receipts|revenue)\s*:\s*\$?([\d,.]+\s*(?:million|mm|m|thousand|k)?)/i] },
+      { confidence: 'medium', patterns: [/(?:revenue|receipts)\s+(?:of|around|roughly|approximately)?\s*\$?([\d,.]+\s*(?:million|mm|m|thousand|k)?)/i] },
+    ],
+  },
+  {
+    fieldPath: 'business.descriptionOfOperations',
+    coerce: (raw) => raw.trim() || null,
+    groups: [
+      { confidence: 'high', patterns: [/description of operations\s*:\s*(.+)/i, /nature of operations\s*:\s*(.+)/i] },
+      { confidence: 'medium', patterns: [/^operations\s*:\s*(.+)/i] },
+    ],
+  },
+  {
+    fieldPath: 'transportation.dotNumber',
+    coerce: (raw) => raw.trim() || null,
+    groups: [
+      { confidence: 'high', patterns: [/us\s*dot\s*(?:number|#|no\.?)?\s*:\s*(\d{5,8})/i, /dot\s*(?:number|#|no\.?)\s*:\s*(\d{5,8})/i] },
+      { confidence: 'medium', patterns: [/\bdot\s*(?:number|no\.?|#)?\s*(?:is)?\s*[:#]?\s*(\d{6,8})\b/i] },
+    ],
+  },
+  {
+    fieldPath: 'transportation.mcNumber',
+    coerce: (raw) => raw.trim() || null,
+    groups: [
+      { confidence: 'high', patterns: [/mc\s*(?:number|#|no\.?)\s*:\s*(\d{4,8})/i] },
+      { confidence: 'medium', patterns: [/\bmc\s*(?:number|no\.?|#)?\s*(?:is)?\s*[:#]?\s*(\d{4,8})\b/i] },
+    ],
+  },
+  {
+    fieldPath: 'transportation.fleetSize',
+    coerce: parseCount,
+    groups: [
+      { confidence: 'high', patterns: [/(?:fleet size|number of power units|power units)\s*:\s*(\d+)/i] },
+      { confidence: 'medium', patterns: [/we\s+(?:currently\s+)?(?:run|operate|have)\s+(\d+)\s+(?:trucks|tractors|power units|vehicles)/i, /(\d+)\s+(?:power units|trucks|tractors)\b/i] },
+    ],
+  },
+  {
+    fieldPath: 'transportation.vehicleTypes',
+    coerce: asStringList,
+    groups: [{ confidence: 'high', patterns: [/vehicle types?\s*:\s*(.+)/i] }],
+  },
+  {
+    fieldPath: 'transportation.statesOfOperation',
+    coerce: (raw) => {
+      const codes = parseStateList(raw);
+      return codes.length > 0 ? codes : null;
+    },
+    groups: [
+      { confidence: 'high', patterns: [/states?\s+of\s+operation\s*:\s*(.+)/i, /operating\s+states?\s*:\s*(.+)/i, /states?\s+(?:traveled|serviced)\s*:\s*(.+)/i] },
+      {
+        confidence: 'medium',
+        patterns: [/(?:haul(?:ing)?|operat(?:e|ing)|run(?:ning)?|travel(?:ing)?)\b[^.]*?\b(?:throughout|across|in|through)\s+([A-Z]{2}(?:\s*,\s*[A-Z]{2})*(?:\s*,?\s*and\s+[A-Z]{2})?)/],
+      },
+    ],
+  },
+  {
+    fieldPath: 'transportation.operatingRadius',
+    coerce: asOperatingRadius,
+    groups: [
+      { confidence: 'high', patterns: [/(?:operating )?radius\s*:\s*(.+)/i] },
+      { confidence: 'medium', patterns: [/(\d+)\s*[- ]?mile\s+radius/i] },
+    ],
+  },
+  {
+    fieldPath: 'transportation.commoditiesHauled',
+    coerce: asStringList,
+    groups: [
+      { confidence: 'high', patterns: [/commodit(?:y|ies)(?: hauled)?\s*:\s*(.+)/i, /cargo\s*:\s*(.+)/i] },
+      { confidence: 'medium', patterns: [/haul(?:ing)?\s+([a-z][a-z ,]*?)(?:\s+throughout|\s+across|\s+in\s+[A-Z]{2}|[.,]|$)/i] },
+    ],
+  },
+  {
+    fieldPath: 'transportation.driverCount',
+    coerce: parseCount,
+    groups: [
+      { confidence: 'high', patterns: [/(?:number of drivers|driver count|total drivers)\s*:\s*(\d+)/i] },
+      { confidence: 'medium', patterns: [/(\d+)\s+drivers\b/i] },
+    ],
+  },
+  {
+    fieldPath: 'transportation.minDriverAge',
+    coerce: parseCount,
+    groups: [{ confidence: 'high', patterns: [/min(?:imum)?\s+driver\s+age\s*:\s*(\d+)/i] }],
+  },
+  {
+    fieldPath: 'transportation.minDriverExperienceYears',
+    coerce: parseCount,
+    groups: [{ confidence: 'high', patterns: [/min(?:imum)?\s+(?:driver\s+)?experience(?:\s*\(years\))?\s*:\s*(\d+)/i, /min(?:imum)?\s+years?\s+(?:of\s+)?experience\s*:\s*(\d+)/i] }],
+  },
+  {
+    fieldPath: 'coverage.auto_liability.requestedLimit',
+    coerce: asCoverageLimit,
+    groups: [{ confidence: 'high', patterns: [/auto liability(?:\s+limit)?(?:\s+requested)?\s*:\s*\$?([\d,]+)/i, /(?:combined single limit|csl)\s*:\s*\$?([\d,]+)/i] }],
+  },
+  {
+    fieldPath: 'coverage.motor_truck_cargo.requestedLimit',
+    coerce: asCoverageLimit,
+    groups: [{ confidence: 'high', patterns: [/(?:motor truck )?cargo(?:\s+limit)?(?:\s+requested)?\s*:\s*\$?([\d,]+)/i] }],
+  },
+  {
+    fieldPath: 'coverage.physical_damage.requestedLimit',
+    coerce: asCoverageLimit,
+    groups: [{ confidence: 'high', patterns: [/physical damage(?:\s+limit)?(?:\s+requested)?\s*:\s*\$?([\d,]+)/i] }],
+  },
+  {
+    fieldPath: 'coverage.general_liability.requestedLimit',
+    coerce: asCoverageLimit,
+    groups: [{ confidence: 'high', patterns: [/general liability(?:\s+limit)?(?:\s+requested)?\s*:\s*\$?([\d,]+)/i] }],
+  },
+];

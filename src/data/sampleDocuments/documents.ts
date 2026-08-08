@@ -1,43 +1,13 @@
-import type { UploadedDocument } from '../../types';
-import { SAMPLE_ACCOUNT_ID } from '../sampleAccounts';
+/** Real sample submission documents for ABC Transportation LLC (see scripts/generate-sample-fixtures.mjs), served statically and run through the real ingestion pipeline like any broker upload. */
+export interface SampleDocumentFixture {
+  name: string;
+  url: string;
+}
 
-export const DOC_APPLICATION = 'doc_application_01';
-export const DOC_LOSS_RUN = 'doc_lossrun_01';
-export const DOC_VEHICLE_SCHEDULE = 'doc_vehicle_01';
-export const DOC_DRIVER_SCHEDULE = 'doc_driver_01';
-
-/** Static metadata for the four sample documents a broker can drag-and-drop in the demo. */
-export const sampleDocumentTemplates: Omit<UploadedDocument, 'status' | 'uploadedAt'>[] = [
-  {
-    id: DOC_APPLICATION,
-    accountId: SAMPLE_ACCOUNT_ID,
-    name: 'ACORD_Commercial_Application_Summit_Freight.pdf',
-    fileType: 'pdf',
-    category: 'application',
-    sizeBytes: 412_000,
-  },
-  {
-    id: DOC_LOSS_RUN,
-    accountId: SAMPLE_ACCOUNT_ID,
-    name: 'Loss_Run_5yr_Summit_Freight.pdf',
-    fileType: 'pdf',
-    category: 'loss_run',
-    sizeBytes: 268_000,
-  },
-  {
-    id: DOC_VEHICLE_SCHEDULE,
-    accountId: SAMPLE_ACCOUNT_ID,
-    name: 'Vehicle_Schedule_Summit_Freight.xlsx',
-    fileType: 'xlsx',
-    category: 'vehicle_schedule',
-    sizeBytes: 54_000,
-  },
-  {
-    id: DOC_DRIVER_SCHEDULE,
-    accountId: SAMPLE_ACCOUNT_ID,
-    name: 'Driver_Schedule_Summit_Freight.xlsx',
-    fileType: 'xlsx',
-    category: 'driver_schedule',
-    sizeBytes: 39_000,
-  },
+export const sampleDocumentFixtures: SampleDocumentFixture[] = [
+  { name: 'ABC_Transportation_Client_Questionnaire.docx', url: '/sample-fixtures/ABC_Transportation_Client_Questionnaire.docx' },
+  { name: 'ABC_Transportation_Loss_Runs.pdf', url: '/sample-fixtures/ABC_Transportation_Loss_Runs.pdf' },
+  { name: 'ABC_Transportation_Vehicle_Schedule.xlsx', url: '/sample-fixtures/ABC_Transportation_Vehicle_Schedule.xlsx' },
+  { name: 'ABC_Transportation_Driver_Schedule.xlsx', url: '/sample-fixtures/ABC_Transportation_Driver_Schedule.xlsx' },
+  { name: 'ABC_Transportation_Client_Email.txt', url: '/sample-fixtures/ABC_Transportation_Client_Email.txt' },
 ];

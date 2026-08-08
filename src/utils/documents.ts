@@ -1,5 +1,4 @@
 import type { DocumentCategory, DocumentFileType } from '../types';
-import { sampleDocumentTemplates } from '../data/sampleDocuments';
 
 export function inferFileType(fileName: string): DocumentFileType {
   const ext = fileName.split('.').pop()?.toLowerCase();
@@ -7,6 +6,7 @@ export function inferFileType(fileName: string): DocumentFileType {
   if (ext === 'xlsx' || ext === 'xls') return 'xlsx';
   if (ext === 'csv') return 'csv';
   if (ext === 'docx' || ext === 'doc') return 'docx';
+  if (ext === 'txt') return 'txt';
   return 'other';
 }
 
@@ -18,11 +18,4 @@ export function inferCategory(fileName: string): DocumentCategory {
   if (n.includes('application') || n.includes('acord')) return 'application';
   if (n.includes('financ')) return 'financials';
   return 'other';
-}
-
-/** Matches a dropped file's name against our known sample documents so the mock extraction provider recognizes it. */
-export function matchKnownSampleDocId(fileName: string): string | null {
-  const normalized = fileName.trim().toLowerCase();
-  const match = sampleDocumentTemplates.find((t) => t.name.toLowerCase() === normalized);
-  return match ? match.id : null;
 }
