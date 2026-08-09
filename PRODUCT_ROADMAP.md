@@ -91,6 +91,24 @@ Success criteria:
   type present in the source doc, "Warehouse Legal Liability", is correctly never invented since
   the Risk Profile's CoverageType enum doesn't model it).
 
+## DONE (Market Finder — live filtering)
+- Removed the "Find Markets" button/staged-filter step — every filter change re-runs the same
+  `matchAllMarkets` engine (via `buildProfileFromFilters`) immediately, with no second search
+  implementation and no debounce needed given the small, fully client-side dataset.
+- Before any filter is set, shows "Start by selecting any risk characteristic" plus a neutral,
+  unscored "All Markets" directory (no verdict language) rather than a blank page or a misleading
+  match against an empty risk profile.
+- Active filters render as removable chips (state, fleet size, years in business/new venture,
+  operation types, cargo terms, driver experience/age, telematics/dashcams, coverage) above the
+  results; removing a chip re-filters immediately. A result-count line breaks down non-zero verdict
+  groups (e.g. "6 Possible Match · 3 Needs More Information · 4 Not Eligible").
+- `Not Eligible` results are shown directly (no hide-by-default toggle this round) so a filter
+  change that flips a market to Not Eligible is immediately visible, per the product's live-search
+  goal. Sort tiebreak switched from the internal match score to `verifiedMatchCount` (a plain
+  count, never a percentage) — "more verified criteria" wins ties, literally.
+- Filters live in page state (not staged), so opening/closing the market detail drawer already
+  preserves them — no URL/routing work needed.
+
 ## NEXT
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)
 - Broker-submitted appetite updates
