@@ -9,8 +9,7 @@ import { VERDICT_LABELS, type FeedbackSeverity, type Verdict } from '../types';
 import { formatDate } from '../utils/dates';
 
 const VERDICT_TONE: Record<Verdict, string> = {
-  strong_match: 'bg-[var(--color-success-500)]',
-  good_match: 'bg-[var(--color-success-500)]',
+  likely_match: 'bg-[var(--color-success-500)]',
   possible_match: 'bg-[var(--color-info-500)]',
   needs_more_information: 'bg-[var(--color-warning-500)]',
   not_eligible: 'bg-[var(--color-danger-500)]',

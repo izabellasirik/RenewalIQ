@@ -31,7 +31,7 @@ export function CarrierAppetitePage() {
   const isAnalyzing = matchResults.length === 0 && documents.some((d) => d.status === 'processing');
 
   const counts = useMemo(() => {
-    const c: Record<Verdict, number> = { strong_match: 0, good_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
+    const c: Record<Verdict, number> = { likely_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
     for (const r of matchResults) c[r.verdict]++;
     return c;
   }, [matchResults]);
@@ -91,8 +91,7 @@ export function CarrierAppetitePage() {
             <Tabs
               items={[
                 { key: 'all', label: 'All Markets', count: matchResults.length },
-                { key: 'strong_match', label: VERDICT_LABELS.strong_match, count: counts.strong_match },
-                { key: 'good_match', label: VERDICT_LABELS.good_match, count: counts.good_match },
+                { key: 'likely_match', label: VERDICT_LABELS.likely_match, count: counts.likely_match },
                 { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
                 { key: 'needs_more_information', label: VERDICT_LABELS.needs_more_information, count: counts.needs_more_information },
                 { key: 'not_eligible', label: VERDICT_LABELS.not_eligible, count: counts.not_eligible },

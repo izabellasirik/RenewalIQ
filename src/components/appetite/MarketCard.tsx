@@ -1,26 +1,22 @@
-import { CircleCheck, TriangleAlert, CircleX, ChevronRight, Clock, NotebookPen, ShieldQuestion } from 'lucide-react';
+import { CircleCheck, CircleHelp, ChevronRight, Clock, NotebookPen, CircleX, ShieldQuestion } from 'lucide-react';
 import type { MatchReason, MatchResult } from '../../types';
-import { Card, CardBody, Badge, VerdictBadge, ScoreRing } from '../ui';
+import { Card, CardBody, Badge, VerdictBadge } from '../ui';
 import { AvailableThroughTag } from './AvailableThroughTag';
 
-const REASON_ICON = { pass: CircleCheck, warning: TriangleAlert, fail: CircleX };
-const REASON_COLOR = {
-  pass: 'text-[var(--color-success-600)]',
-  warning: 'text-[var(--color-warning-600)]',
-  fail: 'text-[var(--color-danger-600)]',
-};
-const STATUS_PRIORITY: Record<MatchReason['status'], number> = { fail: 0, warning: 1, pass: 2 };
+const MAX_LISTED = 3;
 
-function topReasons(reasons: MatchReason[], n: number): MatchReason[] {
-  return [...reasons].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]).slice(0, n);
-}
-
-/** Numeric scores only mean something for markets that remain eligible with enough verified signal — hide the ring rather than imply false precision otherwise. */
-function showsScore(result: MatchResult): boolean {
-  return result.verdict !== 'not_eligible' && result.verdict !== 'needs_more_information';
+function verdictIcon(verdict: MatchResult['verdict']) {
+  if (verdict === 'not_eligible') return CircleX;
+  if (verdict === 'needs_more_information') return ShieldQuestion;
+  return CircleCheck;
 }
 
 export function MarketCard({ result, onClick }: { result: MatchResult; onClick: () => void }) {
+  const failed = result.reasons.filter((r) => r.status === 'fail').slice(0, MAX_LISTED);
+  const matched = result.reasons.filter((r) => r.status === 'pass').slice(0, MAX_LISTED);
+  const needsVerification = result.reasons.filter((r): r is MatchReason => r.status === 'warning' && !!r.isDataGap).slice(0, MAX_LISTED);
+  const VIcon = verdictIcon(result.verdict);
+
   return (
     <Card className="group flex cursor-pointer flex-col transition-shadow hover:[box-shadow:var(--shadow-card-hover)]" onClick={onClick}>
       <CardBody className="flex flex-1 flex-col pt-5">
@@ -32,13 +28,7 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
               <VerdictBadge verdict={result.verdict} />
             </div>
           </div>
-          {showsScore(result) ? (
-            <ScoreRing score={result.matchScore} />
-          ) : (
-            <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-[var(--color-ink-50)] text-[var(--color-ink-400)]">
-              {result.verdict === 'not_eligible' ? <CircleX size={20} /> : <ShieldQuestion size={20} />}
-            </div>
-          )}
+          <VIcon size={20} className="shrink-0 text-[var(--color-ink-300)]" />
         </div>
 
         {result.availableThrough && (
@@ -47,27 +37,47 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
           </div>
         )}
 
-        <p className="mt-3 text-xs text-[var(--color-ink-500)]">
-          {result.verifiedMatchCount} verified criteri{result.verifiedMatchCount === 1 ? 'on' : 'a'} matched
-          {result.needsVerificationCount > 0 && (
-            <>
-              {' · '}
-              {result.needsVerificationCount} need{result.needsVerificationCount === 1 ? 's' : ''} verification
-            </>
+        <div className="mt-3.5 flex flex-1 flex-col gap-3">
+          {failed.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-danger-600)]">Failed</p>
+              <ul className="mt-1 flex flex-col gap-1">
+                {failed.map((r) => (
+                  <li key={r.criterion} className="flex items-start gap-1.5 text-xs text-[var(--color-ink-700)]">
+                    <CircleX size={13} className="mt-0.5 shrink-0 text-[var(--color-danger-600)]" />
+                    <span className="line-clamp-2">{r.explanation}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
-        </p>
-
-        <ul className="mt-2.5 flex flex-1 flex-col gap-1.5">
-          {topReasons(result.reasons, 2).map((reason) => {
-            const Icon = REASON_ICON[reason.status];
-            return (
-              <li key={reason.criterion} className="flex items-start gap-1.5 text-xs text-[var(--color-ink-600)]">
-                <Icon size={13} className={`mt-0.5 shrink-0 ${REASON_COLOR[reason.status]}`} />
-                <span className="line-clamp-2">{reason.explanation}</span>
-              </li>
-            );
-          })}
-        </ul>
+          {matched.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-success-600)]">Verified</p>
+              <ul className="mt-1 flex flex-col gap-1">
+                {matched.map((r) => (
+                  <li key={r.criterion} className="flex items-center gap-1.5 text-xs text-[var(--color-ink-700)]">
+                    <CircleCheck size={13} className="shrink-0 text-[var(--color-success-600)]" />
+                    {r.criterion}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {needsVerification.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">Needs Verification</p>
+              <ul className="mt-1 flex flex-col gap-1">
+                {needsVerification.map((r) => (
+                  <li key={r.criterion} className="flex items-center gap-1.5 text-xs text-[var(--color-ink-500)]">
+                    <CircleHelp size={13} className="shrink-0 text-[var(--color-ink-400)]" />
+                    {r.criterion}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
 
         {result.underwritingNotes && (
           <div className="mt-3 flex items-start gap-1.5 rounded-md bg-[var(--color-ink-50)] px-2.5 py-2 text-xs text-[var(--color-ink-500)]">
@@ -81,8 +91,8 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
             <Clock size={12} />
             {result.freshness === 'UNKNOWN' ? 'Not yet verified' : result.freshness === 'STALE' ? 'Verification aging — recheck' : result.freshness === 'AGING' ? 'Verification aging' : 'Recently verified'}
           </span>
-          <span className="flex items-center gap-1 font-medium text-[var(--color-brand-700)] opacity-0 transition-opacity group-hover:opacity-100">
-            Details <ChevronRight size={13} />
+          <span className="flex items-center gap-1 font-medium text-[var(--color-brand-700)] group-hover:underline">
+            Why this match? <ChevronRight size={13} />
           </span>
         </div>
       </CardBody>

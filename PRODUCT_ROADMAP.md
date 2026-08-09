@@ -43,6 +43,29 @@ Risk Profile → target application field mapping → completed application expo
   "Why this match?" checklist (✓ verified / ? not verified), per-criterion source viewer, and a
   standing disclaimer that appetite should be confirmed with the market before binding.
 
+## DONE (Verified Batch 1 + Market Finder)
+- Appetite criteria now carry a `ruleType` (HARD_RULE / TARGET / PREFERENCE / TYPICAL_RANGE /
+  UNKNOWN) alongside a 4-state `verificationStatus` (VERIFIED / PARTIALLY_VERIFIED /
+  NEEDS_CONFIRMATION / UNKNOWN). Only a VERIFIED HARD_RULE can produce NOT ELIGIBLE — a
+  TARGET/PREFERENCE mismatch is a soft "Preference" signal, a TYPICAL_RANGE value (e.g. National
+  Interstate's published average fleet sizes) is purely informational and never a floor/ceiling.
+- Corrected the verified-batch-1 markets: Cover Whale modeled per-coverage (Auto Liability) rather
+  than one universal appetite; Canal Express/Fleet/DRIVEN/TestDrive carry their real hard rules
+  (fleet bands, CDL/OTR experience, DOT-number requirement, TestDrive's new-venture fleet ramp and
+  years-in-business ceiling); Progressive's published operations list is a TARGET, not a hard
+  exclusion list, so it no longer produces false declines.
+- Numeric match-score percentages removed from the UI entirely — replaced by four statuses
+  (Likely Match / Possible Match / Needs More Information / Not Eligible). Market cards show a
+  compact Verified / Needs Verification checklist instead; the detail drawer groups every
+  criterion into Matched / Failed / Needs Verification / Preferences with a per-criterion "View
+  Source" (source name, type, rule type, last verified — no raw URLs by default).
+- New global **Market Finder** page (`/market-finder`, sidebar between Dashboard and Analytics):
+  brokers manually enter risk characteristics (state, fleet size, years in business, operation
+  type, cargo, driver experience, telematics/dashcams, coverage needed) without creating a
+  submission. Reuses the exact same `matchAllMarkets` engine and `MarketCard`/`MarketDetailDrawer`
+  components as the account-specific Carrier Appetite page — no second matching engine, no
+  duplicate schema. Not Eligible results are hidden by default with a toggle to reveal them.
+
 ## AFTER THAT
 Carrier Appetite:
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)

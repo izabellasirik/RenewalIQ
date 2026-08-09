@@ -51,14 +51,14 @@ export function computeAnalytics(
     }
   }
 
-  const verdictBreakdown: Record<Verdict, number> = { strong_match: 0, good_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
+  const verdictBreakdown: Record<Verdict, number> = { likely_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
   const marketStrongCounts = new Map<string, number>();
   let totalMatchesRun = 0;
   for (const accountId of Object.keys(matchResults)) {
     for (const result of matchResults[accountId]) {
       totalMatchesRun++;
       verdictBreakdown[result.verdict]++;
-      if (result.verdict === 'strong_match') {
+      if (result.verdict === 'likely_match') {
         marketStrongCounts.set(result.marketName, (marketStrongCounts.get(result.marketName) ?? 0) + 1);
       }
     }

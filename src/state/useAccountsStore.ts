@@ -273,10 +273,10 @@ export const useAccountsStore = create<AccountsState>()(
         const profile = get().riskProfiles[accountId];
         if (!profile) return;
         const results = matchAllMarkets(sampleAppetiteRecords, profile);
-        const strong = results.filter((r) => r.verdict === 'strong_match').length;
+        const likely = results.filter((r) => r.verdict === 'likely_match').length;
         set((s) => ({
           matchResults: { ...s.matchResults, [accountId]: results },
-          activityLog: appendEvent(s.activityLog, accountId, 'matching_run', `Matched against ${results.length} markets — ${strong} strong match${strong === 1 ? '' : 'es'}.`),
+          activityLog: appendEvent(s.activityLog, accountId, 'matching_run', `Matched against ${results.length} markets — ${likely} likely match${likely === 1 ? '' : 'es'}.`),
         }));
       },
 

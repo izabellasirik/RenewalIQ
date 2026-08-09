@@ -32,6 +32,7 @@ function allCriteria(record: AppetiteRecord): AppetiteCriterion<unknown>[] {
     record.states,
     record.fleetSize,
     record.yearsInBusinessMin,
+    record.yearsInBusinessMax,
     record.operationTypes,
     record.maxRadius,
     record.commodities,
@@ -39,6 +40,7 @@ function allCriteria(record: AppetiteRecord): AppetiteCriterion<unknown>[] {
     record.minDriverExperienceYears,
     record.telematicsRequired,
     record.dashcamRequired,
+    record.dotNumberRequired,
     record.majorExclusions,
     record.maxClaimsPast3Years,
     record.maxIncurredPerUnit,
@@ -47,12 +49,12 @@ function allCriteria(record: AppetiteRecord): AppetiteCriterion<unknown>[] {
 }
 
 /**
- * Aggregate freshness across every VERIFIED criterion on a record — the least-fresh verified
- * fact drives the message, since that's the one most likely to have changed since we checked.
- * A record with no verified criteria at all has nothing to be stale about, so it reads UNKNOWN.
+ * Aggregate freshness across every verified (or partially verified) criterion on a record — the
+ * least-fresh fact drives the message, since that's the one most likely to have changed since we
+ * checked. A record with no verified criteria at all has nothing to be stale about, so it reads UNKNOWN.
  */
 export function computeRecordFreshness(record: AppetiteRecord): { state: FreshnessState; message?: string } {
-  const verified = allCriteria(record).filter((c) => c.status === 'VERIFIED' && c.source.verifiedAt);
+  const verified = allCriteria(record).filter((c) => (c.verificationStatus === 'VERIFIED' || c.verificationStatus === 'PARTIALLY_VERIFIED') && c.source.verifiedAt);
   if (verified.length === 0) return { state: 'UNKNOWN' };
 
   const leastFresh = verified.reduce((worst, c) => {

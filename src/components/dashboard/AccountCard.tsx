@@ -24,7 +24,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
 
   const steps = useWorkflowStatus(account.id);
   const status = deriveSubmissionStatusLabel(steps);
-  const strongMatches = matchResults.filter((m) => m.verdict === 'strong_match').length;
+  const likelyMatches = matchResults.filter((m) => m.verdict === 'likely_match').length;
 
   function commitRename() {
     const trimmed = draftName.trim();
@@ -94,7 +94,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
             <span>{documents.length} document{documents.length === 1 ? '' : 's'}</span>
             {matchResults.length > 0 && (
               <span>
-                {strongMatches} strong match{strongMatches === 1 ? '' : 'es'}
+                {likelyMatches} likely match{likelyMatches === 1 ? '' : 'es'}
               </span>
             )}
           </div>

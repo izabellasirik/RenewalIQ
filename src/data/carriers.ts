@@ -3,18 +3,27 @@ import { source, verifiedCriterion as v, unknownCriterion as u } from './appetit
 
 /**
  * Source-aware appetite dataset for real, named trucking markets. Every criterion is either
- * VERIFIED (with a source) or explicitly UNKNOWN — nothing here is an invented rule. Facts came
- * from each market's own published program materials; where a market doesn't publish a specific
- * number (fleet ceiling, driver age, loss tolerance, etc.), the criterion is left UNKNOWN rather
- * than guessed. `verifiedAt` reflects the date this record was checked into Renewal IQ; each
- * market's own "last updated" date (sourcePublishedAt) isn't independently known, so it's left
- * unset rather than assumed to match verifiedAt.
+ * VERIFIED (with a source and a ruleType) or explicitly UNKNOWN — nothing here is an invented
+ * rule. Facts came from each market's own published program materials; where a market doesn't
+ * publish a specific number, the criterion is left UNKNOWN rather than guessed.
  *
- * Multi-program companies (Canal, National Interstate) are represented as one AppetiteRecord per
- * program rather than one merged record, since their eligibility criteria genuinely differ by
- * program — collapsing them would misrepresent which program an account actually fits.
+ * ruleType matters as much as the value itself:
+ * - HARD_RULE: an explicit eligibility requirement — violating it is a verified decline.
+ * - TARGET / PREFERENCE: published appetite that isn't stated as an absolute cutoff — a mismatch
+ *   is a soft signal to confirm, never a hard decline.
+ * - TYPICAL_RANGE: a published average/typical account description (e.g. "average fleet: 25-75
+ *   units") — informational only, never used as an eligibility floor/ceiling.
+ *
+ * `verifiedAt` reflects the date this record was checked into Renewal IQ; each market's own
+ * "last updated" date (sourcePublishedAt) isn't independently known, so it's left unset rather
+ * than assumed to match verifiedAt.
+ *
+ * Multi-program/coverage companies (Cover Whale, Canal, National Interstate) are represented as
+ * one AppetiteRecord per program or coverage rather than one merged record, since their
+ * eligibility criteria genuinely differ — collapsing them would misrepresent which program an
+ * account actually fits.
  */
-const VERIFIED_AT = '2026-08-08';
+const VERIFIED_AT = '2026-08-09';
 
 function official(sourceName: string, sourceUrl?: string) {
   return source('OFFICIAL', sourceName, { verifiedAt: VERIFIED_AT, sourceUrl });
@@ -22,29 +31,34 @@ function official(sourceName: string, sourceUrl?: string) {
 
 export const sampleAppetiteRecords: AppetiteRecord[] = [
   // ---------------------------------------------------------------------------------------
-  // Cover Whale — commercial auto/trucking MGA
+  // Cover Whale — modeled per-coverage rather than one universal appetite. Auto Liability is
+  // the only coverage with verified public rules captured so far; APD/Motor Truck Cargo/NTL/GL
+  // may carry different fleet-size targets and are intentionally NOT modeled here until verified.
   // ---------------------------------------------------------------------------------------
   {
-    id: 'appetite_coverwhale',
-    marketName: 'Cover Whale',
+    id: 'appetite_coverwhale_al',
+    marketName: 'Cover Whale — Auto Liability',
     parentCompany: 'Cover Whale',
+    programName: 'Auto Liability',
     marketType: 'mga',
-    states: u('Cover Whale publishes admitted/non-admitted availability by state; the specific state list is not yet captured in Renewal IQ.'),
-    fleetSize: v({ min: 1, max: 25 }, official('Cover Whale Appetite Guidelines'), 'Auto Liability target range at bind.'),
+    states: u('Cover Whale publishes admitted/non-admitted availability by state, and it is coverage-specific — the Auto Liability state list is not yet captured in Renewal IQ.'),
+    fleetSize: v({ min: 1, max: 25 }, 'TARGET', official('Cover Whale Appetite Guidelines'), 'Published target fleet size at bind, not stated as a hard eligibility cutoff.'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
     minDriverAge: u(),
-    minDriverExperienceYears: v(2, official('Cover Whale Appetite Guidelines'), 'Minimum 2 years driving experience with a similar vehicle.'),
+    minDriverExperienceYears: v(2, 'HARD_RULE', official('Cover Whale Appetite Guidelines'), 'Minimum 2 years driving experience with a like vehicle.'),
     telematicsRequired: u(),
-    dashcamRequired: v(true, official('Cover Whale Appetite Guidelines'), 'Required for Auto Liability.'),
-    majorExclusions: u('Cover Whale publishes excluded trucking classes; the specific list is not yet captured in Renewal IQ.'),
+    dashcamRequired: v(true, 'HARD_RULE', official('Cover Whale Appetite Guidelines'), 'Dashcam / ELD connectivity required for Auto Liability.'),
+    dotNumberRequired: u(),
+    majorExclusions: u('Cover Whale publishes excluded trucking classes/operations; the specific list is not yet captured in Renewal IQ.'),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
-    linesOffered: v(['Auto Liability'], official('Cover Whale Appetite Guidelines'), 'Other lines not confirmed.'),
+    linesOffered: v(['Auto Liability'], 'PREFERENCE', official('Cover Whale Appetite Guidelines'), 'APD, Motor Truck Cargo, NTL and GL are separate Cover Whale coverages with their own appetite, not modeled here yet.'),
     underwritingNotes:
-      'Tractors/trailers generally must be newer than 20 years under current published guidelines. Direct agency appointment is available.',
+      'Vehicle-age restrictions are published (tractors/trailers generally must be newer than roughly 20 years under current guidelines) — treat as informational pending a dedicated vehicle-age field. Direct agency appointment is available. Other Cover Whale coverages (APD, Motor Truck Cargo, NTL, GL) may support different fleet-size targets and are not collapsed into this record.',
   },
 
   // ---------------------------------------------------------------------------------------
@@ -57,8 +71,9 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'Express',
     marketType: 'direct',
     states: u(),
-    fleetSize: v({ min: 1, max: 10 }, official('Canal Insurance Company — Program Materials'), 'Canal Express program band.'),
+    fleetSize: v({ min: 1, max: 10 }, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), 'Canal Express program band: 1–10 power units.'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -66,11 +81,12 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
-    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo'], official('Canal Insurance Company — Program Materials')),
-    underwritingNotes: 'Distributed through select general agents.',
+    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo'], 'PREFERENCE', official('Canal Insurance Company — Program Materials')),
+    underwritingNotes: 'Transportation/trucking program distributed through select general agents.',
   },
   {
     id: 'appetite_canal_fleet',
@@ -79,8 +95,9 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'Fleet',
     marketType: 'direct',
     states: u(),
-    fleetSize: v({ min: 11 }, official('Canal Insurance Company — Program Materials'), 'Canal Fleet program band (11+ trucks, no published ceiling).'),
+    fleetSize: v({ min: 11 }, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), 'Canal Fleet program band: designed for fleets with 11+ power units (no published ceiling).'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -88,11 +105,12 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
-    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo'], official('Canal Insurance Company — Program Materials')),
-    underwritingNotes: 'Distributed through select general agents.',
+    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo'], 'PREFERENCE', official('Canal Insurance Company — Program Materials')),
+    underwritingNotes: 'Transportation/trucking program distributed through select general agents. State, driver-age and years-in-business criteria are not independently verified — do not assume restrictions beyond the fleet-size floor.',
   },
   {
     id: 'appetite_canal_driven',
@@ -101,20 +119,23 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'DRIVEN',
     marketType: 'direct',
     states: u(),
-    fleetSize: v({ max: 30 }, official('Canal Insurance Company — Program Materials'), 'DRIVEN program ceiling; units must be model year 2000 or newer.'),
+    fleetSize: v({ max: 30 }, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), 'DRIVEN program ceiling: up to 30 units.'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
     minDriverAge: u(),
-    minDriverExperienceYears: v(2, official('Canal Insurance Company — Program Materials'), 'Class A CDL with 2 years OTR experience required.'),
-    telematicsRequired: v(true, official('Canal Insurance Company — Program Materials'), 'Eligible telematics device required.'),
+    minDriverExperienceYears: v(2, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), 'All drivers must hold a Class A CDL with a minimum 2 years OTR experience.'),
+    telematicsRequired: v(true, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), 'Eligible telematics device required.'),
     dashcamRequired: u(),
+    dotNumberRequired: v(true, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), 'DOT number required or in process.'),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
-    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo'], official('Canal Insurance Company — Program Materials')),
-    underwritingNotes: 'Distributed through select general agents.',
+    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo'], 'PREFERENCE', official('Canal Insurance Company — Program Materials')),
+    underwritingNotes:
+      'Units must be model year 2000 or newer — treat as informational pending a dedicated vehicle-age field. Distributed through select general agents. Missing driver CDL/OTR experience data reads as "needs verification," not a decline.',
   },
   {
     id: 'appetite_canal_testdrive',
@@ -123,20 +144,28 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'TestDrive',
     marketType: 'direct',
     states: u(),
-    fleetSize: u('TestDrive is Canal\'s dedicated new-venture program; a specific fleet-size band is not published separately from its new-venture criteria.'),
-    yearsInBusinessMin: u('TestDrive uses separate new-venture criteria; a specific years-in-business threshold is not published.'),
+    fleetSize: v(
+      { max: 4 },
+      'HARD_RULE',
+      official('Canal Insurance Company — Program Materials'),
+      'New-venture program: starts at up to 2 trucks, can grow to a maximum of 4 units during the first policy year. Modeled here against the first-year ceiling of 4.'
+    ),
+    yearsInBusinessMin: u(),
+    yearsInBusinessMax: v(2, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), "TestDrive is Canal's dedicated new-venture program: operation must be under 2 years in business."),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
     minDriverAge: u(),
-    minDriverExperienceYears: u(),
+    minDriverExperienceYears: v(2, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), 'Minimum 2 years CDL experience required.'),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: v(true, 'HARD_RULE', official('Canal Insurance Company — Program Materials'), 'DOT number required.'),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
-    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo'], official('Canal Insurance Company — Program Materials')),
-    underwritingNotes: 'New-venture program with its own separate criteria from Express/Fleet/DRIVEN. Distributed through select general agents.',
+    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo'], 'PREFERENCE', official('Canal Insurance Company — Program Materials')),
+    underwritingNotes:
+      'Truck model year must be 2000 or newer — treat as informational pending a dedicated vehicle-age field. New-venture program with its own separate criteria from Express/Fleet/DRIVEN. Distributed through select general agents.',
   },
 
   // ---------------------------------------------------------------------------------------
@@ -149,8 +178,9 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'General Trucking',
     marketType: 'direct',
     states: u(),
-    fleetSize: v({ min: 5 }, official('National Interstate — Program Materials'), 'General trucking program targets well-managed local-to-intermediate for-hire fleets.'),
+    fleetSize: v({ min: 5 }, 'HARD_RULE', official('National Interstate — Program Materials'), 'General trucking program targets well-managed local-to-intermediate for-hire fleets of 5+ units.'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -158,11 +188,13 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: v(
       ['Auto Liability', 'Physical Damage', 'Workers Comp', 'Cargo', 'Excess', 'Trailer Interchange', 'General Liability'],
+      'PREFERENCE',
       official('National Interstate — Program Materials')
     ),
     underwritingNotes: 'Some National Interstate programs are distributed through an exclusive producer network.',
@@ -174,8 +206,14 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'Convoy',
     marketType: 'direct',
     states: u(),
-    fleetSize: u('Convoy\'s published average fleet size is 25–75 units — a description of accounts typically written, not a stated eligibility minimum/maximum.'),
+    fleetSize: v(
+      { min: 25, max: 75 },
+      'TYPICAL_RANGE',
+      official('National Interstate — Program Materials'),
+      "Convoy's published average fleet size is 25–75 units — a description of accounts typically written, never an eligibility minimum/maximum."
+    ),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -183,11 +221,13 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: v(
       ['Auto Liability', 'Physical Damage', 'Workers Comp', 'Cargo', 'Excess', 'Trailer Interchange', 'General Liability'],
+      'PREFERENCE',
       official('National Interstate — Program Materials')
     ),
     underwritingNotes: 'Some National Interstate programs are distributed through an exclusive producer network.',
@@ -199,8 +239,9 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'Group Captive',
     marketType: 'direct',
     states: u(),
-    fleetSize: v({ min: 20 }, official('National Interstate — Program Materials')),
+    fleetSize: v({ min: 20 }, 'HARD_RULE', official('National Interstate — Program Materials'), 'Group Captive program: 20+ units.'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -208,11 +249,13 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: v(
       ['Auto Liability', 'Physical Damage', 'Workers Comp', 'Cargo', 'Excess', 'Trailer Interchange', 'General Liability'],
+      'PREFERENCE',
       official('National Interstate — Program Materials')
     ),
     underwritingNotes: 'Some National Interstate programs are distributed through an exclusive producer network.',
@@ -224,8 +267,14 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'Venture',
     marketType: 'direct',
     states: u(),
-    fleetSize: u('Venture\'s published average fleet size is 30–100 units — a description of accounts typically written, not a stated eligibility minimum/maximum.'),
+    fleetSize: v(
+      { min: 30, max: 100 },
+      'TYPICAL_RANGE',
+      official('National Interstate — Program Materials'),
+      "Venture's published average fleet size is 30–100 units — a description of accounts typically written, never an eligibility minimum/maximum."
+    ),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -233,11 +282,13 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: v(
       ['Auto Liability', 'Physical Damage', 'Workers Comp', 'Cargo', 'Excess', 'Trailer Interchange', 'General Liability'],
+      'PREFERENCE',
       official('National Interstate — Program Materials')
     ),
     underwritingNotes: 'Some National Interstate programs are distributed through an exclusive producer network.',
@@ -249,8 +300,14 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'Voyager',
     marketType: 'direct',
     states: u(),
-    fleetSize: u('Voyager\'s published average fleet size is 100–300 units — a description of accounts typically written, not a stated eligibility minimum/maximum.'),
+    fleetSize: v(
+      { min: 100, max: 300 },
+      'TYPICAL_RANGE',
+      official('National Interstate — Program Materials'),
+      "Voyager's published average fleet size is 100–300 units — a description of accounts typically written, never an eligibility minimum/maximum."
+    ),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -258,11 +315,13 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: v(
       ['Auto Liability', 'Physical Damage', 'Workers Comp', 'Cargo', 'Excess', 'Trailer Interchange', 'General Liability'],
+      'PREFERENCE',
       official('National Interstate — Program Materials')
     ),
     underwritingNotes: 'Some National Interstate programs are distributed through an exclusive producer network.',
@@ -274,8 +333,9 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     programName: 'National Accounts',
     marketType: 'direct',
     states: u(),
-    fleetSize: v({ min: 250 }, official('National Interstate — Program Materials')),
+    fleetSize: v({ min: 250 }, 'HARD_RULE', official('National Interstate — Program Materials'), 'National Accounts program: 250+ units.'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -283,11 +343,13 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: v(
       ['Auto Liability', 'Physical Damage', 'Workers Comp', 'Cargo', 'Excess', 'Trailer Interchange', 'General Liability'],
+      'PREFERENCE',
       official('National Interstate — Program Materials')
     ),
     underwritingNotes: 'Some National Interstate programs are distributed through an exclusive producer network.',
@@ -310,27 +372,32 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
           'VA', 'WA', 'WV', 'WI', 'WY',
         ],
       },
+      'HARD_RULE',
       official('Progressive Commercial — Trucking Coverage Pages'),
       'Commercial truck coverage across all 50 states.'
     ),
     fleetSize: u('Progressive does not publish an exact fleet minimum/maximum.'),
     yearsInBusinessMin: u('Progressive does not publish a years-in-business threshold.'),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: v(
       ['General Freight', 'Agriculture', 'Car Hauling', 'Dirt/Sand/Gravel', 'Expeditors', 'Logging/Timber', 'Household Movers', 'Towing', 'Intermodal'],
+      'TARGET',
       official('Progressive Commercial — Trucking Coverage Pages'),
-      'Publicly listed operations Progressive supports.'
+      "Publicly listed operations Progressive supports — a published target, not an exhaustive hard-eligibility list. Public appetite does not provide enough detail to treat cargo mismatches as a decline."
     ),
     minDriverAge: u('Progressive does not publish an exact driver-age threshold.'),
     minDriverExperienceYears: u('Progressive does not publish an exact driver-experience threshold.'),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
-    linesOffered: v(['Auto Liability', 'Cargo', 'Physical Damage'], official('Progressive Commercial — Trucking Coverage Pages')),
-    underwritingNotes: 'Supports owner-operators, motor carriers and private carriers.',
+    linesOffered: v(['Auto Liability', 'Cargo', 'Physical Damage'], 'PREFERENCE', official('Progressive Commercial — Trucking Coverage Pages')),
+    underwritingNotes:
+      'Supports owner-operators, motor carriers and private carriers. Public appetite does not provide enough detailed thresholds for fleet-size, years-in-business, or driver-experience — these read as Needs Verification, not a decline.',
   },
 
   // ---------------------------------------------------------------------------------------
@@ -344,6 +411,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     states: u(),
     fleetSize: u('Northland does not publish fleet-size thresholds.'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
@@ -351,11 +419,13 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: v(
       ['Auto Liability', 'Truckers General Liability', 'Motor Truck Cargo', 'Physical Damage'],
+      'PREFERENCE',
       official('Northland Insurance — Trucking Program Materials')
     ),
     underwritingNotes:
@@ -373,17 +443,19 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     states: u('Sentry does not publish a state-appetite list.'),
     fleetSize: u('Sentry describes its trucking appetite as owner-operators through large fleets, with no published numeric range.'),
     yearsInBusinessMin: u('Sentry does not publish a years-in-business threshold.'),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: u(),
     minDriverAge: u('Sentry does not publish a driver-age threshold.'),
     minDriverExperienceYears: u(),
-    telematicsRequired: v(false, official('Sentry — Trucking Program Materials'), 'Optional — telematics participation may provide a discount, not a requirement.'),
+    telematicsRequired: v(false, 'PREFERENCE', official('Sentry — Trucking Program Materials'), 'Optional — telematics participation may provide a discount, not a requirement.'),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
-    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo', 'General Liability'], official('Sentry — Trucking Program Materials')),
+    linesOffered: v(['Auto Liability', 'Physical Damage', 'Motor Truck Cargo', 'General Liability'], 'PREFERENCE', official('Sentry — Trucking Program Materials')),
     underwritingNotes: 'Trucking product distributed only through appointed agencies specializing in trucking.',
   },
 
@@ -400,22 +472,26 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
         admitted: ['FL', 'IL', 'KS', 'KY', 'MA', 'NC', 'NJ', 'NM', 'NV', 'SC'],
         excluded: ['NY', 'HI', 'CT', 'DE'],
       },
+      'HARD_RULE',
       official('Prime Insurance — Commercial Auto Program Materials'),
       'Admitted commercial auto in the listed states; primary Commercial Auto is not offered in NY, HI, CT, DE. Coverage availability varies by state — states in neither list are not confirmed either way.'
     ),
     fleetSize: u(),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
     commodities: v(
       ['Long Haul', 'Short Haul', 'Fleets', 'Tow Trucks', 'Logging Trucks', 'Car Transporters'],
+      'TARGET',
       official('Prime Insurance — Commercial Auto Program Materials'),
-      'Operations Prime states it will consider for difficult/hard-to-place commercial trucking risks.'
+      'Operations Prime states it will consider for difficult/hard-to-place commercial trucking risks — a published target, not an exhaustive hard-eligibility list.'
     ),
     minDriverAge: u(),
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
@@ -435,6 +511,7 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     states: u('Detailed state appetite not yet verified.'),
     fleetSize: u('Detailed fleet-size criteria not yet verified.'),
     yearsInBusinessMin: u(),
+    yearsInBusinessMax: u(),
     operationTypes: u('Detailed radius/operation-type criteria not yet verified.'),
     maxRadius: u('Detailed radius/operation-type criteria not yet verified.'),
     commodities: u('Detailed cargo appetite not yet verified.'),
@@ -442,10 +519,11 @@ export const sampleAppetiteRecords: AppetiteRecord[] = [
     minDriverExperienceYears: u('Detailed driver criteria not yet verified.'),
     telematicsRequired: u(),
     dashcamRequired: u(),
+    dotNumberRequired: u(),
     majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
-    linesOffered: v(['Auto Liability', 'Physical Damage', 'Cargo', 'General Liability'], official('Great West Casualty Company — Trucking Program Materials')),
+    linesOffered: v(['Auto Liability', 'Physical Damage', 'Cargo', 'General Liability'], 'PREFERENCE', official('Great West Casualty Company — Trucking Program Materials')),
     underwritingNotes: 'Dedicated trucking insurer with trucking-focused risk control and claims expertise. Detailed fleet, state, radius, cargo and driver criteria remain unverified pending direct confirmation.',
   },
 ];
