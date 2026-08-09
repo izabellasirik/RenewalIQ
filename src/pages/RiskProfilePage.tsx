@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowRight, History, ListChecks, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -35,6 +35,7 @@ type TabKey = 'details' | 'fleet' | 'drivers' | 'loss-history' | 'coverage';
 export function RiskProfilePage() {
   const { accountId = '' } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
   const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
@@ -55,6 +56,15 @@ export function RiskProfilePage() {
     });
     setTimeout(() => setHighlightFieldId((current) => (current === id ? null : current)), 2200);
   }
+
+  // Lets other pages (e.g. Submission Assistant, on a conflict field) deep-link straight to the
+  // field that needs resolving, reusing this page's existing scroll-to-and-highlight behavior
+  // instead of duplicating a conflict resolver elsewhere.
+  useEffect(() => {
+    const target = (location.state as { focusField?: { section: 'business' | 'transportation'; key: string } } | null)?.focusField;
+    if (target) focusField(target.section, target.key);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const stats = useRiskProfileStats(profile);
   const anyProcessing = documents.some((d) => d.status === 'processing');
@@ -133,6 +143,7 @@ export function RiskProfilePage() {
                       field={profile[f.section][f.key as keyof (typeof profile)[typeof f.section]] as any}
                       onSave={(value) => updateField(accountId, f.section, f.key, value)}
                       onResolve={(resolution) => resolveField(accountId, f.section, f.key, resolution)}
+                      autoExpand={highlightFieldId === `field-${f.section}-${f.key}`}
                     />
                   </div>
                 ))}

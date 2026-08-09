@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp, CircleAlert, PencilLine } from 'lucide-react';
 import type { ExtractionMethod, FieldValue } from '../../types';
 import type { FieldResolution } from '../../services/extraction';
@@ -24,6 +24,8 @@ interface FieldRowProps<T> {
   readOnly?: boolean;
   /** Show a skeleton instead of "Not provided" — used while a document that might fill this field is still processing. */
   pending?: boolean;
+  /** Auto-opens the source/conflict detail panel — used when another page deep-links straight to this field. */
+  autoExpand?: boolean;
 }
 
 export function displayReadValue(value: unknown): string {
@@ -34,7 +36,7 @@ export function displayReadValue(value: unknown): string {
   return String(value);
 }
 
-function parseDraft(valueType: FieldValueType, raw: string): unknown {
+export function parseDraft(valueType: FieldValueType, raw: string): unknown {
   if (valueType === 'number') return raw.trim() === '' ? null : Number(raw.replace(/,/g, ''));
   if (valueType === 'list') return raw.split(',').map((s) => s.trim()).filter(Boolean);
   if (valueType === 'boolean') return raw === 'Yes';
@@ -137,10 +139,14 @@ function ConflictResolver<T>({
   );
 }
 
-export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOnly, pending }: FieldRowProps<T>) {
+export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOnly, pending, autoExpand }: FieldRowProps<T>) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<string>(displayReadValue(field.value));
   const [showDetail, setShowDetail] = useState(false);
+
+  useEffect(() => {
+    if (autoExpand) setShowDetail(true);
+  }, [autoExpand]);
 
   function commit() {
     onSave(parseDraft(valueType, draft) as T);

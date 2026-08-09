@@ -22,10 +22,6 @@ Success criteria:
 - conflicts are resolvable
 - missing fields are actionable
 
-## NEXT
-Submission Assistant:
-Risk Profile → target application field mapping → completed application export
-
 ## DONE (Carrier Appetite Intelligence — source-aware dataset)
 - Replaced the fictional 16-market demo dataset with 8 real, named carriers/MGAs (Cover Whale,
   Canal Insurance Company, National Interstate, Progressive Commercial, Northland Insurance,
@@ -66,14 +62,43 @@ Risk Profile → target application field mapping → completed application expo
   components as the account-specific Carrier Appetite page — no second matching engine, no
   duplicate schema. Not Eligible results are hidden by default with a toggle to reveal them.
 
-## AFTER THAT
-Carrier Appetite:
+## DONE (Submission Assistant — mapping, itemized tables, export)
+- One comprehensive, realistic template — "Renewal IQ Transportation Application - Demo" —
+  covering Business Information, Operations, Coverage Requested, and repeating Drivers/Vehicles/
+  Loss History tables. Fields with no Risk Profile equivalent yet (DBA, City, ZIP, FEIN) are
+  reported as missing/"enter manually" rather than guessed; replaces the two thin prototype
+  templates from the earlier Submission Assistant prototype.
+- `MappedFieldStatus` expanded from a 2-state mapped/needs_review split into five explicit states
+  (AUTO_FILLED / MISSING / CONFLICT / MANUALLY_ENTERED / NEEDS_REVIEW), each rendered distinctly —
+  no blanket "High Confidence" badges. Drivers/Vehicles/Loss History are real repeating-row tables
+  (a generic `mapTableSection`, not three one-offs, and not flattened into text), with a derived
+  "Unit Number" column proving deterministic transforms work for structural (not just factual)
+  fields.
+- Missing fields get an inline "Enter manually" + optional "Also save to Risk Profile" (persists
+  through the existing `updateField`/`updateCoverage` store actions, preserving manual-entry
+  provenance). Conflicting fields block silently auto-filling and link to a "Resolve in Risk
+  Profile" deep link that reuses the existing FieldRow conflict resolver (now auto-expanding to
+  the exact field) instead of duplicating it — resolving there updates the application
+  automatically since it's derived from the same Risk Profile.
+- Completion header (X% Complete, auto-filled/missing/conflict/needs-review counts, itemized rows
+  mapped) via a new `computeApplicationStats` helper.
+- Export: a real one-click "Download PDF" via `pdf-lib` (previously installed, unused) producing a
+  paginated, professional-looking document — not just the browser print dialog (kept as a
+  secondary "Print" action) — plus JSON and CSV export for debugging/testing.
+- Tested against Blue Ridge (full auto-fill incl. vehicles/drivers/losses/coverage), MetroHaul
+  (fleet-size and revenue conflicts correctly block only the affected fields and clear after
+  resolving), and Sunrise (missing MC Number → manual entry → save-back; an unsupported coverage
+  type present in the source doc, "Warehouse Legal Liability", is correctly never invented since
+  the Risk Profile's CoverageType enum doesn't model it).
+
+## NEXT
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)
 - Broker-submitted appetite updates
-- Real carrier/MGA appetite APIs or PDF ingestion in place of manual verification
+- A second real carrier/MGA application template, proving the Submission Assistant template
+  architecture's reusability the same way the two prior demo templates once did
 
 ## LATER
-- Real carrier/MGA APIs
+- Real carrier/MGA APIs (appetite + application submission)
 - Browser automation where APIs do not exist
 - Authentication
 - Production database

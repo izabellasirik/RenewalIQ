@@ -1,52 +1,49 @@
-import type { ApplicationTemplate } from '../../types';
+import type { ApplicationTemplate, DriverEntry, LossEntry, VehicleEntry } from '../../types';
 import { COVERAGE_LABELS } from '../../types';
+import { formatCurrency, formatDateMDY, formatNewVenture, formatStatus } from './formatters';
 
 const COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability'] as const;
 
 /**
- * Two templates on purpose: proving the mapping engine is reusable means showing the same
- * RiskProfile data land in two differently-shaped target forms, not just asserting it in prose.
- * Adding a third carrier/MGA application is adding a third entry here — no engine or extraction
- * changes required.
+ * One realistic, comprehensive transportation application template for MVP testing — per product
+ * direction, not "dozens of carrier applications" yet. Fields with no Risk Profile equivalent
+ * (DBA, City, ZIP, FEIN) are declared with no riskProfilePath, so the mapping engine reports them
+ * as missing/"enter manually" instead of guessing. Adding a second real carrier/MGA application
+ * later is adding a second entry to this array — the engine and extraction pipeline don't change.
  */
 export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
   {
-    id: 'acord_commercial_auto',
-    name: 'Sample Commercial Auto Application (ACORD-inspired)',
-    description: 'A demo pre-fill layout modeled on standard ACORD commercial auto submission fields. Not a certified/regulatory form.',
+    id: 'renewal_iq_transportation_demo',
+    name: 'Renewal IQ Transportation Application - Demo',
+    description: 'An internal sample transportation insurance application layout for MVP testing. Not a certified/regulatory form.',
     sections: [
       {
-        title: 'Applicant Information',
+        title: 'Business Information',
         fields: [
-          { targetFieldId: 'named_insured', targetLabel: 'Named Insured', riskProfilePath: 'business.namedInsured' },
-          { targetFieldId: 'legal_entity', targetLabel: 'Legal Entity', riskProfilePath: 'business.legalEntity' },
-          { targetFieldId: 'mailing_address', targetLabel: 'Mailing Address', riskProfilePath: 'business.address' },
-          { targetFieldId: 'state', targetLabel: 'State', riskProfilePath: 'business.state' },
-          { targetFieldId: 'years_in_business', targetLabel: 'Years in Business', riskProfilePath: 'business.yearsInBusiness' },
-          { targetFieldId: 'annual_revenue', targetLabel: 'Annual Revenue', riskProfilePath: 'business.annualRevenue' },
-        ],
-      },
-      {
-        title: 'Business Operations',
-        fields: [
-          { targetFieldId: 'description_of_operations', targetLabel: 'Description of Operations', riskProfilePath: 'business.descriptionOfOperations' },
-          { targetFieldId: 'dot_number', targetLabel: 'USDOT Number', riskProfilePath: 'transportation.dotNumber' },
+          { targetFieldId: 'named_insured', targetLabel: 'Named Insured', riskProfilePath: 'business.namedInsured', required: true },
+          { targetFieldId: 'dba', targetLabel: 'DBA', required: false },
+          { targetFieldId: 'address', targetLabel: 'Address', riskProfilePath: 'business.address', required: true },
+          { targetFieldId: 'city', targetLabel: 'City', required: false },
+          { targetFieldId: 'state', targetLabel: 'State', riskProfilePath: 'business.state', required: true },
+          { targetFieldId: 'zip', targetLabel: 'ZIP', required: false },
+          { targetFieldId: 'fein', targetLabel: 'FEIN', required: false },
+          { targetFieldId: 'years_in_business', targetLabel: 'Years in Business', riskProfilePath: 'business.yearsInBusiness', required: true },
+          { targetFieldId: 'annual_revenue', targetLabel: 'Annual Revenue', riskProfilePath: 'business.annualRevenue', format: formatCurrency, required: true },
+          { targetFieldId: 'description_of_operations', targetLabel: 'Description of Operations', riskProfilePath: 'business.descriptionOfOperations', required: true },
+          { targetFieldId: 'dot_number', targetLabel: 'DOT Number', riskProfilePath: 'transportation.dotNumber', required: true },
           { targetFieldId: 'mc_number', targetLabel: 'MC Number', riskProfilePath: 'transportation.mcNumber' },
-          { targetFieldId: 'commodities_hauled', targetLabel: 'Commodities Hauled', riskProfilePath: 'transportation.commoditiesHauled' },
-          { targetFieldId: 'states_of_operation', targetLabel: 'States of Operation', riskProfilePath: 'transportation.statesOfOperation' },
-          { targetFieldId: 'operating_radius', targetLabel: 'Operating Radius', riskProfilePath: 'transportation.operatingRadius' },
         ],
       },
       {
-        title: 'Fleet & Driver Information',
+        title: 'Operations',
         fields: [
-          { targetFieldId: 'fleet_size', targetLabel: 'Fleet Size (Power Units)', riskProfilePath: 'transportation.fleetSize' },
-          { targetFieldId: 'vehicle_types', targetLabel: 'Vehicle Types', riskProfilePath: 'transportation.vehicleTypes' },
-          { targetFieldId: 'driver_count', targetLabel: 'Number of Drivers', riskProfilePath: 'transportation.driverCount' },
-          { targetFieldId: 'min_driver_age', targetLabel: 'Minimum Driver Age', riskProfilePath: 'transportation.minDriverAge' },
-          { targetFieldId: 'min_driver_experience', targetLabel: 'Minimum Driver Experience (yrs)', riskProfilePath: 'transportation.minDriverExperienceYears' },
-          { targetFieldId: 'telematics', targetLabel: 'Telematics Installed', riskProfilePath: 'transportation.telematics' },
-          { targetFieldId: 'dashcams', targetLabel: 'Dashcams Installed', riskProfilePath: 'transportation.dashcams' },
+          { targetFieldId: 'states_of_operation', targetLabel: 'States of Operation', riskProfilePath: 'transportation.statesOfOperation', required: true },
+          { targetFieldId: 'operating_radius', targetLabel: 'Operating Radius', riskProfilePath: 'transportation.operatingRadius' },
+          { targetFieldId: 'commodities_hauled', targetLabel: 'Commodities Hauled', riskProfilePath: 'transportation.commoditiesHauled', required: true },
+          { targetFieldId: 'new_venture', targetLabel: 'New Venture', riskProfilePath: 'business.yearsInBusiness', format: formatNewVenture, editable: false },
+          { targetFieldId: 'fleet_size', targetLabel: 'Fleet Size', riskProfilePath: 'transportation.fleetSize', required: true },
+          { targetFieldId: 'telematics', targetLabel: 'Telematics', riskProfilePath: 'transportation.telematics' },
+          { targetFieldId: 'dashcams', targetLabel: 'Dashcams', riskProfilePath: 'transportation.dashcams' },
         ],
       },
       {
@@ -58,54 +55,41 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
         })),
       },
     ],
-  },
-  {
-    id: 'northfield_mutual_commercial_auto',
-    name: 'Northfield Mutual — Commercial Auto Submission Form',
-    description: "A sample of how the same Risk Profile maps onto one carrier's own submission form layout and field naming.",
-    marketName: 'Northfield Mutual',
-    sections: [
+    tableSections: [
       {
-        title: 'Named Insured & Location',
-        fields: [
-          { targetFieldId: 'ni_name', targetLabel: 'Named Insured', riskProfilePath: 'business.namedInsured' },
-          { targetFieldId: 'ni_entity_type', targetLabel: 'Entity Type', riskProfilePath: 'business.legalEntity' },
-          { targetFieldId: 'ni_address', targetLabel: 'Business Address', riskProfilePath: 'business.address' },
-          { targetFieldId: 'ni_state', targetLabel: 'Domicile State', riskProfilePath: 'business.state' },
-          { targetFieldId: 'ni_years', targetLabel: 'Years Established', riskProfilePath: 'business.yearsInBusiness' },
-          { targetFieldId: 'gross_receipts', targetLabel: 'Gross Receipts', riskProfilePath: 'business.annualRevenue' },
+        title: 'Drivers',
+        source: 'drivers',
+        columns: [
+          { key: 'name', label: 'Driver Name' },
+          { key: 'dob', label: 'DOB', format: (e) => ((e as DriverEntry).dob ? formatDateMDY((e as DriverEntry).dob) : '') },
+          { key: 'licenseState', label: 'License State' },
+          { key: 'yearsExperience', label: 'Years Experience' },
+          { key: 'violations', label: 'Violations' },
         ],
       },
       {
-        title: 'Motor Carrier Details',
-        fields: [
-          { targetFieldId: 'usdot', targetLabel: 'USDOT Number', riskProfilePath: 'transportation.dotNumber' },
-          { targetFieldId: 'mc', targetLabel: 'MC Number', riskProfilePath: 'transportation.mcNumber' },
-          { targetFieldId: 'operations_narrative', targetLabel: 'Nature of Operations', riskProfilePath: 'business.descriptionOfOperations' },
-          { targetFieldId: 'commodities', targetLabel: 'Primary Commodities', riskProfilePath: 'transportation.commoditiesHauled' },
-          { targetFieldId: 'radius', targetLabel: 'Radius of Operation', riskProfilePath: 'transportation.operatingRadius' },
-          { targetFieldId: 'states', targetLabel: 'States/Territories Traveled', riskProfilePath: 'transportation.statesOfOperation' },
+        title: 'Vehicles',
+        source: 'vehicles',
+        columns: [
+          { key: 'unitNumber', label: 'Unit Number', format: (_e, index) => String(index + 1) },
+          { key: 'year', label: 'Year' },
+          { key: 'vin', label: 'VIN' },
+          { key: 'make', label: 'Make' },
+          { key: 'model', label: 'Model' },
+          { key: 'bodyType', label: 'Vehicle Type' },
+          { key: 'value', label: 'Stated Value', format: (e) => ((e as VehicleEntry).value !== undefined ? formatCurrency((e as VehicleEntry).value) : '') },
         ],
       },
       {
-        title: 'Power Units & Drivers',
-        fields: [
-          { targetFieldId: 'power_units', targetLabel: 'Number of Power Units', riskProfilePath: 'transportation.fleetSize' },
-          { targetFieldId: 'unit_types', targetLabel: 'Unit Type(s)', riskProfilePath: 'transportation.vehicleTypes' },
-          { targetFieldId: 'driver_count', targetLabel: 'Total Drivers', riskProfilePath: 'transportation.driverCount' },
-          { targetFieldId: 'driver_min_age', targetLabel: 'Driver Age Minimum', riskProfilePath: 'transportation.minDriverAge' },
-          { targetFieldId: 'driver_min_exp', targetLabel: 'Driver Experience Minimum (yrs)', riskProfilePath: 'transportation.minDriverExperienceYears' },
-          { targetFieldId: 'telematics_yn', targetLabel: 'Telematics? (Y/N)', riskProfilePath: 'transportation.telematics' },
-          { targetFieldId: 'dashcam_yn', targetLabel: 'In-Cab Cameras? (Y/N)', riskProfilePath: 'transportation.dashcams' },
-        ],
-      },
-      {
-        title: 'Limits Requested',
-        fields: [
-          { targetFieldId: 'nf_auto_liability', targetLabel: 'Auto Liability CSL', riskProfilePath: 'coverage.auto_liability.requestedLimit' },
-          { targetFieldId: 'nf_cargo', targetLabel: 'Motor Truck Cargo Limit', riskProfilePath: 'coverage.motor_truck_cargo.requestedLimit' },
-          { targetFieldId: 'nf_phys_damage', targetLabel: 'Physical Damage Limit', riskProfilePath: 'coverage.physical_damage.requestedLimit' },
-          { targetFieldId: 'nf_gl', targetLabel: 'General Liability Limit', riskProfilePath: 'coverage.general_liability.requestedLimit' },
+        title: 'Loss History',
+        source: 'losses',
+        columns: [
+          { key: 'lossDate', label: 'Loss Date', format: (e) => formatDateMDY((e as LossEntry).lossDate) },
+          { key: 'claimType', label: 'Claim Type' },
+          { key: 'paid', label: 'Paid', format: (e) => formatCurrency((e as LossEntry).paid) },
+          { key: 'reserved', label: 'Reserve', format: (e) => formatCurrency((e as LossEntry).reserved) },
+          { key: 'incurred', label: 'Incurred', format: (e) => formatCurrency((e as LossEntry).incurred) },
+          { key: 'status', label: 'Status', format: (e) => formatStatus((e as LossEntry).status) },
         ],
       },
     ],
