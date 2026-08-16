@@ -2,6 +2,7 @@ import type {
   ApplicationStats,
   ApplicationTableSection,
   ApplicationTemplate,
+  CoverageType,
   FieldMapping,
   FieldSource,
   MappedApplication,
@@ -12,6 +13,7 @@ import type {
 } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { getFieldValueByPath } from '../../utils/riskProfilePath';
+import { buildSubmissionWarnings } from '../extraction/reconciliation';
 
 function defaultFormat(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -19,6 +21,33 @@ function defaultFormat(value: unknown): string {
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number' && value >= 1000) return value.toLocaleString('en-US');
   return String(value);
+}
+
+type MappedFieldBase = Pick<MappedField, 'targetFieldId' | 'targetLabel' | 'editable' | 'required' | 'riskProfilePath'>;
+
+/**
+ * A coverage type the client explicitly requested (a CoverageLine exists for it) but gave no
+ * dollar limit for reads as "Requested — limit not specified" — never as an indistinguishable
+ * "Missing" the same as a coverage type nobody mentioned at all. Returns null for anything else
+ * (a populated, conflicting, or genuinely un-requested limit), so the generic mapper below handles it.
+ */
+function coverageRequestedOverride(profile: RiskProfile, path: string, base: MappedFieldBase): MappedField | null {
+  const match = path.match(/^coverage\.([a-z_]+)\.requestedLimit$/);
+  if (!match) return null;
+  const line = profile.coverage.find((c) => c.type === (match[1] as CoverageType));
+  if (!line || !line.requestedLimit.isMissing) return null;
+
+  const hasCurrentPolicyOnFile = profile.coverage.some((c) => c.currentLimit && !c.currentLimit.isMissing);
+  const isNewCoverage = hasCurrentPolicyOnFile && (!line.currentLimit || line.currentLimit.isMissing);
+
+  return {
+    ...base,
+    value: 'Requested — limit not specified',
+    status: 'needs_review',
+    reviewReason: isNewCoverage
+      ? 'Requested this renewal; not on the current policy — confirm the desired limit with the client.'
+      : 'Requested by the client, but no limit was specified — confirm the desired limit.',
+  };
 }
 
 /**
@@ -39,6 +68,9 @@ function mapField(profile: RiskProfile, mapping: FieldMapping): MappedField {
   if (!mapping.riskProfilePath) {
     return { ...base, value: '', status: 'missing', reviewReason: 'Not tracked in the Risk Profile yet — enter manually.' };
   }
+
+  const coverageOverride = coverageRequestedOverride(profile, mapping.riskProfilePath, base);
+  if (coverageOverride) return coverageOverride;
 
   const field = getFieldValueByPath(profile, mapping.riskProfilePath);
   const format = mapping.format ?? defaultFormat;
@@ -149,6 +181,7 @@ export function mapRiskProfileToApplication(profile: RiskProfile, template: Appl
     sections,
     tableSections,
     fieldsNeedingReview,
+    warnings: buildSubmissionWarnings(profile),
   };
 }
 

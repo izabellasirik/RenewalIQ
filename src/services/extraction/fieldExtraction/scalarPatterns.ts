@@ -37,6 +37,17 @@ function asOperatingRadius(raw: string): string {
 }
 
 /**
+ * Regulatory identifiers (DOT/MC numbers) are never inferred or guessed — this is the single
+ * format check every identifier coerce runs through, on top of the regex that captured the text in
+ * the first place. Digits-only, within a plausible length: rejects anything an OCR/fuzzy match
+ * could produce that isn't a clean number (e.g. a stray alphanumeric fragment).
+ */
+function isValidIdentifier(raw: string, minLength: number, maxLength: number): boolean {
+  const trimmed = raw.trim();
+  return new RegExp(`^\\d{${minLength},${maxLength}}$`).test(trimmed);
+}
+
+/**
  * Deterministic label/regex patterns for scalar RiskProfile fields, applied line-by-line over a
  * document's raw text. "high"-confidence groups match explicit "Label: value" formatting; "medium"
  * groups are looser prose fallbacks for unstructured documents like emails. A field with no match
@@ -141,7 +152,10 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
   },
   {
     fieldPath: 'transportation.dotNumber',
-    coerce: (raw) => raw.trim() || null,
+    // Identifier fields are never inferred: the coerce step re-validates the captured text is
+    // digits-only within a plausible DOT-number length, on top of the regex already requiring it,
+    // so a fuzzy/OCR-like fragment can never slip through even if a pattern above is loosened later.
+    coerce: (raw) => (isValidIdentifier(raw, 5, 8) ? raw.trim() : null),
     groups: [
       {
         confidence: 'high',
@@ -152,7 +166,9 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
   },
   {
     fieldPath: 'transportation.mcNumber',
-    coerce: (raw) => raw.trim() || null,
+    // Same defense-in-depth as dotNumber above — only ever accepts a digits-only match from a
+    // parsed source field, never a guess (e.g. prose like "will send it later" has no digits to match).
+    coerce: (raw) => (isValidIdentifier(raw, 4, 8) ? raw.trim() : null),
     groups: [
       { confidence: 'high', patterns: [/mc\s*(?:number|#|no\.?)\s*:\s*(\d{4,8})/i] },
       { confidence: 'medium', patterns: [/\bmc\s*(?:number|no\.?|#)?\s*(?:is)?\s*[:#]?\s*(\d{4,8})\b/i] },

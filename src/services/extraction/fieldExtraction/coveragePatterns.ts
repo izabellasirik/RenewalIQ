@@ -6,6 +6,7 @@ export const COVERAGE_TYPE_ALIASES: { match: RegExp; type: CoverageType }[] = [
   { match: /auto\s*liability|csl|combined single limit/i, type: 'auto_liability' },
   { match: /cargo/i, type: 'motor_truck_cargo' },
   { match: /physical\s*damage/i, type: 'physical_damage' },
+  { match: /warehouse(?:\s*legal)?\s*liability/i, type: 'warehouse_legal_liability' },
   { match: /general\s*liability/i, type: 'general_liability' },
 ];
 
@@ -49,4 +50,37 @@ export function extractDesiredCoverageLine(lines: TextLine[]): DesiredCoverageMa
     }
   }
   return null;
+}
+
+export interface CurrentPolicyCoverageMatch {
+  coverageType: CoverageType;
+  currentLimit: string;
+  matchedText: string;
+  page?: number;
+}
+
+/**
+ * Reads a current/expiring-policy coverage table rendered as one line per row — "Commercial Auto
+ * Liability   $1,000,000 CSL   N/A" — where columns are separated by two-or-more spaces (how
+ * pdfjs-dist renders a table's cell gaps as plain text, since PDFs carry no real table markup).
+ * Only lines whose first column matches a known coverage type are used, so this can never guess a
+ * limit off of an unrelated table (or the "Coverage / Limit / Deductible" header row itself, whose
+ * first column never matches an alias).
+ */
+export function extractCurrentPolicyCoverageLines(lines: TextLine[]): CurrentPolicyCoverageMatch[] {
+  const results: CurrentPolicyCoverageMatch[] = [];
+  for (const line of lines) {
+    const columns = line.text
+      .trim()
+      .split(/\s{2,}/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+    if (columns.length < 2) continue;
+    const [label, limit] = columns;
+    if (!label || !limit) continue;
+    const alias = COVERAGE_TYPE_ALIASES.find((a) => a.match.test(label));
+    if (!alias) continue;
+    results.push({ coverageType: alias.type, currentLimit: limit, matchedText: line.text, page: line.page });
+  }
+  return results;
 }

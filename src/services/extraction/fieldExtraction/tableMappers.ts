@@ -8,6 +8,11 @@ function normalizeHeader(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+/** Standard US VIN format: 17 characters, alphanumeric excluding I/O/Q (never confused with 1/0). A VIN column value that doesn't match this is dropped rather than accepted as-is — never guessed or reformatted. */
+function isValidVin(raw: string): boolean {
+  return /^[A-HJ-NPR-Z0-9]{17}$/i.test(raw.trim());
+}
+
 /**
  * `exactOnly` synonyms are single common words ("driver", "type") that would false-positive if
  * matched as a substring of an unrelated header ("Driver License Number" is not a name column) —
@@ -90,7 +95,7 @@ export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
   const results: MappedVehicleRow[] = [];
   table.rows.forEach((row, i) => {
     const entry: Omit<VehicleEntry, 'id' | 'source'> = {};
-    if (col.vin !== -1 && row[col.vin]) entry.vin = row[col.vin].trim();
+    if (col.vin !== -1 && row[col.vin] && isValidVin(row[col.vin])) entry.vin = row[col.vin].trim();
     if (col.make !== -1 && row[col.make]) entry.make = row[col.make].trim();
     if (col.model !== -1 && row[col.model]) entry.model = row[col.model].trim();
     if (col.year !== -1 && row[col.year]) {

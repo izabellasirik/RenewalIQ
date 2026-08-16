@@ -4,8 +4,9 @@ import { toTextLines, toExcerpt, type TextLine } from './textLines';
 import { SCALAR_FIELD_PATTERNS } from './scalarPatterns';
 import { extractBooleanFields } from './booleanPatterns';
 import { extractLossRows, extractLossBlocks } from './lossPatterns';
-import { extractDesiredCoverageLine } from './coveragePatterns';
+import { extractDesiredCoverageLine, extractCurrentPolicyCoverageLines } from './coveragePatterns';
 import { classifyTable, mapVehicleTable, mapDriverTable, mapLossTable, mapCoverageTable } from './tableMappers';
+import { parseAddressComponents } from './addressPatterns';
 
 export interface ExtractionSourceMeta {
   documentId: string;
@@ -103,6 +104,27 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
         source: scalarSource(meta, desiredCoverage.page, desiredCoverage.matchedText),
         extractionMethod: 'ai_extraction',
       });
+    }
+  }
+
+  for (const row of extractCurrentPolicyCoverageLines(lines)) {
+    results.push({
+      fieldPath: `coverage.${row.coverageType}.currentLimit`,
+      value: row.currentLimit,
+      confidence: 'high',
+      source: scalarSource(meta, row.page, row.matchedText),
+      extractionMethod: 'ai_extraction',
+    });
+  }
+
+  // A "Street, City, ST 12345"-shaped address also yields city/state/ZIP as their own fields —
+  // never invented, only ever read off the same matched address line.
+  const addressResult = results.find((r) => r.fieldPath === 'business.address');
+  if (addressResult && typeof addressResult.value === 'string') {
+    const components = parseAddressComponents(addressResult.value);
+    if (components) {
+      results.push({ fieldPath: 'business.city', value: components.city, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: 'ai_extraction' });
+      results.push({ fieldPath: 'business.zip', value: components.zip, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: 'ai_extraction' });
     }
   }
 

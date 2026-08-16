@@ -2,7 +2,8 @@ import type { ApplicationTemplate, DriverEntry, LossEntry, VehicleEntry } from '
 import { COVERAGE_LABELS } from '../../types';
 import { formatCurrency, formatDateMDY, formatNewVenture, formatStatus } from './formatters';
 
-const COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability'] as const;
+const CURRENT_POLICY_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability'] as const;
+const REQUESTED_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability', 'warehouse_legal_liability'] as const;
 
 /**
  * One realistic, comprehensive transportation application template for MVP testing — per product
@@ -23,9 +24,9 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           { targetFieldId: 'named_insured', targetLabel: 'Named Insured', riskProfilePath: 'business.namedInsured', required: true },
           { targetFieldId: 'dba', targetLabel: 'DBA', required: false },
           { targetFieldId: 'address', targetLabel: 'Address', riskProfilePath: 'business.address', required: true },
-          { targetFieldId: 'city', targetLabel: 'City', required: false },
+          { targetFieldId: 'city', targetLabel: 'City', riskProfilePath: 'business.city', required: false },
           { targetFieldId: 'state', targetLabel: 'State', riskProfilePath: 'business.state', required: true },
-          { targetFieldId: 'zip', targetLabel: 'ZIP', required: false },
+          { targetFieldId: 'zip', targetLabel: 'ZIP', riskProfilePath: 'business.zip', required: false },
           { targetFieldId: 'fein', targetLabel: 'FEIN', required: false },
           { targetFieldId: 'years_in_business', targetLabel: 'Years in Business', riskProfilePath: 'business.yearsInBusiness', required: true },
           { targetFieldId: 'annual_revenue', targetLabel: 'Annual Revenue', riskProfilePath: 'business.annualRevenue', format: formatCurrency, required: true },
@@ -47,8 +48,17 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
         ],
       },
       {
-        title: 'Coverage Requested',
-        fields: COVERAGE_TYPES.map((type) => ({
+        title: 'Current Policy Coverage',
+        fields: CURRENT_POLICY_COVERAGE_TYPES.map((type) => ({
+          targetFieldId: `current_coverage_${type}`,
+          targetLabel: COVERAGE_LABELS[type],
+          riskProfilePath: `coverage.${type}.currentLimit`,
+          required: false,
+        })),
+      },
+      {
+        title: 'Requested Renewal Coverage',
+        fields: REQUESTED_COVERAGE_TYPES.map((type) => ({
           targetFieldId: `coverage_${type}`,
           targetLabel: COVERAGE_LABELS[type],
           riskProfilePath: `coverage.${type}.requestedLimit`,
@@ -72,7 +82,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
         source: 'vehicles',
         columns: [
           { key: 'unitNumber', label: 'Unit Number', format: (_e, index) => String(index + 1) },
-          { key: 'year', label: 'Year' },
+          { key: 'year', label: 'Year', format: (e) => ((e as VehicleEntry).year !== undefined ? String((e as VehicleEntry).year) : '') },
           { key: 'vin', label: 'VIN' },
           { key: 'make', label: 'Make' },
           { key: 'model', label: 'Model' },

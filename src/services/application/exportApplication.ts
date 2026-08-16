@@ -114,6 +114,32 @@ export async function generateApplicationPdf(application: MappedApplication, acc
     y -= 14;
   }
 
+  // --- Missing / Needs Review ---
+  const flaggedFields = application.sections.flatMap((section) =>
+    section.fields.filter((f) => f.status === 'missing' || f.status === 'conflict' || f.status === 'needs_review').map((f) => ({ label: f.targetLabel, text: `${f.targetLabel}: ${f.reviewReason ?? 'Needs review.'}` }))
+  );
+  // Submission-quality warnings restate some of the same facts a flagged field already covers
+  // (e.g. "MC Number is missing" vs. the MC Number field's own reviewReason) — only the ones that
+  // add information no field above already carries (fleet/vehicle-count conflicts, a missing
+  // vehicle schedule) are worth a second line.
+  const warningsNotAlreadyFlagged = application.warnings.filter((w) => !flaggedFields.some((f) => w.includes(f.label)));
+  const reviewItems = [...flaggedFields.map((f) => f.text), ...warningsNotAlreadyFlagged];
+
+  if (reviewItems.length > 0) {
+    ensureSpace(30);
+    text('MISSING / NEEDS REVIEW', MARGIN, 10, bold, INK_600);
+    y -= 6;
+    rule();
+    y -= 16;
+
+    for (const item of reviewItems) {
+      ensureSpace(14);
+      page.drawText('•', { x: MARGIN, y, size: 8, font, color: INK_600 });
+      page.drawText(truncate(item, 100), { x: MARGIN + 10, y, size: 8, font, color: INK_900 });
+      y -= 14;
+    }
+  }
+
   return doc.save();
 }
 

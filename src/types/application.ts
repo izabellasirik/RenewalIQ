@@ -113,6 +113,8 @@ export interface MappedApplication {
   sections: MappedApplicationSection[];
   tableSections: MappedTableSection[];
   fieldsNeedingReview: number;
+  /** Submission-quality warnings (missing identifiers, fleet/vehicle-count conflicts, unspecified requested limits, new coverage requests) — see services/extraction/reconciliation.ts. */
+  warnings: string[];
 }
 
 export interface ApplicationStats {

@@ -109,6 +109,50 @@ Success criteria:
 - Filters live in page state (not staged), so opening/closing the market detail drawer already
   preserves them — no URL/routing work needed.
 
+## DONE (Sunrise Freight regression — extraction/reconciliation reliability)
+- Root-caused and fixed a real spreadsheet-parsing bug, not a fabrication bug: `Vehicle_Schedule.xlsx`
+  used a single namespace prefix on every OOXML element (`<x:workbook>`, `<x:sheetData>`, …) instead
+  of the unprefixed convention every major writer uses; exceljs's SAX matcher only recognizes
+  unprefixed tag names, so the file silently parsed to zero sheets and `parseSpreadsheet` reported
+  "no data." `parseSpreadsheet.ts` now repairs a failed load by stripping element-name namespace
+  prefixes (via `jszip`, now a direct dependency) and retrying — attributes like `r:id` are untouched,
+  and a normally-formed file never touches this path, so no other fixture's parsing changed.
+- Fleet size vs. vehicle-schedule-count reconciliation was mostly already correct architecture (the
+  vehicle-table extractor already derives `fleetSize` from the itemized row count, and the existing
+  merge/conflict system already flags two disagreeing sources rather than silently picking one) — the
+  reported "79" value did not reproduce against the real source files. Added a small
+  `services/extraction/reconciliation.ts` (`buildFieldReconciliation`, `buildSubmissionWarnings`) that
+  projects that same already-tracked provenance into the broker-facing warnings the product spec
+  asked for, rather than a second tracking system.
+- MC/DOT number coerce functions now run through an explicit `isValidIdentifier` format guard
+  (digits-only, plausible length) as defense-in-depth on top of the regex that already required it;
+  vehicle VIN cells are validated against the standard 17-character VIN format before acceptance.
+  The reported "7t8g" MC-number fabrication did not reproduce against the real source files either —
+  most likely an internal object id (`generateId()` produces exactly this shape) that leaked into an
+  unrelated display in an earlier ad hoc test, not a document-extraction defect.
+- Address parsing: a `Street, City, ST ZIP`-shaped `business.address` now also derives
+  `business.city`/`business.zip` as their own tracked fields (new `addressPatterns.ts`), while the
+  full raw address string is preserved unchanged. Verified on both Sunrise and the existing ABC
+  Transportation fixture (bonus: ABC's address now populates City/ZIP too, previously always missing).
+- Coverage: added `warehouse_legal_liability` as a real `CoverageType` (previously unmodeled by
+  design); a current-policy coverage table rendered as one line per row in PDF text (no real table
+  markup in a PDF) is now parsed into `coverage.<type>.currentLimit` via
+  `extractCurrentPolicyCoverageLines`. The Submission Assistant template and PDF export now show
+  **Current Policy Coverage** and **Requested Renewal Coverage** as two explicit sections instead of
+  one conflated "Coverage Requested" list, so a current limit is never presented as the requested one.
+  A coverage type the client explicitly requested but gave no dollar limit for now reads as
+  "Requested — limit not specified" (with a distinct "new coverage, not on the current policy" reason
+  when applicable) instead of an indistinguishable "Missing."
+- New `RiskProfile`-level `warnings` surfaced on `MappedApplication` and rendered as a "Missing /
+  Needs Review" section at the end of the generated PDF, deduplicated against per-field review
+  reasons already shown earlier in the same document.
+- Fixed an unrelated formatting bug surfaced by vehicles finally populating: the generic table-cell
+  formatter was applying thousands-separator commas to the Vehicles table's Year column ("2,024").
+- Regression-tested against the real 7-file Sunrise Freight & Warehousing LLC package end-to-end
+  (upload → Risk Profile → Submission Assistant → PDF) and confirmed against every value in
+  `EXPECTED_RESULTS.txt`; re-verified the ABC Transportation fixture end-to-end for no regression.
+  `tsc -b`, `oxlint`, and `vite build` all clean; no console/runtime errors in either walkthrough.
+
 ## NEXT
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)
 - Broker-submitted appetite updates
