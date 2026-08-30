@@ -15,7 +15,17 @@ export const VERDICT_LABELS: Record<Verdict, string> = {
  * third-party summary (trade publication, aggregator) not the market's own words. UNKNOWN = we
  * have no source at all — used together with a verificationStatus of 'UNKNOWN', never on its own.
  */
-export type SourceType = 'OFFICIAL' | 'UNDERWRITER' | 'BROKER' | 'SECONDARY' | 'UNKNOWN';
+export type SourceType = 'OFFICIAL' | 'UNDERWRITER' | 'BROKER' | 'SECONDARY' | 'INTERNAL_MARKET_LIST' | 'UNKNOWN';
+
+/** Display labels for SourceType, so raw enum values are never rendered verbatim in the UI. */
+export const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
+  OFFICIAL: 'Official',
+  UNDERWRITER: 'Underwriter',
+  BROKER: 'Broker',
+  SECONDARY: 'Secondary',
+  INTERNAL_MARKET_LIST: 'Internal Market List',
+  UNKNOWN: 'Unknown',
+};
 
 /**
  * How strong the evidence behind a specific criterion is. 'UNKNOWN' is a first-class, deliberate

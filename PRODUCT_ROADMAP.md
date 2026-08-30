@@ -253,9 +253,78 @@ Success criteria:
   password is available in this session, and this sandbox's network policy blocks reaching Supabase
   anyway (same limitation as prior passes). Worth confirming these manually.
 
+## DONE (Workbook reconciliation — Phase 1-3, staged import)
+
+An internal market-intelligence workbook (never committed — see "Security" below) was reconciled
+against the existing 16-record verified appetite dataset and imported in three explicitly-scoped
+phases, per an approved staged-import plan. Nothing from this workbook was ever treated as
+"verified" — every criterion it supplied is `NEEDS_CONFIRMATION` or `PARTIALLY_VERIFIED`, sourced
+via a new `SourceType: 'INTERNAL_MARKET_LIST'`, and `ruleType` is never `'HARD_RULE'` on a
+workbook-sourced criterion — so nothing from this pass can ever produce a hard decline
+(`rules.ts`'s `isUsable`/`HARD_RULE` gating is unchanged and enforces this).
+
+- **Phase 1 — Distribution model**: populated the previously-unused `DistributionPartner` /
+  `CarrierMarketRelationship` architecture (`types/organization.ts`, additive from a prior pass)
+  with 17 MGAs/wholesalers that had real appetite content behind them (`data/distributionPartners.ts`)
+  and ~45 carrier↔MGA relationship rows, coverage-specific where the source was clear
+  (`data/carrierMarketRelationships.ts`). Name-only MGA stubs with no coverage/appetite detail were
+  skipped. A relationship can link to a specific `AppetiteRecord` (unambiguous) or a free-form
+  `carrierId` when the source didn't say which specific program it applied to (Canal — see below).
+  New `services/appetite/distribution.ts` looks these up for the UI; no carrier was duplicated
+  because multiple MGAs distribute it.
+- **Phase 2 — Existing markets reconciled**: Cover Whale, Northland, and Prime Insurance got
+  additive-only updates (new distribution relationships, previously-`UNKNOWN` criteria filled in
+  at `NEEDS_CONFIRMATION`, an appended unverified-notes line) — every existing `VERIFIED` criterion
+  on all three is untouched.
+- **Phase 3 — First new-market batch**: 10 new candidate records added
+  (`data/newMarketCandidates.ts`, merged into `sampleAppetiteRecords` alongside the untouched
+  verified batch, now in `data/carriers.ts`'s `verifiedAppetiteRecords`): Berkley Prime, Berkley
+  Small (separate programs, not combined appetite, sharing only a "Berkley" parent label), IAT
+  (explicitly *not* merged with the workbook's separate "IAT / Occidental / Harco" grouping — held
+  back, noted instead), Nirvana, Crum & Forster (workbook's two spellings/sheets consolidated into
+  one entity per the approved scope), NICO Fleet, NICO Schedule (separate programs under a shared
+  NICO parent, appetite not combined), RLI, Carolina Casualty, and Third Coast.
+- **Canal**: no new/duplicate carrier record. Workbook-observed MGA access (Maximum, Rocklake, RPS,
+  Prime Agency, AMWINS) is linked at the carrier level via a free-form `carrierId`, not to any
+  specific Express/Fleet/DRIVEN/TestDrive program, since the source didn't say which program each
+  MGA path applies to.
+- **Explicitly held back** (ambiguous — flagged for a later reconciliation pass rather than
+  imported): Lloyds, Evolum, RPS Fleet Trucking, an ambiguous "Paramount" MGA/carrier entry,
+  "IAT / Occidental / Harco" as a merged identity, "Star RRG"/"Starr RRG" as a merged identity,
+  "XL Catlin"/"XL Group" as a merged identity, "Berkshire Hateway"/BHHC assumptions, and the
+  "Navigator – Hartford Admitted" entity. The Licensed States sheet was excluded entirely — it read
+  as an unfilled agency-licensing checklist, not per-carrier state data, and licensing ≠ appetite.
+- **UI**: `MarketDetailDrawer` gained an "Available Through" section listing every distribution
+  partner for a record (with coverage, when known) — explicitly labeled as unverified/internal and
+  as distribution paths, never implying an MGA is the risk-bearing carrier. `MarketCard` shows a
+  compact one-line summary tag only (e.g. "Available through Maximum +4 more") to avoid overcrowding
+  the card grid; full detail lives in the drawer. `CriterionCard`/`SourcePanel` now render a third
+  "Needs Confirmation" tier (amber, distinct from both the green verified state and the empty
+  unknown state) so workbook-sourced values are visible with their (unverified) provenance instead
+  of collapsing into "no source at all," which is now reserved for genuinely `UNKNOWN` criteria.
+  Added `SOURCE_TYPE_LABELS` so no raw enum value (e.g. `INTERNAL_MARKET_LIST`) ever prints verbatim.
+- **Request Appetite Update UX fix**: label changed to "What information needs updating?"; the
+  "Other" category no longer shows a Current Value (previously silently fell back to
+  `underwritingNotes`, which the form never should have surfaced as if it were the current value of
+  a specific field) — it now shows a free-form "Tell us what needs updating" prompt with helper
+  text, and always stores `currentValue: null`. Every other structured field with no data now
+  reads "Not currently documented" instead of the internal `formatCriterion` sentinel or an
+  underwriting-notes fallback.
+- **Security**: the source workbook was never committed, copied into the repo, or referenced by
+  filename in any public-facing string (internal code comments/`sourceName` values are generic,
+  e.g. "Internal Market Intelligence List"). No passwords, portal credentials, producer/access
+  codes, personal names, phone numbers, or contact emails from the source were imported anywhere —
+  verified by a full-repo grep for the specific credential/domain/contact strings before commit.
+- Verified: `tsc -b` / `oxlint` / `vite build` clean. Browser-tested Market Finder (26 records:
+  16 verified + 10 new, all render, distribution/needs-confirmation UI correct), an existing
+  reconciled record (Prime Insurance — Available Through, Major Exclusions, no VERIFIED criteria
+  altered), and the Request Appetite Update form's new label + Other-field behavior.
+
 ## NEXT
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)
-- Broker-submitted appetite updates
+- A later reconciliation pass for the ambiguous entities held back above (Lloyds, Evolum, RPS Fleet
+  Trucking, Paramount, the IAT/Occidental/Harco merge question, Star RRG/Starr RRG, XL Catlin/XL
+  Group, Berkshire Hateway/BHHC)
 - A second real carrier/MGA application template, proving the Submission Assistant template
   architecture's reusability the same way the two prior demo templates once did
 

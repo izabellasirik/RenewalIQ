@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus } from 'lucide-react';
+import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus, Link2 } from 'lucide-react';
 import type { AppetiteCriterion, AppetiteRecord, MatchReason, MatchResult, ReasonGroup, RuleType } from '../../types';
+import { SOURCE_TYPE_LABELS } from '../../types';
 import { Drawer, VerdictBadge, Badge, Button } from '../ui';
 import { AvailableThroughTag } from './AvailableThroughTag';
 import { FreshnessWarning } from './FreshnessWarning';
 import { RequestAppetiteUpdateForm } from './RequestAppetiteUpdateForm';
 import { formatDate } from '../../utils/dates';
 import { formatStates, formatFleetSize, formatCriterion } from '../../utils/appetiteFormatters';
+import { getDistributionSummary } from '../../services/appetite/distribution';
 import { cn } from '../../utils/cn';
 
 const RULE_TYPE_LABELS: Record<RuleType, string> = {
@@ -56,19 +58,27 @@ function criterionForReason(record: AppetiteRecord, label: string): AppetiteCrit
   }
 }
 
+/** VERIFIED gets the full sourced display; PARTIALLY_VERIFIED/NEEDS_CONFIRMATION still show their (unverified) provenance rather than nothing; pure UNKNOWN has no source to show at all. */
+function criterionTier(status: AppetiteCriterion<unknown>['verificationStatus']): 'verified' | 'needs_confirmation' | 'unknown' {
+  if (status === 'VERIFIED') return 'verified';
+  if (status === 'PARTIALLY_VERIFIED' || status === 'NEEDS_CONFIRMATION') return 'needs_confirmation';
+  return 'unknown';
+}
+
 function SourcePanel({ criterion }: { criterion: AppetiteCriterion<unknown> }) {
-  const isUsable = criterion.verificationStatus === 'VERIFIED' || criterion.verificationStatus === 'PARTIALLY_VERIFIED';
-  if (!isUsable) {
-    return <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">Renewal IQ has no verified source for this criterion.</p>;
+  const tier = criterionTier(criterion.verificationStatus);
+  if (tier === 'unknown') {
+    return <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">Renewal IQ has no source at all for this criterion.</p>;
   }
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-[var(--color-ink-500)]">
-      <Badge tone="neutral" className="px-1.5 py-0.5 text-[10px]">
-        {RULE_TYPE_LABELS[criterion.ruleType]}
+      <Badge tone={tier === 'verified' ? 'neutral' : 'warning'} className="px-1.5 py-0.5 text-[10px]">
+        {tier === 'verified' ? RULE_TYPE_LABELS[criterion.ruleType] : 'Needs Confirmation'}
       </Badge>
       {criterion.source.sourceName && <span>{criterion.source.sourceName}</span>}
-      {criterion.source.sourceType && criterion.source.sourceType !== 'UNKNOWN' && <span>· {criterion.source.sourceType}</span>}
+      {criterion.source.sourceType && criterion.source.sourceType !== 'UNKNOWN' && <span>· {SOURCE_TYPE_LABELS[criterion.source.sourceType]}</span>}
       {criterion.source.verifiedAt && <span>· Verified {formatDate(criterion.source.verifiedAt)}</span>}
+      {tier === 'needs_confirmation' && <span className="italic">· not independently verified</span>}
       {criterion.source.sourceUrl && (
         <a
           href={criterion.source.sourceUrl}
@@ -147,22 +157,28 @@ function buildCriterionRows(record: AppetiteRecord): CriterionRow[] {
 }
 
 function CriterionCard({ row }: { row: CriterionRow }) {
-  const isUsable = row.criterion.verificationStatus === 'VERIFIED' || row.criterion.verificationStatus === 'PARTIALLY_VERIFIED';
+  const tier = criterionTier(row.criterion.verificationStatus);
+  const isVerified = tier === 'verified';
+  const hasSource = tier !== 'unknown';
   return (
-    <div className={`rounded-lg border p-3 ${isUsable ? 'border-[var(--color-ink-100)] bg-white' : 'border-dashed border-[var(--color-ink-200)] bg-[var(--color-ink-50)]'}`}>
+    <div className={`rounded-lg border p-3 ${isVerified ? 'border-[var(--color-ink-100)] bg-white' : 'border-dashed border-[var(--color-ink-200)] bg-[var(--color-ink-50)]'}`}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          {isUsable ? <CircleCheck size={13} className="text-[var(--color-success-600)]" /> : <CircleHelp size={13} className="text-[var(--color-ink-400)]" />}
+          {isVerified ? <CircleCheck size={13} className="text-[var(--color-success-600)]" /> : <CircleHelp size={13} className={tier === 'needs_confirmation' ? 'text-[var(--color-warning-600)]' : 'text-[var(--color-ink-400)]'} />}
           <p className="text-xs font-medium text-[var(--color-ink-500)]">{row.label}</p>
         </div>
-        {isUsable && <span className="shrink-0 rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-500)]">{RULE_TYPE_LABELS[row.criterion.ruleType]}</span>}
+        {isVerified && <span className="shrink-0 rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-500)]">{RULE_TYPE_LABELS[row.criterion.ruleType]}</span>}
+        {tier === 'needs_confirmation' && (
+          <span className="shrink-0 rounded-full bg-[var(--color-warning-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-warning-600)]">Needs Confirmation</span>
+        )}
       </div>
-      <p className={`mt-1 text-sm ${isUsable ? 'font-medium text-[var(--color-ink-900)]' : 'italic text-[var(--color-ink-400)]'}`}>{row.display}</p>
+      <p className={`mt-1 text-sm ${hasSource ? 'font-medium text-[var(--color-ink-900)]' : 'italic text-[var(--color-ink-400)]'}`}>{row.display}</p>
       {row.criterion.notes && <p className="mt-1 text-xs text-[var(--color-ink-500)]">{row.criterion.notes}</p>}
-      {isUsable ? (
+      {hasSource ? (
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--color-ink-400)]">
           {row.criterion.source.sourceName && <span>{row.criterion.source.sourceName}</span>}
           {row.criterion.source.verifiedAt && <span>· Verified {formatDate(row.criterion.source.verifiedAt)}</span>}
+          {tier === 'needs_confirmation' && <span className="italic">· not independently verified</span>}
           {row.criterion.source.sourceUrl && (
             <a
               href={row.criterion.source.sourceUrl}
@@ -176,8 +192,37 @@ function CriterionCard({ row }: { row: CriterionRow }) {
           )}
         </div>
       ) : (
-        <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">Renewal IQ has no verified source for this criterion.</p>
+        <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">Renewal IQ has no source at all for this criterion.</p>
       )}
+    </div>
+  );
+}
+
+function AvailableThroughSection({ record }: { record: AppetiteRecord }) {
+  const partners = getDistributionSummary(record);
+  if (partners.length === 0) return null;
+  return (
+    <div>
+      <h4 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-[var(--color-ink-900)]">
+        <Link2 size={14} className="text-[var(--color-info-600)]" />
+        Available Through
+      </h4>
+      <p className="mb-2 text-xs text-[var(--color-ink-400)]">
+        From an internal market-intelligence list, not independently verified. These are distribution/binding paths — not risk-bearing carriers themselves.
+      </p>
+      <ul className="flex flex-col gap-1.5">
+        {partners.map((p) => (
+          <li key={p.partnerId} className="rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-medium text-[var(--color-ink-800)]">{p.name}</span>
+              {p.coveragesOffered && p.coveragesOffered.length > 0 && (
+                <span className="text-xs text-[var(--color-ink-500)]">{p.coveragesOffered.join(', ')}</span>
+              )}
+            </div>
+            {p.notes && <p className="mt-1 text-xs text-[var(--color-ink-400)]">{p.notes}</p>}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -236,10 +281,12 @@ export function MarketDetailDrawer({
             <NotebookPen size={16} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />
             <div>
               <p className="text-sm font-semibold text-[var(--color-ink-900)]">Underwriting Notes</p>
-              <p className="mt-1 text-sm text-[var(--color-ink-600)]">{record.underwritingNotes}</p>
+              <p className="mt-1 whitespace-pre-line text-sm text-[var(--color-ink-600)]">{record.underwritingNotes}</p>
             </div>
           </div>
         )}
+
+        <AvailableThroughSection record={record} />
 
         <div>
           <h4 className="mb-2 text-sm font-semibold text-[var(--color-ink-900)]">Why this match?</h4>

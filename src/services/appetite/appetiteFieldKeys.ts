@@ -1,5 +1,9 @@
 import type { AppetiteFieldKey, AppetiteOverride, AppetiteRecord, VerificationStatus } from '../../types';
-import { formatStates, formatFleetSize, formatCriterion } from '../../utils/appetiteFormatters';
+import { formatStates, formatFleetSize } from '../../utils/appetiteFormatters';
+import { getDistributionPartnerNamesByRecordId } from './distribution';
+
+/** The shared "we have nothing structured to show" sentinel for the request form — never a fallback onto underwritingNotes/research notes/matching rationale, which aren't a "current value" for any specific field. */
+const NOT_DOCUMENTED = 'Not currently documented';
 
 /**
  * The single source of truth for which broker-facing update category maps to which structured
@@ -21,37 +25,54 @@ const FIELD_KEY_TO_CRITERION: Partial<Record<AppetiteFieldKey, keyof AppetiteRec
   driver_requirements: 'minDriverAge',
 };
 
-/** Human-readable current value for a field category, shown on the request form and snapshotted into the request's currentValue column. */
+/** Formats a structured criterion for display, collapsing every "nothing on file" case to one sentinel rather than showing raw formatter text like "Not verified". */
+function displayCriterion<T>(criterion: { value: T | null }, formatter: (v: T) => string): string {
+  return criterion.value === null ? NOT_DOCUMENTED : formatter(criterion.value);
+}
+
+/**
+ * Human-readable current value for a field category, shown on the request form and snapshotted
+ * into the request's currentValue column. Never falls back to underwritingNotes, research notes,
+ * matching rationale, or verification explanations — those describe the market generally, not the
+ * specific field being requested, and presenting them as a "current value" would be misleading.
+ * Categories with no dedicated structured field ('vehicle_requirements', 'submission_requirements')
+ * read as not-documented instead. 'other' is handled entirely in the UI (no Current Value shown at
+ * all) — this case exists only so getCurrentValueDisplay stays total over AppetiteFieldKey.
+ */
 export function getCurrentValueDisplay(record: AppetiteRecord, fieldKey: AppetiteFieldKey): string {
   switch (fieldKey) {
     case 'states':
-      return formatStates(record);
+      return record.states.value === null ? NOT_DOCUMENTED : formatStates(record);
     case 'fleet_size':
-      return formatFleetSize(record);
+      return record.fleetSize.value === null ? NOT_DOCUMENTED : formatFleetSize(record);
     case 'years_in_business':
-      return formatCriterion(record.yearsInBusinessMin, (v) => `${v}+ years`);
+      return displayCriterion(record.yearsInBusinessMin, (v) => `${v}+ years`);
     case 'cdl_experience':
-      return formatCriterion(record.minDriverExperienceYears, (v) => `${v} years`);
+      return displayCriterion(record.minDriverExperienceYears, (v) => `${v} years`);
     case 'operation':
-      return formatCriterion(record.operationTypes, (v) => v.join(', '));
+      return displayCriterion(record.operationTypes, (v) => v.join(', '));
     case 'coverage':
-      return formatCriterion(record.linesOffered, (v) => v.join(', '));
+      return displayCriterion(record.linesOffered, (v) => v.join(', '));
     case 'new_ventures':
-      return formatCriterion(record.yearsInBusinessMax, (v) => `under ${v} years`);
+      return displayCriterion(record.yearsInBusinessMax, (v) => `under ${v} years`);
     case 'telematics':
-      return formatCriterion(record.telematicsRequired, (v) => (v ? 'Required' : 'Not required'));
+      return displayCriterion(record.telematicsRequired, (v) => (v ? 'Required' : 'Not required'));
     case 'dashcams':
-      return formatCriterion(record.dashcamRequired, (v) => (v ? 'Required' : 'Not required'));
+      return displayCriterion(record.dashcamRequired, (v) => (v ? 'Required' : 'Not required'));
     case 'driver_requirements':
-      return formatCriterion(record.minDriverAge, (v) => `Min. age ${v}`);
-    case 'distribution_mga':
-      return record.marketType === 'mga' ? record.availableThrough ?? 'MGA — carrier not specified' : 'Direct';
+      return displayCriterion(record.minDriverAge, (v) => `Min. age ${v}`);
+    case 'distribution_mga': {
+      if (record.marketType !== 'mga') return 'Direct';
+      const partnerNames = getDistributionPartnerNamesByRecordId(record.id);
+      if (partnerNames.length > 0) return partnerNames.join(', ');
+      return record.availableThrough ?? NOT_DOCUMENTED;
+    }
     case 'vehicle_requirements':
     case 'submission_requirements':
     case 'other':
-      return record.underwritingNotes || 'Not tracked as a structured field — see underwriting notes.';
+      return NOT_DOCUMENTED;
     default:
-      return 'Not tracked as a structured field.';
+      return NOT_DOCUMENTED;
   }
 }
 

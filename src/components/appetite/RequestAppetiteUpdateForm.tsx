@@ -24,6 +24,7 @@ export function RequestAppetiteUpdateForm({ record, onClose }: { record: Appetit
   const [submitterEmail, setSubmitterEmail] = useState('');
   const [submitState, setSubmitState] = useState<SubmitState>({ status: 'idle' });
 
+  const isOther = fieldKey === 'other';
   const canSubmit = fieldKey && proposedValue.trim() && submitterName.trim() && submitterEmail.trim() && submitState.status !== 'submitting';
 
   async function handleSubmit() {
@@ -77,7 +78,7 @@ export function RequestAppetiteUpdateForm({ record, onClose }: { record: Appetit
 
       <div>
         <label className={labelClass} htmlFor="appetite-update-field">
-          Field being updated
+          What information needs updating?
         </label>
         <select id="appetite-update-field" value={fieldKey} onChange={(e) => setFieldKey(e.target.value as AppetiteFieldKey)} className={inputClass}>
           {FIELD_KEYS.map((key) => (
@@ -88,16 +89,30 @@ export function RequestAppetiteUpdateForm({ record, onClose }: { record: Appetit
         </select>
       </div>
 
-      <div>
-        <p className={labelClass}>Current value</p>
-        <p className="rounded-lg border border-dashed border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-600)]">{getCurrentValueDisplay(record, fieldKey)}</p>
-      </div>
+      {!isOther && (
+        <div>
+          <p className={labelClass}>Current value</p>
+          <p className="rounded-lg border border-dashed border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-600)]">{getCurrentValueDisplay(record, fieldKey)}</p>
+        </div>
+      )}
 
       <div>
         <label className={labelClass} htmlFor="appetite-update-proposed">
-          Suggested new value <span className="text-[var(--color-danger-600)]">*</span>
+          {isOther ? 'Tell us what needs updating' : 'Suggested new value'} <span className="text-[var(--color-danger-600)]">*</span>
         </label>
-        <input id="appetite-update-proposed" value={proposedValue} onChange={(e) => setProposedValue(e.target.value)} placeholder="What should this be instead?" className={inputClass} />
+        {isOther && <p className="mb-1.5 text-xs font-normal normal-case text-[var(--color-ink-400)]">Describe the appetite information that appears outdated, incorrect, or missing.</p>}
+        {isOther ? (
+          <textarea
+            id="appetite-update-proposed"
+            value={proposedValue}
+            onChange={(e) => setProposedValue(e.target.value)}
+            rows={3}
+            placeholder="What needs updating?"
+            className={inputClass}
+          />
+        ) : (
+          <input id="appetite-update-proposed" value={proposedValue} onChange={(e) => setProposedValue(e.target.value)} placeholder="What should this be instead?" className={inputClass} />
+        )}
       </div>
 
       <div>

@@ -2,6 +2,7 @@ import { CircleCheck, CircleHelp, ChevronRight, Clock, NotebookPen, CircleX, Shi
 import type { MatchReason, MatchResult } from '../../types';
 import { Card, CardBody, Badge, VerdictBadge } from '../ui';
 import { AvailableThroughTag } from './AvailableThroughTag';
+import { getDistributionPartnerNamesByRecordId } from '../../services/appetite/distribution';
 
 const MAX_LISTED = 3;
 
@@ -16,6 +17,7 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
   const matched = result.reasons.filter((r) => r.status === 'pass').slice(0, MAX_LISTED);
   const needsVerification = result.reasons.filter((r): r is MatchReason => r.status === 'warning' && !!r.isDataGap).slice(0, MAX_LISTED);
   const VIcon = verdictIcon(result.verdict);
+  const partnerNames = result.availableThrough ? [] : getDistributionPartnerNamesByRecordId(result.appetiteRecordId);
 
   return (
     <Card className="group flex cursor-pointer flex-col transition-shadow hover:[box-shadow:var(--shadow-card-hover)]" onClick={onClick}>
@@ -34,6 +36,11 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
         {result.availableThrough && (
           <div className="mt-2.5">
             <AvailableThroughTag carrierName={result.availableThrough} />
+          </div>
+        )}
+        {partnerNames.length > 0 && (
+          <div className="mt-2.5">
+            <AvailableThroughTag carrierName={partnerNames.length > 1 ? `${partnerNames[0]} +${partnerNames.length - 1} more` : partnerNames[0]} />
           </div>
         )}
 
