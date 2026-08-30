@@ -130,6 +130,86 @@ export const carrierMarketRelationships: CarrierMarketRelationship[] = [
   // Third Coast (new)
   // ---------------------------------------------------------------------------------------
   rel('rel_thirdcoast_maximum', { appetiteRecordId: 'appetite_third_coast' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'], notes: 'Also referenced in the source as "Third Coast (Fundamental Underwriters)."' }),
+
+  // =========================================================================================
+  // Phase 2 — remaining workbook data (see PRODUCT_ROADMAP.md)
+  // =========================================================================================
+
+  rel('rel_starrrg_maximum', { appetiteRecordId: 'appetite_star_rrg' }, 'dist_maximum', { relationshipType: 'direct_appointment', coveragesOffered: ['Auto Liability'] }),
+  rel('rel_starrrg_primeagency', { appetiteRecordId: 'appetite_star_rrg' }, 'dist_prime_agency', { coveragesOffered: ['Auto Liability'] }),
+
+  rel('rel_mtm_maximum', { appetiteRecordId: 'appetite_mtm' }, 'dist_maximum', {}),
+  rel('rel_mtm_primeagency', { appetiteRecordId: 'appetite_mtm' }, 'dist_prime_agency', { notes: 'Source labels this path "MTM NON direct," described as an exclusive New York program.' }),
+
+  rel('rel_universalcasualtyrrg_maximum', { appetiteRecordId: 'appetite_universal_casualty_rrg' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'] }),
+
+  rel('rel_southlake_futuristic', { appetiteRecordId: 'appetite_southlake' }, 'dist_futuristic_underwriters', { coveragesOffered: ['Auto Liability', 'Auto Physical Damage'] }),
+
+  rel('rel_paramountdb_iscmga', { appetiteRecordId: 'appetite_paramount_db' }, 'dist_isc_mga', { coveragesOffered: ['Auto Liability'] }),
+
+  rel('rel_spinnaker_maximum', { appetiteRecordId: 'appetite_spinnaker_specialty' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'] }),
+  rel('rel_safepoint_maximum', { appetiteRecordId: 'appetite_safepoint' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'] }),
+  rel('rel_acewestchester_maximum', { appetiteRecordId: 'appetite_ace_westchester' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'] }),
+
+  rel('rel_aig_maximum', { appetiteRecordId: 'appetite_aig' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+  rel('rel_aig_crc', { appetiteRecordId: 'appetite_aig' }, 'dist_crc', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+  rel('rel_aig_rps', { appetiteRecordId: 'appetite_aig' }, 'dist_rps', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+
+  rel('rel_geminiexpress_brs', { appetiteRecordId: 'appetite_gemini_express' }, 'dist_brs', {}),
+
+  rel('rel_xlcatlin_maximum', { appetiteRecordId: 'appetite_xl_catlin' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'] }),
+  rel('rel_xlgroup_rps', { appetiteRecordId: 'appetite_xl_group' }, 'dist_rps', { coveragesOffered: ['Auto Liability'] }),
+
+  rel('rel_arch_maximum', { appetiteRecordId: 'appetite_arch' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+  rel('rel_arch_neee', { appetiteRecordId: 'appetite_arch' }, 'dist_neee', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+  rel('rel_arch_rps', { appetiteRecordId: 'appetite_arch' }, 'dist_rps', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+  rel('rel_arch_primeagency', { appetiteRecordId: 'appetite_arch' }, 'dist_prime_agency', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+
+  rel('rel_aife_maximum', { appetiteRecordId: 'appetite_aife' }, 'dist_maximum', { coveragesOffered: ['Auto Liability', 'Auto Physical Damage'] }),
+  rel('rel_munich_maximum', { appetiteRecordId: 'appetite_munich' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'] }),
+  rel('rel_libertymutual_maximum', { appetiteRecordId: 'appetite_liberty_mutual' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'] }),
+  rel('rel_interlineinsurance_maximum', { appetiteRecordId: 'appetite_interline_insurance' }, 'dist_maximum', {}),
+  rel('rel_suyrarrg_maximum', { appetiteRecordId: 'appetite_suyra_rrg' }, 'dist_maximum', {}),
+
+  rel('rel_nationalgeneralincline_brs', { appetiteRecordId: 'appetite_national_general_incline' }, 'dist_brs', {}),
+
+  rel('rel_freberg_crc', { appetiteRecordId: 'appetite_freberg' }, 'dist_crc', { coveragesOffered: ['Auto Liability'] }),
+  rel('rel_freberg_neee', { appetiteRecordId: 'appetite_freberg' }, 'dist_neee', { coveragesOffered: ['Auto Liability'] }),
+
+  rel('rel_starwind_crc', { appetiteRecordId: 'appetite_starwind' }, 'dist_crc', { coveragesOffered: ['Auto Liability'] }),
+  rel('rel_berkshirehathaway_crc', { appetiteRecordId: 'appetite_berkshire_hathaway' }, 'dist_crc', { coveragesOffered: ['Auto Liability'] }),
+
+  rel('rel_knightinsurance_crc', { appetiteRecordId: 'appetite_knight_insurance' }, 'dist_crc', { coveragesOffered: ['Auto Liability'] }),
+  rel('rel_knightinsurance_primeagency', { appetiteRecordId: 'appetite_knight_insurance' }, 'dist_prime_agency', { coveragesOffered: ['Auto Liability'] }),
+
+  rel('rel_alliedrivington_rps', { appetiteRecordId: 'appetite_allied_rivington' }, 'dist_rps', { coveragesOffered: ['Auto Liability', 'Auto Physical Damage'] }),
+  rel('rel_amcom_rps', { appetiteRecordId: 'appetite_amcom' }, 'dist_rps', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+
+  rel('rel_dualtransportation_rps', { appetiteRecordId: 'appetite_dual_transportation' }, 'dist_rps', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+  rel('rel_dualtransportation_maximum', { appetiteRecordId: 'appetite_dual_transportation' }, 'dist_maximum', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+
+  rel('rel_leeo_rps', { appetiteRecordId: 'appetite_leeo' }, 'dist_rps', { coveragesOffered: ['Auto Liability', 'Auto Physical Damage'] }),
+
+  rel('rel_navigatorhartford_usr', { appetiteRecordId: 'appetite_navigator_hartford' }, 'dist_usr', { coveragesOffered: ['Auto Liability', 'Auto Physical Damage'] }),
+  rel('rel_navigatorhartford_rps', { appetiteRecordId: 'appetite_navigator_hartford' }, 'dist_rps', { coveragesOffered: ['Auto Liability', 'Auto Physical Damage'] }),
+
+  rel('rel_iatoccidentalharco_rps', { appetiteRecordId: 'appetite_iat_occidental_harco' }, 'dist_rps', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+  rel('rel_iatoccidentalharco_amwins', { appetiteRecordId: 'appetite_iat_occidental_harco' }, 'dist_amwins', { coveragesOffered: ['Auto Liability'], notes: PACKAGE_NOTE }),
+
+  rel('rel_texasinsuranceco_primeagency', { appetiteRecordId: 'appetite_texas_insurance_company' }, 'dist_prime_agency', { coveragesOffered: ['Auto Liability', 'Auto Physical Damage', 'Motor Truck Cargo', 'General Liability'] }),
+  rel('rel_texasinsuranceco_cluett', { appetiteRecordId: 'appetite_texas_insurance_company' }, 'dist_cluett', { notes: 'Cluett path notes Florida risks should instead go through MTM\'s direct facility.' }),
+
+  rel('rel_adriatic_jmi', { appetiteRecordId: 'appetite_adriatic' }, 'dist_jmi', {}),
+  rel('rel_adriatic_bassunderwriters', { appetiteRecordId: 'appetite_adriatic' }, 'dist_bass_underwriters', {}),
+  rel('rel_adriatic_morstan', { appetiteRecordId: 'appetite_adriatic' }, 'dist_morstan', {}),
+
+  rel('rel_highlanderspecialty_trinity', { appetiteRecordId: 'appetite_highlander_specialty' }, 'dist_trinity_underwriters', { coveragesOffered: ['Auto Physical Damage'] }),
+  rel('rel_fortegra_trinity', { appetiteRecordId: 'appetite_fortegra' }, 'dist_trinity_underwriters', {}),
+  rel('rel_trisuraspecialty_primeagency', { appetiteRecordId: 'appetite_trisura_specialty' }, 'dist_prime_agency', { notes: PACKAGE_NOTE }),
+
+  rel('rel_greatlakes_rps', { appetiteRecordId: 'appetite_great_lakes' }, 'dist_rps', { coveragesOffered: ['Auto Physical Damage'] }),
+  rel('rel_greatlakes_maximum', { appetiteRecordId: 'appetite_great_lakes' }, 'dist_maximum', { coveragesOffered: ['Auto Physical Damage'] }),
+  rel('rel_greatlakes_trinity', { appetiteRecordId: 'appetite_great_lakes' }, 'dist_trinity_underwriters', { coveragesOffered: ['Auto Physical Damage'] }),
 ];
 
 /** All relationships for a given AppetiteRecord id. */

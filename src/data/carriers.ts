@@ -1,6 +1,7 @@
 import type { AppetiteRecord, CriterionSource } from '../types';
 import { source, verifiedCriterion as v, unknownCriterion as u, needsConfirmationCriterion as nc } from './appetiteCriteriaHelpers';
 import { newMarketAppetiteRecords } from './newMarketCandidates';
+import { newMarketAppetiteRecordsPhase2 } from './newMarketCandidatesPhase2';
 
 /**
  * Internal-market-list provenance for the Phase 2 additive reconciliation below (Cover Whale,
@@ -542,9 +543,10 @@ const verifiedAppetiteRecords: AppetiteRecord[] = [
 ];
 
 /**
- * Full appetite dataset: the verified base batch plus the Phase 3 new-market candidates from the
- * internal market-intelligence list (see ./newMarketCandidates.ts and PRODUCT_ROADMAP.md). New
- * candidates are intentionally kept in a separate module rather than interleaved above, so the
- * verified batch's diff stays untouched and every workbook-derived addition is reviewable on its own.
+ * Full appetite dataset: the verified base batch, plus the first new-market batch
+ * (./newMarketCandidates.ts), plus the broader "remaining workbook data" batch
+ * (./newMarketCandidatesPhase2.ts) — see PRODUCT_ROADMAP.md. Each workbook-derived batch is kept
+ * in its own module rather than interleaved above, so the verified batch's diff stays untouched
+ * and every addition is reviewable on its own.
  */
-export const sampleAppetiteRecords: AppetiteRecord[] = [...verifiedAppetiteRecords, ...newMarketAppetiteRecords];
+export const sampleAppetiteRecords: AppetiteRecord[] = [...verifiedAppetiteRecords, ...newMarketAppetiteRecords, ...newMarketAppetiteRecordsPhase2];

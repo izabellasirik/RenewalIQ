@@ -11,11 +11,13 @@ import { source, needsConfirmationCriterion as nc, partiallyVerifiedCriterion as
  * criterion here, so nothing from an unverified internal list can ever produce a hard decline —
  * see rules.ts (`isUsable`/HARD_RULE gating) and PARTIALLY_VERIFIED's role in it.
  *
- * Explicitly NOT included in this batch (held for a later reconciliation pass — see the
- * reconciliation report): Lloyds, Evolum, RPS Fleet Trucking, the ambiguous "Paramount" MGA/carrier
- * entry, "IAT / Occidental / Harco" as a merged identity (IAT itself IS included below, without
- * that merge), "Star RRG"/"Starr RRG" as a merged identity, "XL Catlin"/"XL Group" as a merged
- * identity, "Berkshire Hateway"/BHHC assumptions, and the "Navigator – Hartford Admitted" entity.
+ * Explicitly NOT included in this batch (held at the time this file was written — see
+ * ./newMarketCandidatesPhase2.ts and PRODUCT_ROADMAP.md for how most of these were later resolved
+ * or, for the ones still unsafe to import, why they remain held): Lloyds, Evolum, RPS Fleet
+ * Trucking, the ambiguous "Paramount" MGA/carrier entry, "IAT / Occidental / Harco" as a merged
+ * identity (IAT itself IS included below, without that merge), "Star RRG"/"Starr RRG" as a merged
+ * identity, "XL Catlin"/"XL Group" as a merged identity, "Berkshire Hateway"/BHHC assumptions, and
+ * the "Navigator – Hartford Admitted" entity.
  */
 
 function workbookSource(): CriterionSource {
