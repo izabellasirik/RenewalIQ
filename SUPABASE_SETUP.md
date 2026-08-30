@@ -72,6 +72,23 @@ account happens directly in the Supabase dashboard, never through a public form:
 To add a second admin later, repeat the same three steps for that person — there's no in-app "add
 admin" button by design, so this stays entirely under your control in the Supabase dashboard.
 
+## 6. Enable "Forgot password?" (optional, one-time dashboard step)
+
+The admin sign-in page has a "Forgot password?" link. Sending the reset email works with zero
+extra setup, but **completing** the reset (clicking the emailed link and landing back on a "set a
+new password" form) requires the redirect URL to be allow-listed, or Supabase will reject it:
+
+1. Supabase dashboard → **Authentication → URL Configuration**.
+2. Under **Redirect URLs**, add every URL admins might sign in from, each ending in
+   `/admin/appetite-updates` — e.g. `https://your-production-domain.com/admin/appetite-updates`
+   and, for local development, `http://localhost:5173/admin/appetite-updates`.
+
+If this step is skipped, the "send reset email" step still works and shows its normal
+confirmation (never revealing whether the address has an account), but the link in that email
+will fail with a redirect error instead of opening the "set a new password" form. This is a
+dashboard setting only — no code change is needed once it's configured, and there is no workaround
+in the app that bypasses it (nor should there be).
+
 ## What is and isn't covered
 
 - **Covered**: broker submission (anonymous, insert-only) → `appetite_update_requests`; admin
@@ -79,6 +96,7 @@ admin" button by design, so this stays entirely under your control in the Supaba
   `review_appetite_update_request()` (not just hiding the route); approve/reject/needs-info →
   `appetite_update_history` (durable, admin-only, nothing ever deleted) + on approval only,
   `appetite_overrides` (the live-appetite override the public app actually reads at runtime,
-  publicly readable but writable by admins only) — all three writes happen in one transaction.
+  publicly readable but writable by admins only) — all three writes happen in one transaction;
+  sign-out and "forgot password" (see §6 above for the one-time redirect-URL setup it needs).
 - **Not covered**: email notifications (design leaves room to add a server-side function later; no
   email is sent today) and the market/MGA workbook import (a separate, later pass).

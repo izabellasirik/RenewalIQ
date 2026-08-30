@@ -16,6 +16,31 @@ export async function signOutAdmin(): Promise<void> {
 }
 
 /**
+ * Sends a password-reset email via Supabase Auth. Deliberately reports the same generic success
+ * message whether or not the address belongs to an account — Supabase itself doesn't error for an
+ * unknown email either, so this avoids turning "forgot password" into an account-existence oracle.
+ * The redirect target is this same admin page; Supabase appends recovery tokens to the URL, and
+ * useAdminSession picks up the resulting PASSWORD_RECOVERY auth event. The redirect URL must be
+ * allow-listed in the Supabase dashboard (Authentication → URL Configuration) — see SUPABASE_SETUP.md.
+ */
+export async function requestPasswordReset(email: string): Promise<SignInResult> {
+  if (!supabase) return { ok: false, message: 'Supabase is not configured in this environment. See SUPABASE_SETUP.md.' };
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/admin/appetite-updates`,
+  });
+  if (error) return { ok: false, message: error.message };
+  return { ok: true };
+}
+
+/** Completes a password reset — only valid while a PASSWORD_RECOVERY session is active (i.e. the user arrived via the emailed link). */
+export async function updateAdminPassword(newPassword: string): Promise<SignInResult> {
+  if (!supabase) return { ok: false, message: 'Supabase is not configured in this environment. See SUPABASE_SETUP.md.' };
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) return { ok: false, message: error.message };
+  return { ok: true };
+}
+
+/**
  * Calls the is_admin() database function (see supabase/migrations) rather than checking any
  * client-held flag — RLS/the database is the actual authority on who is an admin, this just asks
  * it. Returns false (never throws) if Supabase isn't configured or the call fails, so the caller

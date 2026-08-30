@@ -229,6 +229,30 @@ Success criteria:
   were exercised live. `tsc -b` / `oxlint` / `vite build` clean; no console errors; Market Finder and
   Carrier Appetite unaffected.
 
+## DONE (Admin auth UX: clearer sign-out/account-switching, forgot password)
+- `/admin/appetite-updates` already correctly gated fetch on `status === 'admin'` and showed a
+  signed-in-admin banner + sign-out button; the real gap was UX clarity and a missing password-reset
+  path, not the underlying security model (unchanged).
+- Sign-out now shows a transient "You've been signed out. Sign in with the same or a different admin
+  account below." notice on the login form, so the sign-out → sign-in-as-someone-else flow (this
+  app's entire "switch account" story, per product decision — no fake multi-account switcher) has a
+  visible confirmation instead of silently reverting to a blank form.
+- Non-admin copy corrected to the exact requested text ("You are signed in, but this account does
+  not have admin access.") with the signed-in email shown separately underneath.
+- Added "Forgot password?" → `requestPasswordReset()` (always the same generic confirmation,
+  regardless of whether the address has an account — avoids turning it into an existence oracle) →
+  emailed link returns via a new `password_recovery` session status (from Supabase's
+  `PASSWORD_RECOVERY` auth event) → `ResetPasswordForm` calls `updateAdminPassword()`. Neither new
+  function needs or uses the service-role key. Completing a reset requires one dashboard step
+  (redirect URL allow-listing) — documented in `SUPABASE_SETUP.md` §6 rather than worked around.
+- No RLS/migration changes — this pass is UI/client-auth-flow only.
+- Verified: `tsc -b` / `oxlint` / `vite build` clean. Browser-tested the signed-out form, the
+  forgot-password toggle (open/back), and a rejected sign-in attempt (clear error, form stays
+  usable) against the real connected Supabase project. Full sign-in → admin banner → sign-out →
+  re-sign-in cycle, and the non-admin/unauthorized state, could not be exercised live — no admin
+  password is available in this session, and this sandbox's network policy blocks reaching Supabase
+  anyway (same limitation as prior passes). Worth confirming these manually.
+
 ## NEXT
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)
 - Broker-submitted appetite updates

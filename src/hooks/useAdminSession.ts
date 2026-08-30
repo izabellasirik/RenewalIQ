@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../services/supabase/client';
 import { checkIsAdmin } from '../services/supabase/adminAuth';
 
-export type AdminSessionStatus = 'loading' | 'not_configured' | 'signed_out' | 'unauthorized' | 'admin';
+export type AdminSessionStatus = 'loading' | 'not_configured' | 'signed_out' | 'unauthorized' | 'admin' | 'password_recovery';
 
 export interface AdminSession {
   status: AdminSessionStatus;
@@ -39,7 +39,17 @@ export function useAdminSession(): AdminSession {
 
     supabase.auth.getSession().then(({ data }) => evaluate(data.session?.user.email ?? null));
 
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+      // Arriving via the "forgot password" email link: Supabase establishes a temporary recovery
+      // session and fires this event before any normal sign-in happened. Show the "set a new
+      // password" form instead of treating it as a regular admin (or non-admin) session.
+      if (event === 'PASSWORD_RECOVERY') {
+        if (!cancelled) {
+          setEmail(session?.user.email ?? null);
+          setStatus('password_recovery');
+        }
+        return;
+      }
       evaluate(session?.user.email ?? null);
     });
 
