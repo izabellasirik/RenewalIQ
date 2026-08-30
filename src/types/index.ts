@@ -10,6 +10,8 @@ export * from './derivedInsights';
 export * from './document';
 export * from './extraction';
 export * from './appetite';
+export * from './appetiteUpdate';
+export * from './organization';
 export * from './application';
 export * from './account';
 export * from './activity';

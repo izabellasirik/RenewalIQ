@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Compass, Search, Info, RotateCcw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
-import { sampleAppetiteRecords } from '../data/carriers';
+import { useAccountsStore } from '../state/useAccountsStore';
 import { matchAllMarkets, VERDICT_RANK } from '../services/appetite/matchingEngine';
 import {
   buildProfileFromFilters,
@@ -17,7 +17,7 @@ import {
   type TriState,
 } from '../services/appetite/marketFinderInput';
 import { US_STATES, parseStateList } from '../utils/usStates';
-import type { MatchResult, Verdict } from '../types';
+import type { AppetiteRecord, MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
 import { cn } from '../utils/cn';
 
@@ -157,12 +157,12 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   );
 }
 
-function NeutralMarketList() {
+function NeutralMarketList({ records }: { records: AppetiteRecord[] }) {
   return (
     <div>
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">All Markets ({sampleAppetiteRecords.length})</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">All Markets ({records.length})</p>
       <div className="divide-y divide-[var(--color-ink-100)] overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-white">
-        {sampleAppetiteRecords.map((r) => (
+        {records.map((r) => (
           <div key={r.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{r.marketName}</p>
@@ -177,6 +177,12 @@ function NeutralMarketList() {
 }
 
 export function MarketFinderPage() {
+  const effectiveAppetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
+  const loadEffectiveAppetiteRecords = useAccountsStore((s) => s.loadEffectiveAppetiteRecords);
+  useEffect(() => {
+    loadEffectiveAppetiteRecords();
+  }, [loadEffectiveAppetiteRecords]);
+
   const [filters, setFilters] = useState<MarketFinderFilters>(EMPTY_MARKET_FINDER_FILTERS);
   const [selected, setSelected] = useState<MatchResult | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -192,12 +198,12 @@ export function MarketFinderPage() {
   const visibleResults = useMemo(() => {
     if (!filtersActive) return [];
     const profile = buildProfileFromFilters(filters);
-    let results = matchAllMarkets(sampleAppetiteRecords, profile);
+    let results = matchAllMarkets(effectiveAppetiteRecords, profile);
 
     if (filters.coverageNeeded.length > 0) {
       const wanted = filters.coverageNeeded.map((c) => c.toLowerCase());
       results = results.filter((r) => {
-        const record = sampleAppetiteRecords.find((rec) => rec.id === r.appetiteRecordId);
+        const record = effectiveAppetiteRecords.find((rec) => rec.id === r.appetiteRecordId);
         const lines = record?.linesOffered;
         if (!lines || lines.value === null) return true; // unconfirmed lines never excluded — don't guess
         return lines.value.some((line) => wanted.includes(line.toLowerCase()));
@@ -205,7 +211,7 @@ export function MarketFinderPage() {
     }
 
     return [...results].sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.verifiedMatchCount - a.verifiedMatchCount);
-  }, [filters, filtersActive]);
+  }, [filters, filtersActive, effectiveAppetiteRecords]);
 
   const countsByVerdict = useMemo(() => {
     const counts: Record<Verdict, number> = { likely_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
@@ -214,7 +220,7 @@ export function MarketFinderPage() {
   }, [visibleResults]);
 
   const chips = useMemo(() => buildFilterChips(filters, update), [filters]);
-  const selectedRecord = selected ? sampleAppetiteRecords.find((r) => r.id === selected.appetiteRecordId) ?? null : null;
+  const selectedRecord = selected ? effectiveAppetiteRecords.find((r) => r.id === selected.appetiteRecordId) ?? null : null;
 
   function handleClear() {
     setFilters(EMPTY_MARKET_FINDER_FILTERS);
@@ -331,7 +337,7 @@ export function MarketFinderPage() {
           {!filtersActive ? (
             <div className="flex flex-col gap-6">
               <EmptyState icon={<Compass size={28} strokeWidth={1.5} />} title="Start by selecting any risk characteristic." description="Pick a state, fleet size, or anything else you know — results appear immediately, no search button needed." />
-              <NeutralMarketList />
+              <NeutralMarketList records={effectiveAppetiteRecords} />
             </div>
           ) : (
             <>

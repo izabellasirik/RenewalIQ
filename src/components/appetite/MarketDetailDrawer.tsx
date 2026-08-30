@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown } from 'lucide-react';
+import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus } from 'lucide-react';
 import type { AppetiteCriterion, AppetiteRecord, MatchReason, MatchResult, ReasonGroup, RuleType } from '../../types';
-import { Drawer, VerdictBadge, Badge } from '../ui';
+import { Drawer, VerdictBadge, Badge, Button } from '../ui';
 import { AvailableThroughTag } from './AvailableThroughTag';
 import { FreshnessWarning } from './FreshnessWarning';
+import { RequestAppetiteUpdateForm } from './RequestAppetiteUpdateForm';
 import { formatDate } from '../../utils/dates';
+import { formatStates, formatFleetSize, formatCriterion } from '../../utils/appetiteFormatters';
 import { cn } from '../../utils/cn';
 
 const RULE_TYPE_LABELS: Record<RuleType, string> = {
@@ -117,28 +119,6 @@ function ReasonRow({ reason, record }: { reason: MatchReason; record: AppetiteRe
   );
 }
 
-function formatStates(record: AppetiteRecord): string {
-  const c = record.states;
-  if (!c.value) return 'Not verified';
-  const parts: string[] = [];
-  if (c.value.admitted?.length) parts.push(`Admitted: ${c.value.admitted.join(', ')}`);
-  if (c.value.excluded?.length) parts.push(`Excluded: ${c.value.excluded.join(', ')}`);
-  return parts.join(' · ') || 'Not verified';
-}
-
-function formatFleetSize(record: AppetiteRecord): string {
-  const c = record.fleetSize;
-  if (!c.value) return 'Not verified';
-  const { min, max } = c.value;
-  if (min === undefined && max === undefined) return 'Not verified';
-  return `${min ?? 0}–${max !== undefined ? max : '∞'} units`;
-}
-
-function formatCriterion<T>(c: AppetiteCriterion<T>, formatter: (v: T) => string): string {
-  if (c.value === null) return 'Not verified';
-  return formatter(c.value);
-}
-
 interface CriterionRow {
   label: string;
   criterion: AppetiteCriterion<unknown>;
@@ -213,6 +193,7 @@ export function MarketDetailDrawer({
   record: AppetiteRecord | null;
   result: MatchResult | null;
 }) {
+  const [updateFormOpen, setUpdateFormOpen] = useState(false);
   if (!record || !result) return null;
 
   const groups = GROUP_ORDER.map((group) => ({ group, reasons: result.reasons.filter((r) => r.group === group) })).filter((g) => g.reasons.length > 0);
@@ -220,7 +201,10 @@ export function MarketDetailDrawer({
   return (
     <Drawer
       open={open}
-      onClose={onClose}
+      onClose={() => {
+        setUpdateFormOpen(false);
+        onClose();
+      }}
       title={record.marketName}
       subtitle={`${record.marketType === 'direct' ? 'Direct Carrier' : 'MGA'}${record.availableThrough ? ` · available through ${record.availableThrough}` : ''}${
         record.programName ? ` · ${record.programName} program` : ''
@@ -231,6 +215,14 @@ export function MarketDetailDrawer({
           <VerdictBadge verdict={result.verdict} className="text-sm" />
           {record.availableThrough && <AvailableThroughTag carrierName={record.availableThrough} />}
         </div>
+
+        {updateFormOpen ? (
+          <RequestAppetiteUpdateForm record={record} onClose={() => setUpdateFormOpen(false)} />
+        ) : (
+          <Button variant="secondary" size="sm" icon={<MessageSquarePlus size={14} />} onClick={() => setUpdateFormOpen(true)} className="self-start">
+            Request Appetite Update
+          </Button>
+        )}
 
         <p className="text-xs text-[var(--color-ink-500)]">
           {result.verifiedMatchCount} verified criteri{result.verifiedMatchCount === 1 ? 'on' : 'a'} matched · {result.needsVerificationCount} need

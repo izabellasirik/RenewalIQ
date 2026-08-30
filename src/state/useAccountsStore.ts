@@ -4,6 +4,7 @@ import type {
   Account,
   ActivityEvent,
   ActivityEventType,
+  AppetiteRecord,
   CoverageType,
   FeedbackEntry,
   MatchResult,
@@ -13,6 +14,8 @@ import type {
 import type { FieldResolution } from '../services/extraction';
 import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, applyFieldResolution, extractInsuranceFields } from '../services/extraction';
 import { matchAllMarkets } from '../services/appetite';
+import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
+import { fetchAppetiteOverrides } from '../services/appetiteUpdates/appetiteUpdateService';
 import { sampleAppetiteRecords } from '../data/carriers';
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
@@ -29,6 +32,8 @@ interface AccountsState {
   activityLog: Record<string, ActivityEvent[]>;
   feedback: FeedbackEntry[];
   activeAccountId: string | null;
+  /** Base appetite records with any admin-approved Supabase overrides merged on top. Starts as the static base data; `loadEffectiveAppetiteRecords` refreshes it. Never persisted to localStorage — always re-fetched, so a stale override can't get stuck client-side. */
+  effectiveAppetiteRecords: AppetiteRecord[];
 
   createAccount: (namedInsured: string, state: string) => string;
   /** Commits an account whose documents were already parsed/extracted (e.g. by the upload-first New Submission flow) in one transaction, instead of creating an empty account and processing files afterward. */
@@ -41,6 +46,8 @@ interface AccountsState {
   resolveField: (accountId: string, section: 'business' | 'transportation', key: string, resolution: FieldResolution<unknown>) => void;
   updateCoverage: (accountId: string, coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
   runMatching: (accountId: string) => void;
+  /** Fetches approved appetite_overrides from Supabase and merges them onto the base records. No-ops (leaves effectiveAppetiteRecords as the base data) if Supabase isn't configured or the fetch fails. */
+  loadEffectiveAppetiteRecords: () => Promise<void>;
   renameAccount: (accountId: string, namedInsured: string) => void;
   duplicateAccount: (accountId: string) => string;
   archiveAccount: (accountId: string) => void;
@@ -82,6 +89,7 @@ export const useAccountsStore = create<AccountsState>()(
       activityLog: {},
       feedback: [],
       activeAccountId: null,
+      effectiveAppetiteRecords: sampleAppetiteRecords,
 
       createAccount: (namedInsured, state) => {
         const account = newAccount(namedInsured, state);
@@ -272,12 +280,18 @@ export const useAccountsStore = create<AccountsState>()(
       runMatching: (accountId) => {
         const profile = get().riskProfiles[accountId];
         if (!profile) return;
-        const results = matchAllMarkets(sampleAppetiteRecords, profile);
+        const results = matchAllMarkets(get().effectiveAppetiteRecords, profile);
         const likely = results.filter((r) => r.verdict === 'likely_match').length;
         set((s) => ({
           matchResults: { ...s.matchResults, [accountId]: results },
           activityLog: appendEvent(s.activityLog, accountId, 'matching_run', `Matched against ${results.length} markets — ${likely} likely match${likely === 1 ? '' : 'es'}.`),
         }));
+      },
+
+      loadEffectiveAppetiteRecords: async () => {
+        const result = await fetchAppetiteOverrides();
+        if (!result.ok) return; // not configured, or a transient fetch failure — base records stay in effect, nothing breaks
+        set({ effectiveAppetiteRecords: applyOverrides(sampleAppetiteRecords, result.data) });
       },
 
       renameAccount: (accountId, namedInsured) => {
@@ -342,6 +356,14 @@ export const useAccountsStore = create<AccountsState>()(
         set((s) => ({ feedback: [...s.feedback, feedback] }));
       },
     }),
-    { name: 'renewaliq.state.v1' }
+    {
+      name: 'renewaliq.state.v1',
+      // effectiveAppetiteRecords is derived (base + fetched overrides), re-loaded on demand — never
+      // persisted, so a stale override can't get stuck in one broker's browser after an admin change.
+      partialize: (state) => {
+        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, ...rest } = state;
+        return rest;
+      },
+    }
   )
 );

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -8,7 +8,6 @@ import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketCardSkeleton } from '../components/appetite/MarketCardSkeleton';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
 import { useAccountsStore } from '../state/useAccountsStore';
-import { sampleAppetiteRecords } from '../data/carriers';
 import type { MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
 import { VERDICT_RANK } from '../services/appetite/matchingEngine';
@@ -24,6 +23,11 @@ export function CarrierAppetitePage() {
   const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
   const matchResults = useAccountsStore((s) => s.matchResults[accountId]) ?? EMPTY_MATCH_RESULTS;
   const runMatching = useAccountsStore((s) => s.runMatching);
+  const effectiveAppetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
+  const loadEffectiveAppetiteRecords = useAccountsStore((s) => s.loadEffectiveAppetiteRecords);
+  useEffect(() => {
+    loadEffectiveAppetiteRecords();
+  }, [loadEffectiveAppetiteRecords]);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<MatchResult | null>(null);
@@ -39,7 +43,7 @@ export function CarrierAppetitePage() {
   const filtered = (filter === 'all' ? matchResults : matchResults.filter((r) => r.verdict === filter))
     .filter((r) => r.marketName.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.matchScore - a.matchScore);
-  const selectedRecord = selected ? sampleAppetiteRecords.find((r) => r.id === selected.appetiteRecordId) ?? null : null;
+  const selectedRecord = selected ? effectiveAppetiteRecords.find((r) => r.id === selected.appetiteRecordId) ?? null : null;
 
   if (!account || !profile) {
     return <AccountNotFound />;

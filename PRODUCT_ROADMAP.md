@@ -153,6 +153,44 @@ Success criteria:
   `EXPECTED_RESULTS.txt`; re-verified the ABC Transportation fixture end-to-end for no regression.
   `tsc -b`, `oxlint`, and `vite build` all clean; no console/runtime errors in either walkthrough.
 
+## DONE (Appetite Update Request workflow — Supabase-backed, market-identity foundation)
+- First real backend in this codebase: Supabase (public anon key only, browser-side; see
+  `SUPABASE_SETUP.md`). Three tables (`appetite_update_requests`, `appetite_update_history`,
+  `appetite_overrides`) in `supabase/migrations/0001_appetite_update_workflow.sql`, RLS enabled.
+  **No auth exists yet**, so RLS is intentionally permissive for now (every policy is prefixed
+  "anon can..." and commented as a one-line tighten-later item) — a broker can submit from their own
+  device and have it land in a shared queue, closing the localStorage limitation the prior design had.
+- Kept the existing criterion-level architecture unchanged — `AppetiteCriterion<T>`,
+  `CriterionSource`, `VerificationStatus`, `RuleType`, `CriterionHistoryEntry` are exactly as before.
+- New market-identity foundation (`types/organization.ts`): `OrganizationKind`,
+  `DistributionPartner`, `CarrierMarketRelationship` — additive only, no existing record migrated.
+  `AppetiteRecord.availableThrough` is now explicitly `@deprecated` in favor of an optional
+  `distributionPartnerId`, kept for backward compatibility.
+- "Request Appetite Update" on every market's detail drawer (`RequestAppetiteUpdateForm.tsx`) —
+  market/current-value auto-populate, 14 broker-facing field categories, required
+  field/value/name/email, strongly-encouraged-not-required source URL. Never modifies live appetite;
+  inserts a `pending` row and reports success only after Supabase confirms, or a clear "not
+  submitted" message (never a false positive) on any failure including Supabase being unconfigured.
+- `/admin/appetite-updates` (intentionally unlinked from nav — no auth exists) reviews the open
+  queue with Approve / Reject / Needs More Information. Every decision writes a durable
+  `appetite_update_history` row, including rejections (never deleted). Approval additionally writes
+  one `appetite_overrides` row — the admin explicitly confirms/edits the value to store and picks a
+  verification status (never auto-VERIFIED; defaults to NEEDS_CONFIRMATION).
+- Runtime effective appetite = base `carriers.ts` record + approved overrides, merged in
+  `services/appetite/appetiteFieldKeys.ts` (`applyOverrides`) and loaded via a new
+  `effectiveAppetiteRecords` store slice (`loadEffectiveAppetiteRecords`, excluded from localStorage
+  persistence). `CarrierAppetitePage`, `MarketFinderPage`, and account-specific matching all read
+  from it instead of the static import — base `carriers.ts` is never rewritten from the browser.
+  10 of 14 broker-facing categories map to one real `AppetiteRecord` criterion; the 4 that don't yet
+  (vehicle/submission requirements, distribution/MGA, other) apply to `underwritingNotes` instead of
+  guessing a mismatched field.
+- Existing `FeedbackWidget` untouched — still local-only, unrelated to this workflow.
+- Verified: `tsc -b` / `oxlint` / `vite build` clean; no console errors; ABC Transportation's
+  Carrier Appetite results and Market Finder are unchanged; the new form and admin page render
+  correctly at 375px. The true Supabase-connected path (insert → admin read → approve → override
+  applied) could not be exercised end-to-end in this environment — no Supabase project/credentials
+  exist here, and none were invented; only the "Supabase not configured" degradation path was tested.
+
 ## NEXT
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)
 - Broker-submitted appetite updates

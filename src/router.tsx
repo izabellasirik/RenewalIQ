@@ -9,6 +9,7 @@ import { ReviewPage } from './pages/ReviewPage';
 import { SubmissionAssistantPage } from './pages/SubmissionAssistantPage';
 import { CarrierAppetitePage } from './pages/CarrierAppetitePage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
+import { AdminAppetiteUpdatesPage } from './pages/AdminAppetiteUpdatesPage';
 
 export const router = createBrowserRouter([
   {
@@ -23,6 +24,9 @@ export const router = createBrowserRouter([
       { path: '/accounts/:accountId/review', element: <ReviewPage /> },
       { path: '/accounts/:accountId/submission-assistant', element: <SubmissionAssistantPage /> },
       { path: '/accounts/:accountId/carrier-appetite', element: <CarrierAppetitePage /> },
+      // Intentionally not linked in the sidebar/nav — no authentication exists yet. See the
+      // security warning rendered on the page itself and PRODUCT_ROADMAP.md.
+      { path: '/admin/appetite-updates', element: <AdminAppetiteUpdatesPage /> },
     ],
   },
 ]);

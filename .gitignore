@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Real credentials — never commit. .env.example documents required keys with no real values.
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

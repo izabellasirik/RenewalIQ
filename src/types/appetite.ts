@@ -98,8 +98,15 @@ export interface AppetiteRecord {
   /** Program/coverage label shown as a tag when a company has multiple programs or coverage-specific appetite, e.g. "Express" or "Auto Liability". Omitted for single-program companies. */
   programName?: string;
   marketType: MarketType;
-  /** Carrier name this MGA writes on behalf of, when marketType === 'mga' */
+  /**
+   * @deprecated Carrier name this MGA writes on behalf of, as a plain string. Kept for backward
+   * compatibility with every existing record — prefer `distributionPartnerId` (a real
+   * DistributionPartner, see types/organization.ts) for new/updated records, since a string can't
+   * represent one carrier being available through several MGAs without duplicating data.
+   */
   availableThrough?: string;
+  /** The DistributionPartner (MGA/wholesaler/program administrator) this program is written through, when marketType === 'mga'. Not yet backfilled onto existing records — see PRODUCT_ROADMAP.md. */
+  distributionPartnerId?: string;
 
   states: AppetiteCriterion<StateAvailability>;
   fleetSize: AppetiteCriterion<FleetSizeRange>;
