@@ -1,5 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
+import { AdminShell } from './components/layout/AdminShell';
 import { DashboardPage } from './pages/DashboardPage';
 import { MarketFinderPage } from './pages/MarketFinderPage';
 import { NewAccountPage } from './pages/NewAccountPage';
@@ -9,6 +10,7 @@ import { ReviewPage } from './pages/ReviewPage';
 import { SubmissionAssistantPage } from './pages/SubmissionAssistantPage';
 import { CarrierAppetitePage } from './pages/CarrierAppetitePage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
+import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminAppetiteUpdatesPage } from './pages/AdminAppetiteUpdatesPage';
 
 export const router = createBrowserRouter([
@@ -24,8 +26,16 @@ export const router = createBrowserRouter([
       { path: '/accounts/:accountId/review', element: <ReviewPage /> },
       { path: '/accounts/:accountId/submission-assistant', element: <SubmissionAssistantPage /> },
       { path: '/accounts/:accountId/carrier-appetite', element: <CarrierAppetitePage /> },
-      // Not linked in the sidebar/nav — real Supabase Auth + admin_users/RLS is the actual
-      // authorization boundary (see the page and supabase/migrations), not this omission.
+    ],
+  },
+  {
+    // Deliberately separate from AppShell — no broker Sidebar/TopBar. Reachable via a small,
+    // discreet link in the broker Sidebar's footer (see Sidebar.tsx) or by going to /admin
+    // directly. Real Supabase Auth + admin_users/RLS is the actual authorization boundary (see
+    // AdminAuthGate and supabase/migrations), not the absence of a prominent nav item.
+    element: <AdminShell />,
+    children: [
+      { path: '/admin', element: <AdminDashboardPage /> },
       { path: '/admin/appetite-updates', element: <AdminAppetiteUpdatesPage /> },
     ],
   },

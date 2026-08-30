@@ -79,9 +79,11 @@ extra setup, but **completing** the reset (clicking the emailed link and landing
 new password" form) requires the redirect URL to be allow-listed, or Supabase will reject it:
 
 1. Supabase dashboard → **Authentication → URL Configuration**.
-2. Under **Redirect URLs**, add every URL admins might sign in from, each ending in
-   `/admin/appetite-updates` — e.g. `https://your-production-domain.com/admin/appetite-updates`
-   and, for local development, `http://localhost:5173/admin/appetite-updates`.
+2. Under **Redirect URLs**, add every URL admins might sign in from, each ending in `/admin` — e.g.
+   `https://your-production-domain.com/admin` and, for local development, `http://localhost:5173/admin`.
+   (If you'd previously allow-listed a URL ending in `/admin/appetite-updates` from an earlier
+   version of this app, update it to `/admin` — the Admin Dashboard at `/admin` is now the
+   canonical sign-in/reset landing page.)
 
 If this step is skipped, the "send reset email" step still works and shows its normal
 confirmation (never revealing whether the address has an account), but the link in that email
@@ -89,14 +91,53 @@ will fail with a redirect error instead of opening the "set a new password" form
 dashboard setting only — no code change is needed once it's configured, and there is no workaround
 in the app that bypasses it (nor should there be).
 
+## 7. Managing broker appetite-update requests
+
+Once you're an admin (§5), go to **`/admin`** on the running app (e.g. `https://your-production-domain.com/admin`
+in production, or `http://localhost:5173/admin` locally). This is the Admin Dashboard: sign in there
+with the same admin email/password, and you'll see request counts by status and the most recent
+submissions. **"View all requests"** goes to `/admin/appetite-updates`, which is the full queue with
+filters (Pending, Needs More Info, Approved, Rejected, All — Pending is the default) and the
+Approve / Reject / Needs More Information actions.
+
+There's a small "Admin" link at the bottom of the broker product's sidebar that goes to `/admin` —
+deliberately understated (this is an internal tool for you, not a feature brokers are meant to
+notice), but it's there if you'd rather click than type the URL. Both `/admin` and
+`/admin/appetite-updates` require the same admin sign-in described in §5; there is no separate
+broker-facing login anywhere in the app.
+
+## 8. Where your data actually lives in Supabase
+
+If you ever need to inspect or fix something by hand, go to the Supabase dashboard's **Table
+Editor** (or the SQL Editor) for these three tables — this is the same data the Admin Dashboard
+reads and writes, just the raw rows:
+
+- **`appetite_update_requests`** — every broker submission, one row per request, in whatever state
+  it's currently in (`pending`, `needs_more_information`, `approved`, or `rejected`). This is the
+  table the Admin Dashboard's counts and "Recent Requests"/request queue are drawn from.
+- **`appetite_overrides`** — the live, effective override for a given market + field, written only
+  when a request is **approved**. This is what the public app (Market Finder, Carrier Appetite)
+  actually reads at runtime and layers on top of the static base appetite data — publicly readable,
+  admin-write-only.
+- **`appetite_update_history`** — a durable, append-only audit trail: one row per review decision
+  ever made (approve, reject, or needs-more-info), including the before/after value and who decided
+  it. Nothing is ever deleted from this table, including for rejections, so it's the place to look
+  for "what happened to this request over time."
+
+All three are written together in one transaction by `review_appetite_update_request()` (see §2) —
+you should never need to hand-edit `appetite_update_requests.status` or insert into
+`appetite_overrides` directly; use the Admin Dashboard so the audit trail stays accurate.
+
 ## What is and isn't covered
 
-- **Covered**: broker submission (anonymous, insert-only) → `appetite_update_requests`; admin
-  sign-in via Supabase Auth, gated by the `admin_users` allowlist and enforced by RLS +
-  `review_appetite_update_request()` (not just hiding the route); approve/reject/needs-info →
-  `appetite_update_history` (durable, admin-only, nothing ever deleted) + on approval only,
-  `appetite_overrides` (the live-appetite override the public app actually reads at runtime,
-  publicly readable but writable by admins only) — all three writes happen in one transaction;
-  sign-out and "forgot password" (see §6 above for the one-time redirect-URL setup it needs).
+- **Covered**: broker submission (anonymous, insert-only) → `appetite_update_requests`; an Admin
+  Dashboard at `/admin` (counts + recent requests) and a full filterable queue at
+  `/admin/appetite-updates` (see §7); admin sign-in via Supabase Auth, gated by the `admin_users`
+  allowlist and enforced by RLS + `review_appetite_update_request()` (not just hiding the route);
+  approve/reject/needs-info → `appetite_update_history` (durable, admin-only, nothing ever deleted)
+  + on approval only, `appetite_overrides` (the live-appetite override the public app actually
+  reads at runtime, publicly readable but writable by admins only) — all three writes happen in one
+  transaction; sign-out and "forgot password" (see §6 above for the one-time redirect-URL setup it
+  needs).
 - **Not covered**: email notifications (design leaves room to add a server-side function later; no
   email is sent today) and the market/MGA workbook import (a separate, later pass).

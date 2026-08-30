@@ -120,15 +120,18 @@ export async function submitAppetiteUpdateRequest(input: SubmitAppetiteUpdateInp
 
 // --- admin review ---
 
-/** Requests still needing attention — 'pending' and 'needs_more_information' both stay in the working queue; only 'approved'/'rejected' are resolved. */
-export async function fetchOpenAppetiteUpdateRequests(): Promise<ServiceResult<AppetiteUpdateRequest[]>> {
+/**
+ * Every appetite update request regardless of status, newest first — the admin dashboard and the
+ * full request queue both derive their counts and filtered views from this single fetch, rather
+ * than each re-querying Supabase per status. RLS ("admin can read appetite update requests", see
+ * supabase/migrations) already permits an admin to read every status, not just open ones — this
+ * was previously a client-side narrowing on top of that, not a security boundary, so removing it
+ * doesn't change what an admin is authorized to see.
+ */
+export async function fetchAllAppetiteUpdateRequests(): Promise<ServiceResult<AppetiteUpdateRequest[]>> {
   if (!supabase) return notConfigured();
 
-  const { data, error } = await supabase
-    .from('appetite_update_requests')
-    .select('*')
-    .in('status', ['pending', 'needs_more_information'])
-    .order('created_at', { ascending: false });
+  const { data, error } = await supabase.from('appetite_update_requests').select('*').order('created_at', { ascending: false });
 
   if (error) return errorResult(error.message);
   return { ok: true, data: ((data ?? []) as RequestRow[]).map(rowToRequest) };

@@ -1,5 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, ListChecks, FileText, Compass, Search, BarChart3 } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, ListChecks, FileText, Compass, Search, BarChart3, ShieldCheck } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
@@ -114,6 +114,12 @@ export function Sidebar() {
 
       <div className="border-t border-[var(--color-ink-100)] px-5 py-4">
         <p className="text-[11px] text-[var(--color-ink-400)]">Renewal IQ MVP · Design Preview</p>
+        {/* Deliberately understated — this is an access point for the site owner, not a broker-facing
+            product feature. Real authorization happens in AdminAuthGate/Supabase, not by hiding this link. */}
+        <NavLink to="/admin" className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-[var(--color-ink-300)] transition-colors hover:text-[var(--color-ink-500)]">
+          <ShieldCheck size={11} />
+          Admin
+        </NavLink>
       </div>
     </aside>
   );

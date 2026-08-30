@@ -19,14 +19,14 @@ export async function signOutAdmin(): Promise<void> {
  * Sends a password-reset email via Supabase Auth. Deliberately reports the same generic success
  * message whether or not the address belongs to an account — Supabase itself doesn't error for an
  * unknown email either, so this avoids turning "forgot password" into an account-existence oracle.
- * The redirect target is this same admin page; Supabase appends recovery tokens to the URL, and
+ * The redirect target is the Admin Dashboard; Supabase appends recovery tokens to the URL, and
  * useAdminSession picks up the resulting PASSWORD_RECOVERY auth event. The redirect URL must be
  * allow-listed in the Supabase dashboard (Authentication → URL Configuration) — see SUPABASE_SETUP.md.
  */
 export async function requestPasswordReset(email: string): Promise<SignInResult> {
   if (!supabase) return { ok: false, message: 'Supabase is not configured in this environment. See SUPABASE_SETUP.md.' };
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/admin/appetite-updates`,
+    redirectTo: `${window.location.origin}/admin`,
   });
   if (error) return { ok: false, message: error.message };
   return { ok: true };
