@@ -155,11 +155,13 @@ Success criteria:
 
 ## DONE (Appetite Update Request workflow — Supabase-backed, market-identity foundation)
 - First real backend in this codebase: Supabase (public anon key only, browser-side; see
-  `SUPABASE_SETUP.md`). Three tables (`appetite_update_requests`, `appetite_update_history`,
-  `appetite_overrides`) in `supabase/migrations/0001_appetite_update_workflow.sql`, RLS enabled.
-  **No auth exists yet**, so RLS is intentionally permissive for now (every policy is prefixed
-  "anon can..." and commented as a one-line tighten-later item) — a broker can submit from their own
-  device and have it land in a shared queue, closing the localStorage limitation the prior design had.
+  `SUPABASE_SETUP.md`). Tables in `supabase/migrations/0001_appetite_update_workflow.sql`, RLS
+  enabled — a broker can submit from their own device and have it land in a shared queue, closing
+  the localStorage limitation the prior design had. **Correction (see the follow-up security-hardening
+  entry below):** the RLS this table originally shipped with was too permissive (anon could read
+  every submission and, in principle, write a live override directly) — the migration has since been
+  rewritten with the tightened model described there, since it had never been applied to a live
+  project.
 - Kept the existing criterion-level architecture unchanged — `AppetiteCriterion<T>`,
   `CriterionSource`, `VerificationStatus`, `RuleType`, `CriterionHistoryEntry` are exactly as before.
 - New market-identity foundation (`types/organization.ts`): `OrganizationKind`,
@@ -171,11 +173,11 @@ Success criteria:
   field/value/name/email, strongly-encouraged-not-required source URL. Never modifies live appetite;
   inserts a `pending` row and reports success only after Supabase confirms, or a clear "not
   submitted" message (never a false positive) on any failure including Supabase being unconfigured.
-- `/admin/appetite-updates` (intentionally unlinked from nav — no auth exists) reviews the open
-  queue with Approve / Reject / Needs More Information. Every decision writes a durable
-  `appetite_update_history` row, including rejections (never deleted). Approval additionally writes
-  one `appetite_overrides` row — the admin explicitly confirms/edits the value to store and picks a
-  verification status (never auto-VERIFIED; defaults to NEEDS_CONFIRMATION).
+- `/admin/appetite-updates` (unlinked from nav, and — see below — actually access-controlled, not
+  just hidden) reviews the open queue with Approve / Reject / Needs More Information. Every decision
+  writes a durable `appetite_update_history` row, including rejections (never deleted). Approval
+  additionally writes one `appetite_overrides` row — the admin explicitly confirms/edits the value
+  to store and picks a verification status (never auto-VERIFIED; defaults to NEEDS_CONFIRMATION).
 - Runtime effective appetite = base `carriers.ts` record + approved overrides, merged in
   `services/appetite/appetiteFieldKeys.ts` (`applyOverrides`) and loaded via a new
   `effectiveAppetiteRecords` store slice (`loadEffectiveAppetiteRecords`, excluded from localStorage
@@ -190,6 +192,42 @@ Success criteria:
   correctly at 375px. The true Supabase-connected path (insert → admin read → approve → override
   applied) could not be exercised end-to-end in this environment — no Supabase project/credentials
   exist here, and none were invented; only the "Supabase not configured" degradation path was tested.
+
+## DONE (Appetite Update workflow — RLS security hardening + admin auth)
+- The first version of the migration above shipped with permissive interim RLS (anon could read
+  every submitted request, and — the most serious gap — could write directly to
+  `appetite_overrides`, bypassing admin review entirely). Since it had never been applied to a live
+  project, `0001_appetite_update_workflow.sql` was rewritten in place rather than patched with a
+  follow-up migration.
+- Corrected model: anonymous brokers can INSERT `appetite_update_requests` and SELECT
+  `appetite_overrides` — nothing else, on any table. Everything else (reading the request queue,
+  reading/writing audit history, writing an override) requires a `user_id` present in a new
+  `admin_users` table, checked via a `security definer` `is_admin()` helper used throughout RLS.
+  Audit history has no update/delete policy for any role — genuinely append-only.
+- Added Supabase Auth for the admin route only — no general broker account system.
+  `services/supabase/adminAuth.ts` (sign-in/out, `checkIsAdmin()` via the `is_admin()` RPC) +
+  `hooks/useAdminSession.ts` (`loading` / `not_configured` / `signed_out` / `unauthorized` / `admin`).
+  `AdminAppetiteUpdatesPage` fetches request data only in the `admin` state — an unauthenticated
+  visitor sees a sign-in form, a signed-in non-admin sees an explicit "not an admin" state, and
+  neither ever triggers a data fetch. The database (RLS + `is_admin()`), not this client gate, is
+  the actual authorization boundary. No sign-up UI exists in the app; admins are bootstrapped
+  exclusively via the Supabase dashboard + a one-line SQL insert (`SUPABASE_SETUP.md`).
+- Approval is now atomic: `review_appetite_update_request()`, a `security definer` Postgres
+  function, re-checks `is_admin()` itself (the real authorization boundary the frontend relies on,
+  not just RLS on the base tables) and performs the status update, history insert, and — on
+  approval only — the `appetite_overrides` upsert as one transaction; `reviewed_by`/`submitted_by`
+  are resolved server-side from `admin_users`/the request row, never trusted from the client, so a
+  caller can't spoof who reviewed something. `appetiteUpdateService.reviewAppetiteUpdateRequest`
+  now wraps this single RPC call instead of three sequential client-side writes.
+- No service-role key anywhere, and none needed — every privileged write goes through RLS +
+  `is_admin()` + the `security definer` RPC, never a key with elevated access sent to the browser.
+- Verified via migration/policy review against all 24 specified cases (anon: submit-only + can only
+  read approved overrides, nothing else; non-admin authenticated: no elevated access from being
+  logged in alone; admin: full review flow, atomic writes; public app: overrides stay readable,
+  `carriers.ts` untouched) — a real Supabase project to browser-test the full signed-in path against
+  still doesn't exist in this environment; only the "not configured" and anonymous-submission paths
+  were exercised live. `tsc -b` / `oxlint` / `vite build` clean; no console errors; Market Finder and
+  Carrier Appetite unaffected.
 
 ## NEXT
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)

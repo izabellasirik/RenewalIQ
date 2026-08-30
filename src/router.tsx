@@ -24,8 +24,8 @@ export const router = createBrowserRouter([
       { path: '/accounts/:accountId/review', element: <ReviewPage /> },
       { path: '/accounts/:accountId/submission-assistant', element: <SubmissionAssistantPage /> },
       { path: '/accounts/:accountId/carrier-appetite', element: <CarrierAppetitePage /> },
-      // Intentionally not linked in the sidebar/nav — no authentication exists yet. See the
-      // security warning rendered on the page itself and PRODUCT_ROADMAP.md.
+      // Not linked in the sidebar/nav — real Supabase Auth + admin_users/RLS is the actual
+      // authorization boundary (see the page and supabase/migrations), not this omission.
       { path: '/admin/appetite-updates', element: <AdminAppetiteUpdatesPage /> },
     ],
   },

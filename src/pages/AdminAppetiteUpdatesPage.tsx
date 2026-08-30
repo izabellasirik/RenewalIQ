@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ShieldAlert, CircleCheck, CircleX, CircleHelp, ExternalLink } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, LogOut, CircleCheck, CircleX, CircleHelp, ExternalLink } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState, Skeleton } from '../components/ui';
 import type { AppetiteFieldKey, AppetiteUpdateRequest, AppetiteUpdateStatus, VerificationStatus } from '../types';
 import { APPETITE_FIELD_KEY_LABELS } from '../types';
-import { fetchOpenAppetiteUpdateRequests, reviewAppetiteUpdateRequest, isSupabaseConfigured } from '../services/appetiteUpdates/appetiteUpdateService';
+import { fetchOpenAppetiteUpdateRequests, reviewAppetiteUpdateRequest } from '../services/appetiteUpdates/appetiteUpdateService';
+import { signInAdmin, signOutAdmin } from '../services/supabase/adminAuth';
+import { useAdminSession } from '../hooks/useAdminSession';
 
 const inputClass =
   'w-full rounded-lg border border-[var(--color-ink-200)] px-3 py-2 text-sm outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
@@ -39,7 +41,6 @@ function RequestReviewCard({ request, onReviewed }: { request: AppetiteUpdateReq
     const result = await reviewAppetiteUpdateRequest({
       request,
       decision,
-      reviewedBy: 'admin', // no auth yet — see the security note on this page
       reviewNotes: reviewNotes.trim(),
       approvedValue,
       approvedVerificationStatus: decision === 'approved' ? approveStatus : undefined,
@@ -150,7 +151,46 @@ function RequestReviewCard({ request, onReviewed }: { request: AppetiteUpdateReq
   );
 }
 
+function AdminLoginForm() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit() {
+    if (!email.trim() || !password) return;
+    setSubmitting(true);
+    setError(null);
+    const result = await signInAdmin(email.trim(), password);
+    setSubmitting(false);
+    if (!result.ok) setError(result.message);
+    // On success, onAuthStateChange (inside useAdminSession) picks up the new session automatically.
+  }
+
+  return (
+    <div className="mx-auto flex max-w-sm flex-col gap-3 rounded-xl border border-[var(--color-ink-100)] bg-white p-6">
+      <p className="text-sm font-semibold text-[var(--color-ink-900)]">Admin sign-in</p>
+      <p className="text-xs text-[var(--color-ink-500)]">
+        There is no self-service sign-up — an admin account is created directly in the Supabase dashboard. See SUPABASE_SETUP.md.
+      </p>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Email</label>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} />
+      </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Password</label>
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} />
+      </div>
+      {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
+      <Button disabled={!email.trim() || !password || submitting} onClick={handleSubmit}>
+        {submitting ? 'Signing in…' : 'Sign in'}
+      </Button>
+    </div>
+  );
+}
+
 export function AdminAppetiteUpdatesPage() {
+  const session = useAdminSession();
   const [requests, setRequests] = useState<AppetiteUpdateRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -168,39 +208,72 @@ export function AdminAppetiteUpdatesPage() {
     setRequests(result.data);
   }, []);
 
+  // Only ever fetch request data once the database has confirmed this session is an admin — never
+  // on 'loading'/'signed_out'/'unauthorized'. The database (RLS + is_admin()) is still the actual
+  // authorization boundary regardless; this just avoids firing a request that would return nothing.
   useEffect(() => {
-    load();
-  }, [load]);
+    if (session.status === 'admin') load();
+  }, [session.status, load]);
 
   return (
     <PageContainer title="Pending Appetite Updates" description="Review broker-submitted appetite corrections before anything goes live.">
-      <div className="mb-5 flex items-start gap-2.5 rounded-lg border border-[var(--color-warning-200)] bg-[var(--color-warning-50)] px-4 py-3 text-sm text-[var(--color-warning-800)]">
-        <ShieldAlert size={16} className="mt-0.5 shrink-0" />
-        <p>
-          <strong>This page is not secured.</strong> There is no authentication in this application yet, so anyone with this URL (which is intentionally not linked in the sidebar) can review and
-          approve requests. Treat it as a development/internal tool only until Supabase Auth is added — the page is structured so that can gate access here without a redesign.
-        </p>
-      </div>
+      {session.status === 'admin' && (
+        <div className="mb-5 flex items-center justify-between gap-2.5 rounded-lg border border-[var(--color-success-100)] bg-[var(--color-success-50)] px-4 py-3 text-sm text-[var(--color-success-800)]">
+          <span className="flex items-center gap-2">
+            <ShieldCheck size={16} className="shrink-0" />
+            Signed in as {session.email}
+          </span>
+          <Button size="sm" variant="ghost" icon={<LogOut size={13} />} onClick={() => signOutAdmin()}>
+            Sign out
+          </Button>
+        </div>
+      )}
 
-      {!isSupabaseConfigured ? (
-        <EmptyState icon={<ShieldAlert size={26} strokeWidth={1.5} />} title="Supabase is not configured" description="See SUPABASE_SETUP.md — the pending-request queue can't be loaded without VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY." />
-      ) : loading ? (
+      {session.status === 'loading' && (
         <div className="flex flex-col gap-3">
           {[0, 1].map((i) => (
-            <Skeleton key={i} variant="block" className="h-40 w-full" />
-          ))}
-        </div>
-      ) : loadError ? (
-        <EmptyState icon={<ShieldAlert size={26} strokeWidth={1.5} />} title="Couldn't load pending requests" description={loadError} />
-      ) : requests.length === 0 ? (
-        <EmptyState icon={<CircleCheck size={26} strokeWidth={1.5} />} title="Nothing pending" description="No appetite update requests are waiting for review." />
-      ) : (
-        <div className="flex flex-col gap-4">
-          {requests.map((r) => (
-            <RequestReviewCard key={r.id} request={r} onReviewed={load} />
+            <Skeleton key={i} variant="block" className="h-16 w-full" />
           ))}
         </div>
       )}
+
+      {session.status === 'not_configured' && (
+        <EmptyState icon={<ShieldAlert size={26} strokeWidth={1.5} />} title="Supabase is not configured" description="See SUPABASE_SETUP.md — sign-in and the pending-request queue can't be loaded without VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY." />
+      )}
+
+      {session.status === 'signed_out' && <AdminLoginForm />}
+
+      {session.status === 'unauthorized' && (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-6 py-10 text-center">
+          <ShieldAlert size={26} className="text-[var(--color-danger-600)]" strokeWidth={1.5} />
+          <p className="text-sm font-medium text-[var(--color-ink-800)]">
+            Signed in as {session.email}, but this account is not an admin.
+          </p>
+          <p className="max-w-sm text-sm text-[var(--color-ink-500)]">No request data was fetched. Ask an existing admin to add your user id to the admin_users table — see SUPABASE_SETUP.md.</p>
+          <Button size="sm" variant="secondary" icon={<LogOut size={13} />} onClick={() => signOutAdmin()}>
+            Sign out
+          </Button>
+        </div>
+      )}
+
+      {session.status === 'admin' &&
+        (loading ? (
+          <div className="flex flex-col gap-3">
+            {[0, 1].map((i) => (
+              <Skeleton key={i} variant="block" className="h-40 w-full" />
+            ))}
+          </div>
+        ) : loadError ? (
+          <EmptyState icon={<ShieldAlert size={26} strokeWidth={1.5} />} title="Couldn't load pending requests" description={loadError} />
+        ) : requests.length === 0 ? (
+          <EmptyState icon={<CircleCheck size={26} strokeWidth={1.5} />} title="Nothing pending" description="No appetite update requests are waiting for review." />
+        ) : (
+          <div className="flex flex-col gap-4">
+            {requests.map((r) => (
+              <RequestReviewCard key={r.id} request={r} onReviewed={load} />
+            ))}
+          </div>
+        ))}
     </PageContainer>
   );
 }

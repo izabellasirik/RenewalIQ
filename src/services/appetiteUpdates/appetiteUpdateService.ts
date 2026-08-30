@@ -137,7 +137,6 @@ export async function fetchOpenAppetiteUpdateRequests(): Promise<ServiceResult<A
 export interface ReviewDecisionInput {
   request: AppetiteUpdateRequest;
   decision: Exclude<AppetiteUpdateStatus, 'pending'>;
-  reviewedBy: string;
   reviewNotes: string;
   /** Only used when decision === 'approved' — the exact value to write live, chosen/typed by the admin, never auto-derived from the broker's free-text proposal. */
   approvedValue?: unknown;
@@ -146,54 +145,28 @@ export interface ReviewDecisionInput {
 }
 
 /**
- * Reviews one request: 1) updates its status, 2) writes a durable audit-history row (always, for
- * every decision including reject/needs-more-info), 3) on approval only, upserts the one live-facing
- * appetite_overrides row for that (market, field). Steps run in order and stop at the first failure,
- * so a caller can tell exactly how far the review got if something breaks partway through.
+ * Reviews one request via the review_appetite_update_request() database function (see
+ * supabase/migrations) — one atomic transaction that updates the request's status, writes a
+ * durable audit-history row (for every decision, including reject/needs-more-info), and on
+ * approval only, upserts the one live-facing appetite_overrides row for that (market, field).
+ * All three either succeed together or fail together. `reviewedBy` is deliberately not a
+ * parameter here — the function looks up the caller's own admin_users.email server-side, so a
+ * client can never claim to be reviewed by someone else. The function itself re-verifies the
+ * caller is an admin before doing anything; that check, not this client call, is the real
+ * authorization boundary.
  */
 export async function reviewAppetiteUpdateRequest(input: ReviewDecisionInput): Promise<ServiceResult<null>> {
   if (!supabase) return notConfigured();
-  const now = new Date().toISOString();
 
-  const { error: statusError } = await supabase
-    .from('appetite_update_requests')
-    .update({ status: input.decision, review_notes: input.reviewNotes || null, reviewed_by: input.reviewedBy, reviewed_at: now })
-    .eq('id', input.request.id);
-  if (statusError) return errorResult(`Could not update request status: ${statusError.message}`);
-
-  const { error: historyError } = await supabase.from('appetite_update_history').insert({
-    request_id: input.request.id,
-    market_id: input.request.marketId,
-    field_key: input.request.fieldKey,
-    previous_value: input.request.currentValue as never,
-    new_value: (input.decision === 'approved' ? (input.approvedValue ?? input.request.proposedValue) : null) as never,
-    submitted_by: input.request.submitterEmail,
-    submitted_at: input.request.createdAt,
-    reviewed_by: input.reviewedBy,
-    reviewed_at: now,
-    status: input.decision,
-    source_url: input.request.sourceUrl,
-    review_notes: input.reviewNotes || null,
+  const { error } = await supabase.rpc('review_appetite_update_request', {
+    p_request_id: input.request.id,
+    p_decision: input.decision,
+    p_review_notes: input.reviewNotes || null,
+    p_approved_value: (input.decision === 'approved' ? (input.approvedValue ?? input.request.proposedValue) : null) as never,
+    p_approved_verification_status: input.decision === 'approved' ? (input.approvedVerificationStatus ?? 'NEEDS_CONFIRMATION') : null,
   });
-  if (historyError) return errorResult(`Request status was updated, but the audit-history record failed to save: ${historyError.message}`);
 
-  if (input.decision === 'approved') {
-    const { error: overrideError } = await supabase.from('appetite_overrides').upsert(
-      {
-        market_id: input.request.marketId,
-        field_key: input.request.fieldKey,
-        value: (input.approvedValue ?? input.request.proposedValue) as never,
-        verification_status: input.approvedVerificationStatus ?? 'NEEDS_CONFIRMATION',
-        source_url: input.request.sourceUrl,
-        approved_by: input.reviewedBy,
-        approved_at: now,
-        request_id: input.request.id,
-      },
-      { onConflict: 'market_id,field_key' }
-    );
-    if (overrideError) return errorResult(`Request approved and audited, but the live override failed to save: ${overrideError.message}`);
-  }
-
+  if (error) return errorResult(error.message);
   return { ok: true, data: null };
 }
 
