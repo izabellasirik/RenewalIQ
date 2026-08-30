@@ -133,15 +133,22 @@ create table if not exists admin_users (
 
 -- SECURITY DEFINER so it can read admin_users regardless of that table's own RLS (below, which
 -- only lets a user read their own row) — this is the one place "am I an admin" gets decided.
+-- search_path is emptied (not just set to `public`) and every reference is schema-qualified, per
+-- Supabase/Postgres guidance for SECURITY DEFINER functions, so no object created in any schema on
+-- the resolution path — including public itself — can shadow admin_users or auth.uid().
 create or replace function is_admin() returns boolean
 language sql
 security definer
 stable
-set search_path = public
+set search_path = ''
 as $$
-  select exists (select 1 from admin_users where user_id = auth.uid());
+  select exists (select 1 from public.admin_users where user_id = auth.uid());
 $$;
 
+-- Postgres grants EXECUTE on a new function to PUBLIC (i.e. every role, including anon) by
+-- default — revoke that before granting narrowly, or the explicit grant below is additive, not
+-- restrictive. Not granted to anon at all: brokers never need to call this.
+revoke execute on function is_admin() from public;
 grant execute on function is_admin() to authenticated;
 
 -- ============================================================================================
@@ -156,12 +163,15 @@ alter table admin_users enable row level security;
 -- appetite_update_requests -------------------------------------------------------------------
 -- Anyone (anonymous broker, or a signed-in admin using the same form) can submit a new pending
 -- request. Nobody — anon or authenticated non-admin — can read, update, or delete a request
--- directly; only an admin can, and only the review action does so (see the RPC below).
+-- directly; only an admin can, and only the review action does so (see the RPC below). The check
+-- below forces every review-related column to its unreviewed state at insert time — a submitter
+-- cannot set status to anything but 'pending', or pre-fill reviewed_by/reviewed_at/review_notes to
+-- fake a review that never happened.
 
 create policy "anyone can submit appetite update requests"
   on appetite_update_requests for insert
   to anon, authenticated
-  with check (status = 'pending');
+  with check (status = 'pending' and reviewed_by is null and reviewed_at is null and review_notes is null);
 
 create policy "admin can read appetite update requests"
   on appetite_update_requests for select
@@ -234,7 +244,8 @@ create policy "authenticated can check their own admin status"
 -- thing it does is re-check is_admin() itself, which is the real authorization boundary the
 -- frontend relies on. reviewed_by/submitted_by are looked up server-side (admin_users.email,
 -- appetite_update_requests.submitter_email) rather than trusted from the caller, so a client can't
--- spoof who reviewed or who submitted something.
+-- spoof who reviewed or who submitted something. search_path is emptied and every reference is
+-- schema-qualified — same object-shadowing defense as is_admin() above.
 create or replace function review_appetite_update_request(
   p_request_id uuid,
   p_decision text,
@@ -244,14 +255,14 @@ create or replace function review_appetite_update_request(
 ) returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
-  v_request appetite_update_requests%rowtype;
+  v_request public.appetite_update_requests%rowtype;
   v_now timestamptz := now();
   v_reviewer text;
 begin
-  if not is_admin() then
+  if not public.is_admin() then
     raise exception 'Not authorized: admin only.';
   end if;
 
@@ -259,18 +270,18 @@ begin
     raise exception 'Invalid decision: %', p_decision;
   end if;
 
-  select email into v_reviewer from admin_users where user_id = auth.uid();
+  select email into v_reviewer from public.admin_users where user_id = auth.uid();
 
-  select * into v_request from appetite_update_requests where id = p_request_id;
+  select * into v_request from public.appetite_update_requests where id = p_request_id;
   if not found then
     raise exception 'Request not found: %', p_request_id;
   end if;
 
-  update appetite_update_requests
+  update public.appetite_update_requests
   set status = p_decision, review_notes = p_review_notes, reviewed_by = v_reviewer, reviewed_at = v_now
   where id = p_request_id;
 
-  insert into appetite_update_history (
+  insert into public.appetite_update_history (
     request_id, market_id, field_key, previous_value, new_value,
     submitted_by, submitted_at, reviewed_by, reviewed_at, status, source_url, review_notes
   ) values (
@@ -288,7 +299,7 @@ begin
       raise exception 'An approved request must include a value to write live.';
     end if;
 
-    insert into appetite_overrides (market_id, field_key, value, verification_status, source_url, approved_by, approved_at, request_id)
+    insert into public.appetite_overrides (market_id, field_key, value, verification_status, source_url, approved_by, approved_at, request_id)
     values (v_request.market_id, v_request.field_key, p_approved_value, p_approved_verification_status, v_request.source_url, v_reviewer, v_now, p_request_id)
     on conflict (market_id, field_key) do update set
       value = excluded.value,
@@ -301,4 +312,9 @@ begin
 end;
 $$;
 
+-- Revoke the default PUBLIC execute grant (see the is_admin() comment above) before granting
+-- narrowly. Not granted to anon: an anonymous broker has no legitimate reason to call this, and
+-- the internal is_admin() check would reject them anyway — this just removes the ability to even
+-- attempt the call at the database privilege layer, ahead of that check.
+revoke execute on function review_appetite_update_request(uuid, text, text, jsonb, text) from public;
 grant execute on function review_appetite_update_request(uuid, text, text, jsonb, text) to authenticated;
