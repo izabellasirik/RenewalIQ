@@ -6,7 +6,6 @@ import type {
   ActivityEventType,
   AppetiteRecord,
   CoverageType,
-  FeedbackEntry,
   MatchResult,
   RiskProfile,
   UploadedDocument,
@@ -30,7 +29,6 @@ interface AccountsState {
   riskProfiles: Record<string, RiskProfile>;
   matchResults: Record<string, MatchResult[]>;
   activityLog: Record<string, ActivityEvent[]>;
-  feedback: FeedbackEntry[];
   activeAccountId: string | null;
   /** Base appetite records with any admin-approved Supabase overrides merged on top. Starts as the static base data; `loadEffectiveAppetiteRecords` refreshes it. Never persisted to localStorage — always re-fetched, so a stale override can't get stuck client-side. */
   effectiveAppetiteRecords: AppetiteRecord[];
@@ -53,7 +51,6 @@ interface AccountsState {
   archiveAccount: (accountId: string) => void;
   restoreAccount: (accountId: string) => void;
   deleteAccountPermanently: (accountId: string) => void;
-  submitFeedback: (entry: Omit<FeedbackEntry, 'id' | 'submittedAt'>) => void;
 }
 
 function newAccount(namedInsured: string, state: string): Account {
@@ -87,7 +84,6 @@ export const useAccountsStore = create<AccountsState>()(
       riskProfiles: {},
       matchResults: {},
       activityLog: {},
-      feedback: [],
       activeAccountId: null,
       effectiveAppetiteRecords: sampleAppetiteRecords,
 
@@ -351,10 +347,6 @@ export const useAccountsStore = create<AccountsState>()(
         });
       },
 
-      submitFeedback: (entry) => {
-        const feedback: FeedbackEntry = { ...entry, id: generateId('fb'), submittedAt: new Date().toISOString() };
-        set((s) => ({ feedback: [...s.feedback, feedback] }));
-      },
     }),
     {
       name: 'renewaliq.state.v1',

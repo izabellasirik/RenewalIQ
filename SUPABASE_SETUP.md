@@ -1,29 +1,38 @@
-# Supabase Setup — Appetite Update Workflow
+# Supabase Setup — Appetite Update Workflow & Product Feedback
 
-The "Request Appetite Update" broker form and the `/admin/appetite-updates` review page need a
-Supabase project. Nothing else in Renewal IQ depends on Supabase — every other feature still works
-entirely offline with zero configuration.
+The "Request Appetite Update" broker form, the "Feedback" button (general product feedback about
+Renewal IQ itself — a deliberately separate concept from an appetite-update request, see §8), and
+the Admin Dashboard (`/admin`, `/admin/appetite-updates`, `/admin/feedback`) all need a Supabase
+project. Nothing else in Renewal IQ depends on Supabase — every other feature still works entirely
+offline with zero configuration.
 
 ## 1. Create the project
 
 If you don't already have one: [supabase.com](https://supabase.com) → New Project. Free tier is
 sufficient for this workload.
 
-## 2. Run the migration
+## 2. Run the migrations
 
-`supabase/migrations/0001_appetite_update_workflow.sql` creates the tables, row-level security
-policies, an `is_admin()` helper, and the `review_appetite_update_request()` function the admin
-page uses to approve/reject/mark-needs-more-information. Run it via the Supabase SQL editor (paste
-the file's contents and run), or via the Supabase CLI:
+Two migration files, run in order — both are required, and neither has been applied to any live
+Supabase project by this repo automatically. You need to run each one yourself, once, via the
+Supabase SQL editor (paste the file's contents and run) or the Supabase CLI (`supabase db push`):
 
-```
-supabase db push
-```
+- **`supabase/migrations/0001_appetite_update_workflow.sql`** — creates the appetite-update-request
+  tables, row-level security policies, the `is_admin()` helper, and the
+  `review_appetite_update_request()` function the admin page uses to approve/reject/
+  mark-needs-more-information.
+- **`supabase/migrations/0002_product_feedback.sql`** — creates the separate `product_feedback`
+  table (general feedback about Renewal IQ itself — bugs, ideas, comments; distinct from an
+  appetite-update request) and its own RLS policies. Reuses the `is_admin()` helper created in
+  0001, so **0001 must run first**.
 
-**Read the security model comment at the top of that file.** In short: an anonymous broker can
-only insert a new request and read approved overrides — nothing else, on any table. Only a signed-in
-user listed in `admin_users` can read the request queue or review anything, and only through
-`review_appetite_update_request()`, which re-checks admin status itself server-side.
+**Read the security model comment at the top of each file.** In short: an anonymous broker can
+only insert a new appetite-update request or feedback entry, and read approved appetite overrides
+— nothing else, on any table. Only a signed-in user listed in `admin_users` can read either queue.
+Reviewing an appetite-update request happens exclusively through `review_appetite_update_request()`,
+which re-checks admin status itself server-side; updating a feedback entry's status is a plain
+RLS-gated `UPDATE`, gated the same way (`is_admin()`) but without a dedicated function, since it
+doesn't need the multi-table atomic transaction the appetite-update review does.
 
 ## 3. Get your API credentials
 
@@ -91,26 +100,32 @@ will fail with a redirect error instead of opening the "set a new password" form
 dashboard setting only — no code change is needed once it's configured, and there is no workaround
 in the app that bypasses it (nor should there be).
 
-## 7. Managing broker appetite-update requests
+## 7. Managing broker appetite-update requests and product feedback
 
 Once you're an admin (§5), go to **`/admin`** on the running app (e.g. `https://your-production-domain.com/admin`
 in production, or `http://localhost:5173/admin` locally). This is the Admin Dashboard: sign in there
-with the same admin email/password, and you'll see request counts by status and the most recent
-submissions. **"View all requests"** goes to `/admin/appetite-updates`, which is the full queue with
-filters (Pending, Needs More Info, Approved, Rejected, All — Pending is the default) and the
-Approve / Reject / Needs More Information actions.
+with the same admin email/password, and you'll see counts and recent activity for both queues:
+
+- **Appetite Update Requests** — "View all requests" goes to `/admin/appetite-updates`, the full
+  queue with filters (Pending, Needs More Info, Approved, Rejected, All — Pending is the default)
+  and the Approve / Reject / Needs More Information actions.
+- **Product Feedback** — general feedback about Renewal IQ itself (bugs, ideas, comments), submitted
+  from the "Feedback" button anywhere in the broker product. **Deliberately a separate concept from
+  an appetite-update request** — it's not a correction to carrier/MGA data, just feedback about the
+  product. "View all feedback" goes to **`/admin/feedback`**, filterable by New (the default),
+  Reviewed, Resolved, or All, with Mark Reviewed / Mark Resolved actions. Entries are never deleted,
+  only their status changes, so nothing submitted is ever lost.
 
 There's a small "Admin" link at the bottom of the broker product's sidebar that goes to `/admin` —
 deliberately understated (this is an internal tool for you, not a feature brokers are meant to
-notice), but it's there if you'd rather click than type the URL. Both `/admin` and
-`/admin/appetite-updates` require the same admin sign-in described in §5; there is no separate
-broker-facing login anywhere in the app.
+notice), but it's there if you'd rather click than type the URL. Every `/admin*` page requires the
+same admin sign-in described in §5; there is no separate broker-facing login anywhere in the app.
 
 ## 8. Where your data actually lives in Supabase
 
 If you ever need to inspect or fix something by hand, go to the Supabase dashboard's **Table
-Editor** (or the SQL Editor) for these three tables — this is the same data the Admin Dashboard
-reads and writes, just the raw rows:
+Editor** (or the SQL Editor) for these tables — this is the same data the Admin Dashboard reads and
+writes, just the raw rows:
 
 - **`appetite_update_requests`** — every broker submission, one row per request, in whatever state
   it's currently in (`pending`, `needs_more_information`, `approved`, or `rejected`). This is the
@@ -123,21 +138,27 @@ reads and writes, just the raw rows:
   ever made (approve, reject, or needs-more-info), including the before/after value and who decided
   it. Nothing is ever deleted from this table, including for rejections, so it's the place to look
   for "what happened to this request over time."
+- **`product_feedback`** — every general feedback submission, one row per entry, with its current
+  `status` (`new`, `reviewed`, or `resolved`). Completely separate from the three tables above —
+  this is what `/admin/feedback` reads and writes. Never deleted, only its status changes.
 
-All three are written together in one transaction by `review_appetite_update_request()` (see §2) —
-you should never need to hand-edit `appetite_update_requests.status` or insert into
-`appetite_overrides` directly; use the Admin Dashboard so the audit trail stays accurate.
+The first three are written together in one transaction by `review_appetite_update_request()` (see
+§2) — you should never need to hand-edit `appetite_update_requests.status` or insert into
+`appetite_overrides` directly. `product_feedback.status` is a plain admin-only `UPDATE`, no RPC
+needed. Use the Admin Dashboard for both so nothing gets out of sync.
 
 ## What is and isn't covered
 
-- **Covered**: broker submission (anonymous, insert-only) → `appetite_update_requests`; an Admin
-  Dashboard at `/admin` (counts + recent requests) and a full filterable queue at
-  `/admin/appetite-updates` (see §7); admin sign-in via Supabase Auth, gated by the `admin_users`
-  allowlist and enforced by RLS + `review_appetite_update_request()` (not just hiding the route);
-  approve/reject/needs-info → `appetite_update_history` (durable, admin-only, nothing ever deleted)
-  + on approval only, `appetite_overrides` (the live-appetite override the public app actually
-  reads at runtime, publicly readable but writable by admins only) — all three writes happen in one
-  transaction; sign-out and "forgot password" (see §6 above for the one-time redirect-URL setup it
-  needs).
+- **Covered**: broker submission (anonymous, insert-only) → `appetite_update_requests`; general
+  product feedback (anonymous, insert-only, a separate concept — see §7-8) →
+  `product_feedback`; an Admin Dashboard at `/admin` (counts + recent activity for both) and full
+  filterable queues at `/admin/appetite-updates` and `/admin/feedback` (see §7); admin sign-in via
+  Supabase Auth, gated by the `admin_users` allowlist and enforced by RLS (not just hiding the
+  route) — appetite-update reviews go through `review_appetite_update_request()`, feedback status
+  updates through a plain admin-gated `UPDATE`; approve/reject/needs-info →
+  `appetite_update_history` (durable, admin-only, nothing ever deleted) + on approval only,
+  `appetite_overrides` (the live-appetite override the public app actually reads at runtime,
+  publicly readable but writable by admins only) — all three writes happen in one transaction;
+  sign-out and "forgot password" (see §6 above for the one-time redirect-URL setup it needs).
 - **Not covered**: email notifications (design leaves room to add a server-side function later; no
   email is sent today) and the market/MGA workbook import (a separate, later pass).

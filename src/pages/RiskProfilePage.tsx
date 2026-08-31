@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, History, ListChecks, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { ArrowRight, History, ListChecks, TrendingUp, TrendingDown, Minus, Trash2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
-import { Button, ProgressBar, Tabs } from '../components/ui';
+import { Button, ProgressBar, Tabs, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../components/ui';
 import { SectionCard } from '../components/riskProfile/SectionCard';
 import { FieldRow } from '../components/riskProfile/FieldRow';
 import { ConflictBanner } from '../components/riskProfile/ConflictBanner';
@@ -43,9 +43,28 @@ export function RiskProfilePage() {
   const updateField = useAccountsStore((s) => s.updateField);
   const resolveField = useAccountsStore((s) => s.resolveField);
   const updateCoverage = useAccountsStore((s) => s.updateCoverage);
+  const deleteAccountPermanently = useAccountsStore((s) => s.deleteAccountPermanently);
   const [tab, setTab] = useState<TabKey>('details');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [highlightFieldId, setHighlightFieldId] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  function confirmDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      deleteAccountPermanently(accountId);
+      navigate('/');
+    } catch {
+      // Local Zustand state mutation — practically can't fail, but never remove the submission
+      // from the UI or navigate away as if it succeeded when it didn't.
+      setDeleting(false);
+      setDeleteConfirmOpen(false);
+      setDeleteError("Something went wrong deleting this submission. It hasn't been removed — try again.");
+    }
+  }
 
   function focusField(section: 'business' | 'transportation', key: string) {
     const id = `field-${section}-${key}`;
@@ -90,6 +109,22 @@ export function RiskProfilePage() {
           <Button icon={<ListChecks size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
             Review Submission
           </Button>
+          <OverflowMenu
+            items={
+              [
+                {
+                  key: 'delete',
+                  label: 'Delete submission',
+                  icon: <Trash2 size={14} />,
+                  tone: 'danger',
+                  onSelect: () => {
+                    setDeleteError(null);
+                    setDeleteConfirmOpen(true);
+                  },
+                },
+              ] satisfies OverflowMenuItem[]
+            }
+          />
         </>
       }
     >
@@ -391,6 +426,21 @@ export function RiskProfilePage() {
       </div>
 
       <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} accountName={account.namedInsured} events={activityLog} />
+
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        onCancel={() => setDeleteConfirmOpen(false)}
+        onConfirm={confirmDelete}
+        title="Delete this submission?"
+        description={`This will permanently remove ${account.namedInsured} and its associated submission data. This action cannot be undone.`}
+        confirmLabel="Delete submission"
+        confirming={deleting}
+      />
+      {deleteError && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-4 py-2.5 text-sm text-[var(--color-danger-700)] shadow-lg">
+          {deleteError}
+        </div>
+      )}
     </PageContainer>
   );
 }

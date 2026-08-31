@@ -25,7 +25,10 @@ export function AdminShell() {
               Dashboard
             </NavLink>
             <NavLink to="/admin/appetite-updates" className={navLinkClass}>
-              Appetite Update Requests
+              Appetite Updates
+            </NavLink>
+            <NavLink to="/admin/feedback" className={navLinkClass}>
+              Product Feedback
             </NavLink>
           </nav>
         </div>

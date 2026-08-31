@@ -320,6 +320,58 @@ workbook-sourced criterion — so nothing from this pass can ever produce a hard
   reconciled record (Prime Insurance — Available Through, Major Exclusions, no VERIFIED criteria
   altered), and the Request Appetite Update form's new label + Other-field behavior.
 
+## DONE (Product Feedback → Supabase/Admin, Delete Submission)
+
+Two independent UX gaps closed in one pass — no changes to the appetite-update RLS/admin security.
+
+- **General product feedback now reaches the admin, not just the browser it was typed in.** The
+  Feedback button (global floating widget) previously wrote to a local Zustand slice persisted only
+  to that browser's `localStorage` — nobody but that one browser ever saw it. It now submits
+  directly to a new `product_feedback` Supabase table (see
+  `supabase/migrations/0002_product_feedback.sql`), the same "insert via service, never fake
+  success" pattern as Request Appetite Update: success only renders after Supabase confirms the
+  insert, a failure shows an error and keeps the typed message in the form. Feedback type (General
+  Feedback / Bug / Feature Request / Other), message, optional name/email, and automatically
+  captured page path + (when on an account-scoped route) submission id are the only fields —
+  deliberately no other PII, and never any submission/client business data. This is a distinct
+  concept from an Appetite Update Request (a correction to carrier/MGA data) — separate table,
+  separate admin page, never conflated.
+- **New `/admin/feedback`** — filterable (New default, Reviewed, Resolved, All) queue with Mark
+  Reviewed / Mark Resolved actions; entries are never deleted, only their status changes.
+  `/admin` gained a second "Product Feedback" section (counts + recent activity + "View all
+  feedback"), visually separate from the existing "Appetite Update Requests" section.
+  `AdminShell`'s nav now lists Dashboard / Appetite Updates / Product Feedback.
+- **RLS** (new, additive — 0001's tables/policies untouched): anonymous/authenticated can INSERT
+  only, with `status` forced to `'new'` at insert time (same anti-spoofing pattern as
+  `appetite_update_requests`); no anon/non-admin SELECT, UPDATE, or DELETE of any kind; admin
+  (`is_admin()`, the same helper from 0001) gets full SELECT and may UPDATE status. No delete
+  policy for any role. No new `SECURITY DEFINER` function was needed — a single-table status change
+  doesn't need the atomic multi-table transaction `review_appetite_update_request()` exists for.
+- **Delete submission.** Investigated first: accounts/documents/risk profiles/match
+  results/activity log all live in one Zustand store persisted to `localStorage`
+  (`renewaliq.state.v1`) — confirmed they survive a refresh, and that `deleteAccountPermanently`
+  (added in an earlier pass, previously reachable only via Dashboard → Archive → Delete
+  permanently) already correctly cleans up every piece of state keyed by `accountId`, and nothing
+  keyed by market/appetite data. Added a direct, discreet path to it: an overflow-menu "Delete
+  submission" action on the Risk Profile page (the account's detail page) opens a new reusable
+  `ConfirmDialog` component (center modal, confirm never fires on a backdrop click) with the exact
+  required copy; only on explicit confirmation does it call `deleteAccountPermanently` and navigate
+  to the Dashboard. The existing Dashboard archive-first flow is unchanged and still works
+  independently.
+- Verified: `tsc -b` / `oxlint` / `vite build` clean. Browser-tested end to end: created a test
+  submission, confirmed it survives a refresh, opened it, cancelled the delete confirmation once
+  (nothing happened), deleted for real, landed back on the Dashboard with the card gone, and
+  confirmed a refresh does not bring it back. Feedback form submission was exercised against the
+  real Supabase project's insert path; this sandbox's network policy blocks reaching Supabase (same
+  known limitation as every prior Supabase-touching pass), so it correctly showed an honest error
+  with the typed message preserved rather than a false success — the actual live insert needs a
+  manual check post-deploy. Confirmed no regressions: Request Appetite Update, `/admin/appetite-updates`,
+  and Market Finder all still work.
+- **Action required in your Supabase project**: `supabase/migrations/0002_product_feedback.sql` has
+  been created in this repo but has **not** been run against your live project. Apply it (Supabase
+  SQL editor or `supabase db push`) — after `0001`, which it depends on for `is_admin()` — before
+  the Feedback button will actually deliver anything anywhere. See SUPABASE_SETUP.md §2.
+
 ## NEXT
 - Admin/version-history UI for appetite criteria (schema already supports history; no UI yet)
 - A later reconciliation pass for the ambiguous entities held back above (Lloyds, Evolum, RPS Fleet

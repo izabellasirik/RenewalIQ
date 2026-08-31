@@ -6,6 +6,7 @@ export * from './VerdictBadge';
 export * from './ProgressBar';
 export * from './EmptyState';
 export * from './Drawer';
+export * from './ConfirmDialog';
 export * from './Tabs';
 export * from './Skeleton';
 export * from './ScoreRing';

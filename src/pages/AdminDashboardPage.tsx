@@ -1,29 +1,37 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Inbox, CircleHelp, CircleCheck, CircleX, ArrowRight } from 'lucide-react';
+import { Inbox, CircleHelp, CircleCheck, CircleX, ArrowRight, MessageSquare } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Card, CardBody, EmptyState, Skeleton, Button } from '../components/ui';
+import { Card, CardBody, EmptyState, Skeleton, Button, Badge } from '../components/ui';
 import { AdminAuthGate } from '../components/admin/AdminAuthGate';
 import { AppetiteUpdateStatusBadge } from '../components/admin/statusBadge';
+import { FeedbackStatusBadge } from '../components/admin/feedbackStatusBadge';
 import { fetchAllAppetiteUpdateRequests } from '../services/appetiteUpdates/appetiteUpdateService';
-import type { AppetiteUpdateRequest, AppetiteUpdateStatus } from '../types';
-import { APPETITE_FIELD_KEY_LABELS } from '../types';
+import { fetchAllProductFeedback } from '../services/feedback/feedbackService';
+import type { AppetiteUpdateRequest, AppetiteUpdateStatus, FeedbackStatus, ProductFeedback } from '../types';
+import { APPETITE_FIELD_KEY_LABELS, FEEDBACK_TYPE_LABELS } from '../types';
 import { formatDate } from '../utils/dates';
 
 const RECENT_COUNT = 8;
 
-interface StatDef {
-  status: AppetiteUpdateStatus;
+interface StatDef<S extends string> {
+  status: S;
   label: string;
   icon: typeof Inbox;
   iconClass: string;
 }
 
-const STATS: StatDef[] = [
+const STATS: StatDef<AppetiteUpdateStatus>[] = [
   { status: 'pending', label: 'Pending', icon: Inbox, iconClass: 'text-[var(--color-info-600)]' },
   { status: 'needs_more_information', label: 'Needs More Info', icon: CircleHelp, iconClass: 'text-[var(--color-warning-600)]' },
   { status: 'approved', label: 'Approved', icon: CircleCheck, iconClass: 'text-[var(--color-success-600)]' },
   { status: 'rejected', label: 'Rejected', icon: CircleX, iconClass: 'text-[var(--color-danger-600)]' },
+];
+
+const FEEDBACK_STATS: StatDef<FeedbackStatus>[] = [
+  { status: 'new', label: 'New', icon: Inbox, iconClass: 'text-[var(--color-info-600)]' },
+  { status: 'reviewed', label: 'Reviewed', icon: CircleHelp, iconClass: 'text-[var(--color-warning-600)]' },
+  { status: 'resolved', label: 'Resolved', icon: CircleCheck, iconClass: 'text-[var(--color-success-600)]' },
 ];
 
 function DashboardContent() {
@@ -123,11 +131,104 @@ function DashboardContent() {
   );
 }
 
+function FeedbackSummary() {
+  const navigate = useNavigate();
+  const [entries, setEntries] = useState<ProductFeedback[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchAllProductFeedback().then((result) => {
+      if (cancelled) return;
+      if (!result.ok) {
+        setLoadError(result.message);
+        return;
+      }
+      setEntries(result.data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loadError) {
+    return (
+      <div>
+        <h2 className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">Product Feedback</h2>
+        <EmptyState icon={<CircleX size={26} strokeWidth={1.5} />} title="Couldn't load product feedback" description={loadError} />
+      </div>
+    );
+  }
+
+  if (!entries) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} variant="block" className="h-24 w-full" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const counts: Record<FeedbackStatus, number> = { new: 0, reviewed: 0, resolved: 0 };
+  for (const e of entries) counts[e.status]++;
+  const recent = entries.slice(0, RECENT_COUNT);
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-[var(--color-ink-900)]">Product Feedback</h2>
+        <Button variant="secondary" size="sm" icon={<ArrowRight size={14} />} onClick={() => navigate('/admin/feedback')}>
+          View all feedback
+        </Button>
+      </div>
+
+      <div className="mb-4 grid grid-cols-3 gap-4">
+        {FEEDBACK_STATS.map((s) => (
+          <Card key={s.status}>
+            <CardBody className="flex flex-col gap-2">
+              <s.icon size={18} className={s.iconClass} />
+              <p className="text-2xl font-semibold text-[var(--color-ink-900)]">{counts[s.status]}</p>
+              <p className="text-xs font-medium text-[var(--color-ink-500)]">{s.label}</p>
+            </CardBody>
+          </Card>
+        ))}
+      </div>
+
+      {recent.length === 0 ? (
+        <EmptyState icon={<MessageSquare size={24} strokeWidth={1.5} />} title="No feedback yet" description="General feedback submitted from the Feedback button in the broker product will show up here." />
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-[var(--color-ink-100)] bg-white">
+          <div className="divide-y divide-[var(--color-ink-100)]">
+            {recent.map((e) => (
+              <div key={e.id} className="flex items-start justify-between gap-3 px-4 py-3 text-sm">
+                <div className="min-w-0">
+                  <div className="mb-1 flex items-center gap-1.5">
+                    <Badge tone="neutral">{FEEDBACK_TYPE_LABELS[e.feedbackType]}</Badge>
+                    <FeedbackStatusBadge status={e.status} />
+                  </div>
+                  <p className="truncate text-[var(--color-ink-700)]">{e.message}</p>
+                </div>
+                <span className="shrink-0 text-xs text-[var(--color-ink-400)]">{formatDate(e.createdAt)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AdminDashboardPage() {
   return (
-    <PageContainer title="Admin Dashboard" description="Where broker-submitted appetite update requests are reviewed.">
+    <PageContainer title="Admin Dashboard" description="Where broker-submitted appetite update requests and general product feedback are reviewed.">
       <AdminAuthGate>
-        <DashboardContent />
+        <div className="flex flex-col gap-10">
+          <DashboardContent />
+          <FeedbackSummary />
+        </div>
       </AdminAuthGate>
     </PageContainer>
   );

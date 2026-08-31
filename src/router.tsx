@@ -12,6 +12,7 @@ import { CarrierAppetitePage } from './pages/CarrierAppetitePage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminAppetiteUpdatesPage } from './pages/AdminAppetiteUpdatesPage';
+import { AdminFeedbackPage } from './pages/AdminFeedbackPage';
 
 export const router = createBrowserRouter([
   {
@@ -37,6 +38,7 @@ export const router = createBrowserRouter([
     children: [
       { path: '/admin', element: <AdminDashboardPage /> },
       { path: '/admin/appetite-updates', element: <AdminAppetiteUpdatesPage /> },
+      { path: '/admin/feedback', element: <AdminFeedbackPage /> },
     ],
   },
 ]);

@@ -1,25 +1,16 @@
 import { useMemo, type ReactNode } from 'react';
-import { motion } from 'framer-motion';
-import { FileStack, FileSearch, Gauge, Target, Compass, MessageSquare } from 'lucide-react';
+import { FileStack, FileSearch, Gauge, Target, Compass } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Card, CardBody, CardHeader, Badge, EmptyState } from '../components/ui';
+import { Card, CardBody, CardHeader } from '../components/ui';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { computeAnalytics, type RankedItem } from '../services/analytics/computeAnalytics';
-import { VERDICT_LABELS, type FeedbackSeverity, type Verdict } from '../types';
-import { formatDate } from '../utils/dates';
+import { VERDICT_LABELS, type Verdict } from '../types';
 
 const VERDICT_TONE: Record<Verdict, string> = {
   likely_match: 'bg-[var(--color-success-500)]',
   possible_match: 'bg-[var(--color-info-500)]',
   needs_more_information: 'bg-[var(--color-warning-500)]',
   not_eligible: 'bg-[var(--color-danger-500)]',
-};
-
-const SEVERITY_TONE: Record<FeedbackSeverity, 'danger' | 'brand' | 'info' | 'neutral'> = {
-  bug: 'danger',
-  idea: 'brand',
-  question: 'info',
-  other: 'neutral',
 };
 
 function StatCard({ icon, label, value, caption }: { icon: ReactNode; label: string; value: string; caption?: string }) {
@@ -61,7 +52,6 @@ export function AnalyticsPage() {
   const riskProfiles = useAccountsStore((s) => s.riskProfiles);
   const matchResults = useAccountsStore((s) => s.matchResults);
   const activityLog = useAccountsStore((s) => s.activityLog);
-  const feedback = useAccountsStore((s) => s.feedback);
 
   const analytics = useMemo(
     () => computeAnalytics(accounts, documents, riskProfiles, matchResults, activityLog),
@@ -69,7 +59,6 @@ export function AnalyticsPage() {
   );
 
   const totalVerdicts = Object.values(analytics.verdictBreakdown).reduce((a, b) => a + b, 0);
-  const sortedFeedback = [...feedback].sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
 
   return (
     <PageContainer title="Analytics" description="Cross-submission insights across every account in this workspace.">
@@ -84,7 +73,6 @@ export function AnalyticsPage() {
           caption={`${analytics.correctionsCount} broker correction${analytics.correctionsCount === 1 ? '' : 's'} — not a ground-truth benchmark`}
         />
         <StatCard icon={<Compass size={16} />} label="Carrier Matches Run" value={analytics.totalMatchesRun.toLocaleString('en-US')} caption={`across ${accounts.length} submission${accounts.length === 1 ? '' : 's'}`} />
-        <StatCard icon={<MessageSquare size={16} />} label="Feedback Logged" value={String(feedback.length)} caption="from design-partner testing" />
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -147,39 +135,6 @@ export function AnalyticsPage() {
           </CardBody>
         </Card>
       </div>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Design-Partner Feedback</h3>
-        </CardHeader>
-        <CardBody className="pt-2">
-          {sortedFeedback.length === 0 ? (
-            <EmptyState icon={<MessageSquare size={22} strokeWidth={1.5} />} title="No feedback yet" description="Use the Feedback button in the bottom-right corner of any page to log something." />
-          ) : (
-            <div className="flex flex-col gap-1">
-              {sortedFeedback.map((entry, i) => (
-                <motion.div
-                  key={entry.id}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.03, duration: 0.2 }}
-                  className="flex items-start gap-3 border-b border-[var(--color-ink-100)] py-3 last:border-0"
-                >
-                  <Badge tone={SEVERITY_TONE[entry.severity]} className="mt-0.5 shrink-0 capitalize">
-                    {entry.severity}
-                  </Badge>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-[var(--color-ink-800)]">{entry.message}</p>
-                    <p className="mt-0.5 text-xs text-[var(--color-ink-400)]">
-                      {entry.page} · {formatDate(entry.submittedAt)}
-                    </p>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          )}
-        </CardBody>
-      </Card>
     </PageContainer>
   );
 }
