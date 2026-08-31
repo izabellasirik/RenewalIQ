@@ -147,9 +147,6 @@ function AdminLoginForm({ justSignedOut }: { justSignedOut: boolean }) {
       )}
       <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-ink-100)] bg-white p-6">
         <p className="text-sm font-semibold text-[var(--color-ink-900)]">Admin sign-in</p>
-        <p className="text-xs text-[var(--color-ink-500)]">
-          There is no self-service sign-up — an admin account is created directly in the Supabase dashboard. See SUPABASE_SETUP.md.
-        </p>
         <div>
           <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Email</label>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} />
