@@ -71,7 +71,7 @@ export async function generateApplicationPdf(application: MappedApplication, acc
         if (!field) continue;
         const x = MARGIN + c * colWidth;
         page.drawText(field.targetLabel.toUpperCase(), { x, y: rowY, size: 7, font, color: INK_400 });
-        const display = field.value || (field.status === 'missing' ? 'Not provided' : '');
+        const display = field.status === 'conflict' ? 'Needs review — conflicting sources' : field.value || (field.status === 'missing' ? 'Not provided' : '');
         page.drawText(truncate(display || '—', 42), { x, y: rowY - 12, size: 10, font, color: field.value ? INK_900 : INK_400 });
       }
       y -= 28;

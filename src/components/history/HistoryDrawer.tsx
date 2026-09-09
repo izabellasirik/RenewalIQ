@@ -3,12 +3,14 @@ import {
   Copy,
   UploadCloud,
   ScanLine,
+  Trash2,
   CheckCircle2,
   Pencil,
   GitMerge,
   DollarSign,
   Compass,
   Clock,
+  ListPlus,
 } from 'lucide-react';
 import type { ActivityEvent, ActivityEventType } from '../../types';
 import { Drawer, EmptyState } from '../ui';
@@ -19,10 +21,16 @@ const EVENT_ICON: Record<ActivityEventType, typeof PlusCircle> = {
   account_duplicated: Copy,
   document_uploaded: UploadCloud,
   document_processed: ScanLine,
+  document_deleted: Trash2,
   field_completed: CheckCircle2,
   field_corrected: Pencil,
   conflict_resolved: GitMerge,
   coverage_edited: DollarSign,
+  coverage_added: ListPlus,
+  coverage_deleted: Trash2,
+  record_added: ListPlus,
+  record_edited: Pencil,
+  record_deleted: Trash2,
   matching_run: Compass,
 };
 

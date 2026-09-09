@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Compass, Printer, TriangleAlert, CircleCheck, CircleHelp, Download, FileJson, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
-import { Button, ProgressBar, OverflowMenu } from '../components/ui';
+import { Button, ProgressBar, OverflowMenu, ConfirmDialog } from '../components/ui';
 import { ApplicationPreview } from '../components/submission/ApplicationPreview';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { mapRiskProfileToApplication, computeApplicationStats, APPLICATION_TEMPLATES, DEFAULT_APPLICATION_TEMPLATE_ID } from '../services/application';
@@ -47,6 +47,7 @@ export function SubmissionAssistantPage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [templateId, setTemplateId] = useState(DEFAULT_APPLICATION_TEMPLATE_ID);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
 
   const template = APPLICATION_TEMPLATES.find((t) => t.id === templateId) ?? APPLICATION_TEMPLATES[0];
   const application = useMemo(() => (profile ? mapRiskProfileToApplication(profile, template) : null), [profile, template]);
@@ -78,6 +79,17 @@ export function SubmissionAssistantPage() {
     }
   }
 
+  /** Gates Print/Download behind an explicit "continue anyway" when fields still need review — a
+   *  broker can always proceed (missing/conflicting fields are never force-filled, just visibly
+   *  flagged), but never lands on a printed/exported application without being told first. */
+  function guardExport(action: () => void) {
+    if (stats!.conflict + stats!.missing + stats!.needsReview > 0) {
+      setPendingAction(() => action);
+    } else {
+      action();
+    }
+  }
+
   async function handleDownloadPdf() {
     setExportingPdf(true);
     try {
@@ -105,16 +117,16 @@ export function SubmissionAssistantPage() {
       description="Renewal IQ already knows this account. Review what it filled instead of retyping everything."
       actions={
         <>
-          <Button variant="secondary" icon={<Printer size={15} />} onClick={() => window.print()} className="print:hidden">
+          <Button variant="secondary" icon={<Printer size={15} />} onClick={() => guardExport(() => window.print())} className="print:hidden">
             Print
           </Button>
           <OverflowMenu
             items={[
-              { key: 'json', label: 'Export as JSON', icon: <FileJson size={14} />, onSelect: handleDownloadJson },
-              { key: 'csv', label: 'Export as CSV', icon: <FileSpreadsheet size={14} />, onSelect: handleDownloadCsv },
+              { key: 'json', label: 'Export as JSON', icon: <FileJson size={14} />, onSelect: () => guardExport(handleDownloadJson) },
+              { key: 'csv', label: 'Export as CSV', icon: <FileSpreadsheet size={14} />, onSelect: () => guardExport(handleDownloadCsv) },
             ]}
           />
-          <Button icon={exportingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} onClick={handleDownloadPdf} disabled={exportingPdf} className="print:hidden">
+          <Button icon={exportingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} onClick={() => guardExport(handleDownloadPdf)} disabled={exportingPdf} className="print:hidden">
             Download PDF
           </Button>
           <Button variant="secondary" icon={<Compass size={15} />} onClick={() => navigate(`/accounts/${accountId}/carrier-appetite`)} className="print:hidden">
@@ -194,6 +206,22 @@ export function SubmissionAssistantPage() {
         onChange={(id, value) => setValues((v) => ({ ...v, [id]: value }))}
         onSaveToRiskProfile={saveFieldToRiskProfile}
         onResolveConflict={resolveFieldConflict}
+      />
+
+      <ConfirmDialog
+        open={pendingAction !== null}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => {
+          pendingAction?.();
+          setPendingAction(null);
+        }}
+        variant="default"
+        title="This application isn't complete yet"
+        description={`${stats.conflict + stats.missing + stats.needsReview} field${stats.conflict + stats.missing + stats.needsReview === 1 ? '' : 's'} require review before this application is complete${
+          stats.conflict > 0 ? ` — including ${stats.conflict} unresolved conflict${stats.conflict === 1 ? '' : 's'}, which will print blank rather than a guessed value` : ''
+        }. You can continue anyway, or go resolve them first.`}
+        confirmLabel="Continue anyway"
+        cancelLabel="Review fields"
       />
     </PageContainer>
   );

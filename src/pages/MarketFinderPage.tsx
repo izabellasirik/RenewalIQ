@@ -234,7 +234,7 @@ export function MarketFinderPage() {
       </p>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr]">
-        <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-4 lg:sticky lg:top-4 lg:self-start">
+        <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-4 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto scrollbar-thin">
           <p className="text-sm font-semibold text-[var(--color-ink-900)]">Filters</p>
 
           <div>

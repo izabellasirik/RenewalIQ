@@ -5,13 +5,30 @@ import type {
   ActivityEvent,
   ActivityEventType,
   AppetiteRecord,
+  CoverageLine,
   CoverageType,
+  DriverEntry,
+  LossEntry,
   MatchResult,
   RiskProfile,
   UploadedDocument,
+  VehicleEntry,
 } from '../types';
+import { emptyField } from '../types';
 import type { FieldResolution } from '../services/extraction';
-import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, applyFieldResolution, extractInsuranceFields } from '../services/extraction';
+import {
+  createEmptyRiskProfile,
+  mergeIntoRiskProfile,
+  applyManualEdit,
+  applyFieldResolution,
+  applyCoverageFieldResolution,
+  resolveFieldConflict,
+  addRecordEntry,
+  updateRecordEntry,
+  deleteRecordEntry,
+  removeDocumentFromRiskProfile,
+  extractInsuranceFields,
+} from '../services/extraction';
 import { matchAllMarkets } from '../services/appetite';
 import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
 import { fetchAppetiteOverrides } from '../services/appetiteUpdates/appetiteUpdateService';
@@ -40,9 +57,23 @@ interface AccountsState {
   setActiveAccount: (id: string) => void;
   addFiles: (accountId: string, files: File[]) => void;
   loadSampleDocuments: (accountId: string) => Promise<void>;
+  /** Removes an uploaded file and safely retracts any extracted data that depended only on it (see removeDocumentFromRiskProfile) — never leaves stale facts pointing at a source that no longer exists. */
+  deleteDocument: (accountId: string, documentId: string) => void;
   updateField: (accountId: string, section: 'business' | 'transportation', key: string, value: unknown) => void;
   resolveField: (accountId: string, section: 'business' | 'transportation', key: string, resolution: FieldResolution<unknown>) => void;
   updateCoverage: (accountId: string, coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
+  resolveCoverageConflict: (accountId: string, coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', resolution: FieldResolution<string>) => void;
+  addCoverageLine: (accountId: string, coverageType: CoverageType) => void;
+  deleteCoverageLine: (accountId: string, coverageType: CoverageType) => void;
+  addVehicle: (accountId: string, entry: Omit<VehicleEntry, 'id'>) => void;
+  updateVehicle: (accountId: string, vehicleId: string, patch: Partial<VehicleEntry>) => void;
+  deleteVehicle: (accountId: string, vehicleId: string) => void;
+  addDriver: (accountId: string, entry: Omit<DriverEntry, 'id'>) => void;
+  updateDriver: (accountId: string, driverId: string, patch: Partial<DriverEntry>) => void;
+  deleteDriver: (accountId: string, driverId: string) => void;
+  addLoss: (accountId: string, entry: Omit<LossEntry, 'id'>) => void;
+  updateLoss: (accountId: string, lossId: string, patch: Partial<LossEntry>) => void;
+  deleteLoss: (accountId: string, lossId: string) => void;
   runMatching: (accountId: string) => void;
   /** Fetches approved appetite_overrides from Supabase and merges them onto the base records. No-ops (leaves effectiveAppetiteRecords as the base data) if Supabase isn't configured or the fetch fails. */
   loadEffectiveAppetiteRecords: () => Promise<void>;
@@ -238,6 +269,23 @@ export const useAccountsStore = create<AccountsState>()(
         get().addFiles(accountId, files);
       },
 
+      deleteDocument: (accountId, documentId) => {
+        set((s) => {
+          const docs = s.documents[accountId] ?? [];
+          const doc = docs.find((d) => d.id === documentId);
+          if (!doc) return {};
+          const profile = s.riskProfiles[accountId];
+          const updatedProfile = profile ? removeDocumentFromRiskProfile({ ...profile }, documentId) : profile;
+          return {
+            documents: { ...s.documents, [accountId]: docs.filter((d) => d.id !== documentId) },
+            riskProfiles: updatedProfile ? { ...s.riskProfiles, [accountId]: updatedProfile } : s.riskProfiles,
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'document_deleted', `Deleted ${doc.name}. Data that depended only on this file was removed or updated; broker-confirmed values were kept.`),
+          };
+        });
+        get().runMatching(accountId);
+      },
+
       updateField: (accountId, section, key, value) => {
         set((s) => {
           const profile = s.riskProfiles[accountId];
@@ -291,17 +339,180 @@ export const useAccountsStore = create<AccountsState>()(
         set((s) => {
           const profile = s.riskProfiles[accountId];
           if (!profile) return {};
-          const coverage = profile.coverage.map((line) =>
-            line.type === coverageType
-              ? { ...line, [field]: { value, confidence: 'manual' as const, isMissing: value.trim() === '', isConflicting: false, extractionMethod: 'manual_entry' as const, lastUpdatedAt: new Date().toISOString() } }
-              : line
-          );
+          const coverage = profile.coverage.map((line) => {
+            if (line.type !== coverageType) return line;
+            const existing = line[field] ?? emptyField<string>();
+            const nextValue = value.trim() === '' ? null : value;
+            return { ...line, [field]: resolveFieldConflict(existing, { type: 'manual', value: nextValue } as FieldResolution<string>) };
+          });
           return {
             riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, coverage, updatedAt: new Date().toISOString() } },
             accounts: touchAccount(s.accounts, accountId),
             activityLog: appendEvent(s.activityLog, accountId, 'coverage_edited', `Updated ${field === 'currentLimit' ? 'current' : 'requested'} limit for ${coverageType.replace(/_/g, ' ')}.`),
           };
         });
+        get().runMatching(accountId);
+      },
+
+      resolveCoverageConflict: (accountId, coverageType, field, resolution) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const updated = applyCoverageFieldResolution({ ...profile }, coverageType, field, resolution);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: updated },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'conflict_resolved', `Resolved a conflicting ${field === 'currentLimit' ? 'current' : 'requested'} limit for ${coverageType.replace(/_/g, ' ')}.`),
+          };
+        });
+        get().runMatching(accountId);
+      },
+
+      addCoverageLine: (accountId, coverageType) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile || profile.coverage.some((c) => c.type === coverageType)) return {};
+          const line: CoverageLine = { type: coverageType, requestedLimit: emptyField<string>() };
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, coverage: [...profile.coverage, line], updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'coverage_added', `Added ${coverageType.replace(/_/g, ' ')} coverage.`),
+          };
+        });
+      },
+
+      deleteCoverageLine: (accountId, coverageType) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const coverage = profile.coverage.filter((c) => c.type !== coverageType);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, coverage, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'coverage_deleted', `Removed ${coverageType.replace(/_/g, ' ')} coverage.`),
+          };
+        });
+        get().runMatching(accountId);
+      },
+
+      addVehicle: (accountId, entry) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const vehicles = addRecordEntry(profile.vehicles, entry, 'veh');
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, vehicles, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_added', `Added a vehicle${entry.vin ? ` (VIN ${entry.vin})` : ''}.`),
+          };
+        });
+        get().runMatching(accountId);
+      },
+      updateVehicle: (accountId, vehicleId, patch) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const vehicles = updateRecordEntry(profile.vehicles, vehicleId, patch);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, vehicles, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_edited', 'Edited a vehicle.'),
+          };
+        });
+        get().runMatching(accountId);
+      },
+      deleteVehicle: (accountId, vehicleId) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const vehicles = deleteRecordEntry(profile.vehicles, vehicleId);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, vehicles, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_deleted', 'Deleted a vehicle.'),
+          };
+        });
+        get().runMatching(accountId);
+      },
+
+      addDriver: (accountId, entry) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const drivers = addRecordEntry(profile.drivers, entry, 'drv');
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_added', `Added a driver${entry.name ? ` (${entry.name})` : ''}.`),
+          };
+        });
+        get().runMatching(accountId);
+      },
+      updateDriver: (accountId, driverId, patch) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const drivers = updateRecordEntry(profile.drivers, driverId, patch);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_edited', 'Edited a driver.'),
+          };
+        });
+        get().runMatching(accountId);
+      },
+      deleteDriver: (accountId, driverId) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const drivers = deleteRecordEntry(profile.drivers, driverId);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_deleted', 'Deleted a driver.'),
+          };
+        });
+        get().runMatching(accountId);
+      },
+
+      addLoss: (accountId, entry) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const lossHistory = addRecordEntry(profile.lossHistory, entry, 'loss');
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, lossHistory, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_added', 'Added a loss.'),
+          };
+        });
+        get().runMatching(accountId);
+      },
+      updateLoss: (accountId, lossId, patch) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const lossHistory = updateRecordEntry(profile.lossHistory, lossId, patch);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, lossHistory, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_edited', 'Edited a loss.'),
+          };
+        });
+        get().runMatching(accountId);
+      },
+      deleteLoss: (accountId, lossId) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const lossHistory = deleteRecordEntry(profile.lossHistory, lossId);
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, lossHistory, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_deleted', 'Deleted a loss.'),
+          };
+        });
+        get().runMatching(accountId);
       },
 
       runMatching: (accountId) => {

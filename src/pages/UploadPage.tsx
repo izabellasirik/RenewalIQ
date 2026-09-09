@@ -13,8 +13,10 @@ export function UploadPage() {
   const navigate = useNavigate();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
+  const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
   const addFiles = useAccountsStore((s) => s.addFiles);
   const loadSampleDocuments = useAccountsStore((s) => s.loadSampleDocuments);
+  const deleteDocument = useAccountsStore((s) => s.deleteDocument);
 
   if (!account) {
     return <AccountNotFound />;
@@ -47,7 +49,7 @@ export function UploadPage() {
             </button>
           )}
 
-          <DocumentList documents={documents} />
+          <DocumentList documents={documents} profile={profile} onDelete={(documentId) => deleteDocument(accountId, documentId)} />
         </div>
 
         <Card className="h-fit">

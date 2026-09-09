@@ -82,18 +82,22 @@ function mapField(profile: RiskProfile, mapping: FieldMapping): MappedField {
     return { ...base, value: '', status: 'missing', reviewReason: 'No data available in the risk profile.' };
   }
 
-  const value = format(field.value);
-
   if (field.isConflicting) {
+    // Never populate the application with a value the system merely picked as primary — an
+    // unresolved conflict must render as empty everywhere this MappedField is consumed (on-screen,
+    // PDF, CSV, JSON), not just in the one place a human happens to be looking. AI confidence is
+    // not a substitute for a broker's resolution here (see resolveFieldConflict).
     return {
       ...base,
-      value,
+      value: '',
       status: 'conflict',
       confidence: field.confidence,
       source: field.source,
       reviewReason: 'Documents disagree on this value — resolve the conflict in the Risk Profile before it can populate here.',
     };
   }
+
+  const value = format(field.value);
 
   if (field.extractionMethod === 'manual_entry') {
     return { ...base, value, status: 'manually_entered', confidence: field.confidence, source: field.source };

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp, CircleAlert, PencilLine } from 'lucide-react';
+import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp, CircleAlert, CircleCheck, PencilLine } from 'lucide-react';
 import type { ExtractionMethod, FieldValue } from '../../types';
 import type { FieldResolution } from '../../services/extraction';
 import { Badge, Skeleton } from '../ui';
 import { cn } from '../../utils/cn';
 import { relativeTime } from '../../utils/dates';
+import { DATA_STATUS_LABELS, fieldDataStatus } from '../../utils/dataStatus';
 
 export type FieldValueType = 'text' | 'textarea' | 'number' | 'boolean' | 'list';
 
@@ -155,8 +156,10 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
   }
 
   const hasIssue = field.isMissing || field.isConflicting;
-  const needsReview = !field.isMissing && !field.isConflicting && field.confidence === 'low';
-  const wasManuallyEdited = !field.isMissing && !field.isConflicting && field.extractionMethod === 'manual_entry';
+  const status = fieldDataStatus(field);
+  const needsReview = status === 'needs_review';
+  const wasBrokerEdited = status === 'broker_edited';
+  const wasBrokerConfirmed = status === 'broker_confirmed';
 
   return (
     <div className={cn('rounded-lg border px-4 py-3 transition-colors', hasIssue ? 'border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/30' : 'border-transparent hover:bg-[var(--color-ink-50)]')}>
@@ -169,7 +172,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
               {field.isMissing && pending ? (
                 <Skeleton width="60%" />
               ) : field.isMissing ? (
-                <span className="text-sm italic text-[var(--color-ink-400)]">Not provided</span>
+                <span className="text-sm italic text-[var(--color-ink-400)]">Not documented</span>
               ) : valueType === 'boolean' ? (
                 <button
                   onClick={() => setShowDetail((v) => !v)}
@@ -215,11 +218,17 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                 Needs Review
               </Badge>
             )}
-            {wasManuallyEdited && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-ink-400)]">
-                <Pencil size={10} />
-                Manually edited
-              </span>
+            {wasBrokerEdited && (
+              <Badge tone="brand">
+                <Pencil size={11} />
+                {DATA_STATUS_LABELS.broker_edited}
+              </Badge>
+            )}
+            {wasBrokerConfirmed && (
+              <Badge tone="success">
+                <CircleCheck size={11} />
+                {DATA_STATUS_LABELS.broker_confirmed}
+              </Badge>
             )}
             {field.isConflicting && (
               <button
@@ -235,7 +244,18 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                 <FileText size={14} />
               </button>
             )}
-            {!readOnly && (
+            {!readOnly && field.isMissing && (
+              <button
+                onClick={() => {
+                  setDraft('');
+                  setIsEditing(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-md bg-[var(--color-brand-800)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--color-brand-700)] cursor-pointer"
+              >
+                + Add
+              </button>
+            )}
+            {!readOnly && !field.isMissing && (
               <button
                 onClick={() => {
                   setDraft(displayReadValue(field.value));

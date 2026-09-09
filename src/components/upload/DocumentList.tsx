@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert } from 'lucide-react';
+import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import type { UploadedDocument } from '../../types';
+import type { RiskProfile, UploadedDocument } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
-import { Badge } from '../ui';
+import { previewDocumentRemovalImpact } from '../../services/extraction';
+import { Badge, ConfirmDialog } from '../ui';
 import { ImagePreviewModal } from './ImagePreviewModal';
 
 function fileIcon(doc: UploadedDocument) {
@@ -15,10 +16,30 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(0)} KB`;
 }
 
-export function DocumentList({ documents }: { documents: UploadedDocument[] }) {
+export function DocumentList({
+  documents,
+  profile,
+  onDelete,
+}: {
+  documents: UploadedDocument[];
+  /** Used only to preview what a deletion would affect, in the confirm dialog — never mutated here. */
+  profile?: RiskProfile;
+  onDelete?: (documentId: string) => void;
+}) {
   const [previewDoc, setPreviewDoc] = useState<UploadedDocument | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<UploadedDocument | null>(null);
 
   if (documents.length === 0) return null;
+
+  const impact = deleteTarget && profile ? previewDocumentRemovalImpact(profile, deleteTarget.id) : null;
+  const impactParts = impact
+    ? [
+        impact.fields > 0 && `${impact.fields} field${impact.fields === 1 ? '' : 's'}`,
+        impact.vehicles > 0 && `${impact.vehicles} vehicle${impact.vehicles === 1 ? '' : 's'}`,
+        impact.drivers > 0 && `${impact.drivers} driver${impact.drivers === 1 ? '' : 's'}`,
+        impact.losses > 0 && `${impact.losses} loss${impact.losses === 1 ? '' : 'es'}`,
+      ].filter((p): p is string => !!p)
+    : [];
 
   return (
     <>
@@ -82,12 +103,37 @@ export function DocumentList({ documents }: { documents: UploadedDocument[] }) {
                   {doc.fieldsExtracted ?? 0} fields
                 </Badge>
               )}
+              {onDelete && (
+                <button
+                  onClick={() => setDeleteTarget(doc)}
+                  className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-300)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] cursor-pointer"
+                  aria-label={`Delete ${doc.name}`}
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
             </motion.li>
           );
         })}
       </ul>
 
       <ImagePreviewModal open={!!previewDoc} onClose={() => setPreviewDoc(null)} src={previewDoc?.previewDataUrl ?? ''} name={previewDoc?.name ?? ''} />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) onDelete?.(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+        title="Delete this file?"
+        description={
+          impactParts.length > 0
+            ? `Removing this file may affect information extracted from it: ${impactParts.join(', ')} that depended only on ${deleteTarget?.name} will be removed or updated. Values also confirmed by you or supported by another document will be kept.`
+            : `Removing this file may affect information extracted from it. Nothing currently in the Risk Profile depends only on ${deleteTarget?.name ?? 'this file'}.`
+        }
+        confirmLabel="Delete file"
+      />
     </>
   );
 }

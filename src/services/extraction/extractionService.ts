@@ -227,3 +227,127 @@ export function applyFieldResolution<T>(
   profile.updatedAt = new Date().toISOString();
   return profile;
 }
+
+/** Same as applyFieldResolution, for a coverage line's currentLimit/requestedLimit — the one other place a FieldValue can conflict. */
+export function applyCoverageFieldResolution(
+  profile: RiskProfile,
+  coverageType: CoverageType,
+  field: 'currentLimit' | 'requestedLimit',
+  resolution: FieldResolution<string>
+): RiskProfile {
+  const line = profile.coverage.find((c) => c.type === coverageType);
+  if (!line) return profile;
+  const existing = line[field] ?? emptyField<string>();
+  line[field] = resolveFieldConflict(existing, resolution);
+  profile.updatedAt = new Date().toISOString();
+  return profile;
+}
+
+/**
+ * Adds/edits/deletes one row of an itemized collection (vehicles/drivers/lossHistory) — the same
+ * three operations for all three arrays, since they share the same "row with an id" shape. Broker
+ * additions/edits are always marked isManual so a later document deletion (see
+ * removeDocumentFromRiskProfile) knows never to touch them — there's no source document to
+ * invalidate them.
+ */
+export function addRecordEntry<T extends { id: string }>(list: T[], entry: Omit<T, 'id'>, idPrefix: string): T[] {
+  const now = new Date().toISOString();
+  return [...list, { ...entry, id: generateId(idPrefix), isManual: true, lastUpdatedAt: now } as unknown as T];
+}
+
+export function updateRecordEntry<T extends { id: string }>(list: T[], id: string, patch: Partial<T>): T[] {
+  const now = new Date().toISOString();
+  return list.map((item) => (item.id === id ? { ...item, ...patch, isManual: true, lastUpdatedAt: now } : item));
+}
+
+export function deleteRecordEntry<T extends { id: string }>(list: T[], id: string): T[] {
+  return list.filter((item) => item.id !== id);
+}
+
+/**
+ * Removes a deleted document's influence from the risk profile, without discarding anything a
+ * broker has since confirmed or that another surviving document still supports:
+ *  - a broker-confirmed/edited value (confidence 'manual') is never touched — the source document
+ *    disappearing doesn't make a human decision wrong.
+ *  - a conflicting alternate that came from the deleted document is simply dropped; if that was
+ *    the only disagreement, the field stops being a conflict.
+ *  - a primary value whose *only* support was the deleted document falls back to the strongest
+ *    remaining alternate (if any), demoted to 'medium' confidence since we no longer know its
+ *    original confidence — or to fully missing if nothing else ever supported it. Never guesses a
+ *    new value.
+ *  - itemized rows (vehicles/drivers/losses) that came only from the deleted document are removed
+ *    outright, since — unlike scalar fields — a row has exactly one source and no alternates.
+ */
+export function removeDocumentFromRiskProfile(profile: RiskProfile, documentId: string): RiskProfile {
+  function demote<T>(field: FieldValue<T> | undefined): FieldValue<T> | undefined {
+    if (!field || field.isMissing || field.confidence === 'manual') return field;
+    const survivingAlternates = (field.alternateValues ?? []).filter((a) => a.source.documentId !== documentId);
+
+    if (field.source?.documentId !== documentId) {
+      if (survivingAlternates.length === (field.alternateValues ?? []).length) return field;
+      return { ...field, alternateValues: survivingAlternates.length > 0 ? survivingAlternates : undefined, isConflicting: survivingAlternates.length > 0 };
+    }
+
+    if (survivingAlternates.length === 0) return emptyField<T>();
+
+    const [promoted, ...rest] = survivingAlternates;
+    return {
+      value: promoted.value,
+      confidence: 'medium',
+      source: promoted.source,
+      extractionMethod: promoted.extractionMethod ?? 'ai_extraction',
+      isMissing: false,
+      isConflicting: rest.some((alt) => !isEqualValue(alt.value, promoted.value)),
+      alternateValues: rest.length > 0 ? rest : undefined,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  }
+
+  for (const section of ['business', 'transportation'] as const) {
+    const bucket = profile[section] as unknown as Record<string, FieldValue<unknown>>;
+    for (const key of Object.keys(bucket)) {
+      const updated = demote(bucket[key]);
+      if (updated) bucket[key] = updated;
+    }
+  }
+
+  profile.coverage = profile.coverage.map((line) => ({
+    ...line,
+    currentLimit: demote(line.currentLimit),
+    requestedLimit: demote(line.requestedLimit) ?? line.requestedLimit,
+  }));
+
+  profile.vehicles = profile.vehicles.filter((v) => v.isManual || v.source?.documentId !== documentId);
+  profile.drivers = profile.drivers.filter((d) => d.isManual || d.source?.documentId !== documentId);
+  profile.lossHistory = profile.lossHistory.filter((l) => l.isManual || l.source?.documentId !== documentId);
+
+  profile.updatedAt = new Date().toISOString();
+  return profile;
+}
+
+/**
+ * Best-effort, read-only summary of what a document's removal would affect — shown in the delete
+ * confirmation so the broker knows before confirming, not just after. Mirrors the same rules as
+ * removeDocumentFromRiskProfile without mutating anything.
+ */
+export function previewDocumentRemovalImpact(profile: RiskProfile, documentId: string): { fields: number; vehicles: number; drivers: number; losses: number } {
+  let fields = 0;
+  const isSolelySourced = (field: FieldValue<unknown> | undefined) =>
+    !!field && !field.isMissing && field.confidence !== 'manual' && field.source?.documentId === documentId && !(field.alternateValues ?? []).some((a) => a.source.documentId !== documentId);
+
+  for (const section of ['business', 'transportation'] as const) {
+    const bucket = profile[section] as unknown as Record<string, FieldValue<unknown>>;
+    for (const key of Object.keys(bucket)) if (isSolelySourced(bucket[key])) fields++;
+  }
+  for (const line of profile.coverage) {
+    if (isSolelySourced(line.currentLimit)) fields++;
+    if (isSolelySourced(line.requestedLimit)) fields++;
+  }
+
+  return {
+    fields,
+    vehicles: profile.vehicles.filter((v) => !v.isManual && v.source?.documentId === documentId).length,
+    drivers: profile.drivers.filter((d) => !d.isManual && d.source?.documentId === documentId).length,
+    losses: profile.lossHistory.filter((l) => !l.isManual && l.source?.documentId === documentId).length,
+  };
+}
