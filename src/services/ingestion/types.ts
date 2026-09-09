@@ -28,4 +28,8 @@ export interface RawDocument {
   tables?: RawTable[];
   /** Non-fatal problems parsing this file, e.g. a scanned PDF with no embedded text. */
   warnings: string[];
+  /** Image documents only — a resized, compressed JPEG data URL for on-screen preview. See parseImage.ts. */
+  imagePreviewDataUrl?: string;
+  /** Image documents only — Tesseract's overall mean-confidence score (0-100) for the recognized text, so downstream code can scale field confidence to actual image/OCR quality rather than treating OCR text like verbatim embedded PDF text. */
+  ocrConfidence?: number;
 }

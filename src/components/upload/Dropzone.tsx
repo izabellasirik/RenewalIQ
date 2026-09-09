@@ -34,13 +34,15 @@ export function Dropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
       </div>
       <div>
         <p className="text-sm font-medium text-[var(--color-ink-800)]">
-          Drag and drop documents here, or <span className="text-[var(--color-brand-700)] underline underline-offset-2">browse</span>
+          Upload submission documents, spreadsheets, PDFs, or photos, or{' '}
+          <span className="text-[var(--color-brand-700)] underline underline-offset-2">browse</span>
         </p>
-        <p className="mt-1 text-xs text-[var(--color-ink-500)]">PDF, DOCX, XLSX/XLS, CSV, TXT — questionnaires, loss runs, vehicle & driver schedules</p>
+        <p className="mt-1 text-xs text-[var(--color-ink-500)]">PDF, DOCX, XLSX/XLS, CSV, TXT, JPG, PNG, WEBP — questionnaires, loss runs, vehicle &amp; driver schedules, or photos of any of those</p>
       </div>
       <input
         ref={inputRef}
         type="file"
+        accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.jpg,.jpeg,.png,.webp"
         multiple
         className="hidden"
         onChange={(e) => {

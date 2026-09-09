@@ -9,7 +9,7 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { sampleAccount } from '../data/sampleAccounts';
 import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, extractInsuranceFields } from '../services/extraction';
 import { generateId } from '../utils/id';
-import { inferCategory, inferFileType } from '../utils/documents';
+import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { US_STATES } from '../utils/usStates';
 import type { RiskProfile, UploadedDocument } from '../types';
 
@@ -55,20 +55,38 @@ export function NewAccountPage() {
 
     for (const file of files) {
       const docId = generateId('doc');
+      const fileType = inferFileType(file.name);
+      const isImageSource = fileType === 'image';
       const base = {
         id: docId,
         name: file.name,
-        fileType: inferFileType(file.name),
+        fileType,
         category: inferCategory(file.name),
         uploadedAt: new Date().toISOString(),
         sizeBytes: file.size,
       };
+      if (isImageSource) setPhase('Reading image…');
       try {
         const raw = await parseFile(file);
         setPhase('Extracting account information…');
-        const results = extractInsuranceFields(raw, { documentId: docId, documentName: file.name });
+        const results = extractInsuranceFields(raw, { documentId: docId, documentName: file.name, isImageSource });
+        // Empty extractable text alongside a warning means nothing was actually read — surface
+        // that as a failure rather than a quietly-successful "0 fields extracted".
+        if (raw.text.trim().length === 0 && raw.warnings.length > 0) {
+          newFailures.push({ name: file.name, message: raw.warnings.join(' ') });
+          docs.push({ ...base, status: 'error', warnings: raw.warnings, previewDataUrl: raw.imagePreviewDataUrl });
+          continue;
+        }
         profile = mergeIntoRiskProfile(profile, results);
-        docs.push({ ...base, status: 'processed', fieldsExtracted: results.length, warnings: raw.warnings.length > 0 ? raw.warnings : undefined });
+        const contentCategory = isImageSource && raw.text ? inferCategoryFromText(raw.text) : null;
+        docs.push({
+          ...base,
+          category: contentCategory ?? base.category,
+          status: 'processed',
+          fieldsExtracted: results.length,
+          warnings: raw.warnings.length > 0 ? raw.warnings : undefined,
+          previewDataUrl: raw.imagePreviewDataUrl,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not process this file.';
         newFailures.push({ name: file.name, message });

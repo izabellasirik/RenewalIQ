@@ -6,9 +6,13 @@ export type Confidence = 'high' | 'medium' | 'low' | 'manual';
  * interpretation involved — a spreadsheet/CSV column header matched directly to a field, or (in
  * future) a structured API — per the product principle that exact structured sources should be
  * preferred over interpretation when available. 'ai_extraction' means the value was read out of
- * unstructured content (PDF/DOCX/TXT prose) via pattern matching or a real model.
+ * unstructured content (PDF/DOCX/TXT prose) via pattern matching or a real model. 'image_ocr'
+ * means the value came from a photo/screenshot run through on-device OCR before that same pattern
+ * matching — kept distinct from 'ai_extraction' because OCR text carries its own, generally lower,
+ * transcription-error risk that the UI should always be able to disclose (see
+ * services/ingestion/parseImage.ts and FieldRow's extraction-method label).
  */
-export type ExtractionMethod = 'ai_extraction' | 'deterministic_import' | 'manual_entry';
+export type ExtractionMethod = 'ai_extraction' | 'deterministic_import' | 'manual_entry' | 'image_ocr';
 
 export interface FieldSource {
   documentId: string;

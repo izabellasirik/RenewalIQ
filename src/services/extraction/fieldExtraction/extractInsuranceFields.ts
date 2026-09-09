@@ -1,4 +1,4 @@
-import type { ExtractedFieldResult, FieldSource } from '../../../types';
+import type { Confidence, ExtractedFieldResult, ExtractionMethod, FieldSource } from '../../../types';
 import type { RawDocument } from '../../ingestion';
 import { toTextLines, toExcerpt, type TextLine } from './textLines';
 import { SCALAR_FIELD_PATTERNS } from './scalarPatterns';
@@ -11,6 +11,23 @@ import { parseAddressComponents } from './addressPatterns';
 export interface ExtractionSourceMeta {
   documentId: string;
   documentName: string;
+  /**
+   * True when this document's text came from OCR on a photo/screenshot rather than embedded
+   * PDF/DOCX/TXT text. OCR carries its own transcription-error risk on top of whatever the
+   * label/regex pattern itself already accounts for, so every field pulled from an image is
+   * capped at 'medium' confidence (never 'high') and tagged extractionMethod: 'image_ocr' instead
+   * of 'ai_extraction' — confidence should reflect image quality, not just pattern specificity.
+   */
+  isImageSource?: boolean;
+}
+
+/** A pattern match is never trusted as fully 'high' confidence when it came from OCR'd image text — see ExtractionSourceMeta.isImageSource. */
+function capConfidence(confidence: Confidence, meta: ExtractionSourceMeta): Confidence {
+  return meta.isImageSource && confidence === 'high' ? 'medium' : confidence;
+}
+
+function extractionMethodFor(meta: ExtractionSourceMeta): ExtractionMethod {
+  return meta.isImageSource ? 'image_ocr' : 'ai_extraction';
 }
 
 function scalarSource(meta: ExtractionSourceMeta, page: number | undefined, excerpt: string): FieldSource {
@@ -62,9 +79,9 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
           results.push({
             fieldPath: field.fieldPath,
             value,
-            confidence: group.confidence,
+            confidence: capConfidence(group.confidence, meta),
             source: scalarSource(meta, line.page, line.text),
-            extractionMethod: 'ai_extraction',
+            extractionMethod: extractionMethodFor(meta),
           });
           break outer;
         }
@@ -77,9 +94,9 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
     results.push({
       fieldPath: b.fieldPath,
       value: b.value,
-      confidence: b.confidence,
+      confidence: capConfidence(b.confidence, meta),
       source: scalarSource(meta, b.page, b.matchedText),
-      extractionMethod: 'ai_extraction',
+      extractionMethod: extractionMethodFor(meta),
     });
   }
 
@@ -88,9 +105,9 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
     results.push({
       fieldPath: 'lossHistory',
       value: { lossDate: l.lossDate, claimType: l.claimType, paid: l.paid, reserved: l.reserved, incurred: l.incurred, status: l.status },
-      confidence: 'high',
+      confidence: capConfidence('high', meta),
       source: scalarSource(meta, l.page, l.matchedText),
-      extractionMethod: 'ai_extraction',
+      extractionMethod: extractionMethodFor(meta),
     });
   }
 
@@ -100,9 +117,9 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
       results.push({
         fieldPath: 'coverageLine',
         value: coverageType,
-        confidence: 'high',
+        confidence: capConfidence('high', meta),
         source: scalarSource(meta, desiredCoverage.page, desiredCoverage.matchedText),
-        extractionMethod: 'ai_extraction',
+        extractionMethod: extractionMethodFor(meta),
       });
     }
   }
@@ -111,9 +128,9 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
     results.push({
       fieldPath: `coverage.${row.coverageType}.currentLimit`,
       value: row.currentLimit,
-      confidence: 'high',
+      confidence: capConfidence('high', meta),
       source: scalarSource(meta, row.page, row.matchedText),
-      extractionMethod: 'ai_extraction',
+      extractionMethod: extractionMethodFor(meta),
     });
   }
 
@@ -123,8 +140,8 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   if (addressResult && typeof addressResult.value === 'string') {
     const components = parseAddressComponents(addressResult.value);
     if (components) {
-      results.push({ fieldPath: 'business.city', value: components.city, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: 'ai_extraction' });
-      results.push({ fieldPath: 'business.zip', value: components.zip, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: 'ai_extraction' });
+      results.push({ fieldPath: 'business.city', value: components.city, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
+      results.push({ fieldPath: 'business.zip', value: components.zip, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
     }
   }
 

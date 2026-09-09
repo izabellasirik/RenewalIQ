@@ -19,7 +19,7 @@ import { sampleAppetiteRecords } from '../data/carriers';
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
-import { inferCategory, inferFileType } from '../utils/documents';
+import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
 
@@ -174,25 +174,56 @@ export const useAccountsStore = create<AccountsState>()(
 
         newDocs.forEach((doc, i) => {
           const file = files[i];
-          import('../services/ingestion').then(({ parseFile }) => parseFile(file)).then((raw) => {
-            const results = extractInsuranceFields(raw, { documentId: doc.id, documentName: doc.name });
-            set((s) => {
-              const profile = s.riskProfiles[accountId];
-              if (!profile) return {};
-              const updatedProfile = mergeIntoRiskProfile({ ...profile }, results);
-              const updatedDocs = (s.documents[accountId] ?? []).map((d) =>
-                d.id === doc.id
-                  ? { ...d, status: 'processed' as const, fieldsExtracted: results.length, warnings: raw.warnings.length > 0 ? raw.warnings : undefined }
-                  : d
-              );
-              return {
-                riskProfiles: { ...s.riskProfiles, [accountId]: updatedProfile },
-                documents: { ...s.documents, [accountId]: updatedDocs },
-                activityLog: appendEvent(s.activityLog, accountId, 'document_processed', `Extracted ${results.length} field${results.length === 1 ? '' : 's'} from ${doc.name}.`),
-              };
+          import('../services/ingestion')
+            .then(({ parseFile }) => parseFile(file))
+            .then((raw) => {
+              const isImageSource = raw.fileType === 'image';
+              const results = extractInsuranceFields(raw, { documentId: doc.id, documentName: doc.name, isImageSource });
+              // Empty extractable text alongside a warning means nothing was actually read (an
+              // unreadable photo, a scanned PDF with no embedded text) — that's a failure to
+              // surface as such, never a quietly-successful "0 fields extracted".
+              const readFailed = raw.text.trim().length === 0 && raw.warnings.length > 0;
+              const contentCategory = isImageSource && raw.text ? inferCategoryFromText(raw.text) : null;
+
+              set((s) => {
+                const profile = s.riskProfiles[accountId];
+                if (!profile) return {};
+                const updatedProfile = mergeIntoRiskProfile({ ...profile }, results);
+                const updatedDocs = (s.documents[accountId] ?? []).map((d) =>
+                  d.id === doc.id
+                    ? {
+                        ...d,
+                        status: readFailed ? ('error' as const) : ('processed' as const),
+                        fieldsExtracted: results.length,
+                        warnings: raw.warnings.length > 0 ? raw.warnings : undefined,
+                        previewDataUrl: raw.imagePreviewDataUrl,
+                        category: contentCategory ?? d.category,
+                      }
+                    : d
+                );
+                return {
+                  riskProfiles: { ...s.riskProfiles, [accountId]: updatedProfile },
+                  documents: { ...s.documents, [accountId]: updatedDocs },
+                  activityLog: appendEvent(
+                    s.activityLog,
+                    accountId,
+                    'document_processed',
+                    readFailed ? `Could not read ${doc.name}.` : `Extracted ${results.length} field${results.length === 1 ? '' : 's'} from ${doc.name}.`
+                  ),
+                };
+              });
+              get().runMatching(accountId);
+            })
+            .catch((err) => {
+              const message = err instanceof Error ? err.message : 'Could not process this file.';
+              set((s) => ({
+                documents: {
+                  ...s.documents,
+                  [accountId]: (s.documents[accountId] ?? []).map((d) => (d.id === doc.id ? { ...d, status: 'error' as const, warnings: [message] } : d)),
+                },
+                activityLog: appendEvent(s.activityLog, accountId, 'document_processed', `Could not read ${doc.name}.`),
+              }));
             });
-            get().runMatching(accountId);
-          });
         });
       },
 

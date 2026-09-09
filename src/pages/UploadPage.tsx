@@ -20,9 +20,13 @@ export function UploadPage() {
     return <AccountNotFound />;
   }
 
+  // "Settled" (processed or errored) rather than strictly 'processed' — a document that failed to
+  // read (an unreadable photo, a scanned PDF with no text) is done being worked on, not stuck
+  // "processing" forever, so it shouldn't block the review button either.
+  const settledCount = documents.filter((d) => d.status !== 'processing').length;
   const processedCount = documents.filter((d) => d.status === 'processed').length;
   const totalFields = documents.reduce((sum, d) => sum + (d.fieldsExtracted ?? 0), 0);
-  const allProcessed = documents.length > 0 && processedCount === documents.length;
+  const allProcessed = documents.length > 0 && settledCount === documents.length;
 
   return (
     <PageContainer
@@ -50,9 +54,10 @@ export function UploadPage() {
           <CardBody className="pt-5">
             <p className="text-sm font-semibold text-[var(--color-ink-800)]">Extraction Progress</p>
             <div className="mt-3">
-              <ProgressBar value={documents.length ? (processedCount / documents.length) * 100 : 0} />
+              <ProgressBar value={documents.length ? (settledCount / documents.length) * 100 : 0} />
               <p className="mt-2 text-xs text-[var(--color-ink-500)]">
-                {processedCount} of {documents.length} document{documents.length === 1 ? '' : 's'} processed
+                {settledCount} of {documents.length} document{documents.length === 1 ? '' : 's'} processed
+                {settledCount > processedCount && ` (${settledCount - processedCount} couldn't be read)`}
               </p>
             </div>
 
