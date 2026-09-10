@@ -227,14 +227,32 @@ export function MarketFinderPage() {
   }
 
   return (
-    <PageContainer title="Market Finder" description="Search trucking markets based on risk characteristics — no submission required.">
-      <p className="mb-2 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
-        <Info size={13} className="mt-0.5 shrink-0" />
-        Carrier appetite changes frequently. Renewal IQ recommendations are based on the latest information available and should be confirmed with the market before binding.
-      </p>
+    <PageContainer>
+      {/*
+        Grid layout, three top-level items placed explicitly (not relying on `order-*`):
+          - header: page title/subtitle/disclaimer
+          - filters: the filter panel
+          - results: chips/count/cards
+        DOM order is header → filters → results, which is exactly the desired stacked order below
+        `lg:` (single column, no explicit placement active) — phones and portrait/narrow tablets,
+        where the app shell's fixed 256px Sidebar (see components/layout/Sidebar.tsx) would leave
+        too little room for a 300px filters column plus usable results. At `lg:` (1024px) and up,
+        explicit grid placement moves the header above the results in a second column while filters
+        spans the full height of the first column, so filters is reachable at the top of the page
+        and stays put via its own sticky+scroll region, without depending on how long the results
+        column gets.
+      */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr] lg:items-start">
+        <div className="lg:col-start-2 lg:row-start-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">Market Finder</h1>
+          <p className="mt-1 text-sm text-[var(--color-ink-500)]">Search trucking markets based on risk characteristics — no submission required.</p>
+          <p className="mt-2 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
+            <Info size={13} className="mt-0.5 shrink-0" />
+            Carrier appetite changes frequently. Renewal IQ recommendations are based on the latest information available and should be confirmed with the market before binding.
+          </p>
+        </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr]">
-        <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-4 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto scrollbar-thin">
+        <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-4 lg:sticky lg:top-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto scrollbar-thin">
           <p className="text-sm font-semibold text-[var(--color-ink-900)]">Filters</p>
 
           <div>
@@ -333,7 +351,7 @@ export function MarketFinderPage() {
           </Button>
         </div>
 
-        <div className="min-w-0">
+        <div className="min-w-0 lg:col-start-2 lg:row-start-2">
           {!filtersActive ? (
             <div className="flex flex-col gap-6">
               <EmptyState icon={<Compass size={28} strokeWidth={1.5} />} title="Start by selecting any risk characteristic." description="Pick a state, fleet size, or anything else you know — results appear immediately, no search button needed." />
