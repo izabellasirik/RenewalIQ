@@ -15,16 +15,22 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminAppetiteUpdatesPage } from './pages/AdminAppetiteUpdatesPage';
 import { AdminFeedbackPage } from './pages/AdminFeedbackPage';
+import { IntakeFormPage } from './pages/IntakeFormPage';
+import { IntakeLinksPage } from './pages/IntakeLinksPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/signup', element: <SignupPage /> },
+  // Deliberately outside AppShell and unauthenticated — an applicant opening this link has no
+  // Renewal IQ login at all (see types/intake.ts / supabase/migrations/0004_intake_submissions.sql).
+  { path: '/intake/:token', element: <IntakeFormPage /> },
   {
     element: <AppShell />,
     children: [
       { path: '/', element: <DashboardPage /> },
       { path: '/market-finder', element: <MarketFinderPage /> },
       { path: '/analytics', element: <AnalyticsPage /> },
+      { path: '/intake-links', element: <IntakeLinksPage /> },
       { path: '/accounts/new', element: <NewAccountPage /> },
       { path: '/accounts/:accountId/upload', element: <UploadPage /> },
       { path: '/accounts/:accountId/risk-profile', element: <RiskProfilePage /> },

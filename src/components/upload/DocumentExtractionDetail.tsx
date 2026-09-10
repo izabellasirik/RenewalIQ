@@ -6,6 +6,7 @@ import { Drawer, Badge, ConfidenceBadge } from '../ui';
 import { fieldPathLabel, DRIVER_FIELD_LABELS, VEHICLE_FIELD_LABELS, LOSS_FIELD_LABELS } from '../../utils/fieldLabels';
 import { summarizeDocumentExtraction, FIELD_DISPOSITION_LABELS, type DocumentFieldSummary, type FieldDisposition } from '../../utils/documentExtractionSummary';
 import { displayReadValue } from '../riskProfile/FieldRow';
+import { countExtractedFields } from '../../utils/fieldCount';
 
 const DISPOSITION_ICON: Record<FieldDisposition, typeof CircleCheck> = {
   applied: CircleCheck,
@@ -117,6 +118,13 @@ export function DocumentExtractionDetail({
   if (!document) return <Drawer open={open} onClose={onClose} title="Extracted Data"><></></Drawer>;
 
   const summaries = summarizeDocumentExtraction(document, profile);
+  // Always derived from the SAME list rendered below, never from document.fieldsExtracted (a
+  // separately-persisted number computed at upload time) — those two going out of sync for any
+  // document processed before extractedFields existed on UploadedDocument is exactly what
+  // previously produced "11 fields extracted" next to "No fields were extracted from this
+  // document." Deriving the count from what's actually displayed makes that contradiction
+  // structurally impossible, not just less likely.
+  const visibleFieldCount = countExtractedFields(summaries);
   const bySection = new Map<(typeof SECTION_ORDER)[number], DocumentFieldSummary[]>();
   for (const s of summaries) {
     const section = sectionFor(s.fieldPath);
@@ -135,7 +143,7 @@ export function DocumentExtractionDetail({
               Could not read this document
             </Badge>
           )}
-          <span className="text-xs text-[var(--color-ink-400)]">{document.fieldsExtracted ?? 0} field{document.fieldsExtracted === 1 ? '' : 's'} extracted</span>
+          <span className="text-xs text-[var(--color-ink-400)]">{visibleFieldCount} field{visibleFieldCount === 1 ? '' : 's'} extracted</span>
         </div>
 
         {document.warnings && document.warnings.length > 0 && (

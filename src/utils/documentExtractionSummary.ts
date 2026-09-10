@@ -1,4 +1,4 @@
-import type { CoverageType, DriverEntry, FieldValue, LossEntry, RiskProfile, UploadedDocument, VehicleEntry } from '../types';
+import type { CoverageType, DocumentExtractedField, DriverEntry, FieldValue, LossEntry, RiskProfile, UploadedDocument, VehicleEntry } from '../types';
 
 /**
  * Whether a field this document extracted is still reflected in the current Risk Profile, computed
@@ -57,9 +57,68 @@ function rowDisposition(rows: { source?: { documentId: string } }[], documentId:
   return 'not_applied';
 }
 
+function stripRowMeta(row: object): Record<string, unknown> {
+  const { id: _id, source: _source, isManual: _isManual, lastUpdatedAt: _lastUpdatedAt, ...rest } = row as Record<string, unknown>;
+  return rest;
+}
+
+/**
+ * Rebuilds a document's contribution from the CURRENT profile alone, for a document processed
+ * before `extractedFields` existed on UploadedDocument (added when "View extracted data" shipped) —
+ * those records persisted `fieldsExtracted` (a count) but have no `extractedFields` array to show,
+ * which is the actual root cause of a document badge reading "N fields extracted" while the detail
+ * panel said "No fields were extracted": two independently-persisted values that went out of sync
+ * the moment the array was introduced with no migration for data written by earlier code. Rather
+ * than just explaining the gap, this recovers what's still knowable: every scalar field (primary or
+ * demoted to an alternate) and every driver/vehicle/loss row still attributed to this document's id
+ * anywhere in the live profile. A field this document contributed that was later fully overwritten
+ * with no trace (see reconcileImageExtraction.ts's notes on itemized-row merging) can't be recovered
+ * this way — that data genuinely isn't retained anywhere — but everything still attributable is.
+ */
+function reconstructFieldsFromProfile(doc: UploadedDocument, profile: RiskProfile): DocumentExtractedField[] {
+  const reconstructed: DocumentExtractedField[] = [];
+
+  function considerFieldValue(fieldPath: string, field: FieldValue<unknown> | undefined) {
+    if (!field) return;
+    if (!field.isMissing && field.source?.documentId === doc.id) {
+      reconstructed.push({ fieldPath, value: field.value, confidence: field.confidence, extractionMethod: field.extractionMethod });
+    }
+    for (const alt of field.alternateValues ?? []) {
+      if (alt.source.documentId === doc.id) {
+        reconstructed.push({ fieldPath, value: alt.value, confidence: 'medium', extractionMethod: alt.extractionMethod });
+      }
+    }
+  }
+
+  for (const [key, field] of Object.entries(profile.business)) considerFieldValue(`business.${key}`, field as FieldValue<unknown>);
+  for (const [key, field] of Object.entries(profile.transportation)) considerFieldValue(`transportation.${key}`, field as FieldValue<unknown>);
+  for (const line of profile.coverage) {
+    considerFieldValue(`coverage.${line.type}.requestedLimit`, line.requestedLimit);
+    considerFieldValue(`coverage.${line.type}.currentLimit`, line.currentLimit);
+  }
+
+  for (const driver of profile.drivers) {
+    if (driver.source?.documentId === doc.id) {
+      reconstructed.push({ fieldPath: 'drivers', value: stripRowMeta(driver), confidence: 'medium' });
+    }
+  }
+  for (const vehicle of profile.vehicles) {
+    if (vehicle.source?.documentId === doc.id) {
+      reconstructed.push({ fieldPath: 'vehicles', value: stripRowMeta(vehicle), confidence: 'medium' });
+    }
+  }
+  for (const loss of profile.lossHistory) {
+    if (loss.source?.documentId === doc.id) {
+      reconstructed.push({ fieldPath: 'lossHistory', value: stripRowMeta(loss), confidence: 'medium' });
+    }
+  }
+
+  return reconstructed;
+}
+
 /** Builds the broker-facing summary for one document's extraction result, cross-referenced against the CURRENT Risk Profile. */
 export function summarizeDocumentExtraction(doc: UploadedDocument, profile: RiskProfile): DocumentFieldSummary[] {
-  const fields = doc.extractedFields ?? [];
+  const fields = doc.extractedFields ?? reconstructFieldsFromProfile(doc, profile);
   const summaries: DocumentFieldSummary[] = [];
 
   for (const field of fields) {

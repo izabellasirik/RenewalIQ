@@ -16,3 +16,4 @@ export * from './application';
 export * from './account';
 export * from './activity';
 export * from './feedback';
+export * from './intake';

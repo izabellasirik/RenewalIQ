@@ -74,8 +74,15 @@ interface AccountsState {
   dismissLocalImport: (accountIds: string[]) => void;
 
   createAccount: (namedInsured: string, state: string) => string;
-  /** Commits an account whose documents were already parsed/extracted (e.g. by the upload-first New Submission flow) in one transaction, instead of creating an empty account and processing files afterward. `files`, when given, are the original File objects in the same order as `documents` — used only to upload bytes to cloud Storage when this account turns out to be cloud-backed; never required for the local-only path. */
-  createAccountFromExtraction: (namedInsured: string, state: string, documents: Omit<UploadedDocument, 'accountId'>[], profile: RiskProfile, files?: File[]) => string;
+  /** Commits an account whose documents were already parsed/extracted (e.g. by the upload-first New Submission flow) in one transaction, instead of creating an empty account and processing files afterward. `files`, when given, are the original File objects in the same order as `documents` — used only to upload bytes to cloud Storage when this account turns out to be cloud-backed; never required for the local-only path. `contact`, when given (the intake-form import flow — see services/intake/importIntakeSubmission.ts), stamps the applicant's own contact info onto the account envelope. */
+  createAccountFromExtraction: (
+    namedInsured: string,
+    state: string,
+    documents: Omit<UploadedDocument, 'accountId'>[],
+    profile: RiskProfile,
+    files?: File[],
+    contact?: { name?: string; email?: string; phone?: string }
+  ) => string;
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
   addFiles: (accountId: string, files: File[]) => void;
@@ -208,8 +215,14 @@ export const useAccountsStore = create<AccountsState>()(
         return account.id;
       },
 
-      createAccountFromExtraction: (namedInsured, state, documents, profile, files) => {
-        const account = { ...newAccount(namedInsured, state), status: 'documents_uploaded' as const };
+      createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact) => {
+        const account = {
+          ...newAccount(namedInsured, state),
+          status: 'documents_uploaded' as const,
+          ...(contact?.name ? { contactName: contact.name } : {}),
+          ...(contact?.email ? { contactEmail: contact.email } : {}),
+          ...(contact?.phone ? { contactPhone: contact.phone } : {}),
+        };
         const finalDocs: UploadedDocument[] = documents.map((d) => ({ ...d, accountId: account.id }));
         const finalProfile: RiskProfile = { ...profile, accountId: account.id };
 

@@ -176,6 +176,9 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         archived: sub.archived,
         createdAt: sub.created_at,
         updatedAt: sub.updated_at,
+        ...(sub.contact_name ? { contactName: sub.contact_name } : {}),
+        ...(sub.contact_email ? { contactEmail: sub.contact_email } : {}),
+        ...(sub.contact_phone ? { contactPhone: sub.contact_phone } : {}),
       };
 
       const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
@@ -311,6 +314,9 @@ export async function saveSubmissionSnapshot(
       archived: account.archived,
       created_at: account.createdAt,
       updated_at: account.updatedAt,
+      contact_name: account.contactName || null,
+      contact_email: account.contactEmail || null,
+      contact_phone: account.contactPhone || null,
     };
     const { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
     if (subErr) return fail(subErr.message);

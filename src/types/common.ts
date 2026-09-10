@@ -15,8 +15,13 @@ export type Confidence = 'high' | 'medium' | 'low' | 'manual';
  * services/ingestion/visionExtraction.ts) rather than reading OCR'd text through a regex — distinct
  * from both, since it can legitimately reach 'high' confidence on a clean image the way OCR+regex
  * never can (OCR is always capped at 'medium' — see extractInsuranceFields.ts's capConfidence).
+ * 'applicant_provided' means an external, unauthenticated applicant typed the value into the public
+ * intake form (see components/intake) — distinct from 'manual_entry' (a broker typing on the
+ * applicant's behalf) because it carries less trust: a document later extracting a different value
+ * for the same field is a genuine, visible conflict to review, not an overwrite, whereas the same
+ * disagreement against a broker's own manual entry stays broker-wins per the existing merge rules.
  */
-export type ExtractionMethod = 'ai_extraction' | 'deterministic_import' | 'manual_entry' | 'image_ocr' | 'vision_extraction';
+export type ExtractionMethod = 'ai_extraction' | 'deterministic_import' | 'manual_entry' | 'image_ocr' | 'vision_extraction' | 'applicant_provided';
 
 export interface FieldSource {
   documentId: string;

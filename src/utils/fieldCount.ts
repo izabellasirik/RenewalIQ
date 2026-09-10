@@ -1,5 +1,3 @@
-import type { ExtractedFieldResult } from '../types';
-
 const ENTRY_META_KEYS = new Set(['id', 'source', 'isManual', 'lastUpdatedAt', 'fieldConfidence', 'conflicts']);
 
 /** Counts the real, populated data attributes on an itemized-row value (a DriverEntry/VehicleEntry/loss-shaped object) — every key except id/source/isManual/lastUpdatedAt/fieldConfidence/conflicts bookkeeping. */
@@ -19,7 +17,7 @@ function countEntryAttributes(entry: unknown): number {
  * the card was read correctly. Applied uniformly to vehicles/drivers/losses/scalar fields per the
  * same rule, so the count means the same thing everywhere it's shown.
  */
-export function countExtractedFields(results: ExtractedFieldResult[]): number {
+export function countExtractedFields(results: { fieldPath: string; value: unknown }[]): number {
   let total = 0;
   for (const result of results) {
     if (result.fieldPath === 'drivers' || result.fieldPath === 'vehicles' || result.fieldPath === 'lossHistory') {

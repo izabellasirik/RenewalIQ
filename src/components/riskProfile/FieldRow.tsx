@@ -15,6 +15,7 @@ const EXTRACTION_METHOD_LABELS: Record<ExtractionMethod, string> = {
   manual_entry: 'Entered by broker',
   image_ocr: 'Read from a photo (OCR)',
   vision_extraction: 'Read from a photo (AI vision)',
+  applicant_provided: 'Provided by applicant on intake form',
 };
 
 interface FieldRowProps<T> {
@@ -161,6 +162,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
   const needsReview = status === 'needs_review';
   const wasBrokerEdited = status === 'broker_edited';
   const wasBrokerConfirmed = status === 'broker_confirmed';
+  const wasApplicantProvided = status === 'applicant_provided';
   const wasAiExtracted = status === 'ai_extracted';
 
   return (
@@ -230,6 +232,12 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
               <Badge tone="success">
                 <CircleCheck size={11} />
                 {DATA_STATUS_LABELS.broker_confirmed}
+              </Badge>
+            )}
+            {wasApplicantProvided && (
+              <Badge tone="neutral">
+                <PencilLine size={11} />
+                {DATA_STATUS_LABELS.applicant_provided}
               </Badge>
             )}
             {wasAiExtracted && (

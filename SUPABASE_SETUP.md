@@ -2,11 +2,13 @@
 
 The "Request Appetite Update" broker form, the "Feedback" button (general product feedback about
 Renewal IQ itself — a deliberately separate concept from an appetite-update request, see §8), the
-Admin Dashboard (`/admin`, `/admin/appetite-updates`, `/admin/feedback`), and — as of migration
-0003 — **broker sign-up/sign-in and cross-device submission sync** (`/login`, `/signup`) all need a
-Supabase project. Nothing else in Renewal IQ depends on Supabase: with no project configured, every
-broker feature still works fully, entirely offline, in this browser only — sign-in just isn't
-available, and the account/profile menu shows "Local only" instead.
+Admin Dashboard (`/admin`, `/admin/appetite-updates`, `/admin/feedback`), — as of migration
+0003 — **broker sign-up/sign-in and cross-device submission sync** (`/login`, `/signup`), and — as
+of migrations 0004/0005 — **Submission Intake** (`/intake-links`, the public, no-login
+`/intake/:token` form) all need a Supabase project. Nothing else in Renewal IQ depends on Supabase:
+with no project configured, every broker feature still works fully, entirely offline, in this
+browser only — sign-in just isn't available, the account/profile menu shows "Local only", and
+Submission Intake shows a "Cloud sign-in isn't configured" message instead of the link manager.
 
 ## 1. Create the project
 
@@ -15,7 +17,7 @@ sufficient for this workload.
 
 ## 2. Run the migrations
 
-Three migration files, run in order — all are required, and **none has been applied to any live
+Five migration files, run in order — all are required, and **none has been applied to any live
 Supabase project by this repo automatically**. Run each one yourself, once, via the Supabase SQL
 editor (paste the file's contents and run) or the Supabase CLI (`supabase db push`):
 
@@ -52,6 +54,22 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   doesn't appear afterward, create it manually: **Storage → New bucket** → name it exactly
   `submission-documents` → **leave "Public bucket" OFF**. The migration's Storage policies apply to
   the bucket by name regardless of how it was created.
+- **`supabase/migrations/0004_intake_submissions.sql`** — creates the **Submission Intake**
+  schema: `intake_links` (a broker's shareable, unauthenticated links), `intake_submissions` (an
+  applicant's raw answers, staged — never written directly into a broker's live `submissions`
+  table), and `intake_documents` (metadata for files an applicant uploaded), plus the private
+  `intake-uploads` Storage bucket. This is deliberately a **staging** design: an anonymous visitor
+  can only ever `INSERT` into these tables (never read anything back), and a signed-in broker's own
+  "Import" click (`/intake-links`) is what turns a submission into a real account — no service-role
+  key or server-side function is used anywhere in this flow. **Read the security-model comment at
+  the top of the file before applying it.** Same bucket-creation caveat as 0003: if
+  `insert into storage.buckets ...` errors, create the `intake-uploads` bucket manually (**Storage →
+  New bucket** → name it exactly `intake-uploads` → **leave "Public bucket" OFF**) — the migration's
+  Storage policies apply by name regardless of how the bucket was created.
+- **`supabase/migrations/0005_submission_contact_fields.sql`** — adds three nullable columns
+  (`contact_name`, `contact_email`, `contact_phone`) to the existing `submissions` table from 0003,
+  so an account created by importing an intake submission keeps the applicant's contact info after
+  a reload. Must run after 0003.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -311,6 +329,15 @@ is the way to actually confirm which path ran.
   on-device OCR read (agreement boosts confidence, disagreement is recorded as a visible conflict,
   never silently resolved) — opt-in, requires an Anthropic API key you provide, and the app is
   fully functional without it (OCR-only, exactly as before).
+  **Submission Intake** (migrations 0004/0005): a broker creates a shareable, unauthenticated link
+  at `/intake-links`; an agency, safety company, or client opens `/intake/:token`, answers basic
+  questions, and uploads documents/photos with no Renewal IQ login. The submission lands in a
+  staging table only the broker can read; clicking "Import" creates a real account (the applicant's
+  typed answers become `extractionMethod: 'applicant_provided'` fields, tagged "Applicant Provided"
+  distinctly from "AI Extracted"/"Broker Confirmed"/"Broker Edited"/"Needs Review"/"Conflict" — see
+  utils/dataStatus.ts) and runs the exact same OCR/vision extraction pipeline on the uploaded
+  documents as any other upload, so a document that disagrees with what the applicant typed shows
+  up as a normal, visible conflict rather than a silent overwrite.
 - **Not covered**: email notifications beyond Supabase Auth's own (confirmation, password reset);
   the market/MGA workbook import (a separate, later pass); AI-driven account analytics (the next
   phase after this one); multi-user/agency organizations (the schema reserves `organization_id` for

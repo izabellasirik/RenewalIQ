@@ -1,5 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, ListChecks, FileText, Compass, Search, BarChart3, ShieldCheck } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, ListChecks, FileText, Compass, Search, BarChart3, ShieldCheck, Link2 } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
@@ -80,6 +80,21 @@ export function Sidebar() {
         >
           <BarChart3 size={17} />
           Analytics
+        </NavLink>
+
+        <NavLink
+          to="/intake-links"
+          className={({ isActive }) =>
+            cn(
+              navItemClass,
+              isActive
+                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+            )
+          }
+        >
+          <Link2 size={17} />
+          Submission Intake
         </NavLink>
 
         {account && (
