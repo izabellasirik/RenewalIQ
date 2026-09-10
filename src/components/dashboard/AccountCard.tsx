@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowRight, Check, Clock, Copy, History, Pencil, Trash2, X, ArchiveRestore, Archive as ArchiveIcon } from 'lucide-react';
 import type { Account } from '../../types';
-import { Card, CardBody, Badge, OverflowMenu, type OverflowMenuItem } from '../ui';
+import { Card, CardBody, Badge, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, deriveSubmissionStatusLabel } from '../layout/WorkflowSteps';
 import { formatDate } from '../../utils/dates';
@@ -21,6 +21,9 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(account.namedInsured);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const steps = useWorkflowStatus(account.id);
   const status = deriveSubmissionStatusLabel(steps);
@@ -32,6 +35,24 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
     setIsRenaming(false);
   }
 
+  async function confirmDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const result = await deleteAccountPermanently(account.id);
+      if (!result.ok) {
+        setDeleting(false);
+        setDeleteError(result.message ?? "Something went wrong deleting this submission. It hasn't been removed — try again.");
+        return;
+      }
+      setDeleteConfirmOpen(false);
+      setDeleting(false);
+    } catch {
+      setDeleting(false);
+      setDeleteError("Something went wrong deleting this submission. It hasn't been removed — try again.");
+    }
+  }
+
   const menuItems: OverflowMenuItem[] = account.archived
     ? [
         { key: 'restore', label: 'Restore', icon: <ArchiveRestore size={14} />, onSelect: () => restoreAccount(account.id) },
@@ -41,9 +62,8 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
           icon: <Trash2 size={14} />,
           tone: 'danger',
           onSelect: () => {
-            if (window.confirm(`Permanently delete "${account.namedInsured}"? This cannot be undone.`)) {
-              deleteAccountPermanently(account.id);
-            }
+            setDeleteError(null);
+            setDeleteConfirmOpen(true);
           },
         },
       ]
@@ -52,6 +72,16 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
         { key: 'duplicate', label: 'Duplicate for renewal', icon: <Copy size={14} />, onSelect: () => duplicateAccount(account.id) },
         { key: 'history', label: 'View history', icon: <History size={14} />, onSelect: onOpenHistory },
         { key: 'archive', label: 'Archive', icon: <ArchiveIcon size={14} />, onSelect: () => archiveAccount(account.id) },
+        {
+          key: 'delete',
+          label: 'Delete submission',
+          icon: <Trash2 size={14} />,
+          tone: 'danger',
+          onSelect: () => {
+            setDeleteError(null);
+            setDeleteConfirmOpen(true);
+          },
+        },
       ];
 
   return (
@@ -110,6 +140,23 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
           </div>
         </CardBody>
       </Card>
+
+      <div onClick={(e) => e.stopPropagation()}>
+        <ConfirmDialog
+          open={deleteConfirmOpen}
+          onCancel={() => setDeleteConfirmOpen(false)}
+          onConfirm={confirmDelete}
+          title="Delete this submission?"
+          description={`This will permanently remove ${account.namedInsured} and its associated submission data. This action cannot be undone.`}
+          confirmLabel="Delete submission"
+          confirming={deleting}
+        />
+        {deleteError && (
+          <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-4 py-2.5 text-sm text-[var(--color-danger-700)] shadow-lg">
+            {deleteError}
+          </div>
+        )}
+      </div>
     </motion.div>
   );
 }
