@@ -34,9 +34,10 @@ export function NewAccountPage() {
 
   const [namedInsuredInput, setNamedInsuredInput] = useState('');
   const [stateInput, setStateInput] = useState('');
+  const [draftFiles, setDraftFiles] = useState<File[]>([]);
 
-  function finalizeAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile) {
-    const id = createAccountFromExtraction(namedInsured, state, docs, profile);
+  function finalizeAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
+    const id = createAccountFromExtraction(namedInsured, state, docs, profile, files);
     navigate(`/accounts/${id}/risk-profile`);
   }
 
@@ -99,6 +100,7 @@ export function NewAccountPage() {
 
     setDraftDocs(docs);
     setDraftProfile(profile);
+    setDraftFiles(files);
     setFailures(newFailures);
 
     const ni = profile.business.namedInsured;
@@ -106,7 +108,7 @@ export function NewAccountPage() {
     const identityResolved = !ni.isMissing && !ni.isConflicting && !st.isMissing && !st.isConflicting;
 
     if (identityResolved && newFailures.length === 0) {
-      finalizeAccount(ni.value as string, st.value as string, docs, profile);
+      finalizeAccount(ni.value as string, st.value as string, docs, profile, files);
     } else {
       setMode('confirm');
     }
@@ -123,7 +125,7 @@ export function NewAccountPage() {
     const ni = draftProfile.business.namedInsured;
     const st = draftProfile.business.state;
     if (ni.isMissing || ni.isConflicting || st.isMissing || st.isConflicting) return;
-    finalizeAccount(ni.value as string, st.value as string, draftDocs, draftProfile);
+    finalizeAccount(ni.value as string, st.value as string, draftDocs, draftProfile, draftFiles);
   }
 
   function handleManualSubmit(e: FormEvent) {

@@ -5,6 +5,7 @@ import { PageContainer } from '../components/layout/PageContainer';
 import { Button, EmptyState } from '../components/ui';
 import { AccountCard } from '../components/dashboard/AccountCard';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
+import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
 import { useAccountsStore } from '../state/useAccountsStore';
 
 export function DashboardPage() {
@@ -12,6 +13,14 @@ export function DashboardPage() {
   const accounts = useAccountsStore((s) => s.accounts);
   const activityLog = useAccountsStore((s) => s.activityLog);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
+  const currentUserId = useAccountsStore((s) => s.currentUserId);
+  const cloudAccountIds = useAccountsStore((s) => s.cloudAccountIds);
+  const dismissedImportIds = useAccountsStore((s) => s.dismissedImportIds);
+
+  const localOnlyAccounts = useMemo(
+    () => (currentUserId ? accounts.filter((a) => !a.archived && !cloudAccountIds[a.id] && !dismissedImportIds[a.id]) : []),
+    [accounts, currentUserId, cloudAccountIds, dismissedImportIds]
+  );
 
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
@@ -51,6 +60,7 @@ export function DashboardPage() {
         )
       }
     >
+      {!showArchived && <LocalImportPrompt accounts={localOnlyAccounts} />}
       {accounts.length === 0 ? (
         <EmptyState
           icon={<Building2 size={28} strokeWidth={1.5} />}

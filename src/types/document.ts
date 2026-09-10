@@ -38,4 +38,6 @@ export interface UploadedDocument {
    * copy, not the original full-resolution file, which is never retained after processing.
    */
   previewDataUrl?: string;
+  /** Path within the private `submission-documents` Storage bucket, set once the file finishes uploading to a signed-in broker's cloud account. Absent for a local-only (not signed in, or not yet synced) document — see services/supabase/submissionsRepo.ts. */
+  storagePath?: string;
 }

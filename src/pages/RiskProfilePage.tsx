@@ -66,15 +66,21 @@ export function RiskProfilePage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  function confirmDelete() {
+  async function confirmDelete() {
     setDeleting(true);
     setDeleteError(null);
     try {
-      deleteAccountPermanently(accountId);
+      const result = await deleteAccountPermanently(accountId);
+      if (!result.ok) {
+        // A cloud-backed submission whose cloud deletion failed — local state is untouched (see
+        // deleteAccountPermanently), so the submission is still here and still safe to retry.
+        setDeleting(false);
+        setDeleteConfirmOpen(false);
+        setDeleteError(result.message ?? "Something went wrong deleting this submission. It hasn't been removed — try again.");
+        return;
+      }
       navigate('/');
     } catch {
-      // Local Zustand state mutation — practically can't fail, but never remove the submission
-      // from the UI or navigate away as if it succeeded when it didn't.
       setDeleting(false);
       setDeleteConfirmOpen(false);
       setDeleteError("Something went wrong deleting this submission. It hasn't been removed — try again.");

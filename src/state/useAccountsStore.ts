@@ -37,6 +37,8 @@ import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
 import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
+import { isSupabaseConfigured } from '../services/supabase/client';
+import * as cloudRepo from '../services/supabase/submissionsRepo';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
 
@@ -50,9 +52,27 @@ interface AccountsState {
   /** Base appetite records with any admin-approved Supabase overrides merged on top. Starts as the static base data; `loadEffectiveAppetiteRecords` refreshes it. Never persisted to localStorage — always re-fetched, so a stale override can't get stuck client-side. */
   effectiveAppetiteRecords: AppetiteRecord[];
 
+  // --- Broker cloud sync (see services/supabase/submissionsRepo.ts) -----------------------------
+  /** The signed-in broker's id, or null when signed out / Supabase isn't configured. Ephemeral — never persisted, always re-derived from the live Supabase session on load (see App.tsx). */
+  currentUserId: string | null;
+  /** Which local account ids are mirrored to the signed-in broker's Supabase account. An id absent here is local-only (this browser only), regardless of whether anyone is currently signed in. Persisted, so the distinction survives a reload. */
+  cloudAccountIds: Record<string, true>;
+  /** Per-account cloud save status, for the "Saving… / Saved / Failed to save" indicator. Ephemeral — never persisted, since a stale "saving" from a previous session would be meaningless. */
+  syncStatus: Record<string, 'saving' | 'saved' | 'error'>;
+  /** Local accounts the signed-in broker explicitly dismissed ("Not now") from the "import to your account" prompt, or already imported — either way, never prompt again for these ids. Persisted. */
+  dismissedImportIds: Record<string, true>;
+
+  setCurrentUserId: (userId: string | null) => void;
+  /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud. Never touches local-only (not-yet-imported) accounts. */
+  hydrateCloudSubmissions: () => Promise<void>;
+  /** The broker's explicit "Import to account" action from the local-submissions-found prompt — marks each given local account as cloud and pushes its current state up, without waiting to be asked again. */
+  importAccountsToCloud: (accountIds: string[]) => Promise<void>;
+  /** The broker's "Not now" action — stops the import prompt from asking about these ids again this device, without changing anything about the accounts themselves. */
+  dismissLocalImport: (accountIds: string[]) => void;
+
   createAccount: (namedInsured: string, state: string) => string;
-  /** Commits an account whose documents were already parsed/extracted (e.g. by the upload-first New Submission flow) in one transaction, instead of creating an empty account and processing files afterward. */
-  createAccountFromExtraction: (namedInsured: string, state: string, documents: Omit<UploadedDocument, 'accountId'>[], profile: RiskProfile) => string;
+  /** Commits an account whose documents were already parsed/extracted (e.g. by the upload-first New Submission flow) in one transaction, instead of creating an empty account and processing files afterward. `files`, when given, are the original File objects in the same order as `documents` — used only to upload bytes to cloud Storage when this account turns out to be cloud-backed; never required for the local-only path. */
+  createAccountFromExtraction: (namedInsured: string, state: string, documents: Omit<UploadedDocument, 'accountId'>[], profile: RiskProfile, files?: File[]) => string;
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
   addFiles: (accountId: string, files: File[]) => void;
@@ -81,7 +101,8 @@ interface AccountsState {
   duplicateAccount: (accountId: string) => string;
   archiveAccount: (accountId: string) => void;
   restoreAccount: (accountId: string) => void;
-  deleteAccountPermanently: (accountId: string) => void;
+  /** Returns { ok: false, message } if this account is cloud-backed and the cloud deletion fails — local state is left untouched in that case (see the STOP-and-report note in the implementation), so the broker never sees "deleted" when the cloud copy is still there. */
+  deleteAccountPermanently: (accountId: string) => Promise<{ ok: boolean; message?: string }>;
 }
 
 function newAccount(namedInsured: string, state: string): Account {
@@ -109,10 +130,61 @@ function appendEvent(log: Record<string, ActivityEvent[]>, accountId: string, ty
 
 export const useAccountsStore = create<AccountsState>()(
   persist(
-    (set, get) => ({
+    (set, get) => {
+      /**
+       * Fire-and-forget cloud mirror for one submission — a no-op unless Supabase is configured,
+       * a broker is signed in, and this specific account has been marked cloud (created while
+       * signed in, or explicitly imported). Never blocks the caller: local state is always the
+       * immediate source of truth for the current session (see file header in submissionsRepo.ts),
+       * this just pushes the resulting state outward and reflects success/failure via syncStatus.
+       */
+      function syncNow(accountId: string) {
+        const s = get();
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        const account = s.accounts.find((a) => a.id === accountId);
+        const profile = s.riskProfiles[accountId];
+        if (!account || !profile) return;
+        const userId = s.currentUserId;
+        set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'saving' } }));
+        Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
+          const ok = snapRes.ok && actRes.ok;
+          set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
+        });
+      }
+
+      /**
+       * Uploads one file's bytes to the private Storage bucket and records the resulting path on
+       * its document row, then pushes the full submission snapshot (so the document metadata and
+       * every field extracted from it land together). A no-op unless this account is cloud-backed.
+       * Runs after local processing finishes (success or failure) so even a document that failed
+       * to read still has its original bytes preserved in the broker's account, not just discarded.
+       */
+      async function syncDocumentToCloud(accountId: string, documentId: string, file: File) {
+        const s = get();
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        const userId = s.currentUserId;
+        const uploadResult = await cloudRepo.uploadDocumentFile(userId, accountId, documentId, file);
+        if (uploadResult.ok) {
+          set((st) => ({
+            documents: {
+              ...st.documents,
+              [accountId]: (st.documents[accountId] ?? []).map((d) => (d.id === documentId ? { ...d, storagePath: uploadResult.data } : d)),
+            },
+          }));
+        }
+        const doc = (get().documents[accountId] ?? []).find((d) => d.id === documentId);
+        if (doc) await cloudRepo.upsertDocumentMetadata(userId, accountId, doc, uploadResult.ok ? uploadResult.data : null);
+        syncNow(accountId);
+      }
+
+      return {
       accounts: [],
       documents: {},
       riskProfiles: {},
+      currentUserId: null,
+      cloudAccountIds: {},
+      syncStatus: {},
+      dismissedImportIds: {},
       matchResults: {},
       activityLog: {},
       activeAccountId: null,
@@ -120,17 +192,20 @@ export const useAccountsStore = create<AccountsState>()(
 
       createAccount: (namedInsured, state) => {
         const account = newAccount(namedInsured, state);
+        const cloud = isSupabaseConfigured && !!get().currentUserId;
         set((s) => ({
           accounts: [...s.accounts, account],
           riskProfiles: { ...s.riskProfiles, [account.id]: createEmptyRiskProfile(account.id) },
           documents: { ...s.documents, [account.id]: [] },
           activityLog: appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`),
           activeAccountId: account.id,
+          cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
         }));
+        if (cloud) syncNow(account.id);
         return account.id;
       },
 
-      createAccountFromExtraction: (namedInsured, state, documents, profile) => {
+      createAccountFromExtraction: (namedInsured, state, documents, profile, files) => {
         const account = { ...newAccount(namedInsured, state), status: 'documents_uploaded' as const };
         const finalDocs: UploadedDocument[] = documents.map((d) => ({ ...d, accountId: account.id }));
         const finalProfile: RiskProfile = { ...profile, accountId: account.id };
@@ -148,15 +223,24 @@ export const useAccountsStore = create<AccountsState>()(
               log = appendEvent(log, account.id, 'document_processed', `Extracted ${doc.fieldsExtracted ?? 0} field${doc.fieldsExtracted === 1 ? '' : 's'} from ${doc.name}.`);
             }
           }
+          const cloud = isSupabaseConfigured && !!s.currentUserId;
           return {
             accounts: [...s.accounts, account],
             riskProfiles: { ...s.riskProfiles, [account.id]: finalProfile },
             documents: { ...s.documents, [account.id]: finalDocs },
             activityLog: log,
             activeAccountId: account.id,
+            cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
           };
         });
         get().runMatching(account.id);
+        syncNow(account.id);
+        if (isSupabaseConfigured && get().currentUserId && files) {
+          finalDocs.forEach((doc, i) => {
+            const file = files[i];
+            if (file) syncDocumentToCloud(account.id, doc.id, file);
+          });
+        }
         return account.id;
       },
 
@@ -244,6 +328,7 @@ export const useAccountsStore = create<AccountsState>()(
                 };
               });
               get().runMatching(accountId);
+              syncDocumentToCloud(accountId, doc.id, file);
             })
             .catch((err) => {
               const message = err instanceof Error ? err.message : 'Could not process this file.';
@@ -254,6 +339,7 @@ export const useAccountsStore = create<AccountsState>()(
                 },
                 activityLog: appendEvent(s.activityLog, accountId, 'document_processed', `Could not read ${doc.name}.`),
               }));
+              syncDocumentToCloud(accountId, doc.id, file);
             });
         });
       },
@@ -270,9 +356,10 @@ export const useAccountsStore = create<AccountsState>()(
       },
 
       deleteDocument: (accountId, documentId) => {
+        const before = get().documents[accountId] ?? [];
+        const doc = before.find((d) => d.id === documentId);
         set((s) => {
           const docs = s.documents[accountId] ?? [];
-          const doc = docs.find((d) => d.id === documentId);
           if (!doc) return {};
           const profile = s.riskProfiles[accountId];
           const updatedProfile = profile ? removeDocumentFromRiskProfile({ ...profile }, documentId) : profile;
@@ -284,6 +371,16 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
+        const s = get();
+        if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId] && doc) {
+          Promise.all([doc.storagePath ? cloudRepo.deleteDocumentFile(doc.storagePath) : Promise.resolve({ ok: true as const, data: undefined }), cloudRepo.deleteDocumentRow(documentId)]).then(
+            ([fileRes, rowRes]) => {
+              const ok = fileRes.ok && rowRes.ok;
+              set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
+            }
+          );
+        }
       },
 
       updateField: (accountId, section, key, value) => {
@@ -315,6 +412,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
 
       resolveField: (accountId, section, key, resolution) => {
@@ -333,6 +431,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
 
       updateCoverage: (accountId, coverageType, field, value) => {
@@ -352,6 +451,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
 
       resolveCoverageConflict: (accountId, coverageType, field, resolution) => {
@@ -366,6 +466,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
 
       addCoverageLine: (accountId, coverageType) => {
@@ -379,6 +480,7 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog: appendEvent(s.activityLog, accountId, 'coverage_added', `Added ${coverageType.replace(/_/g, ' ')} coverage.`),
           };
         });
+        syncNow(accountId);
       },
 
       deleteCoverageLine: (accountId, coverageType) => {
@@ -393,6 +495,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
 
       addVehicle: (accountId, entry) => {
@@ -407,6 +510,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
       updateVehicle: (accountId, vehicleId, patch) => {
         set((s) => {
@@ -420,6 +524,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
       deleteVehicle: (accountId, vehicleId) => {
         set((s) => {
@@ -433,6 +538,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
 
       addDriver: (accountId, entry) => {
@@ -447,6 +553,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
       updateDriver: (accountId, driverId, patch) => {
         set((s) => {
@@ -460,6 +567,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
       deleteDriver: (accountId, driverId) => {
         set((s) => {
@@ -473,6 +581,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
 
       addLoss: (accountId, entry) => {
@@ -487,6 +596,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
       updateLoss: (accountId, lossId, patch) => {
         set((s) => {
@@ -500,6 +610,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
       deleteLoss: (accountId, lossId) => {
         set((s) => {
@@ -513,6 +624,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
       },
 
       runMatching: (accountId) => {
@@ -539,6 +651,7 @@ export const useAccountsStore = create<AccountsState>()(
             accountId
           ),
         }));
+        syncNow(accountId);
       },
 
       duplicateAccount: (accountId) => {
@@ -566,36 +679,100 @@ export const useAccountsStore = create<AccountsState>()(
 
       archiveAccount: (accountId) => {
         set((s) => ({ accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, archived: true } : a)) }));
+        syncNow(accountId);
       },
 
       restoreAccount: (accountId) => {
         set((s) => ({ accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, archived: false } : a)) }));
+        syncNow(accountId);
       },
 
-      deleteAccountPermanently: (accountId) => {
-        set((s) => {
-          const { [accountId]: _doc, ...documents } = s.documents;
-          const { [accountId]: _profile, ...riskProfiles } = s.riskProfiles;
-          const { [accountId]: _matches, ...matchResults } = s.matchResults;
-          const { [accountId]: _log, ...activityLog } = s.activityLog;
+      deleteAccountPermanently: async (accountId) => {
+        const s = get();
+        // A cloud-backed submission: remove the cloud copy FIRST (Storage objects, then the
+        // database row, which cascades to every dependent table) before touching local state. If
+        // either cloud step fails, local state is left completely untouched and the broker sees a
+        // real error — never a "deleted" submission that quietly still exists in their account.
+        if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId]) {
+          const filesResult = await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
+          if (!filesResult.ok) return { ok: false, message: `Couldn't remove this submission's files from your account: ${filesResult.message}` };
+          const deleteResult = await cloudRepo.deleteSubmissionCloud(accountId);
+          if (!deleteResult.ok) return { ok: false, message: `Couldn't delete this submission from your account: ${deleteResult.message}` };
+        }
+
+        set((st) => {
+          const { [accountId]: _doc, ...documents } = st.documents;
+          const { [accountId]: _profile, ...riskProfiles } = st.riskProfiles;
+          const { [accountId]: _matches, ...matchResults } = st.matchResults;
+          const { [accountId]: _log, ...activityLog } = st.activityLog;
+          const { [accountId]: _cloud, ...cloudAccountIds } = st.cloudAccountIds;
+          const { [accountId]: _sync, ...syncStatus } = st.syncStatus;
           return {
-            accounts: s.accounts.filter((a) => a.id !== accountId),
+            accounts: st.accounts.filter((a) => a.id !== accountId),
             documents,
             riskProfiles,
             matchResults,
             activityLog,
-            activeAccountId: s.activeAccountId === accountId ? null : s.activeAccountId,
+            cloudAccountIds,
+            syncStatus,
+            activeAccountId: st.activeAccountId === accountId ? null : st.activeAccountId,
           };
         });
+        return { ok: true };
       },
 
-    }),
+      setCurrentUserId: (userId) => set({ currentUserId: userId }),
+
+      hydrateCloudSubmissions: async () => {
+        const userId = get().currentUserId;
+        if (!isSupabaseConfigured || !userId) return;
+        const result = await cloudRepo.fetchUserSubmissions(userId);
+        if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
+        set((s) => {
+          const accounts = [...s.accounts];
+          const documents = { ...s.documents };
+          const riskProfiles = { ...s.riskProfiles };
+          const activityLog = { ...s.activityLog };
+          const cloudAccountIds = { ...s.cloudAccountIds };
+          for (const bundle of result.data) {
+            const idx = accounts.findIndex((a) => a.id === bundle.account.id);
+            if (idx === -1) accounts.push(bundle.account);
+            else accounts[idx] = bundle.account; // cloud is authoritative for an already-known cloud account
+            documents[bundle.account.id] = bundle.documents;
+            riskProfiles[bundle.account.id] = bundle.profile;
+            activityLog[bundle.account.id] = bundle.activity;
+            cloudAccountIds[bundle.account.id] = true;
+          }
+          return { accounts, documents, riskProfiles, activityLog, cloudAccountIds };
+        });
+        for (const bundle of result.data) get().runMatching(bundle.account.id);
+      },
+
+      importAccountsToCloud: async (accountIds) => {
+        const userId = get().currentUserId;
+        if (!isSupabaseConfigured || !userId) return;
+        set((s) => ({
+          cloudAccountIds: { ...s.cloudAccountIds, ...Object.fromEntries(accountIds.map((id) => [id, true as const])) },
+          dismissedImportIds: { ...s.dismissedImportIds, ...Object.fromEntries(accountIds.map((id) => [id, true as const])) },
+        }));
+        for (const accountId of accountIds) syncNow(accountId);
+      },
+
+      dismissLocalImport: (accountIds) => {
+        set((s) => ({ dismissedImportIds: { ...s.dismissedImportIds, ...Object.fromEntries(accountIds.map((id) => [id, true as const])) } }));
+      },
+      };
+    },
     {
       name: 'renewaliq.state.v1',
       // effectiveAppetiteRecords is derived (base + fetched overrides), re-loaded on demand — never
       // persisted, so a stale override can't get stuck in one broker's browser after an admin change.
       partialize: (state) => {
-        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, ...rest } = state;
+        // effectiveAppetiteRecords: derived, always re-fetched — see its own comment above.
+        // currentUserId: re-derived from the live Supabase session on load, never trusted from a
+        // stale persisted value (see App.tsx's bootstrap effect).
+        // syncStatus: a snapshot of in-flight/last save outcome — meaningless across a reload.
+        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, currentUserId: _currentUserId, syncStatus: _syncStatus, ...rest } = state;
         return rest;
       },
     }
