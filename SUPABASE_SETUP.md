@@ -233,6 +233,59 @@ If step 3 ever shows test-b able to see test-a's data, stop and re-check that RL
 every table (`alter table ... enable row level security` — all nine tables in 0003) before doing
 anything else with real broker data.
 
+## 11. Vision-based image extraction (optional — not required for the app to work)
+
+By default, an uploaded photo/screenshot (JPG/PNG/WEBP) is read with on-device OCR (Tesseract.js,
+runs entirely in the browser, no setup needed) and the OCR'd text is pattern-matched the same way a
+PDF/DOCX's text is. This works well for a clean, well-lit photo but struggles with skew, glare, and
+the abbreviated card-style labels a driver's license or registration uses.
+
+Turning on vision-based extraction sends the image itself to a Claude vision model, which reads the
+layout directly instead of relying on OCR text + regex — meaningfully more robust across the
+phone-photo-quality images a real submission pipeline (Telegram, SMS, email forwards) actually
+receives. OCR keeps running alongside it as a fallback/second opinion (see `reconcileImageExtraction`
+in the app code) — nothing is removed by turning this on, and nothing breaks if you don't.
+
+**This step requires an Anthropic API key and is not automatically enabled.** Skip this section
+entirely if you don't want to turn it on yet — the app is fully functional without it.
+
+1. **Get an Anthropic API key.** Create one at [console.anthropic.com](https://console.anthropic.com)
+   (Settings → API Keys). This is a paid, metered API — you are billed per image processed. There is
+   no free tier baked into this app; review Anthropic's current pricing before enabling this for a
+   real broker workload.
+2. **Install the Supabase CLI** if you haven't already (`npm install -g supabase`, or see
+   [supabase.com/docs/guides/cli](https://supabase.com/docs/guides/cli)), then link it to your
+   project: `supabase link --project-ref <your-project-ref>` (the project ref is in your project's
+   Settings → General).
+3. **Deploy the Edge Function** (already in this repo at `supabase/functions/extract-document-vision`):
+   ```
+   supabase functions deploy extract-document-vision
+   ```
+   Do **not** pass `--no-verify-jwt` — the function relies on Supabase's default JWT verification so
+   only a signed-in broker's browser can call it (never an anonymous visitor, and never something
+   that runs up your Anthropic bill for free).
+4. **Set the API key as a function secret** (never as a `VITE_` variable — those are bundled into the
+   browser JS and would leak the key to every visitor):
+   ```
+   supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+   ```
+5. **(Optional) Choose the model.** Defaults to `claude-sonnet-5` if unset. To use a different model
+   (e.g. a cheaper one for cost, or a stronger one for accuracy) without redeploying code:
+   ```
+   supabase secrets set ANTHROPIC_VISION_MODEL=claude-haiku-4-5-20251001
+   ```
+6. **That's it — no frontend rebuild or `VITE_` variable needed.** The next image a signed-in broker
+   uploads will attempt vision extraction automatically; local-only (not signed in) sessions and any
+   Supabase project without this function deployed keep using OCR exactly as before.
+
+**Smoke test after deploying:** sign in, upload a clear photo of a driver's license or vehicle
+registration to a submission, and open the Documents tab. If vision is working, the field count and
+the field-level "Source" column should reflect an AI-vision read (`extractionMethod:
+'vision_extraction'`, visible via each field's source label in the Risk Profile). If it's still
+using OCR only, check the function's logs (`supabase functions logs extract-document-vision`) for a
+missing-secret or provider-error message — the app degrades silently to OCR on any failure, so this
+is the way to actually confirm which path ran.
+
 ## What is and isn't covered
 
 - **Covered**: broker submission (anonymous, insert-only) → `appetite_update_requests`; general
@@ -253,11 +306,17 @@ anything else with real broker data.
   Postgres; a private `submission-documents` Storage bucket with per-owner-folder access policies;
   a "Local submissions found" import prompt that never uploads anything without an explicit broker
   action; and a Saving…/Saved/Failed-to-save indicator so a sync failure is never silently hidden.
+  **Vision-based image extraction** (see §11): an Edge Function that sends an uploaded photo to a
+  Claude vision model for layout-aware structured extraction, reconciled against the existing
+  on-device OCR read (agreement boosts confidence, disagreement is recorded as a visible conflict,
+  never silently resolved) — opt-in, requires an Anthropic API key you provide, and the app is
+  fully functional without it (OCR-only, exactly as before).
 - **Not covered**: email notifications beyond Supabase Auth's own (confirmation, password reset);
   the market/MGA workbook import (a separate, later pass); AI-driven account analytics (the next
   phase after this one); multi-user/agency organizations (the schema reserves `organization_id` for
   this — see the migration's comments — but nothing enforces or uses it yet); offline editing while
-  disconnected (a network failure surfaces as "Failed to save," it doesn't queue for later); and a
+  disconnected (a network failure surfaces as "Failed to save," it doesn't queue for later); a
   live, end-to-end browser test of sign-up/sign-in/cross-device sync against a real Supabase
   project, which requires credentials this development environment doesn't have — §10 above is the
-  smoke test to run once you have those.
+  smoke test to run once you have those; and a live call to the vision Edge Function against a real
+  Anthropic API key, for the same reason — §11 is the smoke test to run once you've deployed it.

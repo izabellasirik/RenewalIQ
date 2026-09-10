@@ -28,7 +28,10 @@ import {
   deleteRecordEntry,
   removeDocumentFromRiskProfile,
   extractInsuranceFields,
+  reconcileImageExtraction,
 } from '../services/extraction';
+import { extractViaVision } from '../services/ingestion/visionExtraction';
+import { countExtractedFields } from '../utils/fieldCount';
 import { matchAllMarkets } from '../services/appetite';
 import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
 import { fetchAppetiteOverrides } from '../services/appetiteUpdates/appetiteUpdateService';
@@ -290,27 +293,48 @@ export const useAccountsStore = create<AccountsState>()(
         newDocs.forEach((doc, i) => {
           const file = files[i];
           import('../services/ingestion')
-            .then(({ parseFile }) => parseFile(file))
-            .then((raw) => {
+            .then(async ({ parseFile }) => {
+              const raw = await parseFile(file);
               const isImageSource = raw.fileType === 'image';
-              const results = extractInsuranceFields(raw, { documentId: doc.id, documentName: doc.name, isImageSource });
-              // Empty extractable text alongside a warning means nothing was actually read (an
-              // unreadable photo, a scanned PDF with no embedded text) — that's a failure to
-              // surface as such, never a quietly-successful "0 fields extracted".
-              const readFailed = raw.text.trim().length === 0 && raw.warnings.length > 0;
-              const contentCategory = isImageSource && raw.text ? inferCategoryFromText(raw.text) : null;
+              const ocrResults = extractInsuranceFields(raw, { documentId: doc.id, documentName: doc.name, isImageSource });
+
+              // Images are the primary case vision extraction exists for — a layout-aware model
+              // reads the photo directly instead of relying only on OCR text + regex. Attempted
+              // only when Supabase is configured and the broker is signed in (see
+              // isVisionExtractionAvailable); resolves to null on any failure (not configured,
+              // function not deployed, provider error, malformed response) so OCR is always there
+              // as a fallback — this call never throws and never blocks the OCR path.
+              const visionResult = isImageSource ? await extractViaVision(file, get().currentUserId) : null;
+
+              const { results, documentCategory } = isImageSource
+                ? reconcileImageExtraction({ documentId: doc.id, documentName: doc.name, ocrResults, visionResult })
+                : { results: ocrResults, documentCategory: null };
+
+              const fieldsExtracted = countExtractedFields(results);
+              // "Unreadable" now means BOTH extraction paths came up empty — vision succeeding on a
+              // photo OCR's own confidence gate rejected (a common phone-photo-quality case) is a
+              // real success, not a failure, even though raw.text is empty in that case.
+              const ocrFoundNothing = raw.text.trim().length === 0 && raw.warnings.length > 0;
+              const readFailed = ocrFoundNothing && fieldsExtracted === 0;
+              // The "partially readable" warning describes Tesseract's own confidence, which stops
+              // being an accurate description of the document once a vision read has taken over as
+              // the primary source — only surfaced when OCR is what the final result actually rests on.
+              const warnings = isImageSource && visionResult && fieldsExtracted > 0 ? [] : raw.warnings;
+              const contentCategory = documentCategory ?? (isImageSource && raw.text ? inferCategoryFromText(raw.text) : null);
 
               if (import.meta.env.DEV) {
-                // Counts and metadata only — never the OCR'd text or any extracted field value,
-                // so this can't leak a driver's-license/PII payload into the console even in dev.
+                // Counts and metadata only — never the OCR'd/vision text or any extracted field
+                // value, so this can't leak a driver's-license/PII payload into the console even in dev.
                 console.debug('[RenewalIQ] document processed', {
                   documentId: doc.id,
                   fileType: raw.fileType,
                   detectedCategory: contentCategory ?? doc.category,
+                  visionAttempted: isImageSource,
+                  visionSucceeded: !!visionResult,
                   ocrConfidence: raw.ocrConfidence,
                   ocrTextLength: raw.text.length,
-                  fieldsExtracted: results.length,
-                  warningCount: raw.warnings.length,
+                  fieldsExtracted,
+                  warningCount: warnings.length,
                 });
               }
 
@@ -323,8 +347,8 @@ export const useAccountsStore = create<AccountsState>()(
                     ? {
                         ...d,
                         status: readFailed ? ('error' as const) : ('processed' as const),
-                        fieldsExtracted: results.length,
-                        warnings: raw.warnings.length > 0 ? raw.warnings : undefined,
+                        fieldsExtracted,
+                        warnings: warnings.length > 0 ? warnings : undefined,
                         previewDataUrl: raw.imagePreviewDataUrl,
                         category: contentCategory ?? d.category,
                       }
@@ -337,7 +361,7 @@ export const useAccountsStore = create<AccountsState>()(
                     s.activityLog,
                     accountId,
                     'document_processed',
-                    readFailed ? `Could not read ${doc.name}.` : `Extracted ${results.length} field${results.length === 1 ? '' : 's'} from ${doc.name}.`
+                    readFailed ? `Could not read ${doc.name}.` : `Extracted ${fieldsExtracted} field${fieldsExtracted === 1 ? '' : 's'} from ${doc.name}.`
                   ),
                 };
               });

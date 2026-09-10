@@ -49,7 +49,17 @@ export function mergeFieldValue<T>(
   }
 
   if (isEqualValue(existing.value, incoming.value)) {
-    // Same value from a second document — corroborates it. Keep the stronger confidence.
+    // Same value from a second document — corroborates it. When the second read is specifically a
+    // vision-model read agreeing with an on-device-OCR read of the SAME image (or vice versa) —
+    // two independent extraction mechanisms, not just two documents — that's stronger evidence
+    // than either alone, so the confidence is boosted rather than just keeping the stronger of the
+    // two. Any other pairing (e.g. two OCR reads from different documents) keeps today's behavior:
+    // the stronger of the two confidences wins, never invented beyond what either read alone earned.
+    const methods = new Set([incoming.extractionMethod, existing.extractionMethod]);
+    const isVisionOcrCorroboration = incoming.confidence !== 'low' && existing.confidence !== 'low' && methods.has('vision_extraction') && methods.has('image_ocr');
+    if (isVisionOcrCorroboration) {
+      return { ...incoming, confidence: 'high', isConflicting: existing.isConflicting, alternateValues: existing.alternateValues };
+    }
     const stronger = CONFIDENCE_ORDER[incoming.confidence] < CONFIDENCE_ORDER[existing.confidence];
     return stronger ? { ...incoming, isConflicting: existing.isConflicting, alternateValues: existing.alternateValues } : existing;
   }

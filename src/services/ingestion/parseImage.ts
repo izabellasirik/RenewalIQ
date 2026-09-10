@@ -1,18 +1,19 @@
 import { createWorker } from 'tesseract.js';
 import type { RawDocument } from './types';
+import { decodeOriented, drawToCanvas } from './imageUtils';
 
 /**
- * How image ingestion actually reads text: on-device OCR (Tesseract.js — WebAssembly, runs
- * entirely in the broker's browser) rather than a multimodal AI vision API. There is currently no
- * AI/vision provider wired into this app anywhere (no API key, no server to hold one securely —
- * see PRODUCT_ROADMAP.md), and building one would require exactly that: a secret key plus a
- * server-side function, since a Vite frontend can never hold a secret safely. OCR needs neither —
- * no key, no backend, ships today. The OCR'd text is then run through the exact same
- * extractInsuranceFields() deterministic pattern-matching used for PDF/DOCX/TXT text, so every
- * downstream behavior (provenance, confidence, reconciliation, conflict review) is identical for
- * an image as for any other document — see fieldExtraction/extractInsuranceFields.ts's
- * `isImageSource` handling for the one place image provenance is treated differently (confidence
- * is capped, and extractionMethod is 'image_ocr' instead of 'ai_extraction').
+ * On-device OCR (Tesseract.js — WebAssembly, runs entirely in the broker's browser). This is no
+ * longer the primary way an image's content is understood — see visionExtraction.ts, which sends
+ * the image itself to a vision-capable model via a Supabase Edge Function for layout-aware
+ * structured extraction. This module remains as the fallback/supplement for when vision isn't
+ * available (Supabase not configured, broker not signed in, or the vision call fails) and as a
+ * second, independent read that the vision result can be reconciled against — see
+ * services/extraction/reconcileImageExtraction.ts. The OCR'd text still runs through the same
+ * extractInsuranceFields() deterministic pattern-matching used for PDF/DOCX/TXT text, tagged
+ * extractionMethod: 'image_ocr' (confidence capped at 'medium' — see capConfidence in
+ * extractInsuranceFields.ts) to keep it distinct from a vision-model read ('vision_extraction',
+ * which can legitimately reach 'high').
  *
  * Runtime note: Tesseract.js fetches its worker script, WASM core, and English language data
  * (a few MB total) from public CDNs (jsdelivr / tessdata) the first time an image is processed in
@@ -34,31 +35,6 @@ const LOW_CONFIDENCE_WARNING = 55;
 const MIN_READABLE_CHARS = 6;
 
 const UNREADABLE_MESSAGE = "We couldn't reliably read this image. Try uploading a clearer photo or review the fields manually.";
-
-/**
- * Decodes with EXIF orientation applied — the single most common phone-photo problem (a document
- * shot in portrait that the camera tagged as rotated). `imageOrientation: 'from-image'` is the
- * standards-based way to get pixels that are actually right-side-up; browsers old enough to lack
- * it still decode the image, just without the correction, so this never blocks a valid upload.
- */
-async function decodeOriented(file: File): Promise<ImageBitmap> {
-  try {
-    return await createImageBitmap(file, { imageOrientation: 'from-image' });
-  } catch {
-    return await createImageBitmap(file);
-  }
-}
-
-function drawToCanvas(bitmap: ImageBitmap, maxDimension: number): HTMLCanvasElement {
-  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('This browser could not prepare the image for reading.');
-  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  return canvas;
-}
 
 export async function parseImage(file: File): Promise<RawDocument> {
   const warnings: string[] = [];

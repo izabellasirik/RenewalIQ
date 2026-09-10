@@ -83,17 +83,22 @@ const DATE_TOKEN = /^(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}-\d{2}-\d{2})$/;
 const ID_TOKEN = /^[A-Z0-9-]{5,17}$/;
 const CLASS_TOKEN = /^(?:CDL[-\s]?)?[A-Z]{1,2}[0-9]?$/;
 
-function normalizeDate(raw: string): string | null {
+/**
+ * Exported so visionExtraction.ts's response validator can hold a vision-model-returned value to
+ * the exact same format rules as an OCR-matched one — "never hallucinate" applies uniformly
+ * regardless of which extraction path produced the candidate value, not just to regex matches.
+ */
+export function normalizeDate(raw: string): string | null {
   const t = raw.trim().replace(/[.,;]+$/, '');
   return DATE_TOKEN.test(t) ? t : null;
 }
 
-function normalizeIdToken(raw: string): string | null {
+export function normalizeIdToken(raw: string): string | null {
   const t = raw.trim().replace(/[.,;]+$/, '').toUpperCase();
   return ID_TOKEN.test(t) ? t : null;
 }
 
-function normalizeClassToken(raw: string): string | null {
+export function normalizeClassToken(raw: string): string | null {
   const t = raw.trim().replace(/[.,;]+$/, '').toUpperCase();
   return CLASS_TOKEN.test(t) ? t : null;
 }
@@ -104,7 +109,7 @@ function normalizeNamePart(raw: string): string | null {
   return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
 }
 
-function normalizePlainName(raw: string): string | null {
+export function normalizePlainName(raw: string): string | null {
   const parts = raw.trim().split(/\s+/);
   if (parts.length === 0 || parts.length > 4) return null;
   const normalized = parts.map(normalizeNamePart);

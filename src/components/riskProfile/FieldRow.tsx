@@ -14,6 +14,7 @@ const EXTRACTION_METHOD_LABELS: Record<ExtractionMethod, string> = {
   deterministic_import: 'Imported from API',
   manual_entry: 'Entered by broker',
   image_ocr: 'Read from a photo (OCR)',
+  vision_extraction: 'Read from a photo (AI vision)',
 };
 
 interface FieldRowProps<T> {

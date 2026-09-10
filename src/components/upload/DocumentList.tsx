@@ -100,7 +100,7 @@ export function DocumentList({
               ) : (
                 <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'}>
                   <CircleCheck size={12} />
-                  {doc.fieldsExtracted ?? 0} fields
+                  {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted
                 </Badge>
               )}
               {onDelete && (

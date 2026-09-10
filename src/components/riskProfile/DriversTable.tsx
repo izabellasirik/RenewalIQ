@@ -45,9 +45,17 @@ function fromDraft(d: Draft): Omit<DriverEntry, 'id'> {
   };
 }
 
-/** True when at least one field on this row was a shakier read than the rest (see idDocumentPatterns.ts) — surfaced as a small inline flag rather than hiding or discarding the row. */
+/** True when at least one field on this row was a shakier read than the rest, or when the vision model and OCR disagreed on a field — surfaced as a small inline flag rather than hiding or discarding the row. */
 function needsReview(d: DriverEntry): boolean {
-  return !!d.fieldConfidence && Object.values(d.fieldConfidence).some((c) => c === 'low');
+  return (!!d.conflicts && Object.keys(d.conflicts).length > 0) || (!!d.fieldConfidence && Object.values(d.fieldConfidence).some((c) => c === 'low'));
+}
+
+function reviewTooltip(d: DriverEntry): string {
+  if (d.conflicts && Object.keys(d.conflicts).length > 0) {
+    const fields = Object.keys(d.conflicts).join(', ');
+    return `AI vision and OCR read this row's ${fields} differently — double-check against the source photo.`;
+  }
+  return 'Some fields on this row were a shakier read — double-check against the source photo.';
 }
 
 const inputCls = 'w-full rounded-md border border-[var(--color-brand-500)] px-1.5 py-1 text-xs outline-none';
@@ -143,7 +151,7 @@ export function DriversTable({
                   <span className="inline-flex items-center gap-1.5">
                     {d.name ?? '—'}
                     {needsReview(d) && (
-                      <span title="Some fields on this row were a shakier OCR read — double-check against the source photo." className="inline-flex items-center text-[var(--color-warning-600,#b45309)]">
+                      <span title={reviewTooltip(d)} className="inline-flex items-center text-[var(--color-warning-600,#b45309)]">
                         <AlertTriangle size={12} />
                       </span>
                     )}

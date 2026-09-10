@@ -1,7 +1,19 @@
 import { useState } from 'react';
-import { Plus, Pencil, Trash2, Check, X, User } from 'lucide-react';
+import { Plus, Pencil, Trash2, Check, X, User, AlertTriangle } from 'lucide-react';
 import type { VehicleEntry } from '../../types';
 import { Button, ConfirmDialog } from '../ui';
+
+/** True when at least one field on this row was a shakier read, or when the vision model and OCR disagreed on a field. */
+function needsReview(v: VehicleEntry): boolean {
+  return (!!v.conflicts && Object.keys(v.conflicts).length > 0) || (!!v.fieldConfidence && Object.values(v.fieldConfidence).some((c) => c === 'low'));
+}
+
+function reviewTooltip(v: VehicleEntry): string {
+  if (v.conflicts && Object.keys(v.conflicts).length > 0) {
+    return `AI vision and OCR read this row's ${Object.keys(v.conflicts).join(', ')} differently — double-check against the source photo.`;
+  }
+  return 'Some fields on this row were a shakier read — double-check against the source photo.';
+}
 
 type Draft = { vin: string; make: string; model: string; year: string; value: string; bodyType: string; plate: string };
 
@@ -122,7 +134,16 @@ export function VehiclesTable({
               </tr>
             ) : (
               <tr key={v.id} className="border-b border-[var(--color-ink-100)] last:border-0">
-                <td className="py-2.5 pr-4 font-mono text-xs text-[var(--color-ink-800)]">{v.vin ?? '—'}</td>
+                <td className="py-2.5 pr-4 font-mono text-xs text-[var(--color-ink-800)]">
+                  <span className="inline-flex items-center gap-1.5">
+                    {v.vin ?? '—'}
+                    {needsReview(v) && (
+                      <span title={reviewTooltip(v)} className="inline-flex items-center text-[var(--color-warning-600,#b45309)]">
+                        <AlertTriangle size={12} />
+                      </span>
+                    )}
+                  </span>
+                </td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.make ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.model ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.year ?? '—'}</td>

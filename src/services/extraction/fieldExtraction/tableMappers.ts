@@ -31,7 +31,7 @@ function findColumn(headers: string[], synonyms: string[], exactOnly: string[] =
   return -1;
 }
 
-const VEHICLE_SYNONYMS: Record<keyof Omit<VehicleEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt'>, string[]> = {
+const VEHICLE_SYNONYMS: Record<keyof Omit<VehicleEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'fieldConfidence' | 'conflicts'>, string[]> = {
   vin: ['vin', 'vehicle identification number'],
   make: ['make'],
   model: ['model'],
@@ -43,7 +43,7 @@ const VEHICLE_SYNONYMS: Record<keyof Omit<VehicleEntry, 'id' | 'source' | 'isMan
 /** Bare single-word headers only safe as a whole-header match, never a substring. */
 const VEHICLE_BODY_TYPE_EXACT_ONLY = ['type'];
 
-const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'isCDL' | 'fieldConfidence'>, string[]> = {
+const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'isCDL' | 'fieldConfidence' | 'conflicts'>, string[]> = {
   name: ['driver name', 'employee name', 'name'],
   dob: ['dob', 'date of birth'],
   address: ['address', 'driver address', 'home address'],
