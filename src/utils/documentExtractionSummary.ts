@@ -16,6 +16,8 @@ export interface DocumentFieldSummary {
   disposition: FieldDisposition;
   /** Populated only for 'superseded' — what the Risk Profile currently shows instead. */
   currentValue?: unknown;
+  /** For an itemized row (drivers/vehicles/lossHistory) only: the canonical profile row's real id, populated only when one could actually be matched (see rowDisposition) — this is what an Edit action needs to call updateDriver/updateVehicle/updateLoss against. Undefined for scalar fields and for a row this document contributed that no longer matches anything in the live profile (nothing safe to edit). */
+  rowId?: string;
 }
 
 function isEqualLoose(a: unknown, b: unknown): boolean {
@@ -36,7 +38,8 @@ function dispositionForFieldValue<T>(current: FieldValue<T> | undefined, extract
   return { disposition: 'not_applied', currentValue: current.value };
 }
 
-function scalarFieldValue(profile: RiskProfile, fieldPath: string): FieldValue<unknown> | undefined {
+/** The current canonical FieldValue a scalar fieldPath (business.___, transportation.___, or coverage.___) resolves to in the live profile — exported so the "Extracted Data" panel can both edit it and check whether it's since become broker-edited/confirmed (see fieldDataStatus). */
+export function scalarFieldValue(profile: RiskProfile, fieldPath: string): FieldValue<unknown> | undefined {
   if (fieldPath === 'coverageLine') return undefined; // membership-only field, no FieldValue to compare
   if (fieldPath.startsWith('coverage.')) {
     const [, coverageType, sub] = fieldPath.split('.') as [string, CoverageType, 'requestedLimit' | 'currentLimit'];
@@ -48,13 +51,21 @@ function scalarFieldValue(profile: RiskProfile, fieldPath: string): FieldValue<u
   return bucket?.[key];
 }
 
-function rowDisposition(rows: { source?: { documentId: string } }[], documentId: string, matchesValue: (row: unknown) => boolean): FieldDisposition {
-  if (rows.some((r) => r.source?.documentId === documentId)) return 'applied';
+function rowDisposition(
+  rows: { id: string; source?: { documentId: string } }[],
+  documentId: string,
+  matchesValue: (row: unknown) => boolean
+): { disposition: FieldDisposition; rowId?: string } {
+  const bySource = rows.find((r) => r.source?.documentId === documentId);
+  if (bySource) return { disposition: 'applied', rowId: bySource.id };
   // Exact-duplicate dedup (isDuplicateRow in extractionService.ts) can merge this document's row
   // into an already-existing identical row attributed to a different document — the data is still
-  // represented, just not attributed here, so check by value before calling it fully gone.
-  if (rows.some(matchesValue)) return 'applied';
-  return 'not_applied';
+  // represented, just not attributed here, so check by value before calling it fully gone. rowId is
+  // still populated in this case: it's a real, currently-live row, just not one this document itself
+  // is the recorded source of — still safe (and useful) to edit from here.
+  const byValue = rows.find(matchesValue);
+  if (byValue) return { disposition: 'applied', rowId: byValue.id };
+  return { disposition: 'not_applied' };
 }
 
 function stripRowMeta(row: object): Record<string, unknown> {
@@ -124,20 +135,20 @@ export function summarizeDocumentExtraction(doc: UploadedDocument, profile: Risk
   for (const field of fields) {
     if (field.fieldPath === 'drivers') {
       const entry = field.value as DriverEntry;
-      const disposition = rowDisposition(profile.drivers, doc.id, (r) => isEqualLoose((r as DriverEntry).name, entry.name) && isEqualLoose((r as DriverEntry).dob, entry.dob));
-      summaries.push({ fieldPath: field.fieldPath, value: field.value, confidence: field.confidence, extractionMethod: field.extractionMethod, disposition });
+      const { disposition, rowId } = rowDisposition(profile.drivers, doc.id, (r) => isEqualLoose((r as DriverEntry).name, entry.name) && isEqualLoose((r as DriverEntry).dob, entry.dob));
+      summaries.push({ fieldPath: field.fieldPath, value: field.value, confidence: field.confidence, extractionMethod: field.extractionMethod, disposition, rowId });
       continue;
     }
     if (field.fieldPath === 'vehicles') {
       const entry = field.value as VehicleEntry;
-      const disposition = rowDisposition(profile.vehicles, doc.id, (r) => !!entry.vin && isEqualLoose((r as VehicleEntry).vin, entry.vin));
-      summaries.push({ fieldPath: field.fieldPath, value: field.value, confidence: field.confidence, extractionMethod: field.extractionMethod, disposition });
+      const { disposition, rowId } = rowDisposition(profile.vehicles, doc.id, (r) => !!entry.vin && isEqualLoose((r as VehicleEntry).vin, entry.vin));
+      summaries.push({ fieldPath: field.fieldPath, value: field.value, confidence: field.confidence, extractionMethod: field.extractionMethod, disposition, rowId });
       continue;
     }
     if (field.fieldPath === 'lossHistory') {
       const entry = field.value as LossEntry;
-      const disposition = rowDisposition(profile.lossHistory, doc.id, (r) => isEqualLoose((r as LossEntry).lossDate, entry.lossDate) && isEqualLoose((r as LossEntry).claimType, entry.claimType));
-      summaries.push({ fieldPath: field.fieldPath, value: field.value, confidence: field.confidence, extractionMethod: field.extractionMethod, disposition });
+      const { disposition, rowId } = rowDisposition(profile.lossHistory, doc.id, (r) => isEqualLoose((r as LossEntry).lossDate, entry.lossDate) && isEqualLoose((r as LossEntry).claimType, entry.claimType));
+      summaries.push({ fieldPath: field.fieldPath, value: field.value, confidence: field.confidence, extractionMethod: field.extractionMethod, disposition, rowId });
       continue;
     }
     if (field.fieldPath === 'coverageLine') {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import type { RiskProfile, UploadedDocument } from '../../types';
+import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { previewDocumentRemovalImpact } from '../../services/extraction';
 import { Badge, ConfirmDialog } from '../ui';
@@ -21,11 +21,21 @@ export function DocumentList({
   documents,
   profile,
   onDelete,
+  onUpdateField,
+  onUpdateCoverage,
+  onUpdateVehicle,
+  onUpdateDriver,
+  onUpdateLoss,
 }: {
   documents: UploadedDocument[];
-  /** Used only to preview what a deletion would affect, in the confirm dialog — never mutated here. */
+  /** Used to preview what a deletion would affect (in the confirm dialog) and, when passed through, to let the "Extracted Data" panel edit fields directly. */
   profile?: RiskProfile;
   onDelete?: (documentId: string) => void;
+  onUpdateField?: (section: 'business' | 'transportation', key: string, value: unknown) => void;
+  onUpdateCoverage?: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
+  onUpdateVehicle?: (id: string, patch: Partial<VehicleEntry>) => void;
+  onUpdateDriver?: (id: string, patch: Partial<DriverEntry>) => void;
+  onUpdateLoss?: (id: string, patch: Partial<LossEntry>) => void;
 }) {
   const [previewDoc, setPreviewDoc] = useState<UploadedDocument | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UploadedDocument | null>(null);
@@ -132,7 +142,19 @@ export function DocumentList({
 
       <ImagePreviewModal open={!!previewDoc} onClose={() => setPreviewDoc(null)} src={previewDoc?.previewDataUrl ?? ''} name={previewDoc?.name ?? ''} />
 
-      {profile && <DocumentExtractionDetail open={!!detailDoc} onClose={() => setDetailDoc(null)} document={detailDoc} profile={profile} />}
+      {profile && (
+        <DocumentExtractionDetail
+          open={!!detailDoc}
+          onClose={() => setDetailDoc(null)}
+          document={detailDoc}
+          profile={profile}
+          onUpdateField={onUpdateField}
+          onUpdateCoverage={onUpdateCoverage}
+          onUpdateVehicle={onUpdateVehicle}
+          onUpdateDriver={onUpdateDriver}
+          onUpdateLoss={onUpdateLoss}
+        />
+      )}
 
       <ConfirmDialog
         open={!!deleteTarget}

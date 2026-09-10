@@ -17,6 +17,11 @@ export function UploadPage() {
   const addFiles = useAccountsStore((s) => s.addFiles);
   const loadSampleDocuments = useAccountsStore((s) => s.loadSampleDocuments);
   const deleteDocument = useAccountsStore((s) => s.deleteDocument);
+  const updateField = useAccountsStore((s) => s.updateField);
+  const updateCoverage = useAccountsStore((s) => s.updateCoverage);
+  const updateVehicle = useAccountsStore((s) => s.updateVehicle);
+  const updateDriver = useAccountsStore((s) => s.updateDriver);
+  const updateLoss = useAccountsStore((s) => s.updateLoss);
 
   if (!account) {
     return <AccountNotFound />;
@@ -49,7 +54,16 @@ export function UploadPage() {
             </button>
           )}
 
-          <DocumentList documents={documents} profile={profile} onDelete={(documentId) => deleteDocument(accountId, documentId)} />
+          <DocumentList
+            documents={documents}
+            profile={profile}
+            onDelete={(documentId) => deleteDocument(accountId, documentId)}
+            onUpdateField={(section, key, value) => updateField(accountId, section, key, value)}
+            onUpdateCoverage={(coverageType, field, value) => updateCoverage(accountId, coverageType, field, value)}
+            onUpdateVehicle={(id, patch) => updateVehicle(accountId, id, patch)}
+            onUpdateDriver={(id, patch) => updateDriver(accountId, id, patch)}
+            onUpdateLoss={(id, patch) => updateLoss(accountId, id, patch)}
+          />
         </div>
 
         <Card className="h-fit">

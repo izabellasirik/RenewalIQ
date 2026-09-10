@@ -51,42 +51,61 @@ export interface SubmitProductFeedbackInput {
   appetiteRecordId?: string;
 }
 
-/** Inserts a new 'new'-status feedback row. Never touches anything else. Returns ok:false (never a false "saved") on any failure, including Supabase not being configured. */
+/**
+ * Inserts a new 'new'-status feedback row. Never touches anything else. Returns ok:false (never a
+ * false "saved") on any failure, including Supabase not being configured — wrapped in try/catch so
+ * that promise, too: a thrown network/client error (as opposed to a `{error}` result, which
+ * supabase-js normally returns for an ordinary failed request) would otherwise propagate as an
+ * unhandled rejection past this function, leaving the caller's "Submitting…" state stuck forever
+ * with no visible error — indistinguishable, from a broker's perspective, from the button simply
+ * doing nothing.
+ */
 export async function submitProductFeedback(input: SubmitProductFeedbackInput): Promise<ServiceResult<null>> {
   if (!supabase) return notConfigured();
 
-  const { error } = await supabase.from('product_feedback').insert({
-    feedback_type: input.feedbackType,
-    message: input.message,
-    name: input.name || null,
-    email: input.email || null,
-    page_path: input.pagePath || null,
-    account_id: input.accountId || null,
-    appetite_record_id: input.appetiteRecordId || null,
-    status: 'new',
-  });
+  try {
+    const { error } = await supabase.from('product_feedback').insert({
+      feedback_type: input.feedbackType,
+      message: input.message,
+      name: input.name || null,
+      email: input.email || null,
+      page_path: input.pagePath || null,
+      account_id: input.accountId || null,
+      appetite_record_id: input.appetiteRecordId || null,
+      status: 'new',
+    });
 
-  if (error) return errorResult(error.message);
-  return { ok: true, data: null };
+    if (error) return errorResult(error.message);
+    return { ok: true, data: null };
+  } catch (err) {
+    return errorResult(err instanceof Error ? err.message : 'Could not submit this feedback.');
+  }
 }
 
 /** Every feedback entry regardless of status, newest first — the admin dashboard and the full feedback list both derive their counts and filtered views from this single fetch. RLS ("admin can read product feedback", see supabase/migrations) is the actual authorization boundary. */
 export async function fetchAllProductFeedback(): Promise<ServiceResult<ProductFeedback[]>> {
   if (!supabase) return notConfigured();
 
-  const { data, error } = await supabase.from('product_feedback').select('*').order('created_at', { ascending: false });
-
-  if (error) return errorResult(error.message);
-  return { ok: true, data: ((data ?? []) as FeedbackRow[]).map(rowToFeedback) };
+  try {
+    const { data, error } = await supabase.from('product_feedback').select('*').order('created_at', { ascending: false });
+    if (error) return errorResult(error.message);
+    return { ok: true, data: ((data ?? []) as FeedbackRow[]).map(rowToFeedback) };
+  } catch (err) {
+    return errorResult(err instanceof Error ? err.message : 'Could not load feedback.');
+  }
 }
 
 /** Updates only the status of one feedback row — gated by the "admin can update product feedback status" RLS policy (is_admin()), which is the real authorization boundary here, not this client call. */
 export async function updateFeedbackStatus(id: string, status: FeedbackStatus): Promise<ServiceResult<null>> {
   if (!supabase) return notConfigured();
 
-  const { error } = await supabase.from('product_feedback').update({ status }).eq('id', id);
-  if (error) return errorResult(error.message);
-  return { ok: true, data: null };
+  try {
+    const { error } = await supabase.from('product_feedback').update({ status }).eq('id', id);
+    if (error) return errorResult(error.message);
+    return { ok: true, data: null };
+  } catch (err) {
+    return errorResult(err instanceof Error ? err.message : 'Could not update this feedback.');
+  }
 }
 
 export { isSupabaseConfigured };

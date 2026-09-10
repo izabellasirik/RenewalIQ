@@ -1,6 +1,6 @@
 import { Sparkles, TriangleAlert } from 'lucide-react';
 import type { FieldStatEntry } from '../../hooks/useRiskProfileStats';
-import { Button, ConfidenceBadge } from '../ui';
+import { Button } from '../ui';
 import { displayReadValue } from '../riskProfile/FieldRow';
 
 export function SuggestedFixRow({ entry, onResolve }: { entry: FieldStatEntry; onResolve: (value: unknown) => void }) {
@@ -21,10 +21,7 @@ export function SuggestedFixRow({ entry, onResolve }: { entry: FieldStatEntry; o
 
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div className="rounded-md border border-[var(--color-ink-100)] bg-white p-3">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-medium text-[var(--color-ink-900)]">{displayReadValue(value.value)}</span>
-            <ConfidenceBadge confidence={value.confidence} />
-          </div>
+          <span className="text-sm font-medium text-[var(--color-ink-900)]">{displayReadValue(value.value)}</span>
           {value.source && <p className="mt-1 text-xs text-[var(--color-ink-400)]">from {value.source.documentName}</p>}
         </div>
         {alternates.map((alt, i) => (

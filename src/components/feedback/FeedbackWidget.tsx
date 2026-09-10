@@ -39,20 +39,27 @@ export function FeedbackWidget() {
   async function handleSubmit() {
     if (!message.trim()) return;
     setSubmitState({ status: 'submitting' });
-    const result = await submitProductFeedback({
-      feedbackType,
-      message: message.trim(),
-      name: name.trim(),
-      email: email.trim(),
-      pagePath: location.pathname,
-      accountId,
-    });
+    try {
+      const result = await submitProductFeedback({
+        feedbackType,
+        message: message.trim(),
+        name: name.trim(),
+        email: email.trim(),
+        pagePath: location.pathname,
+        accountId,
+      });
 
-    if (!result.ok) {
-      setSubmitState({ status: 'error', message: result.message });
-      return;
+      if (!result.ok) {
+        setSubmitState({ status: 'error', message: result.message });
+        return;
+      }
+      setSubmitState({ status: 'success' });
+    } catch (err) {
+      // submitProductFeedback itself never throws (see its own try/catch), but guarding here too
+      // means this can never get stuck showing "Submitting…" forever with no visible error — which
+      // is indistinguishable, from a broker's perspective, from the button doing nothing at all.
+      setSubmitState({ status: 'error', message: err instanceof Error ? err.message : 'Something went wrong submitting this feedback.' });
     }
-    setSubmitState({ status: 'success' });
   }
 
   return (
@@ -131,9 +138,14 @@ export function FeedbackWidget() {
               </div>
             )}
 
-            <Button disabled={!message.trim() || submitState.status === 'submitting'} onClick={handleSubmit}>
-              {submitState.status === 'submitting' ? 'Submitting…' : 'Submit Feedback'}
-            </Button>
+            <div className="flex gap-2">
+              <Button disabled={!message.trim() || submitState.status === 'submitting'} onClick={handleSubmit}>
+                {submitState.status === 'submitting' ? 'Submitting…' : 'Submit'}
+              </Button>
+              <Button variant="secondary" disabled={submitState.status === 'submitting'} onClick={resetAndClose}>
+                Cancel
+              </Button>
+            </div>
           </div>
         )}
       </Drawer>

@@ -1,35 +1,44 @@
 import { useState } from 'react';
-import { CircleCheck, CircleAlert, TriangleAlert, CircleX, Info, ChevronDown, ChevronUp } from 'lucide-react';
-import type { RiskProfile, UploadedDocument, Confidence } from '../../types';
+import { CircleCheck, CircleAlert, TriangleAlert, CircleX, Info, Pencil, Check, X } from 'lucide-react';
+import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
-import { Drawer, Badge, ConfidenceBadge } from '../ui';
-import { fieldPathLabel, DRIVER_FIELD_LABELS, VEHICLE_FIELD_LABELS, LOSS_FIELD_LABELS } from '../../utils/fieldLabels';
-import { summarizeDocumentExtraction, FIELD_DISPOSITION_LABELS, type DocumentFieldSummary, type FieldDisposition } from '../../utils/documentExtractionSummary';
-import { displayReadValue } from '../riskProfile/FieldRow';
+import { Drawer, Badge, type BadgeTone } from '../ui';
+import { fieldPathLabel, fieldPathValueType, DRIVER_FIELD_LABELS, VEHICLE_FIELD_LABELS, LOSS_FIELD_LABELS } from '../../utils/fieldLabels';
+import { summarizeDocumentExtraction, scalarFieldValue, type DocumentFieldSummary } from '../../utils/documentExtractionSummary';
+import { displayReadValue, parseDraft, ValueInput } from '../riskProfile/FieldRow';
 import { countExtractedFields } from '../../utils/fieldCount';
 
-const DISPOSITION_ICON: Record<FieldDisposition, typeof CircleCheck> = {
-  applied: CircleCheck,
-  needs_review: CircleAlert,
-  conflict: TriangleAlert,
-  superseded: Info,
-  not_applied: Info,
-};
+/**
+ * The broker-facing status for one document's contribution to a field — deliberately reduced to
+ * the four states worth a badge (Applied / Conflict / Needs Review / Broker Edited), never raw
+ * confidence. A document's own extraction confidence still lives on the data (FieldValue.confidence,
+ * DocumentExtractedField.confidence) and still drives merge/conflict logic in
+ * services/extraction — this is purely a display simplification for this panel.
+ */
+function simplifiedStatus(summary: DocumentFieldSummary, profile: RiskProfile): { label: string; tone: BadgeTone } | null {
+  if (summary.fieldPath === 'drivers' || summary.fieldPath === 'vehicles' || summary.fieldPath === 'lossHistory') {
+    const rows = summary.fieldPath === 'drivers' ? profile.drivers : summary.fieldPath === 'vehicles' ? profile.vehicles : profile.lossHistory;
+    const row = summary.rowId ? rows.find((r) => r.id === summary.rowId) : undefined;
+    if (row?.isManual) return { label: 'Broker Edited', tone: 'brand' };
+  } else if (summary.fieldPath !== 'coverageLine') {
+    const current = scalarFieldValue(profile, summary.fieldPath);
+    if (current?.extractionMethod === 'manual_entry') return { label: 'Broker Edited', tone: 'brand' };
+  }
+  if (summary.disposition === 'conflict') return { label: 'Conflict', tone: 'danger' };
+  if (summary.disposition === 'needs_review') return { label: 'Needs Review', tone: 'warning' };
+  if (summary.disposition === 'applied') return { label: 'Applied', tone: 'success' };
+  // 'superseded' / 'not_applied': not one of the four statuses worth a badge here — the scalar row
+  // still shows what the Risk Profile currently has instead (see the 'superseded' text below), so
+  // nothing is silently hidden, it's just not given badge-level prominence.
+  return null;
+}
 
-const DISPOSITION_TONE: Record<FieldDisposition, 'success' | 'warning' | 'danger' | 'neutral'> = {
-  applied: 'success',
-  needs_review: 'warning',
-  conflict: 'danger',
-  superseded: 'neutral',
-  not_applied: 'neutral',
-};
-
-function DispositionBadge({ disposition }: { disposition: FieldDisposition }) {
-  const Icon = DISPOSITION_ICON[disposition];
+function StatusBadge({ status }: { status: { label: string; tone: BadgeTone } }) {
+  const Icon = status.tone === 'success' ? CircleCheck : status.tone === 'warning' ? CircleAlert : status.tone === 'danger' ? TriangleAlert : Pencil;
   return (
-    <Badge tone={DISPOSITION_TONE[disposition]}>
+    <Badge tone={status.tone}>
       <Icon size={12} />
-      {FIELD_DISPOSITION_LABELS[disposition]}
+      {status.label}
     </Badge>
   );
 }
@@ -51,49 +60,196 @@ function sectionFor(fieldPath: string): (typeof SECTION_ORDER)[number] {
   return 'business_transportation';
 }
 
-function ScalarFieldRow({ summary }: { summary: DocumentFieldSummary }) {
+interface UpdateHandlers {
+  onUpdateField?: (section: 'business' | 'transportation', key: string, value: unknown) => void;
+  onUpdateCoverage?: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
+  onUpdateVehicle?: (id: string, patch: Partial<VehicleEntry>) => void;
+  onUpdateDriver?: (id: string, patch: Partial<DriverEntry>) => void;
+  onUpdateLoss?: (id: string, patch: Partial<LossEntry>) => void;
+}
+
+function ScalarFieldRow({ summary, profile, onUpdateField, onUpdateCoverage }: { summary: DocumentFieldSummary; profile: RiskProfile } & Pick<UpdateHandlers, 'onUpdateField' | 'onUpdateCoverage'>) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const status = simplifiedStatus(summary, profile);
+  const valueType = fieldPathValueType(summary.fieldPath);
+  // 'coverageLine' is a membership marker (this coverage type was requested), not a value — nothing to edit.
+  const canEdit = summary.fieldPath !== 'coverageLine' && (!!onUpdateField || !!onUpdateCoverage);
+  // Shows the LIVE canonical value, not a frozen snapshot of what this document originally read —
+  // once editing is possible from this panel, the display has to reflect a save immediately, the
+  // same way the main Risk Profile page's FieldRow always shows the current value. Falls back to
+  // this document's own extracted value only when the field currently has nothing live (e.g. it was
+  // since cleared) — see disposition/StatusBadge for whether that still matches what this document said.
+  const current = summary.fieldPath === 'coverageLine' ? undefined : scalarFieldValue(profile, summary.fieldPath);
+  const displayValue = current && !current.isMissing ? current.value : summary.value;
+
+  function startEdit() {
+    setDraft(displayReadValue(displayValue));
+    setIsEditing(true);
+  }
+
+  function commit() {
+    const value = parseDraft(valueType, draft);
+    if (summary.fieldPath.startsWith('coverage.')) {
+      const [, coverageType, sub] = summary.fieldPath.split('.') as [string, CoverageType, 'currentLimit' | 'requestedLimit'];
+      onUpdateCoverage?.(coverageType, sub, (value ?? '') as string);
+    } else {
+      const [section, key] = summary.fieldPath.split('.') as ['business' | 'transportation', string];
+      onUpdateField?.(section, key, value);
+    }
+    setIsEditing(false);
+  }
+
   return (
-    <div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--color-ink-100)] px-3 py-2.5">
-      <div className="min-w-0">
-        <p className="text-xs font-medium text-[var(--color-ink-500)]">{fieldPathLabel(summary.fieldPath)}</p>
-        <p className="mt-0.5 text-sm font-medium text-[var(--color-ink-900)]">{displayReadValue(summary.value) || '—'}</p>
-        {summary.disposition === 'superseded' && (
-          <p className="mt-1 text-xs text-[var(--color-ink-400)]">Risk Profile currently shows: <span className="font-medium">{displayReadValue(summary.currentValue)}</span></p>
-        )}
-      </div>
-      <div className="flex shrink-0 flex-col items-end gap-1.5">
-        <ConfidenceBadge confidence={summary.confidence as Confidence} />
-        <DispositionBadge disposition={summary.disposition} />
+    <div className="rounded-lg border border-[var(--color-ink-100)] px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium text-[var(--color-ink-500)]">{fieldPathLabel(summary.fieldPath)}</p>
+          {!isEditing ? (
+            <p className="mt-0.5 text-sm font-medium text-[var(--color-ink-900)]">{displayReadValue(displayValue) || '—'}</p>
+          ) : (
+            <div className="mt-1">
+              <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus />
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {!isEditing ? (
+            <>
+              {status && <StatusBadge status={status} />}
+              {canEdit && (
+                <button onClick={startEdit} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-[var(--color-ink-500)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer">
+                  <Pencil size={12} />
+                  Edit
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
+                <Check size={13} />
+              </button>
+              <button onClick={() => setIsEditing(false)} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+                <X size={13} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function RowEntryCard({ summary, fieldLabels, title }: { summary: DocumentFieldSummary; fieldLabels: Record<string, string>; title: string }) {
-  const entry = summary.value as Record<string, unknown>;
-  const fieldConfidence = (entry.fieldConfidence ?? {}) as Partial<Record<string, Confidence>>;
+const NUMERIC_ROW_KEYS: Record<'drivers' | 'vehicles' | 'lossHistory', string[]> = {
+  drivers: ['yearsExperience'],
+  vehicles: ['year', 'value'],
+  lossHistory: ['paid', 'reserved', 'incurred'],
+};
+const BOOLEAN_ROW_KEYS: Record<'drivers' | 'vehicles' | 'lossHistory', string[]> = {
+  drivers: ['isCDL'],
+  vehicles: [],
+  lossHistory: [],
+};
+
+function RowEntryCard({
+  summary,
+  profile,
+  fieldLabels,
+  title,
+  rowKind,
+  onUpdate,
+}: {
+  summary: DocumentFieldSummary;
+  profile: RiskProfile;
+  fieldLabels: Record<string, string>;
+  title: string;
+  rowKind: 'drivers' | 'vehicles' | 'lossHistory';
+  onUpdate?: (id: string, patch: Record<string, unknown>) => void;
+}) {
+  // Shows the LIVE canonical row (looked up by rowId) when one is known, not a frozen snapshot of
+  // what this document originally read — the same reasoning as ScalarFieldRow's displayValue, so a
+  // save is reflected immediately and any current conflicts/fieldConfidence shown are the row's
+  // real, present-day ones. Falls back to the document's own extracted value when no live row
+  // matches (rowId undefined) — in that case editing is disabled too, since there's nothing to edit.
+  const rows = rowKind === 'drivers' ? profile.drivers : rowKind === 'vehicles' ? profile.vehicles : profile.lossHistory;
+  const canonicalRow = summary.rowId ? rows.find((r) => r.id === summary.rowId) : undefined;
+  const entry = (canonicalRow ?? summary.value) as Record<string, unknown>;
   const conflicts = (entry.conflicts ?? {}) as Partial<Record<string, { value: unknown; extractionMethod: string }[]>>;
   const subFields = Object.entries(entry).filter(([key, value]) => fieldLabels[key] && value !== undefined && value !== null && value !== '');
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const status = simplifiedStatus(summary, profile);
+  // Editing only makes sense once we know which real, currently-live profile row this document's
+  // contribution corresponds to (see rowDisposition in documentExtractionSummary.ts) — a row this
+  // document contributed that's no longer reflected anywhere in the profile has nothing to edit.
+  const canEdit = !!summary.rowId && !!onUpdate;
+
+  function startEdit() {
+    const initial: Record<string, string> = {};
+    for (const [key, value] of subFields) initial[key] = typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
+    setDraft(initial);
+    setIsEditing(true);
+  }
+
+  function commit() {
+    if (!summary.rowId) return;
+    const patch: Record<string, unknown> = {};
+    for (const [key, raw] of Object.entries(draft)) {
+      if (raw.trim() === '') continue; // never blank out a field the row already had — only changed/filled values are sent
+      if (BOOLEAN_ROW_KEYS[rowKind].includes(key)) patch[key] = raw === 'Yes';
+      else if (NUMERIC_ROW_KEYS[rowKind].includes(key)) patch[key] = Number(raw.replace(/,/g, ''));
+      else patch[key] = raw.trim();
+    }
+    onUpdate?.(summary.rowId, patch);
+    setIsEditing(false);
+  }
 
   return (
     <div className="rounded-lg border border-[var(--color-ink-100)] px-3 py-2.5">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs font-medium text-[var(--color-ink-500)]">{title}</p>
-        <DispositionBadge disposition={summary.disposition} />
+        <div className="flex shrink-0 items-center gap-1.5">
+          {!isEditing ? (
+            <>
+              {status && <StatusBadge status={status} />}
+              {canEdit && (
+                <button onClick={startEdit} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-[var(--color-ink-500)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer">
+                  <Pencil size={12} />
+                  Edit
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
+                <Check size={13} />
+              </button>
+              <button onClick={() => setIsEditing(false)} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+                <X size={13} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
         {subFields.map(([key, value]) => (
           <div key={key}>
             <p className="text-xs text-[var(--color-ink-400)]">{fieldLabels[key]}</p>
-            <div className="mt-0.5 flex items-center gap-1.5">
-              <p className="text-sm font-medium text-[var(--color-ink-900)]">{displayReadValue(value)}</p>
-              {fieldConfidence[key] === 'low' && <CircleAlert size={13} className="shrink-0 text-[var(--color-warning-600)]" aria-label="Needs review" />}
-              {conflicts[key] && <TriangleAlert size={13} className="shrink-0 text-[var(--color-danger-600)]" aria-label="Conflict" />}
-            </div>
-            {conflicts[key]?.[0] && (
-              <p className="mt-0.5 text-xs italic text-[var(--color-danger-600)]">
-                OCR read: {displayReadValue(conflicts[key]![0].value)}
-              </p>
+            {!isEditing ? (
+              <>
+                <div className="mt-0.5 flex items-center gap-1.5">
+                  <p className="text-sm font-medium text-[var(--color-ink-900)]">{displayReadValue(value)}</p>
+                  {conflicts[key] && <TriangleAlert size={13} className="shrink-0 text-[var(--color-danger-600)]" aria-label="Conflict" />}
+                </div>
+                {conflicts[key]?.[0] && <p className="mt-0.5 text-xs italic text-[var(--color-danger-600)]">OCR read: {displayReadValue(conflicts[key]![0].value)}</p>}
+              </>
+            ) : (
+              <input
+                className="mt-0.5 w-full rounded-md border border-[var(--color-brand-500)] px-1.5 py-1 text-sm outline-none"
+                value={draft[key] ?? ''}
+                onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+              />
             )}
           </div>
         ))}
@@ -107,14 +263,17 @@ export function DocumentExtractionDetail({
   onClose,
   document,
   profile,
+  onUpdateField,
+  onUpdateCoverage,
+  onUpdateVehicle,
+  onUpdateDriver,
+  onUpdateLoss,
 }: {
   open: boolean;
   onClose: () => void;
   document: UploadedDocument | null;
   profile: RiskProfile;
-}) {
-  const [showRaw, setShowRaw] = useState(false);
-
+} & UpdateHandlers) {
   if (!document) return <Drawer open={open} onClose={onClose} title="Extracted Data"><></></Drawer>;
 
   const summaries = summarizeDocumentExtraction(document, profile);
@@ -167,13 +326,13 @@ export function DocumentExtractionDetail({
               <div className="space-y-2">
                 {items.map((s, i) =>
                   s.fieldPath === 'drivers' ? (
-                    <RowEntryCard key={i} summary={s} fieldLabels={DRIVER_FIELD_LABELS} title="Driver" />
+                    <RowEntryCard key={i} summary={s} profile={profile} fieldLabels={DRIVER_FIELD_LABELS} title="Driver" rowKind="drivers" onUpdate={onUpdateDriver as (id: string, patch: Record<string, unknown>) => void} />
                   ) : s.fieldPath === 'vehicles' ? (
-                    <RowEntryCard key={i} summary={s} fieldLabels={VEHICLE_FIELD_LABELS} title="Vehicle" />
+                    <RowEntryCard key={i} summary={s} profile={profile} fieldLabels={VEHICLE_FIELD_LABELS} title="Vehicle" rowKind="vehicles" onUpdate={onUpdateVehicle as (id: string, patch: Record<string, unknown>) => void} />
                   ) : s.fieldPath === 'lossHistory' ? (
-                    <RowEntryCard key={i} summary={s} fieldLabels={LOSS_FIELD_LABELS} title="Loss/Claim" />
+                    <RowEntryCard key={i} summary={s} profile={profile} fieldLabels={LOSS_FIELD_LABELS} title="Loss/Claim" rowKind="lossHistory" onUpdate={onUpdateLoss as (id: string, patch: Record<string, unknown>) => void} />
                   ) : (
-                    <ScalarFieldRow key={i} summary={s} />
+                    <ScalarFieldRow key={i} summary={s} profile={profile} onUpdateField={onUpdateField} onUpdateCoverage={onUpdateCoverage} />
                   )
                 )}
               </div>
@@ -191,23 +350,6 @@ export function DocumentExtractionDetail({
               </p>
               {document.candidateNotes}
             </div>
-          </div>
-        )}
-
-        {summaries.length > 0 && (
-          <div className="border-t border-[var(--color-ink-100)] pt-3">
-            <button
-              onClick={() => setShowRaw((v) => !v)}
-              className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-ink-500)] hover:text-[var(--color-ink-700)] cursor-pointer"
-            >
-              {showRaw ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-              Advanced: raw extraction data
-            </button>
-            {showRaw && (
-              <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-[var(--color-ink-50)] p-3 text-[11px] text-[var(--color-ink-600)]">
-                {JSON.stringify(document.extractedFields, null, 2)}
-              </pre>
-            )}
           </div>
         )}
       </div>

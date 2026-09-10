@@ -47,7 +47,7 @@ export function parseDraft(valueType: FieldValueType, raw: string): unknown {
   return raw;
 }
 
-function ValueInput({ valueType, value, onChange, autoFocus }: { valueType: FieldValueType; value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
+export function ValueInput({ valueType, value, onChange, autoFocus }: { valueType: FieldValueType; value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
   if (valueType === 'boolean') {
     return (
       <select autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} className="rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none">
