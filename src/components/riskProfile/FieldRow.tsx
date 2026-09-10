@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp, CircleAlert, CircleCheck, PencilLine } from 'lucide-react';
+import { Pencil, Check, X, FileText, TriangleAlert, ChevronDown, ChevronUp, CircleAlert, CircleCheck, PencilLine, Sparkles } from 'lucide-react';
 import type { ExtractionMethod, FieldValue } from '../../types';
 import type { FieldResolution } from '../../services/extraction';
 import { Badge, Skeleton } from '../ui';
@@ -161,6 +161,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
   const needsReview = status === 'needs_review';
   const wasBrokerEdited = status === 'broker_edited';
   const wasBrokerConfirmed = status === 'broker_confirmed';
+  const wasAiExtracted = status === 'ai_extracted';
 
   return (
     <div className={cn('rounded-lg border px-4 py-3 transition-colors', hasIssue ? 'border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/30' : 'border-transparent hover:bg-[var(--color-ink-50)]')}>
@@ -229,6 +230,12 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
               <Badge tone="success">
                 <CircleCheck size={11} />
                 {DATA_STATUS_LABELS.broker_confirmed}
+              </Badge>
+            )}
+            {wasAiExtracted && (
+              <Badge tone="info">
+                <Sparkles size={11} />
+                {DATA_STATUS_LABELS.ai_extracted}
               </Badge>
             )}
             {field.isConflicting && (

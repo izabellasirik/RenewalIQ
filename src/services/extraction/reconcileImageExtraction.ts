@@ -93,10 +93,27 @@ export interface ReconcileImageExtractionOutput {
   results: ExtractedFieldResult[];
   /** The vision model's own document-type read, when available — takes priority over the OCR-text keyword heuristic (inferCategoryFromText) since it's not limited to a fixed keyword list and isn't affected by filename. Null means the caller should fall back to that heuristic. */
   documentCategory: DocumentCategory | null;
+  /** Vision's free-text fallback for readable content with no field to land in — never silently dropped, surfaced to the caller to persist and show rather than discarded here. */
+  candidateNotes?: string;
 }
 
 function scalarSource(documentId: string, documentName: string, note: string) {
   return { documentId, documentName, excerpt: note };
+}
+
+/**
+ * A driver's license or vehicle registration never legitimately carries applicant-business fields
+ * (named insured, business address, DOT #, coverage, ...) — a card that IS one of these two document
+ * types is personal/vehicle identity, not the submission's business information. This is the same
+ * rule extractInsuranceFields.ts's `isIdCardDocument` gate already enforces for the OCR/regex path
+ * (based on the document's own OCR text); this is the vision-path equivalent, based on the document
+ * type the vision model itself reported — which is why it must run AFTER vision's classification is
+ * known, not be baked into an isolated per-field pattern the way the regex gate is.
+ */
+const ID_CARD_DOCUMENT_TYPES = new Set<DocumentCategory>(['driver_license', 'vehicle_registration']);
+
+function isBusinessOrTransportationField(fieldPath: string): boolean {
+  return fieldPath.startsWith('business.') || fieldPath.startsWith('transportation.') || fieldPath.startsWith('coverage.') || fieldPath === 'coverageLine';
 }
 
 export function reconcileImageExtraction({ documentId, documentName, ocrResults, visionResult }: ReconcileImageExtractionInput): ReconcileImageExtractionOutput {
@@ -104,9 +121,17 @@ export function reconcileImageExtraction({ documentId, documentName, ocrResults,
     return { results: ocrResults, documentCategory: null };
   }
 
+  const isIdCardDocument = ID_CARD_DOCUMENT_TYPES.has(visionResult.documentType);
   const results: ExtractedFieldResult[] = [];
 
+  // Classification is respected before any extracted field is applied: once vision has classified
+  // this image as a license/registration, NEITHER source's business/transportation/coverage fields
+  // are applied, regardless of what either extractor returned for them — confirmed necessary by a
+  // real incident where a driver's-license photo produced a garbled business.namedInsured value
+  // (the vision prompt already instructs the model not to do this, but a prompt is not an
+  // enforcement mechanism; this is).
   for (const field of visionResult.scalarFields) {
+    if (isIdCardDocument && isBusinessOrTransportationField(field.fieldPath)) continue;
     results.push({
       fieldPath: field.fieldPath,
       value: field.value,
@@ -117,7 +142,13 @@ export function reconcileImageExtraction({ documentId, documentName, ocrResults,
   }
 
   const ocrRowResults = ocrResults.filter((r) => r.fieldPath === 'drivers' || r.fieldPath === 'vehicles' || r.fieldPath === 'lossHistory');
-  const ocrScalarResults = ocrResults.filter((r) => r.fieldPath !== 'drivers' && r.fieldPath !== 'vehicles' && r.fieldPath !== 'lossHistory');
+  const ocrScalarResults = ocrResults
+    .filter((r) => r.fieldPath !== 'drivers' && r.fieldPath !== 'vehicles' && r.fieldPath !== 'lossHistory')
+    // OCR's own text-based detection (extractInsuranceFields.ts) already skips these for a document
+    // ITS OWN OCR text reads as a license/registration — this is a second, independent check against
+    // vision's classification (more reliable than OCR's own text heuristic when both ran), so a
+    // document OCR's weaker text-based heuristic missed still can't leak a business field through.
+    .filter((r) => !(isIdCardDocument && isBusinessOrTransportationField(r.fieldPath)));
   // OCR's own scalar results are pushed alongside vision's under the SAME fieldPath — the existing
   // mergeFieldValue()/setByPath() merge (extractionService.ts) corroborates or conflicts them
   // exactly like any two documents disagreeing on a field, no new code needed for that part.
@@ -167,5 +198,5 @@ export function reconcileImageExtraction({ documentId, documentName, ocrResults,
   const ocrLossResults = ocrRowResults.filter((r) => r.fieldPath === 'lossHistory');
   results.push(...ocrLossResults);
 
-  return { results, documentCategory: visionResult.documentType };
+  return { results, documentCategory: visionResult.documentType, candidateNotes: visionResult.candidateNotes };
 }

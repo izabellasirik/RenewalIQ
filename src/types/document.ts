@@ -27,6 +27,14 @@ export type DocumentFileType = 'pdf' | 'xlsx' | 'csv' | 'docx' | 'txt' | 'image'
 
 export type DocumentStatus = 'processing' | 'processed' | 'error';
 
+/** What this specific document contributed, as extracted — persisted so "View extracted data" can show it later without re-running extraction. One entry per ExtractedFieldResult this document produced. */
+export interface DocumentExtractedField {
+  fieldPath: string;
+  value: unknown;
+  confidence: import('./common').Confidence;
+  extractionMethod?: import('./common').ExtractionMethod;
+}
+
 export interface UploadedDocument {
   id: string;
   accountId: string;
@@ -39,6 +47,10 @@ export interface UploadedDocument {
   fieldsExtracted?: number;
   /** Non-fatal parse warnings, e.g. a scanned PDF with no extractable text. */
   warnings?: string[];
+  /** Every field this document produced at extraction time — the "View extracted data" panel's source of truth for what THIS document contributed (its current disposition in the Risk Profile — applied/needs review/conflict — is looked up live against the current profile, not stored here, since later documents/edits can change it). */
+  extractedFields?: DocumentExtractedField[];
+  /** Vision's free-text fallback for anything readable that didn't map to a known field — never silently discarded, shown in the detail panel instead. */
+  candidateNotes?: string;
   /**
    * A resized, compressed JPEG data URL — image documents only, so a broker can view the photo
    * that produced an extracted value (see components/upload/DocumentList.tsx). Capped small

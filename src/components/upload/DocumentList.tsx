@@ -6,6 +6,7 @@ import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { previewDocumentRemovalImpact } from '../../services/extraction';
 import { Badge, ConfirmDialog } from '../ui';
 import { ImagePreviewModal } from './ImagePreviewModal';
+import { DocumentExtractionDetail } from './DocumentExtractionDetail';
 
 function fileIcon(doc: UploadedDocument) {
   if (doc.fileType === 'image') return ImageIcon;
@@ -28,6 +29,7 @@ export function DocumentList({
 }) {
   const [previewDoc, setPreviewDoc] = useState<UploadedDocument | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UploadedDocument | null>(null);
+  const [detailDoc, setDetailDoc] = useState<UploadedDocument | null>(null);
 
   if (documents.length === 0) return null;
 
@@ -97,6 +99,17 @@ export function DocumentList({
                   <CircleX size={12} />
                   Couldn't read
                 </Badge>
+              ) : profile ? (
+                <button
+                  onClick={() => setDetailDoc(doc)}
+                  className="cursor-pointer"
+                  aria-label={`View extracted data for ${doc.name}`}
+                >
+                  <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'} className="hover:opacity-80">
+                    <CircleCheck size={12} />
+                    {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted · View
+                  </Badge>
+                </button>
               ) : (
                 <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'}>
                   <CircleCheck size={12} />
@@ -118,6 +131,8 @@ export function DocumentList({
       </ul>
 
       <ImagePreviewModal open={!!previewDoc} onClose={() => setPreviewDoc(null)} src={previewDoc?.previewDataUrl ?? ''} name={previewDoc?.name ?? ''} />
+
+      {profile && <DocumentExtractionDetail open={!!detailDoc} onClose={() => setDetailDoc(null)} document={detailDoc} profile={profile} />}
 
       <ConfirmDialog
         open={!!deleteTarget}

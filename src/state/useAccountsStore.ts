@@ -306,9 +306,9 @@ export const useAccountsStore = create<AccountsState>()(
               // as a fallback — this call never throws and never blocks the OCR path.
               const visionResult = isImageSource ? await extractViaVision(file, get().currentUserId) : null;
 
-              const { results, documentCategory } = isImageSource
+              const { results, documentCategory, candidateNotes } = isImageSource
                 ? reconcileImageExtraction({ documentId: doc.id, documentName: doc.name, ocrResults, visionResult })
-                : { results: ocrResults, documentCategory: null };
+                : { results: ocrResults, documentCategory: null, candidateNotes: undefined };
 
               const fieldsExtracted = countExtractedFields(results);
               // "Unreadable" now means BOTH extraction paths came up empty — vision succeeding on a
@@ -351,6 +351,8 @@ export const useAccountsStore = create<AccountsState>()(
                         warnings: warnings.length > 0 ? warnings : undefined,
                         previewDataUrl: raw.imagePreviewDataUrl,
                         category: contentCategory ?? d.category,
+                        extractedFields: results.map((r) => ({ fieldPath: r.fieldPath, value: r.value, confidence: r.confidence, extractionMethod: r.extractionMethod })),
+                        candidateNotes,
                       }
                     : d
                 );

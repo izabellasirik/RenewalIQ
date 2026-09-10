@@ -55,13 +55,18 @@ export function mergeFieldValue<T>(
     // than either alone, so the confidence is boosted rather than just keeping the stronger of the
     // two. Any other pairing (e.g. two OCR reads from different documents) keeps today's behavior:
     // the stronger of the two confidences wins, never invented beyond what either read alone earned.
+    //
+    // confirmedByBroker is carried over from `existing` whenever it was already true — a fresh
+    // extraction agreeing with a value the broker already explicitly confirmed doesn't un-confirm
+    // it — but it is NEVER set here otherwise; corroboration between two AI sources is still an AI
+    // result, never "broker confirmed" on its own.
     const methods = new Set([incoming.extractionMethod, existing.extractionMethod]);
     const isVisionOcrCorroboration = incoming.confidence !== 'low' && existing.confidence !== 'low' && methods.has('vision_extraction') && methods.has('image_ocr');
     if (isVisionOcrCorroboration) {
-      return { ...incoming, confidence: 'high', isConflicting: existing.isConflicting, alternateValues: existing.alternateValues };
+      return { ...incoming, confidence: 'high', isConflicting: existing.isConflicting, alternateValues: existing.alternateValues, confirmedByBroker: existing.confirmedByBroker };
     }
     const stronger = CONFIDENCE_ORDER[incoming.confidence] < CONFIDENCE_ORDER[existing.confidence];
-    return stronger ? { ...incoming, isConflicting: existing.isConflicting, alternateValues: existing.alternateValues } : existing;
+    return stronger ? { ...incoming, isConflicting: existing.isConflicting, alternateValues: existing.alternateValues, confirmedByBroker: existing.confirmedByBroker } : existing;
   }
 
   // Genuine conflict: two documents disagree. Higher confidence becomes primary.
@@ -84,15 +89,18 @@ export type FieldResolution<T> = { type: 'primary' } | { type: 'alternate'; inde
 /**
  * Resolves a conflicting (or any) field per the broker's explicit choice — pick the current
  * primary, pick one of the alternates (swapping it in, preserving its own source/extractionMethod),
- * or type a brand-new value. In every case the field becomes 'manual' confidence (broker-confirmed)
- * and isConflicting clears, but nothing is discarded: whichever options aren't chosen are kept in
- * alternateValues as history, so provenance survives resolution.
+ * or type a brand-new value. In every case the field becomes 'manual' confidence and
+ * isConflicting clears, but nothing is discarded: whichever options aren't chosen are kept in
+ * alternateValues as history, so provenance survives resolution. This is the ONLY place
+ * confirmedByBroker is ever set true — every branch here is reached exclusively from an explicit
+ * broker action in the conflict-resolver UI (see FieldRow.tsx's ConflictResolver and
+ * NewAccountPage.tsx's identity-resolution step), never automatically.
  */
 export function resolveFieldConflict<T>(existing: FieldValue<T>, resolution: FieldResolution<T>): FieldValue<T> {
   const now = new Date().toISOString();
 
   if (resolution.type === 'primary') {
-    return { ...existing, confidence: 'manual', isConflicting: false, lastUpdatedAt: now };
+    return { ...existing, confidence: 'manual', isConflicting: false, confirmedByBroker: true, lastUpdatedAt: now };
   }
 
   if (resolution.type === 'alternate') {
@@ -106,6 +114,7 @@ export function resolveFieldConflict<T>(existing: FieldValue<T>, resolution: Fie
       confidence: 'manual',
       isMissing: false,
       isConflicting: false,
+      confirmedByBroker: true,
       source: chosen.source,
       extractionMethod: chosen.extractionMethod ?? 'ai_extraction',
       alternateValues: remaining.length > 0 ? remaining : undefined,
@@ -114,6 +123,9 @@ export function resolveFieldConflict<T>(existing: FieldValue<T>, resolution: Fie
   }
 
   // type === 'manual': a genuinely new, typed value — still keeps every prior option as history.
+  // extractionMethod: 'manual_entry' already takes display priority as "Broker Edited" over
+  // confirmedByBroker's "Broker Confirmed" (see fieldDataStatus) — set here anyway since it's
+  // also, genuinely, broker-confirmed content, just additionally edited.
   const priorAlternates = existing.alternateValues ?? [];
   const demotedPrimary = existing.value !== null && existing.source ? [{ value: existing.value, source: existing.source, extractionMethod: existing.extractionMethod }] : [];
   const history = [...priorAlternates, ...demotedPrimary];
@@ -122,6 +134,7 @@ export function resolveFieldConflict<T>(existing: FieldValue<T>, resolution: Fie
     confidence: 'manual',
     isMissing: resolution.value === null || (Array.isArray(resolution.value) && resolution.value.length === 0),
     isConflicting: false,
+    confirmedByBroker: true,
     extractionMethod: 'manual_entry',
     alternateValues: history.length > 0 ? history : undefined,
     lastUpdatedAt: now,

@@ -38,6 +38,17 @@ export interface FieldValue<T> {
   alternateValues?: { value: T; source: FieldSource; extractionMethod?: ExtractionMethod }[];
   /** How this value was populated. Undefined only for a field that has never been set. */
   extractionMethod?: ExtractionMethod;
+  /**
+   * True ONLY when a broker explicitly reviewed and picked this exact value via the conflict
+   * resolver ("Use this value") — never set anywhere else. This is a deliberately separate signal
+   * from `confidence === 'manual'`: the confidence value alone decided merge priority (a manual
+   * pick should never lose to a later extraction) and the UI's "Broker Confirmed" label used to be
+   * inferred from it, which meant any future code path that produced confidence: 'manual' for a
+   * non-broker reason would silently mislabel an unreviewed value as broker-confirmed. Requiring
+   * this explicit flag makes that class of bug impossible by construction — see
+   * utils/dataStatus.ts's fieldDataStatus.
+   */
+  confirmedByBroker?: boolean;
   /** ISO timestamp this specific field was last populated/edited — distinct from the whole-profile updatedAt. */
   lastUpdatedAt?: string;
 }
@@ -61,5 +72,5 @@ export function emptyField<T>(): FieldValue<T> {
 }
 
 export function manualField<T>(value: T): FieldValue<T> {
-  return { value, confidence: 'manual', isMissing: false, isConflicting: false, extractionMethod: 'manual_entry', lastUpdatedAt: new Date().toISOString() };
+  return { value, confidence: 'manual', isMissing: false, isConflicting: false, extractionMethod: 'manual_entry', confirmedByBroker: true, lastUpdatedAt: new Date().toISOString() };
 }

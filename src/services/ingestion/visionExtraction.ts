@@ -114,10 +114,20 @@ const SCALAR_FIELD_VALIDATORS: Record<string, (raw: unknown) => string | number 
   'coverage.warehouse_legal_liability.currentLimit': asCoverageLimit,
 };
 
+/**
+ * At least 2 consecutive letters/digits — rejects a non-empty but content-free string (stray
+ * punctuation, a symbol the model misread off a barcode/MRZ line, an em-dash). A real incident:
+ * "=»" passed the previous "just non-empty" check and was accepted into business.namedInsured, so
+ * this validator existed but wasn't actually validating CONTENT, only that a string was present.
+ * Deliberately loose (no length/format assumptions beyond this) — it's a hallucination floor, not a
+ * business-name format checker.
+ */
+const HAS_REAL_CONTENT = /[A-Za-z0-9]{2,}/;
+
 function asTrimmedString(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const t = raw.trim();
-  return t.length > 0 && t.length <= 200 ? t : null;
+  return t.length > 0 && t.length <= 200 && HAS_REAL_CONTENT.test(t) ? t : null;
 }
 
 function asStateCode(raw: unknown): string | null {
