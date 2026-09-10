@@ -35,6 +35,40 @@ function firstMatch(lines: TextLine[], patterns: RegExp[]): LineMatch | null {
   return null;
 }
 
+interface ValidMatch<T> {
+  value: T;
+  raw: string;
+  line: TextLine;
+}
+
+/**
+ * Like firstMatch, but keeps searching past a pattern that matched if the captured text fails
+ * `validate` — an OCR artifact stray character directly after a label ("Restrictions: ~~ None",
+ * confirmed against real Tesseract output) means the FIRST \S+ token isn't the real value, so
+ * `patterns` should include both a plain "label: (value)" form and a "label: (garbage) (value)"
+ * form that skips exactly one throwaway token; this tries every pattern against every line in
+ * order and returns the first candidate that actually validates, rather than the first that merely
+ * matches the regex. Never invents a value — a label with no validating candidate anywhere still
+ * resolves to null, same as today.
+ */
+function firstValidMatch<T>(lines: TextLine[], patterns: RegExp[], validate: (raw: string) => T | null): ValidMatch<T> | null {
+  for (const line of lines) {
+    for (const pattern of patterns) {
+      const m = line.text.match(pattern);
+      if (!m || !m[1]) continue;
+      const value = validate(m[1]);
+      if (value !== null) return { value, raw: m[1], line };
+    }
+  }
+  return null;
+}
+
+/** Appends a fallback pattern that tolerates exactly one throwaway token between the label and the real value (a stray OCR-artifact character glued to the label) — e.g. "Restrictions: ~~ None" where the first token after the colon is noise, not the value. */
+function withSkipOneTokenFallback(primary: RegExp): RegExp[] {
+  const skipOne = new RegExp(primary.source.replace(/\(\\S\+\)$/, '\\S+\\s+(\\S+)'), primary.flags);
+  return [primary, skipOne];
+}
+
 /**
  * Real AAMVA-style license cards print a small field number directly against the label with no
  * gap ("1LN", "3DOB", "9CLASS") — confirmed against actual Tesseract output on a synthetic license
@@ -141,29 +175,63 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
     }
   }
 
-  const dob = firstMatch(lines, [new RegExp(`${FIELD_NUM_PREFIX}dob\\b\\s*:?\\s*(\\S+)`, 'i'), /\bdate\s+of\s+birth\s*:?\s*(\S+)/i]);
+  // The driver's own street address — distinct from, and never merged into, the applicant
+  // business's address. Free text (no fixed token shape to validate against), so it's only
+  // accepted if it looks address-like (contains a digit, within a sane length) rather than
+  // capturing an unrelated sentence.
+  const address = firstMatch(lines, [/^address\s*:?\s*(.+)$/i]);
+  if (address) {
+    attempted++;
+    const raw = address.raw.trim().replace(/[.,;]+$/, '');
+    if (raw.length >= 5 && raw.length <= 120 && /\d/.test(raw)) {
+      entry.address = raw;
+      fieldConfidence.address = 'medium';
+      excerpts.push(address.line.text);
+    }
+  }
+
+  const dob = firstValidMatch(
+    lines,
+    [...withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}dob\\b\\s*:?\\s*(\\S+)`, 'i')), /\bdate\s+of\s+birth\s*:?\s*(\S+)/i],
+    normalizeDate
+  );
   if (dob) {
     attempted++;
-    const norm = normalizeDate(dob.raw);
-    if (norm) {
-      entry.dob = norm;
-      fieldConfidence.dob = 'medium';
-      excerpts.push(dob.line.text);
-    }
+    entry.dob = dob.value;
+    fieldConfidence.dob = 'medium';
+    excerpts.push(dob.line.text);
   }
 
-  const lic = firstMatch(lines, [new RegExp(`${FIELD_NUM_PREFIX}(?:dl|lic(?:ense)?)\\s*#\\s*:?\\s*(\\S+)`, 'i'), /\blicense\s*(?:no\.?|number)\s*:?\s*(\S+)/i]);
+  const lic = firstValidMatch(
+    lines,
+    [
+      ...withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}(?:dl|lic(?:ense)?)\\s*#\\s*:?\\s*(\\S+)`, 'i')),
+      /\blicense\s*(?:no\.?|number)\s*:?\s*(\S+)/i,
+      // Real OCR can split "License number:" from its value onto separate lines, leaving a line
+      // that just reads "License 123456789" with no "number"/"no" token at all — confirmed against
+      // actual Tesseract output on a synthetic Tennessee license, not assumed. Scoped to this
+      // extractor (only runs on a document already detected as a license) so it can't misfire
+      // elsewhere.
+      /\blicense\b.{0,15}?(\d{5,15})\b/i,
+    ],
+    normalizeIdToken
+  );
   if (lic) {
     attempted++;
-    const norm = normalizeIdToken(lic.raw);
-    if (norm) {
-      entry.licenseNumber = norm;
-      fieldConfidence.licenseNumber = 'medium';
-      excerpts.push(lic.line.text);
-    }
+    entry.licenseNumber = lic.value;
+    fieldConfidence.licenseNumber = 'medium';
+    excerpts.push(lic.line.text);
   }
 
-  const stateHeader = firstMatch(lines, [/^([A-Za-z][A-Za-z ]+?)\s+driver'?s?\s+licen[cs]e/i, /state\s+of\s+(.+)$/i, /^licen[cs]e\s+state\s*:?\s*(\S+)/i]);
+  const stateHeader = firstMatch(lines, [
+    /^([A-Za-z][A-Za-z ]+?)\s+driver'?s?\s+licen[cs]e/i,
+    /state\s+of\s+(.+)$/i,
+    /^licen[cs]e\s+state\s*:?\s*(\S+)/i,
+    // A plain "State: Tennessee" line (no "license" qualifier) — the most common real-world
+    // phrasing on a license, confirmed against actual OCR output. Deliberately the last, loosest
+    // pattern tried, and only reached inside this license-specific extractor.
+    /^state\s*:?\s*(.+)$/i,
+  ]);
   if (stateHeader) {
     attempted++;
     const code = parseStateFromPhrase(stateHeader.raw);
@@ -174,65 +242,67 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
     }
   }
 
-  const cls = firstMatch(lines, [new RegExp(`${FIELD_NUM_PREFIX}class\\b\\s*:?\\s*(\\S+)`, 'i')]);
+  const cls = firstValidMatch(lines, withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}class\\b\\s*:?\\s*(\\S+)`, 'i')), normalizeClassToken);
   if (cls) {
     attempted++;
-    const norm = normalizeClassToken(cls.raw);
-    if (norm) {
-      entry.licenseClass = norm;
-      fieldConfidence.licenseClass = 'medium';
-      excerpts.push(cls.line.text);
-    }
+    entry.licenseClass = cls.value;
+    fieldConfidence.licenseClass = 'medium';
+    excerpts.push(cls.line.text);
   }
   if (/\bcommercial\s+driver'?s?\s+licen[cs]e\b/i.test(fullText) || /\bcdl\b/i.test(fullText) || (entry.licenseClass && /^[AB]$/i.test(entry.licenseClass))) {
     entry.isCDL = true;
   }
 
-  const iss = firstMatch(lines, [new RegExp(`${FIELD_NUM_PREFIX}iss(?:ue)?(?:\\s*date)?\\b\\s*:?\\s*(\\S+)`, 'i')]);
+  const iss = firstValidMatch(
+    lines,
+    withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}iss(?:ue)?(?:\\s*date)?\\b\\s*:?\\s*(\\S+)`, 'i')),
+    normalizeDate
+  );
   if (iss) {
     attempted++;
-    const norm = normalizeDate(iss.raw);
-    if (norm) {
-      entry.issueDate = norm;
-      fieldConfidence.issueDate = 'medium';
-      excerpts.push(iss.line.text);
-    }
+    entry.issueDate = iss.value;
+    fieldConfidence.issueDate = 'medium';
+    excerpts.push(iss.line.text);
   }
 
-  const exp = firstMatch(lines, [new RegExp(`${FIELD_NUM_PREFIX}exp(?:ires?)?(?:\\s*date)?\\b\\s*:?\\s*(\\S+)`, 'i')]);
+  // "exp(?:ir(?:es?|ation))?" covers "Exp", "Expire(s)" and "Expiration" — the latter is at least
+  // as common a real-world label as "Exp", and a prior version of this pattern only matched the
+  // first two, which was confirmed (against real OCR output on a synthetic Tennessee license using
+  // "Expiration:") to silently drop the expiration date entirely.
+  const exp = firstValidMatch(
+    lines,
+    withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}exp(?:ir(?:es?|ation))?(?:\\s*date)?\\b\\s*:?\\s*(\\S+)`, 'i')),
+    normalizeDate
+  );
   if (exp) {
     attempted++;
-    const norm = normalizeDate(exp.raw);
-    if (norm) {
-      entry.expirationDate = norm;
-      fieldConfidence.expirationDate = 'medium';
-      excerpts.push(exp.line.text);
-    }
+    entry.expirationDate = exp.value;
+    fieldConfidence.expirationDate = 'medium';
+    excerpts.push(exp.line.text);
   }
 
   // restrictions/endorsements have no fixed format to validate against (unlike a date or an
   // identifier), so even a clean-looking match is a shakier read than the fields above — tagged
   // 'low' rather than 'medium' so a broker knows to double-check these two specifically.
-  const restr = firstMatch(lines, [new RegExp(`${FIELD_NUM_PREFIX}restr(?:ictions?)?\\b\\s*:?\\s*(\\S+)`, 'i')]);
+  const validateFreeToken = (raw: string): string | null => {
+    const t = raw.trim().replace(/[.,;]+$/, '');
+    return /^[A-Za-z0-9]+$/.test(t) ? t.toUpperCase() : null;
+  };
+
+  const restr = firstValidMatch(lines, withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}restr(?:ictions?)?\\b\\s*:?\\s*(\\S+)`, 'i')), validateFreeToken);
   if (restr) {
     attempted++;
-    const t = restr.raw.trim().replace(/[.,;]+$/, '');
-    if (/^[A-Za-z0-9]+$/.test(t)) {
-      entry.restrictions = t.toUpperCase();
-      fieldConfidence.restrictions = 'low';
-      excerpts.push(restr.line.text);
-    }
+    entry.restrictions = restr.value;
+    fieldConfidence.restrictions = 'low';
+    excerpts.push(restr.line.text);
   }
 
-  const endo = firstMatch(lines, [new RegExp(`${FIELD_NUM_PREFIX}end(?:orsements?)?\\b\\s*:?\\s*(\\S+)`, 'i')]);
+  const endo = firstValidMatch(lines, withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}end(?:orsements?)?\\b\\s*:?\\s*(\\S+)`, 'i')), validateFreeToken);
   if (endo) {
     attempted++;
-    const t = endo.raw.trim().replace(/[.,;]+$/, '');
-    if (/^[A-Za-z0-9]+$/.test(t)) {
-      entry.endorsements = t.toUpperCase();
-      fieldConfidence.endorsements = 'low';
-      excerpts.push(endo.line.text);
-    }
+    entry.endorsements = endo.value;
+    fieldConfidence.endorsements = 'low';
+    excerpts.push(endo.line.text);
   }
 
   const populatedFields = Object.keys(entry).filter((k) => k !== 'isCDL').length;

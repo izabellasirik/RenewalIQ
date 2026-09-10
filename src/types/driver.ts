@@ -4,6 +4,8 @@ export interface DriverEntry {
   id: string;
   name?: string;
   dob?: string;
+  /** The driver's own address as printed on their license — distinct from, and never merged into, the applicant business's address (business.address). */
+  address?: string;
   licenseState?: string;
   /** License/DL number as printed on the card. Never guessed from a partially-unreadable value — see fieldExtraction/idDocumentPatterns.ts. */
   licenseNumber?: string;

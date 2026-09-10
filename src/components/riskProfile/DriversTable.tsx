@@ -5,6 +5,7 @@ import { Button, ConfirmDialog } from '../ui';
 
 type Draft = {
   name: string;
+  address: string;
   dob: string;
   licenseState: string;
   licenseNumber: string;
@@ -14,11 +15,12 @@ type Draft = {
   violations: string;
 };
 
-const EMPTY_DRAFT: Draft = { name: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', expirationDate: '', yearsExperience: '', violations: '' };
+const EMPTY_DRAFT: Draft = { name: '', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', expirationDate: '', yearsExperience: '', violations: '' };
 
 function toDraft(d: DriverEntry): Draft {
   return {
     name: d.name ?? '',
+    address: d.address ?? '',
     dob: d.dob ?? '',
     licenseState: d.licenseState ?? '',
     licenseNumber: d.licenseNumber ?? '',
@@ -32,6 +34,7 @@ function toDraft(d: DriverEntry): Draft {
 function fromDraft(d: Draft): Omit<DriverEntry, 'id'> {
   return {
     name: d.name.trim() || undefined,
+    address: d.address.trim() || undefined,
     dob: d.dob.trim() || undefined,
     licenseState: d.licenseState.trim() || undefined,
     licenseNumber: d.licenseNumber.trim() || undefined,
@@ -85,7 +88,10 @@ export function DriversTable({
     const isNew = d === null;
     return (
       <tr key={d?.id ?? 'new'} className="border-b border-[var(--color-ink-100)] bg-[var(--color-brand-50)]/40">
-        <td className="py-2 pr-4"><input className={inputCls} placeholder="Name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} autoFocus={isNew} /></td>
+        <td className="py-2 pr-4">
+          <input className={inputCls} placeholder="Name" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} autoFocus={isNew} />
+          <input className={`${inputCls} mt-1`} placeholder="Address (optional)" value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
+        </td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="YYYY-MM-DD" value={draft.dob} onChange={(e) => setDraft({ ...draft, dob: e.target.value })} /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="State" value={draft.licenseState} onChange={(e) => setDraft({ ...draft, licenseState: e.target.value })} /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="License #" value={draft.licenseNumber} onChange={(e) => setDraft({ ...draft, licenseNumber: e.target.value })} /></td>
@@ -142,6 +148,7 @@ export function DriversTable({
                       </span>
                     )}
                   </span>
+                  {d.address && <div className="mt-0.5 text-xs text-[var(--color-ink-400)]">{d.address}</div>}
                 </td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.dob ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.licenseState ?? '—'}</td>

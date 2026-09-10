@@ -46,6 +46,7 @@ const VEHICLE_BODY_TYPE_EXACT_ONLY = ['type'];
 const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'isCDL' | 'fieldConfidence'>, string[]> = {
   name: ['driver name', 'employee name', 'name'],
   dob: ['dob', 'date of birth'],
+  address: ['address', 'driver address', 'home address'],
   licenseState: ['license state', 'lic state', 'state license', 'licensing state'],
   licenseNumber: ['license number', 'license no', 'dl number', 'lic number', 'lic #'],
   licenseClass: ['license class', 'lic class', 'class'],
@@ -134,6 +135,7 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
   const col = {
     name: findColumn(table.headers, DRIVER_SYNONYMS.name, DRIVER_NAME_EXACT_ONLY),
     dob: findColumn(table.headers, DRIVER_SYNONYMS.dob),
+    address: findColumn(table.headers, DRIVER_SYNONYMS.address),
     licenseState: findColumn(table.headers, DRIVER_SYNONYMS.licenseState),
     licenseNumber: findColumn(table.headers, DRIVER_SYNONYMS.licenseNumber),
     licenseClass: findColumn(table.headers, DRIVER_SYNONYMS.licenseClass),
@@ -150,6 +152,7 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
     const entry: Omit<DriverEntry, 'id' | 'source'> = {};
     if (col.name !== -1 && row[col.name]) entry.name = row[col.name].trim();
     if (col.dob !== -1 && row[col.dob]) entry.dob = row[col.dob].trim();
+    if (col.address !== -1 && row[col.address]) entry.address = row[col.address].trim();
     if (col.licenseState !== -1 && row[col.licenseState]) entry.licenseState = row[col.licenseState].trim().toUpperCase();
     if (col.licenseNumber !== -1 && row[col.licenseNumber]) entry.licenseNumber = row[col.licenseNumber].trim().toUpperCase();
     if (col.licenseClass !== -1 && row[col.licenseClass]) entry.licenseClass = row[col.licenseClass].trim().toUpperCase();

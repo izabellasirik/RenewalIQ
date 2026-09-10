@@ -7,7 +7,14 @@ import { extractLossRows, extractLossBlocks } from './lossPatterns';
 import { extractDesiredCoverageLine, extractCurrentPolicyCoverageLines } from './coveragePatterns';
 import { classifyTable, mapVehicleTable, mapDriverTable, mapLossTable, mapCoverageTable } from './tableMappers';
 import { parseAddressComponents } from './addressPatterns';
-import { extractDriverLicenseFields, extractVehicleRegistrationFields, findGenericBusinessName, findGenericCityState } from './idDocumentPatterns';
+import {
+  extractDriverLicenseFields,
+  extractVehicleRegistrationFields,
+  findGenericBusinessName,
+  findGenericCityState,
+  detectDriverLicense,
+  detectVehicleRegistration,
+} from './idDocumentPatterns';
 
 export interface ExtractionSourceMeta {
   documentId: string;
@@ -69,22 +76,34 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   const lines = [...toTextLines(doc), ...synthesizeKeyValueLines(doc)];
   const results: ExtractedFieldResult[] = [];
 
-  for (const field of SCALAR_FIELD_PATTERNS) {
-    outer: for (const group of field.groups) {
-      for (const pattern of group.patterns) {
-        for (const line of lines) {
-          const m = line.text.match(pattern);
-          if (!m || !m[1]) continue;
-          const value = field.coerce(m[1]);
-          if (value === null || value === undefined || (Array.isArray(value) && value.length === 0)) continue;
-          results.push({
-            fieldPath: field.fieldPath,
-            value,
-            confidence: capConfidence(group.confidence, meta),
-            source: scalarSource(meta, line.page, line.text),
-            extractionMethod: extractionMethodFor(meta),
-          });
-          break outer;
+  // A driver's license or vehicle registration never legitimately carries applicant-business
+  // fields (named insured, business address, DOT #, ...) — confirmed as a real bug, not a
+  // hypothetical: a synthetic Tennessee license's own "State: Tennessee" and "Address: ..." lines
+  // were previously misrouted into business.state/business.address (the SUBMISSION's business
+  // info) purely because those bare labels also happen to match the generic business-field
+  // patterns below. Skipping the business/transportation prose patterns entirely for a
+  // detected ID-card document is what keeps a driver's personal details out of the applicant's
+  // business section, rather than trying to out-guess which label "wins".
+  const isIdCardDocument = detectDriverLicense(doc.text) || detectVehicleRegistration(doc.text);
+
+  if (!isIdCardDocument) {
+    for (const field of SCALAR_FIELD_PATTERNS) {
+      outer: for (const group of field.groups) {
+        for (const pattern of group.patterns) {
+          for (const line of lines) {
+            const m = line.text.match(pattern);
+            if (!m || !m[1]) continue;
+            const value = field.coerce(m[1]);
+            if (value === null || value === undefined || (Array.isArray(value) && value.length === 0)) continue;
+            results.push({
+              fieldPath: field.fieldPath,
+              value,
+              confidence: capConfidence(group.confidence, meta),
+              source: scalarSource(meta, line.page, line.text),
+              extractionMethod: extractionMethodFor(meta),
+            });
+            break outer;
+          }
         }
       }
     }
@@ -176,7 +195,10 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   // Generic fallback: a bare, unlabeled "Company Name LLC" or "City, ST" line. Only ever fills a
   // field nothing more specific above already matched, and only at low confidence — this is what
   // lets a screenshot or an unrecognized document type still yield real fields instead of zero.
-  if (!results.some((r) => r.fieldPath === 'business.namedInsured')) {
+  // Skipped for a detected ID-card document for the same reason as the prose patterns above: a
+  // multi-line driver's address can easily contain a bare "Nashville, TN 37210"-shaped line that
+  // would otherwise get misread as the applicant business's city/state.
+  if (!isIdCardDocument && !results.some((r) => r.fieldPath === 'business.namedInsured')) {
     const nameMatch = findGenericBusinessName(lines);
     if (nameMatch) {
       results.push({
@@ -188,7 +210,7 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
       });
     }
   }
-  if (!results.some((r) => r.fieldPath === 'business.city')) {
+  if (!isIdCardDocument && !results.some((r) => r.fieldPath === 'business.city')) {
     const cityState = findGenericCityState(lines);
     if (cityState) {
       results.push({
