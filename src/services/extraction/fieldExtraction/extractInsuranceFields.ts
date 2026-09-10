@@ -7,6 +7,7 @@ import { extractLossRows, extractLossBlocks } from './lossPatterns';
 import { extractDesiredCoverageLine, extractCurrentPolicyCoverageLines } from './coveragePatterns';
 import { classifyTable, mapVehicleTable, mapDriverTable, mapLossTable, mapCoverageTable } from './tableMappers';
 import { parseAddressComponents } from './addressPatterns';
+import { extractDriverLicenseFields, extractVehicleRegistrationFields, findGenericBusinessName, findGenericCityState } from './idDocumentPatterns';
 
 export interface ExtractionSourceMeta {
   documentId: string;
@@ -142,6 +143,70 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
     if (components) {
       results.push({ fieldPath: 'business.city', value: components.city, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
       results.push({ fieldPath: 'business.zip', value: components.zip, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
+    }
+  }
+
+  // Card/ID-style documents (driver's licenses, vehicle registrations) are laid out as short
+  // abbreviated labels next to a value rather than the "Label: sentence" prose the patterns above
+  // are built for, so they need their own dedicated, narrowly-gated extractors — see
+  // idDocumentPatterns.ts for why this exists and how it avoids hallucinating a value from a
+  // partially-unreadable field.
+  const licenseMatch = extractDriverLicenseFields(lines, doc.text);
+  if (licenseMatch) {
+    results.push({
+      fieldPath: 'drivers',
+      value: licenseMatch.entry,
+      confidence: capConfidence('medium', meta),
+      source: scalarSource(meta, undefined, licenseMatch.matchedText),
+      extractionMethod: extractionMethodFor(meta),
+    });
+  }
+
+  const registrationMatch = extractVehicleRegistrationFields(lines, doc.text);
+  if (registrationMatch) {
+    results.push({
+      fieldPath: 'vehicles',
+      value: registrationMatch.entry,
+      confidence: capConfidence('medium', meta),
+      source: scalarSource(meta, undefined, registrationMatch.matchedText),
+      extractionMethod: extractionMethodFor(meta),
+    });
+  }
+
+  // Generic fallback: a bare, unlabeled "Company Name LLC" or "City, ST" line. Only ever fills a
+  // field nothing more specific above already matched, and only at low confidence — this is what
+  // lets a screenshot or an unrecognized document type still yield real fields instead of zero.
+  if (!results.some((r) => r.fieldPath === 'business.namedInsured')) {
+    const nameMatch = findGenericBusinessName(lines);
+    if (nameMatch) {
+      results.push({
+        fieldPath: 'business.namedInsured',
+        value: nameMatch.raw.trim(),
+        confidence: capConfidence('low', meta),
+        source: scalarSource(meta, nameMatch.line.page, nameMatch.line.text),
+        extractionMethod: extractionMethodFor(meta),
+      });
+    }
+  }
+  if (!results.some((r) => r.fieldPath === 'business.city')) {
+    const cityState = findGenericCityState(lines);
+    if (cityState) {
+      results.push({
+        fieldPath: 'business.city',
+        value: cityState.city,
+        confidence: capConfidence('low', meta),
+        source: scalarSource(meta, cityState.line.page, cityState.line.text),
+        extractionMethod: extractionMethodFor(meta),
+      });
+      if (!results.some((r) => r.fieldPath === 'business.state')) {
+        results.push({
+          fieldPath: 'business.state',
+          value: cityState.state,
+          confidence: capConfidence('low', meta),
+          source: scalarSource(meta, cityState.line.page, cityState.line.text),
+          extractionMethod: extractionMethodFor(meta),
+        });
+      }
     }
   }
 

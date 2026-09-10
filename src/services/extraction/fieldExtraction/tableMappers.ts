@@ -9,7 +9,7 @@ function normalizeHeader(h: string): string {
 }
 
 /** Standard US VIN format: 17 characters, alphanumeric excluding I/O/Q (never confused with 1/0). A VIN column value that doesn't match this is dropped rather than accepted as-is — never guessed or reformatted. */
-function isValidVin(raw: string): boolean {
+export function isValidVin(raw: string): boolean {
   return /^[A-HJ-NPR-Z0-9]{17}$/i.test(raw.trim());
 }
 
@@ -38,14 +38,21 @@ const VEHICLE_SYNONYMS: Record<keyof Omit<VehicleEntry, 'id' | 'source' | 'isMan
   year: ['year', 'model year', 'vehicle year'],
   value: ['value', 'vehicle value', 'stated value', 'acv', 'actual cash value'],
   bodyType: ['vehicle type', 'body type', 'unit type'],
+  plate: ['plate', 'license plate', 'plate number', 'tag number'],
 };
 /** Bare single-word headers only safe as a whole-header match, never a substring. */
 const VEHICLE_BODY_TYPE_EXACT_ONLY = ['type'];
 
-const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt'>, string[]> = {
+const DRIVER_SYNONYMS: Record<keyof Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'isCDL' | 'fieldConfidence'>, string[]> = {
   name: ['driver name', 'employee name', 'name'],
   dob: ['dob', 'date of birth'],
   licenseState: ['license state', 'lic state', 'state license', 'licensing state'],
+  licenseNumber: ['license number', 'license no', 'dl number', 'lic number', 'lic #'],
+  licenseClass: ['license class', 'lic class', 'class'],
+  issueDate: ['issue date', 'date issued'],
+  expirationDate: ['expiration date', 'expiry date', 'exp date', 'license expiration'],
+  restrictions: ['restrictions', 'license restrictions'],
+  endorsements: ['endorsements', 'license endorsements'],
   yearsExperience: ['years experience', 'years of experience', 'yrs experience', 'driving experience', 'experience'],
   violations: ['violations', 'mvr violations', 'violation history'],
 };
@@ -90,6 +97,7 @@ export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
     year: findColumn(table.headers, VEHICLE_SYNONYMS.year),
     value: findColumn(table.headers, VEHICLE_SYNONYMS.value),
     bodyType: findColumn(table.headers, VEHICLE_SYNONYMS.bodyType, VEHICLE_BODY_TYPE_EXACT_ONLY),
+    plate: findColumn(table.headers, VEHICLE_SYNONYMS.plate),
   };
 
   const results: MappedVehicleRow[] = [];
@@ -111,6 +119,7 @@ export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
       const bodyType = normalizeVehicleBodyType(row[col.bodyType]);
       if (bodyType !== null) entry.bodyType = bodyType;
     }
+    if (col.plate !== -1 && row[col.plate]) entry.plate = row[col.plate].trim().toUpperCase();
     if (Object.keys(entry).length > 0) results.push({ row: i, entry });
   });
   return results;
@@ -126,6 +135,12 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
     name: findColumn(table.headers, DRIVER_SYNONYMS.name, DRIVER_NAME_EXACT_ONLY),
     dob: findColumn(table.headers, DRIVER_SYNONYMS.dob),
     licenseState: findColumn(table.headers, DRIVER_SYNONYMS.licenseState),
+    licenseNumber: findColumn(table.headers, DRIVER_SYNONYMS.licenseNumber),
+    licenseClass: findColumn(table.headers, DRIVER_SYNONYMS.licenseClass),
+    issueDate: findColumn(table.headers, DRIVER_SYNONYMS.issueDate),
+    expirationDate: findColumn(table.headers, DRIVER_SYNONYMS.expirationDate),
+    restrictions: findColumn(table.headers, DRIVER_SYNONYMS.restrictions),
+    endorsements: findColumn(table.headers, DRIVER_SYNONYMS.endorsements),
     yearsExperience: findColumn(table.headers, DRIVER_SYNONYMS.yearsExperience),
     violations: findColumn(table.headers, DRIVER_SYNONYMS.violations),
   };
@@ -136,6 +151,12 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
     if (col.name !== -1 && row[col.name]) entry.name = row[col.name].trim();
     if (col.dob !== -1 && row[col.dob]) entry.dob = row[col.dob].trim();
     if (col.licenseState !== -1 && row[col.licenseState]) entry.licenseState = row[col.licenseState].trim().toUpperCase();
+    if (col.licenseNumber !== -1 && row[col.licenseNumber]) entry.licenseNumber = row[col.licenseNumber].trim().toUpperCase();
+    if (col.licenseClass !== -1 && row[col.licenseClass]) entry.licenseClass = row[col.licenseClass].trim().toUpperCase();
+    if (col.issueDate !== -1 && row[col.issueDate]) entry.issueDate = row[col.issueDate].trim();
+    if (col.expirationDate !== -1 && row[col.expirationDate]) entry.expirationDate = row[col.expirationDate].trim();
+    if (col.restrictions !== -1 && row[col.restrictions]) entry.restrictions = row[col.restrictions].trim();
+    if (col.endorsements !== -1 && row[col.endorsements]) entry.endorsements = row[col.endorsements].trim();
     if (col.yearsExperience !== -1 && row[col.yearsExperience]) {
       const years = parseCount(row[col.yearsExperience]);
       if (years !== null) entry.yearsExperience = years;

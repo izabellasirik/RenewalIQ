@@ -4,6 +4,10 @@ export type DocumentCategory =
   | 'vehicle_schedule'
   | 'driver_schedule'
   | 'financials'
+  | 'driver_license'
+  | 'vehicle_registration'
+  | 'insurance_id_card'
+  | 'insurance_declarations'
   | 'other';
 
 export const DOCUMENT_CATEGORY_LABELS: Record<DocumentCategory, string> = {
@@ -12,6 +16,10 @@ export const DOCUMENT_CATEGORY_LABELS: Record<DocumentCategory, string> = {
   vehicle_schedule: 'Vehicle Schedule',
   driver_schedule: 'Driver Schedule',
   financials: 'Financials',
+  driver_license: "Driver's License",
+  vehicle_registration: 'Vehicle Registration',
+  insurance_id_card: 'Insurance ID Card',
+  insurance_declarations: 'Insurance Declarations Page',
   other: 'Other',
 };
 

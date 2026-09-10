@@ -59,28 +59,38 @@ export interface CurrentPolicyCoverageMatch {
   page?: number;
 }
 
+/** A coverage-type name directly followed by a dollar amount, with only ordinary single-space gaps — how OCR'd text usually renders a declarations-page row, since visual multi-space column gaps rarely survive OCR as literal repeated spaces. */
+const INLINE_COVERAGE_AMOUNT = /^(auto\s*liability|csl|combined single limit|(?:motor truck )?cargo|physical\s*damage|warehouse(?:\s*legal)?\s*liability|general\s*liability)\s+\$?([\d,]+(?:\.\d+)?)\s*(?:csl)?$/i;
+
 /**
- * Reads a current/expiring-policy coverage table rendered as one line per row — "Commercial Auto
- * Liability   $1,000,000 CSL   N/A" — where columns are separated by two-or-more spaces (how
- * pdfjs-dist renders a table's cell gaps as plain text, since PDFs carry no real table markup).
- * Only lines whose first column matches a known coverage type are used, so this can never guess a
- * limit off of an unrelated table (or the "Coverage / Limit / Deductible" header row itself, whose
- * first column never matches an alias).
+ * Reads a current/expiring-policy coverage table rendered as one line per row. Two shapes are
+ * recognized: "Commercial Auto Liability   $1,000,000 CSL   N/A" with columns separated by
+ * two-or-more spaces (how pdfjs-dist renders a table's cell gaps as plain text, since PDFs carry no
+ * real table markup), and "General Liability $1,000,000" with a single ordinary space (how the same
+ * row typically comes back from OCR, which collapses visual column gaps to normal spacing). Only
+ * lines whose coverage-type portion matches a known alias are used, so this can never guess a limit
+ * off of an unrelated line (or the "Coverage / Limit / Deductible" header row itself).
  */
 export function extractCurrentPolicyCoverageLines(lines: TextLine[]): CurrentPolicyCoverageMatch[] {
   const results: CurrentPolicyCoverageMatch[] = [];
   for (const line of lines) {
-    const columns = line.text
-      .trim()
-      .split(/\s{2,}/)
-      .map((c) => c.trim())
-      .filter(Boolean);
-    if (columns.length < 2) continue;
-    const [label, limit] = columns;
-    if (!label || !limit) continue;
-    const alias = COVERAGE_TYPE_ALIASES.find((a) => a.match.test(label));
-    if (!alias) continue;
-    results.push({ coverageType: alias.type, currentLimit: limit, matchedText: line.text, page: line.page });
+    const trimmed = line.text.trim();
+    const columns = trimmed.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+    if (columns.length >= 2) {
+      const [label, limit] = columns;
+      const alias = COVERAGE_TYPE_ALIASES.find((a) => a.match.test(label));
+      if (alias) {
+        results.push({ coverageType: alias.type, currentLimit: limit, matchedText: line.text, page: line.page });
+        continue;
+      }
+    }
+    const inline = trimmed.match(INLINE_COVERAGE_AMOUNT);
+    if (inline) {
+      const alias = COVERAGE_TYPE_ALIASES.find((a) => a.match.test(inline[1]));
+      if (alias) {
+        results.push({ coverageType: alias.type, currentLimit: `$${inline[2]}`, matchedText: line.text, page: line.page });
+      }
+    }
   }
   return results;
 }

@@ -300,6 +300,20 @@ export const useAccountsStore = create<AccountsState>()(
               const readFailed = raw.text.trim().length === 0 && raw.warnings.length > 0;
               const contentCategory = isImageSource && raw.text ? inferCategoryFromText(raw.text) : null;
 
+              if (import.meta.env.DEV) {
+                // Counts and metadata only — never the OCR'd text or any extracted field value,
+                // so this can't leak a driver's-license/PII payload into the console even in dev.
+                console.debug('[RenewalIQ] document processed', {
+                  documentId: doc.id,
+                  fileType: raw.fileType,
+                  detectedCategory: contentCategory ?? doc.category,
+                  ocrConfidence: raw.ocrConfidence,
+                  ocrTextLength: raw.text.length,
+                  fieldsExtracted: results.length,
+                  warningCount: raw.warnings.length,
+                });
+              }
+
               set((s) => {
                 const profile = s.riskProfiles[accountId];
                 if (!profile) return {};

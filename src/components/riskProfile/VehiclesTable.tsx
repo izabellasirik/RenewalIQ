@@ -3,12 +3,20 @@ import { Plus, Pencil, Trash2, Check, X, User } from 'lucide-react';
 import type { VehicleEntry } from '../../types';
 import { Button, ConfirmDialog } from '../ui';
 
-type Draft = { vin: string; make: string; model: string; year: string; value: string; bodyType: string };
+type Draft = { vin: string; make: string; model: string; year: string; value: string; bodyType: string; plate: string };
 
-const EMPTY_DRAFT: Draft = { vin: '', make: '', model: '', year: '', value: '', bodyType: '' };
+const EMPTY_DRAFT: Draft = { vin: '', make: '', model: '', year: '', value: '', bodyType: '', plate: '' };
 
 function toDraft(v: VehicleEntry): Draft {
-  return { vin: v.vin ?? '', make: v.make ?? '', model: v.model ?? '', year: v.year !== undefined ? String(v.year) : '', value: v.value !== undefined ? String(v.value) : '', bodyType: v.bodyType ?? '' };
+  return {
+    vin: v.vin ?? '',
+    make: v.make ?? '',
+    model: v.model ?? '',
+    year: v.year !== undefined ? String(v.year) : '',
+    value: v.value !== undefined ? String(v.value) : '',
+    bodyType: v.bodyType ?? '',
+    plate: v.plate ?? '',
+  };
 }
 
 function fromDraft(d: Draft): Omit<VehicleEntry, 'id'> {
@@ -19,6 +27,7 @@ function fromDraft(d: Draft): Omit<VehicleEntry, 'id'> {
     year: d.year.trim() ? Number(d.year) : undefined,
     value: d.value.trim() ? Number(d.value.replace(/,/g, '')) : undefined,
     bodyType: d.bodyType.trim() || undefined,
+    plate: d.plate.trim() || undefined,
   };
 }
 
@@ -70,6 +79,7 @@ export function VehiclesTable({
             <th className="py-2 pr-4 font-medium">Make</th>
             <th className="py-2 pr-4 font-medium">Model</th>
             <th className="py-2 pr-4 font-medium">Year</th>
+            <th className="py-2 pr-4 font-medium">Plate</th>
             <th className="py-2 pr-4 font-medium">Value</th>
             <th className="py-2 pr-4 font-medium">Source</th>
             <th className="py-2 font-medium" />
@@ -82,6 +92,7 @@ export function VehiclesTable({
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Make" value={draft.make} onChange={(e) => setDraft({ ...draft, make: e.target.value })} /></td>
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Model" value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} /></td>
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Year" value={draft.year} onChange={(e) => setDraft({ ...draft, year: e.target.value })} /></td>
+              <td className="py-2 pr-4"><input className={inputCls} placeholder="Plate" value={draft.plate} onChange={(e) => setDraft({ ...draft, plate: e.target.value })} /></td>
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Value" value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></td>
               <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">Entered by broker</td>
               <td className="py-2">
@@ -99,6 +110,7 @@ export function VehiclesTable({
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.make} onChange={(e) => setDraft({ ...draft, make: e.target.value })} /></td>
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} /></td>
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.year} onChange={(e) => setDraft({ ...draft, year: e.target.value })} /></td>
+                <td className="py-2 pr-4"><input className={inputCls} value={draft.plate} onChange={(e) => setDraft({ ...draft, plate: e.target.value })} /></td>
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></td>
                 <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{v.source?.documentName ?? 'Entered by broker'}</td>
                 <td className="py-2">
@@ -114,6 +126,7 @@ export function VehiclesTable({
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.make ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.model ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{v.year ?? '—'}</td>
+                <td className="py-2.5 pr-4 font-mono text-xs text-[var(--color-ink-800)]">{v.plate ?? '—'}</td>
                 <td className="py-2.5 pr-4 font-medium text-[var(--color-ink-900)]">{v.value ? `$${v.value.toLocaleString('en-US')}` : '—'}</td>
                 <td className="py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
                   {v.isManual ? (

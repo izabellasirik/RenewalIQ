@@ -1,4 +1,5 @@
 import type { DocumentCategory, DocumentFileType } from '../types';
+import { detectDriverLicense, detectVehicleRegistration, detectInsuranceIdCard, detectDeclarationsPage } from '../services/extraction/fieldExtraction/idDocumentPatterns';
 
 /** Image extensions this app can actually decode/OCR client-side. HEIC/HEIF are deliberately not included yet — see services/ingestion/parseImage.ts for why. */
 export const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp'] as const;
@@ -33,6 +34,14 @@ export function inferCategory(fileName: string): DocumentCategory {
  */
 export function inferCategoryFromText(text: string): DocumentCategory | null {
   const t = text.toLowerCase();
+  // Checked ahead of the schedule/spreadsheet heuristics below: a single license or registration
+  // card should classify as itself, not as a "schedule" just because it also mentions a license
+  // number or a VIN-adjacent word. Filename is never consulted here — a license photo saved as
+  // "IMG_1843.png" or "REGULAR_LICENSE.png" alike is classified from what the image actually says.
+  if (detectDriverLicense(text)) return 'driver_license';
+  if (detectVehicleRegistration(text)) return 'vehicle_registration';
+  if (detectDeclarationsPage(text)) return 'insurance_declarations';
+  if (detectInsuranceIdCard(text)) return 'insurance_id_card';
   if (/\bloss run\b|\bclaims? history\b|\bincurred\b.{0,20}\bpaid\b/.test(t)) return 'loss_run';
   if (/\bvehicle schedule\b|\bvin\b.{0,20}\b(year|make|model)\b/.test(t)) return 'vehicle_schedule';
   if (/\bdriver schedule\b|\blicense number\b.{0,20}\bstate\b/.test(t)) return 'driver_schedule';
