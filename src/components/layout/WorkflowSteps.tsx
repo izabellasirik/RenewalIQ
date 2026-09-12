@@ -34,9 +34,12 @@ export function computeWorkflowSteps(
       : 'done';
   const appetiteStatus: StepStatus = matchResults.length === 0 ? (hasDocs ? 'in_progress' : 'not_started') : 'done';
 
+  const coverageStatus: StepStatus = !hasDocs ? 'not_started' : (profile?.coverage.length ?? 0) > 0 ? 'done' : 'in_progress';
+
   return [
     { key: 'upload', label: 'Documents', path: `/accounts/${accountId}/upload`, status: documentsStatus },
     { key: 'risk-profile', label: 'Risk Profile', path: `/accounts/${accountId}/risk-profile`, status: profileStatus },
+    { key: 'limits-coverage', label: 'Limits & Coverage', path: `/accounts/${accountId}/limits-coverage`, status: coverageStatus },
     { key: 'review', label: 'Review', path: `/accounts/${accountId}/review`, status: profileStatus },
     { key: 'submission-assistant', label: 'Submission Assistant', path: `/accounts/${accountId}/submission-assistant`, status: hasDocs ? 'done' : 'not_started' },
     { key: 'carrier-appetite', label: 'Carrier Appetite', path: `/accounts/${accountId}/carrier-appetite`, status: appetiteStatus },

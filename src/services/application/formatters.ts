@@ -4,10 +4,10 @@
  * mutates the underlying Risk Profile value (the transform only applies to what's displayed here).
  */
 
-export function formatCurrency(value: unknown): string {
-  const n = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(n) ? `$${Math.round(n).toLocaleString('en-US')}` : String(value ?? '');
-}
+import { formatCurrencyValue } from '../../utils/currency';
+
+/** Re-exported for callers already importing formatCurrency from here — see utils/currency.ts for the single shared implementation used across the read-only export layer and the editable broker UI. */
+export const formatCurrency = formatCurrencyValue;
 
 /** "1985-04-11" -> "04/11/1985". Parsed by string, not Date(), to avoid UTC-offset off-by-one. Returns the raw string unchanged if it isn't in a recognizable YYYY-MM-DD shape, rather than guessing. */
 export function formatDateMDY(value: unknown): string {

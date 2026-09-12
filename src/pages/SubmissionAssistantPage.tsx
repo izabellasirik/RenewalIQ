@@ -7,33 +7,14 @@ import { Button, ProgressBar, OverflowMenu, ConfirmDialog } from '../components/
 import { ApplicationPreview } from '../components/submission/ApplicationPreview';
 import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { useAccountsStore } from '../state/useAccountsStore';
-import { mapRiskProfileToApplication, computeApplicationStats, computeSubmissionCompleteness, APPLICATION_TEMPLATES, DEFAULT_APPLICATION_TEMPLATE_ID } from '../services/application';
+import { mapRiskProfileToApplication, computeApplicationStats, computeSubmissionCompleteness, applicationTitleFor, APPLICATION_TEMPLATES, DEFAULT_APPLICATION_TEMPLATE_ID } from '../services/application';
 import { parseDraft } from '../components/riskProfile/FieldRow';
-import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { downloadBlob } from '../utils/download';
+import { normalizeCurrencyText } from '../utils/currency';
+import { fieldPathValueType } from '../utils/fieldLabels';
+import { parseRiskProfilePath } from '../utils/riskProfilePath';
 import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
-import type { CoverageType, MappedField } from '../types';
-
-function fieldValueType(section: 'business' | 'transportation', key: string) {
-  for (const group of RISK_PROFILE_GROUPS) {
-    const match = group.fields.find((f) => f.section === section && f.key === key);
-    if (match) return match.type;
-  }
-  return 'text' as const;
-}
-
-type SavableTarget = { kind: 'field'; section: 'business' | 'transportation'; key: string } | { kind: 'coverage'; coverageType: CoverageType; field: 'currentLimit' | 'requestedLimit' } | null;
-
-function parseRiskProfilePath(path: string): SavableTarget {
-  const parts = path.split('.');
-  if (parts[0] === 'coverage') {
-    return { kind: 'coverage', coverageType: parts[1] as CoverageType, field: (parts[2] as 'currentLimit' | 'requestedLimit') ?? 'requestedLimit' };
-  }
-  if (parts[0] === 'business' || parts[0] === 'transportation') {
-    return { kind: 'field', section: parts[0], key: parts[1] };
-  }
-  return null;
-}
+import type { MappedField } from '../types';
 
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -69,10 +50,14 @@ export function SubmissionAssistantPage() {
     const target = parseRiskProfilePath(field.riskProfilePath);
     if (!target) return;
     if (target.kind === 'field') {
-      const valueType = fieldValueType(target.section, target.key);
+      const valueType = fieldPathValueType(field.riskProfilePath);
       updateField(accountId, target.section, target.key, parseDraft(valueType, value));
     } else {
-      updateCoverage(accountId, target.coverageType, target.field, value);
+      // Coverage limits are free-text (a broker can write "$1M/$2M CSL"), but a plain-digit entry
+      // like "100000" is normalized to "$100,000" here too — the same rule CoverageSection's own
+      // FieldRow applies, so a limit reads the same whether it was edited from the Risk Profile's
+      // Limits & Coverage page or from here.
+      updateCoverage(accountId, target.coverageType, target.field, normalizeCurrencyText(value));
     }
   }
 
@@ -174,7 +159,7 @@ export function SubmissionAssistantPage() {
 
       <div className="flex flex-col gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-4 print:hidden">
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-base font-semibold text-[var(--color-ink-900)]">Transportation Application</h2>
+          <h2 className="text-base font-semibold text-[var(--color-ink-900)]">{applicationTitleFor(account.namedInsured, application.templateName)}</h2>
           <span className="text-sm font-semibold text-[var(--color-ink-900)]">{stats.percentComplete}% Complete</span>
         </div>
         <ProgressBar value={stats.percentComplete} />
@@ -238,7 +223,13 @@ export function SubmissionAssistantPage() {
         cancelLabel="Review fields"
       />
 
-      <WhatsMissingPanel open={whatsMissingOpen} onClose={() => setWhatsMissingOpen(false)} completeness={completeness} />
+      <WhatsMissingPanel
+        open={whatsMissingOpen}
+        onClose={() => setWhatsMissingOpen(false)}
+        completeness={completeness}
+        onUpdateField={(section, key, value) => updateField(accountId, section, key, value)}
+        onUpdateCoverage={(coverageType, field, value) => updateCoverage(accountId, coverageType, field, value)}
+      />
     </PageContainer>
   );
 }

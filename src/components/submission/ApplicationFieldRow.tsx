@@ -3,6 +3,11 @@ import { CircleCheck, CircleHelp, TriangleAlert, CircleAlert, Pencil, Check, X, 
 import type { MappedField, MappedFieldStatus } from '../../types';
 import { Badge, type BadgeTone } from '../ui';
 
+/** Coverage limits and annual revenue are the monetary fields reachable from this page today — kept as a small local check rather than threading a valueType prop through, since it's just "start the edit from plain digits", not a display change (the value is already formatted via the template's own formatCurrency, see templates.ts). */
+function isCurrencyPath(path?: string): boolean {
+  return !!path && (path.startsWith('coverage.') || path === 'business.annualRevenue');
+}
+
 const STATUS_META: Record<MappedFieldStatus, { label: string; tone: BadgeTone; Icon: typeof CircleCheck }> = {
   auto_filled: { label: 'Auto-filled', tone: 'success', Icon: CircleCheck },
   manually_entered: { label: 'Entered by broker', tone: 'brand', Icon: Pencil },
@@ -43,7 +48,15 @@ export function ApplicationFieldRow({
   const canEdit = !!onSaveToRiskProfile;
 
   function startEdit() {
-    setDraft(field.status === 'missing' ? '' : field.value);
+    if (field.status === 'missing') {
+      setDraft('');
+    } else if (isCurrencyPath(field.riskProfilePath)) {
+      // Strip back to plain digits so editing starts from "100000", not "$100,000" — easy to
+      // backspace/retype. normalizeCurrencyText (applied on save) re-formats it either way.
+      setDraft(field.value.replace(/[$,\s]/g, ''));
+    } else {
+      setDraft(field.value);
+    }
     setIsEditing(true);
   }
 

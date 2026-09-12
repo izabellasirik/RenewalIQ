@@ -22,3 +22,20 @@ export function getFieldValueByPath(profile: RiskProfile, path: string): FieldVa
 
   return null;
 }
+
+/** Where a dot-path's value actually needs to be written back — a scalar business/transportation field, or one side of a coverage line. Shared by every surface that edits a MappedField's riskProfilePath back into the canonical Risk Profile (Submission Assistant, the "What's Missing?" panel), so there's one parser instead of each screen re-deriving it. */
+export type RiskProfileSaveTarget =
+  | { kind: 'field'; section: 'business' | 'transportation'; key: string }
+  | { kind: 'coverage'; coverageType: CoverageType; field: 'currentLimit' | 'requestedLimit' }
+  | null;
+
+export function parseRiskProfilePath(path: string): RiskProfileSaveTarget {
+  const parts = path.split('.');
+  if (parts[0] === 'coverage') {
+    return { kind: 'coverage', coverageType: parts[1] as CoverageType, field: (parts[2] as 'currentLimit' | 'requestedLimit') ?? 'requestedLimit' };
+  }
+  if (parts[0] === 'business' || parts[0] === 'transportation') {
+    return { kind: 'field', section: parts[0], key: parts[1] };
+  }
+  return null;
+}

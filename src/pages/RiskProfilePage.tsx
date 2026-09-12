@@ -14,7 +14,6 @@ import { AccountSummary } from '../components/riskProfile/AccountSummary';
 import { VehiclesTable } from '../components/riskProfile/VehiclesTable';
 import { DriversTable } from '../components/riskProfile/DriversTable';
 import { LossHistoryTable } from '../components/riskProfile/LossHistoryTable';
-import { CoverageSection } from '../components/riskProfile/CoverageSection';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
@@ -34,7 +33,7 @@ const TREND_COLOR = {
   insufficient_data: 'text-[var(--color-ink-400)]',
 };
 
-type TabKey = 'details' | 'fleet' | 'drivers' | 'loss-history' | 'coverage';
+type TabKey = 'details' | 'fleet' | 'drivers' | 'loss-history';
 
 export function RiskProfilePage() {
   const { accountId = '' } = useParams();
@@ -45,10 +44,6 @@ export function RiskProfilePage() {
   const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
   const updateField = useAccountsStore((s) => s.updateField);
   const resolveField = useAccountsStore((s) => s.resolveField);
-  const updateCoverage = useAccountsStore((s) => s.updateCoverage);
-  const resolveCoverageConflict = useAccountsStore((s) => s.resolveCoverageConflict);
-  const addCoverageLine = useAccountsStore((s) => s.addCoverageLine);
-  const deleteCoverageLine = useAccountsStore((s) => s.deleteCoverageLine);
   const addVehicle = useAccountsStore((s) => s.addVehicle);
   const updateVehicle = useAccountsStore((s) => s.updateVehicle);
   const deleteVehicle = useAccountsStore((s) => s.deleteVehicle);
@@ -171,7 +166,6 @@ export function RiskProfilePage() {
           { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
           { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
           { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
-          { key: 'coverage', label: 'Coverage', count: profile.coverage.length },
         ]}
         active={tab}
         onChange={(k) => setTab(k as TabKey)}
@@ -329,21 +323,9 @@ export function RiskProfilePage() {
         </SectionCard>
       )}
 
-      {tab === 'coverage' && (
-        <SectionCard title="Coverage" description="Expiring limits (from loss run) vs. requested limits (from application).">
-          <CoverageSection
-            coverage={profile.coverage}
-            onSave={(coverageType, field, value) => updateCoverage(accountId, coverageType, field, value)}
-            onResolve={(coverageType, field, resolution) => resolveCoverageConflict(accountId, coverageType, field, resolution)}
-            onAdd={(coverageType) => addCoverageLine(accountId, coverageType)}
-            onDelete={(coverageType) => deleteCoverageLine(accountId, coverageType)}
-          />
-        </SectionCard>
-      )}
-
       <div className="flex justify-end">
-        <Button icon={<ArrowRight size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
-          Continue to Review
+        <Button icon={<ArrowRight size={15} />} onClick={() => navigate(`/accounts/${accountId}/limits-coverage`)}>
+          Continue to Limits & Coverage
         </Button>
       </div>
 

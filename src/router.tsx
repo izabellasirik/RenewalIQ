@@ -8,6 +8,7 @@ import { MarketFinderPage } from './pages/MarketFinderPage';
 import { NewAccountPage } from './pages/NewAccountPage';
 import { UploadPage } from './pages/UploadPage';
 import { RiskProfilePage } from './pages/RiskProfilePage';
+import { LimitsCoveragePage } from './pages/LimitsCoveragePage';
 import { ReviewPage } from './pages/ReviewPage';
 import { SubmissionAssistantPage } from './pages/SubmissionAssistantPage';
 import { CarrierAppetitePage } from './pages/CarrierAppetitePage';
@@ -34,6 +35,7 @@ export const router = createBrowserRouter([
       { path: '/accounts/new', element: <NewAccountPage /> },
       { path: '/accounts/:accountId/upload', element: <UploadPage /> },
       { path: '/accounts/:accountId/risk-profile', element: <RiskProfilePage /> },
+      { path: '/accounts/:accountId/limits-coverage', element: <LimitsCoveragePage /> },
       { path: '/accounts/:accountId/review', element: <ReviewPage /> },
       { path: '/accounts/:accountId/submission-assistant', element: <SubmissionAssistantPage /> },
       { path: '/accounts/:accountId/carrier-appetite', element: <CarrierAppetitePage /> },

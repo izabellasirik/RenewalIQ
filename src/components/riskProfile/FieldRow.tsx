@@ -6,8 +6,10 @@ import { Badge, Skeleton } from '../ui';
 import { cn } from '../../utils/cn';
 import { relativeTime } from '../../utils/dates';
 import { DATA_STATUS_LABELS, fieldDataStatus } from '../../utils/dataStatus';
+import { formatCurrencyValue, parseCurrencyInput } from '../../utils/currency';
 
-export type FieldValueType = 'text' | 'textarea' | 'number' | 'boolean' | 'list';
+/** 'currency' is for true numeric monetary fields (e.g. annualRevenue) — stores/parses a clean number, displays with $ and comma separators. A monetary field that's fundamentally free text (coverage limits, which can legitimately hold "$1M/$2M CSL") stays 'text' and is normalized at its own save call site instead — see utils/currency.ts's normalizeCurrencyText. */
+export type FieldValueType = 'text' | 'textarea' | 'number' | 'currency' | 'boolean' | 'list';
 
 const EXTRACTION_METHOD_LABELS: Record<ExtractionMethod, string> = {
   ai_extraction: 'AI-extracted',
@@ -42,6 +44,7 @@ export function displayReadValue(value: unknown): string {
 
 export function parseDraft(valueType: FieldValueType, raw: string): unknown {
   if (valueType === 'number') return raw.trim() === '' ? null : Number(raw.replace(/,/g, ''));
+  if (valueType === 'currency') return parseCurrencyInput(raw);
   if (valueType === 'list') return raw.split(',').map((s) => s.trim()).filter(Boolean);
   if (valueType === 'boolean') return raw === 'Yes';
   return raw;
@@ -59,7 +62,13 @@ export function ValueInput({ valueType, value, onChange, autoFocus }: { valueTyp
   return (
     <input
       autoFocus={autoFocus}
+      // 'currency' stays a plain text input (not type="number") specifically so a broker can freely
+      // backspace/retype while editing without the browser's number-input caret quirks — it still
+      // only expects plain digits, per parseCurrencyInput above; formatting only ever happens on
+      // display, never live while typing.
       type={valueType === 'number' ? 'number' : 'text'}
+      inputMode={valueType === 'currency' ? 'decimal' : undefined}
+      placeholder={valueType === 'currency' ? 'e.g. 100000' : undefined}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className="w-full rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
@@ -188,7 +197,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                   {displayReadValue(field.value)}
                 </button>
               ) : (
-                <p className="text-sm text-[var(--color-ink-900)]">{displayReadValue(field.value)}</p>
+                <p className="text-sm text-[var(--color-ink-900)]">{valueType === 'currency' ? formatCurrencyValue(field.value) : displayReadValue(field.value)}</p>
               )}
             </div>
           ) : (
@@ -274,7 +283,10 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
             {!readOnly && !field.isMissing && (
               <button
                 onClick={() => {
-                  setDraft(displayReadValue(field.value));
+                  // Currency fields re-enter edit mode showing the plain number (no $, no commas) —
+                  // easy to backspace/retype, exactly like typing it in fresh. Formatting only ever
+                  // happens for display, never inside the editable input.
+                  setDraft(valueType === 'currency' ? String(field.value ?? '') : displayReadValue(field.value));
                   setIsEditing(true);
                 }}
                 className="rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer"

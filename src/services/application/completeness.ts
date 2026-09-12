@@ -24,6 +24,8 @@ import { buildSubmissionWarnings } from '../extraction/reconciliation';
 export interface CompletenessItem {
   label: string;
   detail?: string;
+  /** Present only for a scalar field the broker can actually edit in place (the "What's Missing?" panel's Edit/Add action) — a synthetic item like "Driver information" or a missing document has nowhere single to write a value back to, so it's left undefined and stays read-only there. */
+  riskProfilePath?: string;
 }
 
 export interface SubmissionCompleteness {
@@ -55,7 +57,7 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
   for (const section of application.sections) {
     for (const field of section.fields) {
       if (field.status === 'missing') {
-        (field.required ? missingRequiredFields : missingRecommendedFields).push({ label: field.targetLabel, detail: field.reviewReason });
+        (field.required ? missingRequiredFields : missingRecommendedFields).push({ label: field.targetLabel, detail: field.reviewReason, riskProfilePath: field.riskProfilePath });
       } else if (field.status === 'needs_review') {
         needsReview.push({ label: field.targetLabel, detail: field.reviewReason });
       } else if (field.status === 'conflict') {

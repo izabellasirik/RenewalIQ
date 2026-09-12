@@ -5,6 +5,7 @@ import { COVERAGE_LABELS } from '../../types';
 import type { FieldResolution } from '../../services/extraction';
 import { Button, ConfirmDialog } from '../ui';
 import { FieldRow } from './FieldRow';
+import { normalizeCurrencyText } from '../../utils/currency';
 
 const ALL_COVERAGE_TYPES = Object.keys(COVERAGE_LABELS) as CoverageType[];
 
@@ -75,15 +76,15 @@ export function CoverageSection({
               label="Current Limit"
               valueType="text"
               field={line.currentLimit ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false }}
-              onSave={(value) => onSave(line.type, 'currentLimit', value)}
-              onResolve={(resolution) => onResolve(line.type, 'currentLimit', resolution)}
+              onSave={(value) => onSave(line.type, 'currentLimit', normalizeCurrencyText(value))}
+              onResolve={(resolution) => onResolve(line.type, 'currentLimit', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
             />
             <FieldRow
               label="Requested Limit"
               valueType="text"
               field={line.requestedLimit}
-              onSave={(value) => onSave(line.type, 'requestedLimit', value)}
-              onResolve={(resolution) => onResolve(line.type, 'requestedLimit', resolution)}
+              onSave={(value) => onSave(line.type, 'requestedLimit', normalizeCurrencyText(value))}
+              onResolve={(resolution) => onResolve(line.type, 'requestedLimit', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
             />
           </div>
         </div>

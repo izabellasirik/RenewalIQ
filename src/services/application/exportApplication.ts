@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { MappedApplication } from '../../types';
+import { applicationTitleFor } from './applicationTitle';
 
 const PAGE_WIDTH = 612; // US Letter, points
 const PAGE_HEIGHT = 792;
@@ -131,17 +132,15 @@ export async function generateApplicationPdf(application: MappedApplication, acc
     });
   }
 
-  // --- Header --- accountName is the named insured's own value (the same field that gets wrapped
-  // in the Business Information section below), so it goes through the same wrapping as everything
-  // else — an unwrapped single drawText call here would run a long company name past the page's
-  // right edge, clipped rather than overlapping other text, but still a "long text" failure the same
-  // fix belongs to.
-  const titleLines = wrapText(bold, application.templateName, 16, CONTENT_WIDTH);
+  // --- Header --- title is "{Named Insured} Application" (falling back to the template's own
+  // export title only when there's no named insured), never the account name repeated separately
+  // underneath — see applicationTitleFor. It goes through the same wrapping as everything else — an
+  // unwrapped single drawText call here would run a long company name past the page's right edge,
+  // clipped rather than overlapping other text, but still a "long text" failure the same fix belongs to.
+  const title = applicationTitleFor(accountName, application.templateName);
+  const titleLines = wrapText(bold, title, 16, CONTENT_WIDTH);
   drawLines(titleLines, MARGIN, y, 16, bold, INK_900, 19);
   y -= titleLines.length * 19 + 4;
-  const accountLines = wrapText(font, accountName, 12, CONTENT_WIDTH);
-  drawLines(accountLines, MARGIN, y, 12, font, INK_600, 15);
-  y -= accountLines.length * 15 + 4;
   text(`Generated ${new Date(application.generatedAt).toLocaleDateString('en-US')}`, MARGIN, 8, italic, INK_400);
   y -= 10;
   rule();
@@ -149,6 +148,13 @@ export async function generateApplicationPdf(application: MappedApplication, acc
 
   // --- Scalar sections, two columns ---
   for (const section of application.sections) {
+    // An optional field with nothing in it doesn't get a row at all — no blank label, no "Not
+    // provided" placeholder, nothing. A required field still renders (blank) even when empty, since
+    // silently hiding an incomplete required field would misrepresent the application as more
+    // complete than it is; that gap belongs in the broker's "What's Missing?" panel, not erased here.
+    const fieldsToRender = section.fields.filter((f) => f.required || f.value);
+    if (fieldsToRender.length === 0) continue;
+
     const colWidth = CONTENT_WIDTH / 2;
     const usableWidth = colWidth - COLUMN_GUTTER;
 
@@ -161,8 +167,8 @@ export async function generateApplicationPdf(application: MappedApplication, acc
 
     /** Wraps both fields of one visual row and returns everything needed to size and draw it. */
     function layoutRow(i: number) {
-      const left = section.fields[i];
-      const right = section.fields[i + 1];
+      const left = fieldsToRender[i];
+      const right = fieldsToRender[i + 1];
       const leftLabel = left ? wrapText(font, left.targetLabel.toUpperCase(), LABEL_SIZE, usableWidth) : [];
       const rightLabel = right ? wrapText(font, right.targetLabel.toUpperCase(), LABEL_SIZE, usableWidth) : [];
       const leftValue = left?.value ? wrapText(font, left.value, VALUE_SIZE, usableWidth) : [];
@@ -197,13 +203,13 @@ export async function generateApplicationPdf(application: MappedApplication, acc
     // Look ahead at the first row so a section header is never left orphaned at the bottom of a
     // page with its first row pushed to the next one — if the header and its first row don't fit
     // together, both move to the new page as a unit.
-    const firstRow = section.fields.length > 0 ? layoutRow(0) : null;
+    const firstRow = layoutRow(0);
     const headerHeight = 6 + 16; // title line + rule + gap, matches sectionHeader()'s own offsets
-    ensureSpace(headerHeight + (firstRow?.height ?? 0));
+    ensureSpace(headerHeight + firstRow.height);
     sectionHeader();
 
-    for (let i = 0; i < section.fields.length; i += 2) {
-      const row = i === 0 && firstRow ? firstRow : layoutRow(i);
+    for (let i = 0; i < fieldsToRender.length; i += 2) {
+      const row = i === 0 ? firstRow : layoutRow(i);
       ensureSpace(row.height, () => sectionHeader(' (CONTINUED)'));
       drawRow(row);
     }

@@ -51,6 +51,7 @@ export function ReviewPage() {
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
   const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
   const updateField = useAccountsStore((s) => s.updateField);
+  const updateCoverage = useAccountsStore((s) => s.updateCoverage);
   const stats = useRiskProfileStats(profile);
   const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
   const [showCompleted, setShowCompleted] = useState(false);
@@ -172,7 +173,13 @@ export function ReviewPage() {
         </Button>
       </div>
 
-      <WhatsMissingPanel open={whatsMissingOpen} onClose={() => setWhatsMissingOpen(false)} completeness={completeness} />
+      <WhatsMissingPanel
+        open={whatsMissingOpen}
+        onClose={() => setWhatsMissingOpen(false)}
+        completeness={completeness}
+        onUpdateField={(section, key, value) => updateField(accountId, section, key, value)}
+        onUpdateCoverage={(coverageType, field, value) => updateCoverage(accountId, coverageType, field, value)}
+      />
     </PageContainer>
   );
 }
