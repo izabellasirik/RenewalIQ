@@ -126,6 +126,19 @@ export function IntakeFormPage() {
     setStatus('submitted');
   }
 
+  /**
+   * Lets one reusable link be used for several different insureds in a row (e.g. an agency sending
+   * multiple accounts) without a manual page refresh. Resets every piece of applicant-entered state
+   * back to blank — `link` itself is untouched (same token, still valid, carries no prior applicant
+   * data) so the next submission starts genuinely clean rather than preloading the last one's answers.
+   */
+  function handleSubmitAnother() {
+    setAnswers(emptyAnswers);
+    setFiles([]);
+    setError(null);
+    setStatus('ready');
+  }
+
   if (status === 'loading') {
     return (
       <IntakeShell>
@@ -168,6 +181,9 @@ export function IntakeFormPage() {
           <CircleCheck size={26} className="text-[var(--color-success-600)]" />
           <p className="text-sm font-medium text-[var(--color-ink-800)]">Thank you — your submission has been received.</p>
           <p className="max-w-xs text-xs text-[var(--color-ink-500)]">Someone will review it and follow up if anything else is needed. You can close this page.</p>
+          <Button className="mt-2" variant="secondary" onClick={handleSubmitAnother}>
+            Submit another account
+          </Button>
         </div>
       </IntakeShell>
     );

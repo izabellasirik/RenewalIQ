@@ -119,7 +119,7 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   const linkResult = await fetchIntakeLinkById(submission.intakeLinkId);
   const sourceLabel = linkResult.ok ? (linkResult.data?.label ?? undefined) : undefined;
 
-  const { createAccountFromExtraction, addFiles } = useAccountsStore.getState();
+  const { createAccountFromExtraction, addFiles, syncAccountAndAwait, deleteAccountPermanently } = useAccountsStore.getState();
   const accountId = createAccountFromExtraction(
     namedInsured,
     state,
@@ -134,14 +134,47 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
     sourceLabel
   );
 
+  // Confirm the account's core data (submissions/field_values/field_alternates/coverage_lines/
+  // vehicles/drivers/losses/activity_events — see saveSubmissionSnapshot) actually reached
+  // Supabase BEFORE treating this import as real. Without this, an "authenticated" submission
+  // could end up local-only after a failed cloud save with nothing but a small TopBar banner
+  // (easy to miss) to show for it, while the intake row already reads "Imported" — the whole
+  // "does not reliably save" bug report. A no-op success if this account isn't cloud-backed
+  // (Supabase not configured / not signed in), same as syncNow elsewhere in the app.
+  const syncResult = await syncAccountAndAwait(accountId);
+  if (!syncResult.ok) {
+    // The exact table/operation/code/message/details/hint is already logged in full by logAndFail
+    // inside submissionsRepo.ts at the moment it happened — this just ties it to the import attempt
+    // for anyone reading the console. The broker-facing message stays short and non-technical (see
+    // TopBar.tsx's "Cloud save failed" banner for the same principle) — never the raw Postgres text.
+    // eslint-disable-next-line no-console
+    console.error(`[RenewalIQ intake import] Cloud save failed for intake submission ${submission.id}:`, syncResult.message);
+
+    // Nothing durable exists yet — undo the local account and the claim so Import can just be
+    // retried cleanly, instead of leaving an "Imported" row with a broken/local-only account
+    // behind it, or risking a duplicate account on the next attempt.
+    const deleteResult = await deleteAccountPermanently(accountId);
+    await revertIntakeSubmissionClaim(submission.id);
+    if (!deleteResult.ok) {
+      // eslint-disable-next-line no-console
+      console.error(`[RenewalIQ intake import] Cleanup after failed import also failed for account ${accountId}:`, deleteResult.message);
+    }
+    return {
+      ok: false,
+      message: "Couldn't save this submission to your account. Nothing was imported — please try again. (See the browser console for details.)",
+    };
+  }
+
   if (files.length > 0) addFiles(accountId, files);
 
-  // The account now genuinely exists, so the claim stands even if this last linking step fails —
-  // reverting here would risk a second account being created on retry. The broker still gets a
-  // clear signal that the link may not have saved.
+  // The account is now confirmed durable, so the claim stands even if this last linking step
+  // fails — reverting here would risk a second account being created on retry. The broker still
+  // gets a clear signal that the link may not have saved.
   const linkAccountResult = await setImportedAccountId(submission.id, accountId);
   if (!linkAccountResult.ok) {
-    return { ok: true, accountId, message: `Account created, but couldn't record the link back to the intake submission: ${linkAccountResult.message}` };
+    // eslint-disable-next-line no-console
+    console.error(`[RenewalIQ intake import] Couldn't record imported_account_id for intake submission ${submission.id}:`, linkAccountResult.message);
+    return { ok: true, accountId, message: 'Account created, but the link back to this intake submission may not have saved. (See the browser console for details.)' };
   }
 
   return { ok: true, accountId };

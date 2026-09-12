@@ -82,7 +82,6 @@ export function TopBar() {
   const location = useLocation();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const syncStatus = useAccountsStore((s) => (accountId ? s.syncStatus[accountId] : undefined));
-  const syncError = useAccountsStore((s) => (accountId ? s.syncErrors[accountId] : undefined));
   const steps = useWorkflowStatus(account?.id);
   const activeKey = steps.find((s) => location.pathname.startsWith(s.path))?.key ?? '';
 
@@ -100,14 +99,14 @@ export function TopBar() {
         {account && syncStatus === 'error' && (
           <span
             className="flex items-center gap-1.5 text-xs text-[var(--color-danger-600)]"
-            title={
-              syncError
-                ? `This change is only saved in this browser — it did not reach your account. ${syncError} (see the browser console for the full error).`
-                : 'This change is only saved in this browser — it did not reach your account. Try again.'
-            }
+            // The full Supabase error (table, code, message, details, hint) is always logged to the
+            // browser console at the moment it happens — see logAndFail in submissionsRepo.ts. This
+            // tooltip stays a plain, safe summary rather than echoing that raw text (which can
+            // include Postgres constraint/column names) directly in the UI.
+            title="Cloud save failed. Your latest change is only saved in this browser — see the browser console for details, then try again."
           >
             <AlertTriangle size={13} />
-            Failed to save to your account
+            Cloud save failed
           </span>
         )}
         {account && (syncStatus === 'saved' || syncStatus === undefined) && (

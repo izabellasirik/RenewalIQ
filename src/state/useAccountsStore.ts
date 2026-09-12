@@ -119,6 +119,16 @@ interface AccountsState {
   restoreAccount: (accountId: string) => void;
   /** Returns { ok: false, message } if this account is cloud-backed and the cloud deletion fails — local state is left untouched in that case (see the STOP-and-report note in the implementation), so the broker never sees "deleted" when the cloud copy is still there. */
   deleteAccountPermanently: (accountId: string) => Promise<{ ok: boolean; message?: string }>;
+  /**
+   * The same cloud mirror syncNow() fires for every edit, except awaited so a caller can actually
+   * find out whether the account's core submission data (the "submissions" row plus field_values/
+   * field_alternates/coverage_lines/vehicles/drivers/losses/activity_events — see
+   * submissionsRepo.ts's saveSubmissionSnapshot) really reached Supabase, with the exact
+   * table/error message on failure. Used by importIntakeSubmission() so a cloud save failure can be
+   * caught and handled right at import time instead of only surfacing later as a TopBar banner. A
+   * no-op success ({ ok: true }) when this account isn't cloud-backed (not signed in / not configured).
+   */
+  syncAccountAndAwait: (accountId: string) => Promise<{ ok: boolean; message?: string }>;
 }
 
 function newAccount(namedInsured: string, state: string): Account {
@@ -148,32 +158,40 @@ export const useAccountsStore = create<AccountsState>()(
   persist(
     (set, get) => {
       /**
-       * Fire-and-forget cloud mirror for one submission — a no-op unless Supabase is configured,
-       * a broker is signed in, and this specific account has been marked cloud (created while
-       * signed in, or explicitly imported). Never blocks the caller: local state is always the
-       * immediate source of truth for the current session (see file header in submissionsRepo.ts),
-       * this just pushes the resulting state outward and reflects success/failure via syncStatus.
+       * The actual cloud save — shared by the fire-and-forget syncNow() (used by every field-edit
+       * action) and the awaited syncAccountAndAwait() (used by importIntakeSubmission(), which
+       * needs to know whether this specifically succeeded before treating an import as durable). A
+       * no-op success unless Supabase is configured, a broker is signed in, and this specific
+       * account has been marked cloud (created while signed in, or explicitly imported).
        */
-      function syncNow(accountId: string) {
+      async function syncAccountCloud(accountId: string): Promise<{ ok: boolean; message?: string }> {
         const s = get();
-        if (!isSupabaseConfigured || !s.currentUserId || s.cloudAccountIds[accountId] !== s.currentUserId) return;
+        if (!isSupabaseConfigured || !s.currentUserId || s.cloudAccountIds[accountId] !== s.currentUserId) return { ok: true };
         const account = s.accounts.find((a) => a.id === accountId);
         const profile = s.riskProfiles[accountId];
-        if (!account || !profile) return;
+        if (!account || !profile) return { ok: true };
         const userId = s.currentUserId;
         set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'saving' }, syncErrors: { ...st.syncErrors, [accountId]: undefined as unknown as string } }));
-        Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
-          const ok = snapRes.ok && actRes.ok;
-          // The real Supabase error (code/message/details/hint) is already logged in full by
-          // logAndFail inside submissionsRepo.ts at the moment it happens — this just keeps the
-          // human-readable summary around so the UI can show *which* save failed and why, instead
-          // of only a generic "Failed to save to your account" with no way to find out more.
-          const message = !snapRes.ok ? snapRes.message : !actRes.ok ? actRes.message : undefined;
-          set((st) => ({
-            syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' },
-            syncErrors: { ...st.syncErrors, [accountId]: message as string },
-          }));
-        });
+        const [snapRes, actRes] = await Promise.all([
+          cloudRepo.saveSubmissionSnapshot(userId, account, profile),
+          cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []),
+        ]);
+        const ok = snapRes.ok && actRes.ok;
+        // The real Supabase error (code/message/details/hint) is already logged in full by
+        // logAndFail inside submissionsRepo.ts at the moment it happens — this just keeps the
+        // human-readable summary around so the UI can show *which* save failed and why, instead
+        // of only a generic "Failed to save to your account" with no way to find out more.
+        const message = !snapRes.ok ? snapRes.message : !actRes.ok ? actRes.message : undefined;
+        set((st) => ({
+          syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' },
+          syncErrors: { ...st.syncErrors, [accountId]: message as string },
+        }));
+        return { ok, message };
+      }
+
+      /** Fire-and-forget cloud mirror for one submission — never blocks the caller: local state is always the immediate source of truth for the current session (see file header in submissionsRepo.ts), this just pushes the resulting state outward and reflects success/failure via syncStatus. */
+      function syncNow(accountId: string) {
+        void syncAccountCloud(accountId);
       }
 
       /**
@@ -801,6 +819,8 @@ export const useAccountsStore = create<AccountsState>()(
         });
         return { ok: true };
       },
+
+      syncAccountAndAwait: (accountId) => syncAccountCloud(accountId),
 
       handleAuthChange: (userId) => {
         const s = get();
