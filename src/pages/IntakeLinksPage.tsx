@@ -140,7 +140,7 @@ function LinksSection({ userId }: { userId: string }) {
         />
         <input
           className={inputClass}
-          placeholder="Your brokerage name, shown to the recipient — e.g. DXP"
+          placeholder="Your brokerage name, shown to the recipient — e.g. Acme Insurance Group"
           value={orgName}
           onChange={(e) => {
             setOrgName(e.target.value);
