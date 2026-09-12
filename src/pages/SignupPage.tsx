@@ -97,11 +97,9 @@ export function SignupPage() {
           Sign in
         </Link>
       </p>
-      <p className="mt-2 text-center text-xs text-[var(--color-ink-400)]">
-        <Link to="/" className="hover:underline">
-          Continue without an account
-        </Link>
-      </p>
+      {/* No "continue without an account" link here (unlike the not_configured branch above): once
+          Supabase is configured, every broker-private route requires sign-in (see
+          RequireBrokerAuth) — this link would just bounce straight back to /login. */}
     </AuthShell>
   );
 }

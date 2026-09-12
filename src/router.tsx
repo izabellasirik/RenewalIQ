@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { AdminShell } from './components/layout/AdminShell';
+import { RequireBrokerAuth } from './components/layout/RequireBrokerAuth';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -25,7 +26,13 @@ export const router = createBrowserRouter([
   // Renewal IQ login at all (see types/intake.ts / supabase/migrations/0004_intake_submissions.sql).
   { path: '/intake/:token', element: <IntakeFormPage /> },
   {
-    element: <AppShell />,
+    // RequireBrokerAuth redirects a signed-out visitor to /login before any of this ever renders —
+    // see its own comment for exactly which states are (and are not) treated as "signed out."
+    element: (
+      <RequireBrokerAuth>
+        <AppShell />
+      </RequireBrokerAuth>
+    ),
     children: [
       { path: '/', element: <DashboardPage /> },
       { path: '/market-finder', element: <MarketFinderPage /> },
