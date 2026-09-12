@@ -2,7 +2,16 @@ import { supabase } from './client';
 import type { Account, ActivityEvent, CoverageType, DriverEntry, FieldValue, LossEntry, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
 
-export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
+export interface RepoFailure {
+  ok: false;
+  message: string;
+  /** Postgres/PostgREST error code when the failure came back from a real Supabase request (e.g. '23514' for a check-constraint violation, '42501' for an RLS denial) — never fabricated, absent for a "not configured" or thrown-JS-error failure. */
+  code?: string;
+  details?: string;
+  hint?: string;
+}
+
+export type RepoResult<T = void> = { ok: true; data: T } | RepoFailure;
 
 /**
  * The cloud persistence layer for broker submissions — see supabase/migrations/0003_broker_workspaces.sql
@@ -17,15 +26,45 @@ export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message:
  * bulk-replaced, so `storage_path` (set once, after the file upload completes) is never clobbered
  * by a later unrelated field edit's snapshot save.
  *
- * Every exported function fails soft with `{ ok: false, message }` — including when Supabase isn't
- * configured — never throws, so a caller always has a clean way to surface "failed to save" instead
- * of an unhandled rejection.
+ * Every exported function fails soft with a RepoFailure — including when Supabase isn't configured
+ * — never throws, so a caller always has a clean way to surface "failed to save" instead of an
+ * unhandled rejection. See logAndFail's own comment for how the *real* Postgres error (code/
+ * message/details/hint), not just a flattened string, reaches the browser console every time.
  */
 
-const NOT_CONFIGURED: RepoResult<never> = { ok: false, message: 'Cloud sync is not configured in this environment.' };
+const NOT_CONFIGURED: RepoFailure = { ok: false, message: 'Cloud sync is not configured in this environment.' };
 
-function fail(message: string): RepoResult<never> {
-  return { ok: false, message };
+/** The shape every supabase-js query/storage call's `error` actually has (PostgrestError / StorageError) — not re-exported by the SDK under a name worth importing, so declared narrowly here. */
+type SupabaseLikeError = { message: string; code?: string; details?: string | null; hint?: string | null };
+
+/**
+ * Every write/read failure in this file goes through here. `context` names the exact operation
+ * (which table, which step) so "field_values delete before re-saving" is distinguishable from
+ * "submissions upsert" in both the console and the message a caller can show. Logs the FULL
+ * Supabase/Postgres error — code, message, details, hint — to the console, since a flattened
+ * `message` string alone (what this used to return) can silently drop the one piece of information
+ * that actually explains a failure, e.g. a check-constraint violation's code '23514' or an RLS
+ * denial's '42501'. A caller that only ever showed a generic "Failed to save" had no way to surface
+ * more than that — this is what makes the real cause inspectable without re-instrumenting anything.
+ */
+function logAndFail(context: string, err: unknown): RepoFailure {
+  const pgError = (err && typeof err === 'object' ? (err as Partial<SupabaseLikeError>) : {}) as Partial<SupabaseLikeError>;
+  const message = pgError.message ?? (err instanceof Error ? err.message : typeof err === 'string' ? err : 'Unknown error');
+  // eslint-disable-next-line no-console
+  console.error(`[RenewalIQ cloud sync] ${context} failed:`, {
+    message,
+    code: pgError.code,
+    details: pgError.details ?? undefined,
+    hint: pgError.hint ?? undefined,
+    raw: err,
+  });
+  return {
+    ok: false,
+    message: `${context}: ${message}`,
+    code: pgError.code,
+    details: pgError.details ?? undefined,
+    hint: pgError.hint ?? undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -153,7 +192,8 @@ export interface CloudSubmissionBundle {
 export async function fetchUserSubmissions(userId: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await Promise.all([
+    const tables = ['submissions', 'field_values', 'field_alternates', 'coverage_lines', 'vehicles', 'drivers', 'losses', 'documents', 'activity_events'] as const;
+    const results = await Promise.all([
       supabase.from('submissions').select('*').eq('user_id', userId),
       supabase.from('field_values').select('*').eq('user_id', userId),
       supabase.from('field_alternates').select('*').eq('user_id', userId),
@@ -164,8 +204,9 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
       supabase.from('documents').select('*').eq('user_id', userId),
       supabase.from('activity_events').select('*').eq('user_id', userId),
     ]);
-    const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes].find((r) => r.error);
-    if (errored?.error) return fail(errored.error.message);
+    const erroredIdx = results.findIndex((r) => r.error);
+    if (erroredIdx !== -1) return logAndFail(`loading your ${tables[erroredIdx]}`, results[erroredIdx].error);
+    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = results;
 
     const bundles: CloudSubmissionBundle[] = (subsRes.data ?? []).map((sub) => {
       const account: Account = {
@@ -289,7 +330,7 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
 
     return { ok: true, data: bundles };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not load your account data.');
+    return logAndFail('loading your account data', err);
   }
 }
 
@@ -304,6 +345,7 @@ export async function saveSubmissionSnapshot(
   profile: RiskProfile
 ): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
+  const client = supabase; // narrowed once so closures below (e.g. deleteTables.map) don't lose the null-check
   try {
     const submissionRow = {
       id: account.id,
@@ -318,32 +360,38 @@ export async function saveSubmissionSnapshot(
       contact_email: account.contactEmail || null,
       contact_phone: account.contactPhone || null,
     };
-    const { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
-    if (subErr) return fail(subErr.message);
+    const { error: subErr } = await client.from('submissions').upsert(submissionRow);
+    if (subErr) return logAndFail('saving submission header (submissions table)', subErr);
 
     const { values, alternates } = collectFieldValueRows(userId, account.id, profile);
 
     // Delete-then-reinsert for the itemized/child tables — see file header for why this is an
-    // acceptable trade-off at this app's scale.
-    const del = await Promise.all([
-      supabase.from('field_values').delete().eq('submission_id', account.id),
-      supabase.from('coverage_lines').delete().eq('submission_id', account.id),
-      supabase.from('vehicles').delete().eq('submission_id', account.id),
-      supabase.from('drivers').delete().eq('submission_id', account.id),
-      supabase.from('losses').delete().eq('submission_id', account.id),
-    ]);
-    const delErr = del.find((r) => r.error);
-    if (delErr?.error) return fail(delErr.error.message);
+    // acceptable trade-off at this app's scale. Each table is labeled so a failure names exactly
+    // which one, rather than a generic "something failed" — this is the delete half; the submission
+    // header above has already been upserted by this point, so a failure here means the header
+    // saved but the itemized rows are now stale until the broker retries.
+    const deleteTables = ['field_values', 'coverage_lines', 'vehicles', 'drivers', 'losses'] as const;
+    const del = await Promise.all(deleteTables.map((table) => client.from(table).delete().eq('submission_id', account.id)));
+    const delErrIdx = del.findIndex((r) => r.error);
+    if (delErrIdx !== -1) return logAndFail(`clearing old ${deleteTables[delErrIdx]} rows before re-saving`, del[delErrIdx].error);
 
-    const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
-    if (values.length) inserts.push(supabase.from('field_values').insert(values));
+    const insertLabels: string[] = [];
+    const inserts: PromiseLike<{ error: SupabaseLikeError | null }>[] = [];
+    function pushInsert(table: string, promise: PromiseLike<{ error: SupabaseLikeError | null }>) {
+      insertLabels.push(table);
+      inserts.push(promise);
+    }
+
+    if (values.length) pushInsert('field_values', supabase.from('field_values').insert(values));
     if (profile.coverage.length) {
-      inserts.push(
+      pushInsert(
+        'coverage_lines',
         supabase.from('coverage_lines').insert(profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type })))
       );
     }
     if (profile.vehicles.length) {
-      inserts.push(
+      pushInsert(
+        'vehicles',
         supabase.from('vehicles').insert(
           profile.vehicles.map((v) => ({
             id: v.id,
@@ -365,7 +413,8 @@ export async function saveSubmissionSnapshot(
       );
     }
     if (profile.drivers.length) {
-      inserts.push(
+      pushInsert(
+        'drivers',
         supabase.from('drivers').insert(
           profile.drivers.map((d) => ({
             id: d.id,
@@ -386,7 +435,8 @@ export async function saveSubmissionSnapshot(
       );
     }
     if (profile.lossHistory.length) {
-      inserts.push(
+      pushInsert(
+        'losses',
         supabase.from('losses').insert(
           profile.lossHistory.map((l) => ({
             id: l.id,
@@ -407,15 +457,15 @@ export async function saveSubmissionSnapshot(
         )
       );
     }
-    if (alternates.length) inserts.push(supabase.from('field_alternates').insert(alternates));
+    if (alternates.length) pushInsert('field_alternates', supabase.from('field_alternates').insert(alternates));
 
     const insRes = await Promise.all(inserts);
-    const insErr = insRes.find((r) => r.error);
-    if (insErr?.error) return fail(insErr.error.message);
+    const insErrIdx = insRes.findIndex((r) => r.error);
+    if (insErrIdx !== -1) return logAndFail(`inserting ${insertLabels[insErrIdx]} rows`, insRes[insErrIdx].error);
 
     return { ok: true, data: undefined };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not save to your account.');
+    return logAndFail('saving to your account', err);
   }
 }
 
@@ -437,10 +487,10 @@ export async function upsertDocumentMetadata(userId: string, accountId: string, 
       preview_data_url: doc.previewDataUrl ?? null,
       uploaded_at: doc.uploadedAt,
     });
-    if (error) return fail(error.message);
+    if (error) return logAndFail('saving document metadata', error);
     return { ok: true, data: undefined };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not save this document.');
+    return logAndFail('saving document metadata', err);
   }
 }
 
@@ -448,10 +498,10 @@ export async function deleteDocumentRow(documentId: string): Promise<RepoResult>
   if (!supabase) return NOT_CONFIGURED;
   try {
     const { error } = await supabase.from('documents').delete().eq('id', documentId);
-    if (error) return fail(error.message);
+    if (error) return logAndFail('deleting document record', error);
     return { ok: true, data: undefined };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not delete this document.');
+    return logAndFail('deleting document record', err);
   }
 }
 
@@ -462,10 +512,10 @@ export async function appendActivityEvents(userId: string, accountId: string, ev
     const { error } = await supabase.from('activity_events').upsert(
       events.map((e) => ({ id: e.id, submission_id: accountId, user_id: userId, type: e.type, message: e.message, occurred_at: e.timestamp }))
     );
-    if (error) return fail(error.message);
+    if (error) return logAndFail('saving activity history', error);
     return { ok: true, data: undefined };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not save activity history.');
+    return logAndFail('saving activity history', err);
   }
 }
 
@@ -474,10 +524,10 @@ export async function deleteSubmissionCloud(submissionId: string): Promise<RepoR
   if (!supabase) return NOT_CONFIGURED;
   try {
     const { error } = await supabase.from('submissions').delete().eq('id', submissionId);
-    if (error) return fail(error.message);
+    if (error) return logAndFail('deleting submission', error);
     return { ok: true, data: undefined };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not delete this submission.');
+    return logAndFail('deleting submission', err);
   }
 }
 
@@ -496,10 +546,10 @@ export async function uploadDocumentFile(userId: string, accountId: string, docu
   const path = storagePathFor(userId, accountId, documentId, file.name);
   try {
     const { error } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: true });
-    if (error) return fail(error.message);
+    if (error) return logAndFail('uploading document file', error);
     return { ok: true, data: path };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not upload this file.');
+    return logAndFail('uploading document file', err);
   }
 }
 
@@ -507,10 +557,10 @@ export async function deleteDocumentFile(storagePath: string): Promise<RepoResul
   if (!supabase) return NOT_CONFIGURED;
   try {
     const { error } = await supabase.storage.from(BUCKET).remove([storagePath]);
-    if (error) return fail(error.message);
+    if (error) return logAndFail('deleting document file from storage', error);
     return { ok: true, data: undefined };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not delete this file from storage.');
+    return logAndFail('deleting document file from storage', err);
   }
 }
 
@@ -520,7 +570,7 @@ export async function deleteSubmissionFiles(userId: string, accountId: string): 
   try {
     const prefix = `${userId}/${accountId}`;
     const { data: docFolders, error: listErr } = await supabase.storage.from(BUCKET).list(prefix);
-    if (listErr) return fail(listErr.message);
+    if (listErr) return logAndFail('listing submission files in storage', listErr);
     const paths: string[] = [];
     for (const folder of docFolders ?? []) {
       const { data: files } = await supabase.storage.from(BUCKET).list(`${prefix}/${folder.name}`);
@@ -528,10 +578,10 @@ export async function deleteSubmissionFiles(userId: string, accountId: string): 
     }
     if (paths.length === 0) return { ok: true, data: undefined };
     const { error: removeErr } = await supabase.storage.from(BUCKET).remove(paths);
-    if (removeErr) return fail(removeErr.message);
+    if (removeErr) return logAndFail('deleting submission files from storage', removeErr);
     return { ok: true, data: undefined };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not remove stored files.');
+    return logAndFail('removing stored files', err);
   }
 }
 
@@ -540,9 +590,9 @@ export async function getSignedDocumentUrl(storagePath: string, expiresInSeconds
   if (!supabase) return NOT_CONFIGURED;
   try {
     const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, expiresInSeconds);
-    if (error || !data) return fail(error?.message ?? 'Could not create a preview link.');
+    if (error || !data) return logAndFail('creating document preview link', error ?? new Error('No signed URL returned.'));
     return { ok: true, data: data.signedUrl };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not create a preview link.');
+    return logAndFail('creating document preview link', err);
   }
 }

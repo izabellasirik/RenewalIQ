@@ -64,6 +64,8 @@ interface AccountsState {
   cloudAccountIds: Record<string, string>;
   /** Per-account cloud save status, for the "Saving… / Saved / Failed to save" indicator. Ephemeral — never persisted, since a stale "saving" from a previous session would be meaningless. */
   syncStatus: Record<string, 'saving' | 'saved' | 'error'>;
+  /** The actual error message (already prefixed with which operation/table failed — see submissionsRepo.ts's logAndFail) for an account whose syncStatus is currently 'error'. Always also logged in full (code/details/hint included) to the console via logAndFail — this is just the human-readable summary the UI can display instead of a generic "Failed to save." Ephemeral, same reasoning as syncStatus. */
+  syncErrors: Record<string, string>;
   /** Maps a local-only account id to the id of the broker who explicitly dismissed ("Not now") or imported it from the "import to your account" prompt — never prompt that same broker again for this id. An account with no entry here (and not created by a currently-different signed-in broker) is still eligible to be offered to whichever broker next signs in on this device. Persisted. */
   dismissedImportIds: Record<string, string>;
 
@@ -158,10 +160,18 @@ export const useAccountsStore = create<AccountsState>()(
         const profile = s.riskProfiles[accountId];
         if (!account || !profile) return;
         const userId = s.currentUserId;
-        set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'saving' } }));
+        set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'saving' }, syncErrors: { ...st.syncErrors, [accountId]: undefined as unknown as string } }));
         Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
           const ok = snapRes.ok && actRes.ok;
-          set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
+          // The real Supabase error (code/message/details/hint) is already logged in full by
+          // logAndFail inside submissionsRepo.ts at the moment it happens — this just keeps the
+          // human-readable summary around so the UI can show *which* save failed and why, instead
+          // of only a generic "Failed to save to your account" with no way to find out more.
+          const message = !snapRes.ok ? snapRes.message : !actRes.ok ? actRes.message : undefined;
+          set((st) => ({
+            syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' },
+            syncErrors: { ...st.syncErrors, [accountId]: message as string },
+          }));
         });
       }
 
@@ -184,9 +194,18 @@ export const useAccountsStore = create<AccountsState>()(
               [accountId]: (st.documents[accountId] ?? []).map((d) => (d.id === documentId ? { ...d, storagePath: uploadResult.data } : d)),
             },
           }));
+        } else {
+          // Already logged in full by logAndFail inside uploadDocumentFile — recorded here too so
+          // it isn't silently overwritten by whatever the syncNow() call below (metadata/snapshot
+          // save, which can independently succeed even though the file itself never uploaded) ends
+          // up setting for this account's syncStatus/syncErrors.
+          set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'error' }, syncErrors: { ...st.syncErrors, [accountId]: uploadResult.message } }));
         }
         const doc = (get().documents[accountId] ?? []).find((d) => d.id === documentId);
-        if (doc) await cloudRepo.upsertDocumentMetadata(userId, accountId, doc, uploadResult.ok ? uploadResult.data : null);
+        if (doc) {
+          const metaResult = await cloudRepo.upsertDocumentMetadata(userId, accountId, doc, uploadResult.ok ? uploadResult.data : null);
+          if (!metaResult.ok) set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'error' }, syncErrors: { ...st.syncErrors, [accountId]: metaResult.message } }));
+        }
         syncNow(accountId);
       }
 
@@ -198,6 +217,7 @@ export const useAccountsStore = create<AccountsState>()(
       lastKnownUserId: null,
       cloudAccountIds: {},
       syncStatus: {},
+      syncErrors: {},
       dismissedImportIds: {},
       matchResults: {},
       activityLog: {},
@@ -435,7 +455,8 @@ export const useAccountsStore = create<AccountsState>()(
           Promise.all([doc.storagePath ? cloudRepo.deleteDocumentFile(doc.storagePath) : Promise.resolve({ ok: true as const, data: undefined }), cloudRepo.deleteDocumentRow(documentId)]).then(
             ([fileRes, rowRes]) => {
               const ok = fileRes.ok && rowRes.ok;
-              set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
+              const message = !fileRes.ok ? fileRes.message : !rowRes.ok ? rowRes.message : undefined;
+              set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' }, syncErrors: { ...st.syncErrors, [accountId]: message as string } }));
             }
           );
         }
@@ -909,8 +930,8 @@ export const useAccountsStore = create<AccountsState>()(
         // currentUserId: re-derived from the live Supabase session on load, never trusted from a
         // stale persisted value (see App.tsx's bootstrap effect) — lastKnownUserId (persisted, see
         // its own comment above) is the one identity-tracking field that must survive a reload.
-        // syncStatus: a snapshot of in-flight/last save outcome — meaningless across a reload.
-        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, currentUserId: _currentUserId, syncStatus: _syncStatus, ...rest } = state;
+        // syncStatus/syncErrors: a snapshot of in-flight/last save outcome — meaningless across a reload.
+        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, currentUserId: _currentUserId, syncStatus: _syncStatus, syncErrors: _syncErrors, ...rest } = state;
         return rest;
       },
     }
