@@ -118,7 +118,6 @@ export function SubmissionAssistantPage() {
   return (
     <PageContainer
       title={`Submission Assistant — ${account.namedInsured}`}
-      description="RenewalIQ already knows this account. Review what it filled instead of retyping everything."
       actions={
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)} className="print:hidden">
@@ -139,8 +138,8 @@ export function SubmissionAssistantPage() {
         </>
       }
     >
-      <div className="flex flex-col gap-1 print:hidden">
-        {APPLICATION_TEMPLATES.length > 1 ? (
+      {APPLICATION_TEMPLATES.length > 1 && (
+        <div className="flex flex-col gap-1 print:hidden">
           <select
             value={template.id}
             onChange={(e) => setTemplateId(e.target.value)}
@@ -152,10 +151,8 @@ export function SubmissionAssistantPage() {
               </option>
             ))}
           </select>
-        ) : (
-          <p className="text-sm font-medium text-[var(--color-ink-700)]">{template.name}</p>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-4 print:hidden">
         <div className="flex items-center justify-between gap-4">
@@ -192,7 +189,6 @@ export function SubmissionAssistantPage() {
           )}
           <span className="text-[var(--color-ink-400)]">{stats.itemizedRows} itemized rows mapped</span>
         </div>
-        <p className="text-xs text-[var(--color-ink-400)]">This is a sample application layout for demo purposes, not a certified ACORD form.</p>
       </div>
 
       {stats.conflict > 0 && (

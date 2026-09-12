@@ -184,10 +184,6 @@ export function IntakeFormPage() {
           You're submitting this directly to{' '}
           {link?.organizationName ? <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName}</span> : 'your insurance broker'} for review.
         </p>
-        <p className="mt-1 text-sm text-[var(--color-ink-500)]">
-          Tell us a bit about the account and attach whatever documents you already have — you don't need to fill in anything a document already covers. Fields marked{' '}
-          <span className="text-[var(--color-danger-600)]">*</span> are required; everything else is optional.
-        </p>
       </div>
 
       <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-5">

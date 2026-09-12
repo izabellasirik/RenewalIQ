@@ -64,21 +64,6 @@ export function Sidebar() {
         </NavLink>
 
         <NavLink
-          to="/analytics"
-          className={({ isActive }) =>
-            cn(
-              navItemClass,
-              isActive
-                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-            )
-          }
-        >
-          <BarChart3 size={17} />
-          Analytics
-        </NavLink>
-
-        <NavLink
           to="/intake-links"
           className={({ isActive }) =>
             cn(
@@ -91,6 +76,21 @@ export function Sidebar() {
         >
           <Link2 size={17} />
           Submission Links
+        </NavLink>
+
+        <NavLink
+          to="/analytics"
+          className={({ isActive }) =>
+            cn(
+              navItemClass,
+              isActive
+                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+            )
+          }
+        >
+          <BarChart3 size={17} />
+          Analytics
         </NavLink>
 
         {account && (

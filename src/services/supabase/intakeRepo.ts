@@ -324,9 +324,45 @@ export async function downloadIntakeDocumentFile(doc: IntakeDocument): Promise<R
   }
 }
 
-export async function markIntakeSubmissionImported(id: string, accountId: string): Promise<RepoResult> {
+/**
+ * Atomically claims a pending submission for import BEFORE any account is created — the `.eq(
+ * 'status', 'pending')` makes this a conditional update, so if two clicks (or two tabs) race to
+ * import the same submission, only the first one actually flips its status; the second gets back
+ * `data: false` and must not create a second account. imported_account_id is filled in afterward by
+ * setImportedAccountId() once the account actually exists — splitting the claim from the linkage
+ * means the status change (the part that prevents a duplicate import) never has to wait on account
+ * creation succeeding first.
+ */
+export async function claimIntakeSubmissionForImport(id: string): Promise<RepoResult<boolean>> {
   if (!supabase) return NOT_CONFIGURED;
-  const { error } = await supabase.from('intake_submissions').update({ status: 'imported', imported_at: new Date().toISOString(), imported_account_id: accountId }).eq('id', id);
+  const { data, error } = await supabase
+    .from('intake_submissions')
+    .update({ status: 'imported', imported_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select('id');
+  if (error) return fail(error.message);
+  return { ok: true, data: (data ?? []).length > 0 };
+}
+
+/** Links an already-claimed (status already 'imported') submission to the account created from it. */
+export async function setImportedAccountId(id: string, accountId: string): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  const { error } = await supabase.from('intake_submissions').update({ imported_account_id: accountId }).eq('id', id);
+  if (error) return fail(error.message);
+  return { ok: true, data: undefined };
+}
+
+/**
+ * Best-effort rollback for a claim that won but couldn't proceed (e.g. the submission's documents
+ * failed to load before any account was created) — puts the submission back to 'pending' so the
+ * broker can simply retry Import instead of the row getting stuck "imported" with no account behind
+ * it. Only ever called before an account has actually been created; once one exists, the claim
+ * should stand (see importIntakeSubmission.ts).
+ */
+export async function revertIntakeSubmissionClaim(id: string): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  const { error } = await supabase.from('intake_submissions').update({ status: 'pending', imported_at: null }).eq('id', id).eq('status', 'imported');
   if (error) return fail(error.message);
   return { ok: true, data: undefined };
 }

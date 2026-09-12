@@ -1,7 +1,14 @@
 import type { ExtractedFieldResult, IntakeSubmission } from '../../types';
 import { createEmptyRiskProfile, mergeIntoRiskProfile } from '../extraction';
 import { useAccountsStore } from '../../state/useAccountsStore';
-import { fetchIntakeDocuments, downloadIntakeDocumentFile, fetchIntakeLinkById, markIntakeSubmissionImported } from '../supabase/intakeRepo';
+import {
+  fetchIntakeDocuments,
+  downloadIntakeDocumentFile,
+  fetchIntakeLinkById,
+  claimIntakeSubmissionForImport,
+  setImportedAccountId,
+  revertIntakeSubmissionClaim,
+} from '../supabase/intakeRepo';
 
 function splitList(raw: string | null): string[] {
   return (raw ?? '')
@@ -62,6 +69,8 @@ export interface ImportResult {
   ok: boolean;
   accountId?: string;
   message?: string;
+  /** True when the reason this call didn't create an account is that the submission was already imported (by an earlier click, another tab, or another device) — the caller should refresh its list and show the existing imported state rather than treating this as a failure to report. */
+  alreadyImported?: boolean;
 }
 
 /**
@@ -70,10 +79,25 @@ export interface ImportResult {
  * commit the applicant-provided profile, then addFiles for each uploaded document so the real
  * OCR/vision extraction pipeline runs on them exactly as if the broker had just uploaded them
  * directly. Adds no new account-creation or extraction logic of its own.
+ *
+ * Claims the submission (an atomic, conditional status flip) BEFORE creating anything — see
+ * claimIntakeSubmissionForImport's own comment. This is what makes a double-click, a second browser
+ * tab, or a retried request safe: only the first caller to win the claim ever creates an account.
  */
 export async function importIntakeSubmission(submission: IntakeSubmission): Promise<ImportResult> {
+  const claim = await claimIntakeSubmissionForImport(submission.id);
+  if (!claim.ok) return { ok: false, message: claim.message };
+  if (!claim.data) {
+    return { ok: false, alreadyImported: true, message: 'This submission was already imported.' };
+  }
+
   const docsResult = await fetchIntakeDocuments(submission.id);
-  if (!docsResult.ok) return { ok: false, message: docsResult.message };
+  if (!docsResult.ok) {
+    // Nothing was created yet — put the claim back so this isn't stuck "imported" with no account
+    // behind it, and the broker can just click Import again.
+    await revertIntakeSubmissionClaim(submission.id);
+    return { ok: false, message: docsResult.message };
+  }
 
   const files: File[] = [];
   for (const doc of docsResult.data) {
@@ -112,8 +136,13 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
 
   if (files.length > 0) addFiles(accountId, files);
 
-  const markResult = await markIntakeSubmissionImported(submission.id, accountId);
-  if (!markResult.ok) return { ok: true, accountId, message: `Account created, but couldn't mark the intake submission as imported: ${markResult.message}` };
+  // The account now genuinely exists, so the claim stands even if this last linking step fails —
+  // reverting here would risk a second account being created on retry. The broker still gets a
+  // clear signal that the link may not have saved.
+  const linkAccountResult = await setImportedAccountId(submission.id, accountId);
+  if (!linkAccountResult.ok) {
+    return { ok: true, accountId, message: `Account created, but couldn't record the link back to the intake submission: ${linkAccountResult.message}` };
+  }
 
   return { ok: true, accountId };
 }
