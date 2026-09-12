@@ -130,10 +130,13 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
   const filledWeight = requiredFilled * REQUIRED_WEIGHT + recommendedFilled * RECOMMENDED_WEIGHT;
   let percent = totalWeight === 0 ? 100 : Math.round((filledWeight / totalWeight) * 100);
   // Belt-and-suspenders floor: whatever the weighted math rounds to, never show 100% while
-  // something applicable is still actually missing — a broker should never see a "complete" score
-  // above the What's Missing list while that same list isn't empty.
-  const anythingMissing = missingRequiredFields.length > 0 || recommendedMissingCount > 0;
-  if (anythingMissing && percent >= 100) percent = 99;
+  // anything applicable is still actually outstanding — a broker should never see a "complete"
+  // score while What's Missing still lists something, and a needs-review or unresolved-conflict
+  // field is exactly as outstanding as a missing one (the weighted math above only ever subtracts
+  // a *missing* field from requiredFilled/recommendedFilled, so a field stuck at 'needs_review' or
+  // 'conflict' would otherwise still count as "filled" here and could round this to 100 on its own).
+  const anythingOutstanding = missingRequiredFields.length > 0 || recommendedMissingCount > 0 || needsReview.length > 0 || conflicts.length > 0;
+  if (anythingOutstanding && percent >= 100) percent = 99;
 
   return { percent, percentRequired, missingRequiredFields, missingRecommendedFields, missingRecommendedDocuments, needsReview, conflicts };
 }
