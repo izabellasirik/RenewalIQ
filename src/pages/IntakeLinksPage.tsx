@@ -131,7 +131,7 @@ function LinksSection({ userId }: { userId: string }) {
           <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Internal label</label>
           <input
             className={inputClass}
-            placeholder="Example: ABC Agency"
+            placeholder="Internal label"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
@@ -141,7 +141,7 @@ function LinksSection({ userId }: { userId: string }) {
           <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Brokerage name</label>
           <input
             className={inputClass}
-            placeholder="Example: Acme Insurance Group"
+            placeholder="Brokerage name"
             value={orgName}
             onChange={(e) => {
               setOrgName(e.target.value);
@@ -397,7 +397,7 @@ export function IntakeLinksPage() {
   const session = useBrokerSession();
 
   return (
-    <PageContainer title="Submission Links">
+    <PageContainer title="Submission Links" description="Create reusable links for agencies or clients to send new submissions directly to your workspace.">
       {session.status === 'loading' && (
         <div className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
           <Loader2 size={16} className="animate-spin" />

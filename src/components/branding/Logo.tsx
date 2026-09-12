@@ -1,19 +1,21 @@
 import { cn } from '../../utils/cn';
 
 /**
- * Official RenewalIQ mark — asset lives at public/brand/logo-mark.svg. This is the single place
- * that references that file, so replacing the asset (or its path) only requires editing this file.
+ * Official RenewalIQ mark — asset lives at public/brand/logo-mark.png (the exact final logo file
+ * provided, trimmed to its content and given a transparent background; not a redraw). This is the
+ * single place that references that file, so replacing the asset only requires editing here.
+ *
+ * Sized by height only (width auto) so the mark's real aspect ratio is preserved at any size —
+ * never stretched into a forced square.
  */
 function LogoMark({ size }: { size: number }) {
   return (
     <img
-      src="/brand/logo-mark.svg"
+      src="/brand/logo-mark.png"
       alt=""
       aria-hidden="true"
-      width={size}
-      height={size}
-      className="shrink-0 object-contain"
-      style={{ width: size, height: size }}
+      className="block w-auto shrink-0 object-contain"
+      style={{ height: size }}
     />
   );
 }
@@ -23,7 +25,7 @@ export function BrandLogo({
   wordmark = true,
   className,
 }: {
-  /** Pixel size of the icon mark. */
+  /** Pixel height of the icon mark (width follows automatically to keep its aspect ratio). */
   size?: number;
   /** Whether to render the "RenewalIQ" wordmark next to the mark. */
   wordmark?: boolean;
