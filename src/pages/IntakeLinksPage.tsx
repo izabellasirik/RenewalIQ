@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Copy, FileWarning, Inbox, Link2, Loader2, X } from 'lucide-react';
+import { Check, Copy, FileText, FileWarning, Inbox, Link2, Loader2, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState, Skeleton, Tabs } from '../components/ui';
 import { COVERAGE_LABELS } from '../types';
 import type { IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
 import { useBrokerSession } from '../hooks/useBrokerSession';
-import { createIntakeLink, dismissIntakeSubmission, fetchIntakeLinks, fetchIntakeSubmissions, setIntakeLinkActive } from '../services/supabase/intakeRepo';
+import { createIntakeLink, dismissIntakeSubmission, fetchIntakeDocuments, fetchIntakeLinks, fetchIntakeSubmissions, setIntakeLinkActive } from '../services/supabase/intakeRepo';
 import { importIntakeSubmission } from '../services/intake/importIntakeSubmission';
 import { formatDate } from '../utils/dates';
 
@@ -16,6 +16,7 @@ const inputClass =
 function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const url = `${window.location.origin}/intake/${link.token}`;
 
   async function copy() {
@@ -26,26 +27,34 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
 
   async function toggle() {
     setBusy(true);
-    await setIntakeLinkActive(link.id, !link.active);
+    setError(null);
+    const result = await setIntakeLinkActive(link.id, !link.active);
     setBusy(false);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
     onToggled();
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-ink-100)] px-3 py-2.5">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{link.label}</p>
-        <p className="truncate text-xs text-[var(--color-ink-400)]">{url}</p>
+    <div className="rounded-lg border border-[var(--color-ink-100)] px-3 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{link.label}</p>
+          <p className="truncate text-xs text-[var(--color-ink-400)]">{url}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Badge tone={link.active ? 'success' : 'neutral'}>{link.active ? 'Active' : 'Inactive'}</Badge>
+          <Button size="sm" variant="secondary" icon={copied ? <Check size={13} /> : <Copy size={13} />} onClick={copy}>
+            {copied ? 'Copied' : 'Copy link'}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={toggle}>
+            {link.active ? 'Deactivate' : 'Activate'}
+          </Button>
+        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <Badge tone={link.active ? 'success' : 'neutral'}>{link.active ? 'Active' : 'Inactive'}</Badge>
-        <Button size="sm" variant="secondary" icon={copied ? <Check size={13} /> : <Copy size={13} />} onClick={copy}>
-          {copied ? 'Copied' : 'Copy link'}
-        </Button>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={toggle}>
-          {link.active ? 'Deactivate' : 'Activate'}
-        </Button>
-      </div>
+      {error && <p className="mt-1.5 text-xs text-[var(--color-danger-600)]">{error}</p>}
     </div>
   );
 }
@@ -53,14 +62,21 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
 function LinksSection({ userId }: { userId: string }) {
   const [links, setLinks] = useState<IntakeLink[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     const result = await fetchIntakeLinks(userId);
     setLoading(false);
-    if (result.ok) setLinks(result.data);
+    if (!result.ok) {
+      setLoadError(result.message);
+      return;
+    }
+    setLoadError(null);
+    setLinks(result.data);
   }, [userId]);
 
   useEffect(() => {
@@ -70,12 +86,18 @@ function LinksSection({ userId }: { userId: string }) {
   async function handleCreate() {
     if (!label.trim()) return;
     setCreating(true);
+    setCreateError(null);
     const result = await createIntakeLink(userId, label.trim());
     setCreating(false);
-    if (result.ok) {
-      setLabel('');
-      load();
+    if (!result.ok) {
+      // Never fail silently — a broker clicking "New Link" and seeing nothing happen (no new row,
+      // no explanation) looks exactly like the feature being broken, which is the whole reason this
+      // needed fixing: the previous version dropped this error on the floor.
+      setCreateError(result.message);
+      return;
     }
+    setLabel('');
+    load();
   }
 
   return (
@@ -90,8 +112,11 @@ function LinksSection({ userId }: { userId: string }) {
           {creating ? 'Creating…' : 'New Link'}
         </Button>
       </div>
+      {createError && <p className="text-xs text-[var(--color-danger-600)]">{createError}</p>}
       {loading ? (
         <Skeleton variant="block" className="h-16 w-full" />
+      ) : loadError ? (
+        <EmptyState icon={<FileWarning size={26} strokeWidth={1.5} />} title="Couldn't load submission links" description={loadError} />
       ) : links.length === 0 ? (
         <p className="text-sm text-[var(--color-ink-400)]">No submission links yet.</p>
       ) : (
@@ -112,6 +137,19 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
   const navigate = useNavigate();
   const [busy, setBusy] = useState<'import' | 'dismiss' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Fetched once per card so a broker can see what was attached before deciding to import — the
+  // "review it" step in the intake flow otherwise had no visibility into documents at all.
+  const [documentNames, setDocumentNames] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchIntakeDocuments(submission.id).then((result) => {
+      if (!cancelled && result.ok) setDocumentNames(result.data.map((d) => d.fileName));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [submission.id]);
 
   async function handleImport() {
     setBusy('import');
@@ -171,6 +209,23 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
 
       {submission.additionalNotes && (
         <p className="mt-3 whitespace-pre-line rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-xs text-[var(--color-ink-600)]">{submission.additionalNotes}</p>
+      )}
+
+      {documentNames && documentNames.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-ink-500)]">
+            <FileText size={12} />
+            {documentNames.length} document{documentNames.length === 1 ? '' : 's'} attached:
+          </span>
+          {documentNames.map((name, i) => (
+            <Badge key={i} tone="neutral">
+              {name}
+            </Badge>
+          ))}
+        </div>
+      )}
+      {documentNames && documentNames.length === 0 && (
+        <p className="mt-3 text-xs italic text-[var(--color-ink-400)]">No documents attached.</p>
       )}
 
       {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]">{error}</p>}

@@ -32,18 +32,32 @@ export interface CompletenessItem {
 
 export interface SubmissionCompleteness {
   /**
-   * Required-fields-filled ratio only, rounded to a whole percent — deliberately not a weighted
-   * blend of required+recommended+documents+conflicts. The underlying signal (how many of the
-   * fields this product already calls "required" are actually filled) is simple, so the number
-   * stays simple rather than implying a precision the rules don't have.
+   * Overall broker-facing completeness: a weighted blend of every applicable required field,
+   * recommended field, and recommended document — required items count for more (see
+   * REQUIRED_WEIGHT/RECOMMENDED_WEIGHT below) but a missing recommended item still keeps this below
+   * 100, and always strictly so (see the `anythingMissing` floor at the bottom of
+   * computeSubmissionCompleteness) — a broker should never read "100%" while the list below still
+   * shows something outstanding, no matter how the weighted math rounds.
    */
   percent: number;
+  /**
+   * Required-fields-filled ratio only, rounded to a whole percent — kept alongside `percent` so the
+   * UI can show a clean "All required information complete" the moment this hits 100, distinct from
+   * "the whole submission is done" (which also needs recommended items/documents wrapped up).
+   */
+  percentRequired: number;
   missingRequiredFields: CompletenessItem[];
   missingRecommendedFields: CompletenessItem[];
   missingRecommendedDocuments: CompletenessItem[];
   needsReview: CompletenessItem[];
   conflicts: CompletenessItem[];
 }
+
+// "More weight" for required information, per product direction — a simple 2:1 ratio rather than a
+// more elaborate scheme, since the underlying signal (how many required vs. recommended items are
+// filled) doesn't support more precision than that anyway.
+const REQUIRED_WEIGHT = 2;
+const RECOMMENDED_WEIGHT = 1;
 
 // Deliberately excludes 'application' — Renewal IQ generates the application itself from the
 // structured Risk Profile, so an uploaded copy of an existing application is a source document to
@@ -58,9 +72,14 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
   const missingRecommendedFields: CompletenessItem[] = [];
   const needsReview: CompletenessItem[] = [];
   const conflicts: CompletenessItem[] = [];
+  let requiredTotal = 0;
+  let recommendedTotal = 0;
 
   for (const section of application.sections) {
     for (const field of section.fields) {
+      if (field.required) requiredTotal++;
+      else if (!field.neverFlagMissing) recommendedTotal++;
+
       if (field.status === 'missing') {
         if (!field.neverFlagMissing) {
           (field.required ? missingRequiredFields : missingRecommendedFields).push({ label: field.targetLabel, detail: field.reviewReason, riskProfilePath: field.riskProfilePath });
@@ -75,12 +94,15 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
 
   // Itemized rows: an entirely-empty vehicle/driver schedule is already something Renewal IQ flags
   // (see buildSubmissionWarnings) — surfaced here as its own recommended item, since it's broker-
-  // fillable data (add a row directly in the Risk Profile), not a missing upload.
+  // fillable data (add a row directly in the Risk Profile), not a missing upload. Always applicable
+  // (every account can have drivers/vehicles), so always counted toward recommendedTotal below.
+  recommendedTotal += 2;
   if (profile.drivers.length === 0) missingRecommendedFields.push({ label: 'Driver information', detail: 'No drivers on file yet — add at least one in the Risk Profile.' });
   if (profile.vehicles.length === 0) missingRecommendedFields.push({ label: 'Vehicle information', detail: 'No vehicle schedule on file yet — add at least one in the Risk Profile.' });
 
   const missingRecommendedDocuments: CompletenessItem[] = [];
   for (const category of RECOMMENDED_DOCUMENT_CATEGORIES) {
+    recommendedTotal++;
     const label = DOCUMENT_CATEGORY_LABELS[category];
     const hasOne = documents.some((d) => d.category === category && d.status !== 'error');
     if (!hasOne) missingRecommendedDocuments.push({ label, detail: `No ${label.toLowerCase()} uploaded yet.` });
@@ -99,11 +121,21 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
     }
   }
 
-  const requiredTotal = application.sections.reduce((sum, s) => sum + s.fields.filter((f) => f.required).length, 0);
   const requiredFilled = requiredTotal - missingRequiredFields.length;
-  const percent = requiredTotal === 0 ? 100 : Math.round((requiredFilled / requiredTotal) * 100);
+  const percentRequired = requiredTotal === 0 ? 100 : Math.round((requiredFilled / requiredTotal) * 100);
 
-  return { percent, missingRequiredFields, missingRecommendedFields, missingRecommendedDocuments, needsReview, conflicts };
+  const recommendedMissingCount = missingRecommendedFields.length + missingRecommendedDocuments.length;
+  const recommendedFilled = recommendedTotal - recommendedMissingCount;
+  const totalWeight = requiredTotal * REQUIRED_WEIGHT + recommendedTotal * RECOMMENDED_WEIGHT;
+  const filledWeight = requiredFilled * REQUIRED_WEIGHT + recommendedFilled * RECOMMENDED_WEIGHT;
+  let percent = totalWeight === 0 ? 100 : Math.round((filledWeight / totalWeight) * 100);
+  // Belt-and-suspenders floor: whatever the weighted math rounds to, never show 100% while
+  // something applicable is still actually missing — a broker should never see a "complete" score
+  // above the What's Missing list while that same list isn't empty.
+  const anythingMissing = missingRequiredFields.length > 0 || recommendedMissingCount > 0;
+  if (anythingMissing && percent >= 100) percent = 99;
+
+  return { percent, percentRequired, missingRequiredFields, missingRecommendedFields, missingRecommendedDocuments, needsReview, conflicts };
 }
 
 /** True when nothing at all is flagged — required, recommended, documents, review, or conflict. */

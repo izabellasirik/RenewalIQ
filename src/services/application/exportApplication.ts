@@ -1,11 +1,17 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { MappedApplication } from '../../types';
 import { applicationTitleFor } from './applicationTitle';
+import { DEFAULT_APPLICATION_BRANDING, type ApplicationBranding } from './branding';
 
 const PAGE_WIDTH = 612; // US Letter, points
 const PAGE_HEIGHT = 792;
 const MARGIN = 48;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+// Reserved band at the bottom of every page for the branding footer — ensureSpace treats this as
+// part of the margin, so no section/table row is ever laid out low enough to collide with it.
+const FOOTER_HEIGHT = 24;
+const FOOTER_SIZE = 7;
+const CONTENT_BOTTOM = MARGIN + FOOTER_HEIGHT;
 
 const INK_900 = rgb(0.11, 0.13, 0.16);
 const INK_600 = rgb(0.32, 0.36, 0.42);
@@ -95,7 +101,11 @@ function wrapText(font: PDFFont, text: string, size: number, maxWidth: number): 
  * label and its value (or a table row's cells) are never split across two pages. Section/table
  * headers are re-drawn at the top of a new page whenever a section or table continues onto it.
  */
-export async function generateApplicationPdf(application: MappedApplication, accountName: string): Promise<Uint8Array> {
+export async function generateApplicationPdf(
+  application: MappedApplication,
+  accountName: string,
+  branding: ApplicationBranding = DEFAULT_APPLICATION_BRANDING
+): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -111,9 +121,9 @@ export async function generateApplicationPdf(application: MappedApplication, acc
     onNewPage?.();
   }
 
-  /** Guarantees `needed` points of vertical space on the current page, starting a new one first if there isn't room — the one place page-break decisions happen. */
+  /** Guarantees `needed` points of vertical space on the current page, starting a new one first if there isn't room — the one place page-break decisions happen. CONTENT_BOTTOM (not MARGIN) is the real floor, so content is never laid out into the reserved footer band. */
   function ensureSpace(needed: number, onNewPage?: () => void) {
-    if (y - needed < MARGIN) newPage(onNewPage);
+    if (y - needed < CONTENT_BOTTOM) newPage(onNewPage);
   }
 
   function text(value: string, x: number, size: number, f: PDFFont, color = INK_900) {
@@ -141,7 +151,9 @@ export async function generateApplicationPdf(application: MappedApplication, acc
   const titleLines = wrapText(bold, title, 16, CONTENT_WIDTH);
   drawLines(titleLines, MARGIN, y, 16, bold, INK_900, 19);
   y -= titleLines.length * 19 + 4;
-  text(`Generated ${new Date(application.generatedAt).toLocaleDateString('en-US')}`, MARGIN, 8, italic, INK_400);
+  // Branding tagline directly under the title, subtle and small — combined with the generation
+  // date on one line so the header stays a single small gray line, not two stacked ones.
+  text(`${branding.headerTagline} · Generated ${new Date(application.generatedAt).toLocaleDateString('en-US')}`, MARGIN, 8, italic, INK_400);
   y -= 10;
   rule();
   y -= 22;
@@ -282,6 +294,15 @@ export async function generateApplicationPdf(application: MappedApplication, acc
   // application, not an internal QA report. That information (missing required/recommended fields,
   // conflicts, needs-review items, missing recommended documents) lives in the broker UI's
   // "What's Missing?" panel (see services/application/completeness.ts) instead.
+
+  // --- Footer, every page --- drawn last (page count isn't known until every section/table has
+  // been laid out) but never overlaps content: CONTENT_BOTTOM already reserved this exact band on
+  // every page above, in ensureSpace, before a single row was placed.
+  const footerWidth = font.widthOfTextAtSize(branding.footerText, FOOTER_SIZE);
+  const footerX = (PAGE_WIDTH - footerWidth) / 2;
+  for (const p of doc.getPages()) {
+    p.drawText(branding.footerText, { x: footerX, y: MARGIN / 2, size: FOOTER_SIZE, font, color: INK_400 });
+  }
 
   return doc.save();
 }

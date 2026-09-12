@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { CheckCircle2, CircleAlert, FileWarning, TriangleAlert, CircleHelp, Pencil, Check, X } from 'lucide-react';
 import { Drawer, Badge, ProgressBar, type BadgeTone } from '../ui';
 import { isSubmissionComplete, type CompletenessItem, type SubmissionCompleteness } from '../../services/application';
-import { ValueInput, parseDraft } from '../riskProfile/FieldRow';
+import { ValueInput, parseDraft, isValidDraft, singleLineEditKeyDown } from '../riskProfile/FieldRow';
 import { fieldPathValueType } from '../../utils/fieldLabels';
 import { parseRiskProfilePath } from '../../utils/riskProfilePath';
 import { normalizeCurrencyText } from '../../utils/currency';
@@ -34,7 +34,7 @@ function EditableItem({ item, onUpdateField, onUpdateCoverage }: { item: Complet
   }
 
   function commit() {
-    if (!target) return;
+    if (!target || !isValidDraft(valueType, draft)) return;
     if (target.kind === 'field') {
       onUpdateField(target.section, target.key, parseDraft(valueType, draft));
     } else {
@@ -42,6 +42,10 @@ function EditableItem({ item, onUpdateField, onUpdateCoverage }: { item: Complet
       // like "100000" is normalized to "$100,000" — same rule every other coverage editor applies.
       onUpdateCoverage(target.coverageType, target.field, normalizeCurrencyText(draft));
     }
+    setIsEditing(false);
+  }
+
+  function cancelEdit() {
     setIsEditing(false);
   }
 
@@ -53,7 +57,7 @@ function EditableItem({ item, onUpdateField, onUpdateCoverage }: { item: Complet
           {!isEditing && item.detail && <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{item.detail}</p>}
           {isEditing && (
             <div className="mt-1.5">
-              <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus />
+              <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus onKeyDown={singleLineEditKeyDown(commit, cancelEdit)} />
             </div>
           )}
         </div>
@@ -71,7 +75,7 @@ function EditableItem({ item, onUpdateField, onUpdateCoverage }: { item: Complet
               <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
                 <Check size={13} />
               </button>
-              <button onClick={() => setIsEditing(false)} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+              <button onClick={cancelEdit} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
                 <X size={13} />
               </button>
             </div>
@@ -137,14 +141,22 @@ export function WhatsMissingPanel({
   const update = { onUpdateField, onUpdateCoverage };
 
   return (
-    <Drawer open={open} onClose={onClose} title="What's Missing?" subtitle={`${completeness.percent}% of required fields complete`}>
+    <Drawer open={open} onClose={onClose} title="What's Missing?" subtitle={`Submission completeness: ${completeness.percent}%`}>
       <div className="flex flex-col gap-5">
         <div>
           <div className="flex items-center justify-between text-sm">
-            <span className="font-medium text-[var(--color-ink-700)]">Required fields filled</span>
+            <span className="font-medium text-[var(--color-ink-700)]">Submission completeness</span>
             <span className="font-semibold text-[var(--color-ink-900)]">{completeness.percent}%</span>
           </div>
           <ProgressBar value={completeness.percent} className="mt-1.5" />
+          {completeness.percentRequired === 100 ? (
+            <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-[var(--color-success-600)]">
+              <CheckCircle2 size={13} />
+              All required information complete
+            </p>
+          ) : (
+            <p className="mt-2 text-xs text-[var(--color-ink-500)]">{completeness.percentRequired}% of required fields complete</p>
+          )}
         </div>
 
         {complete ? (

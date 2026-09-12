@@ -42,6 +42,8 @@ const DOCUMENT_TYPES = [
 const SCALAR_FIELD_PATHS = [
   'business.namedInsured',
   'business.legalEntity',
+  'business.dba',
+  'business.fein',
   'business.address',
   'business.city',
   'business.state',
@@ -166,7 +168,9 @@ Read the image and call the extracted_submission_data tool with what you can act
 3. If the document doesn't match a known template (documentType "other"), still extract any clearly readable business-identifying information (company name, DOT number, address, phone) into scalarFields, and note anything else readable in candidateNotes. A document not matching a template is never a reason to return nothing.
 4. If the image is only partially readable (glare, blur, cropping, an unclear field), extract every field that IS legible and simply omit the ones that aren't — never discard the whole document because one part is unclear.
 5. Give each field's own confidence rather than one confidence for the whole document — a name read with total certainty and a smudged expiration date should not share a confidence level.
-6. A driver's own personal fields (name, DOB, address, license info) belong ONLY in the driver object, never in scalarFields' business.* paths — a driver's license is not the submission's business information.`;
+6. A driver's own personal fields (name, DOB, address, license info) belong ONLY in the driver object, never in scalarFields' business.* paths — a driver's license is not the submission's business information.
+7. business.dba: ONLY include this if the document explicitly labels a value as a DBA, "d/b/a", trade name, assumed name, or fictitious business name (e.g. a W-9's "Business name/disregarded entity name, if different from above" line, or an application's "DBA:" field). Never infer a DBA from the named insured, a nickname mentioned in passing, or any other unlabeled text. Leave this out entirely if the document has no such explicit label — it is genuinely optional and a missing DBA is not a gap.
+8. business.fein: ONLY include this if the value is clearly labeled FEIN, EIN, "Employer Identification Number", "Federal Tax ID", or (on a W-9) the "Employer identification number" box specifically — never the adjacent "Social Security Number" box on the same form, even though both are 9 digits. It must read as exactly 9 digits (formatted either XX-XXXXXXX or as 9 plain digits); if you cannot clearly read all 9 digits or the label is ambiguous, omit the field rather than guessing. Never copy a DOT number, MC number, phone number, or any other digit string into this field just because it is 9 digits long.`;
 
 function corsHeaders(): HeadersInit {
   return {

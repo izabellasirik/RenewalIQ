@@ -50,10 +50,68 @@ export function parseDraft(valueType: FieldValueType, raw: string): unknown {
   return raw;
 }
 
-export function ValueInput({ valueType, value, onChange, autoFocus }: { valueType: FieldValueType; value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
+/**
+ * True when a draft can actually be committed for this valueType — every inline-edit surface
+ * (FieldRow, the What's Missing panel, the Submission Assistant preview) calls this before saving
+ * on Enter or the Save button, so a broker's keystrokes are never silently discarded as a blank/null
+ * value. A currency/number field with non-empty text that doesn't parse to a real number (e.g.
+ * "abc") is invalid and blocks the save; an empty draft is always valid (an explicit clear).
+ */
+export function isValidDraft(valueType: FieldValueType, raw: string): boolean {
+  if ((valueType === 'currency' || valueType === 'number') && raw.trim() !== '') {
+    return parseDraft(valueType, raw) !== null;
+  }
+  return true;
+}
+
+/**
+ * Enter commits, Escape cancels — the one keyboard contract every single-line inline editor in the
+ * app shares (FieldRow, What's Missing, the Submission Assistant preview). Deliberately NOT used for
+ * a `<textarea>`, where Enter must stay a plain newline — see the dedicated multiline handler below.
+ * Plain functions, not hooks (no "use" prefix) — they hold no state of their own and just close over
+ * the caller's own commit/cancel, so they're fine to build fresh on every render.
+ */
+export function singleLineEditKeyDown(commit: () => void, cancel: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  };
+}
+
+/** Cmd/Ctrl+Enter commits a multiline field; plain Enter stays a normal newline; Escape cancels. */
+export function multilineEditKeyDown(commit: () => void, cancel: () => void) {
+  return (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  };
+}
+
+export function ValueInput({
+  valueType,
+  value,
+  onChange,
+  autoFocus,
+  onKeyDown,
+}: {
+  valueType: FieldValueType;
+  value: string;
+  onChange: (v: string) => void;
+  autoFocus?: boolean;
+  onKeyDown?: (e: React.KeyboardEvent) => void;
+}) {
   if (valueType === 'boolean') {
     return (
-      <select autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} className="rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none">
+      <select autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} className="rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none">
         <option value="Yes">Yes</option>
         <option value="No">No</option>
       </select>
@@ -71,6 +129,7 @@ export function ValueInput({ valueType, value, onChange, autoFocus }: { valueTyp
       placeholder={valueType === 'currency' ? 'e.g. 100000' : undefined}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onKeyDown={onKeyDown}
       className="w-full rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
     />
   );
@@ -138,9 +197,24 @@ function ConflictResolver<T>({
         </button>
       ) : (
         <div className="flex items-center gap-2">
-          <ValueInput valueType={valueType} value={manualDraft} onChange={setManualDraft} autoFocus />
+          <ValueInput
+            valueType={valueType}
+            value={manualDraft}
+            onChange={setManualDraft}
+            autoFocus
+            onKeyDown={singleLineEditKeyDown(
+              () => {
+                if (!isValidDraft(valueType, manualDraft)) return;
+                choose({ type: 'manual', value: parseDraft(valueType, manualDraft) as T });
+              },
+              () => setManualOpen(false)
+            )}
+          />
           <button
-            onClick={() => choose({ type: 'manual', value: parseDraft(valueType, manualDraft) as T })}
+            onClick={() => {
+              if (!isValidDraft(valueType, manualDraft)) return;
+              choose({ type: 'manual', value: parseDraft(valueType, manualDraft) as T });
+            }}
             className="shrink-0 cursor-pointer rounded-md bg-[var(--color-brand-800)] p-1.5 text-white"
             aria-label="Save manual value"
           >
@@ -162,7 +236,12 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
   }, [autoExpand]);
 
   function commit() {
+    if (!isValidDraft(valueType, draft)) return;
     onSave(parseDraft(valueType, draft) as T);
+    setIsEditing(false);
+  }
+
+  function cancelEdit() {
     setIsEditing(false);
   }
 
@@ -207,16 +286,17 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                   autoFocus
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={multilineEditKeyDown(commit, cancelEdit)}
                   rows={3}
                   className="w-full rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
                 />
               ) : (
-                <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus />
+                <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus onKeyDown={singleLineEditKeyDown(commit, cancelEdit)} />
               )}
               <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
                 <Check size={14} />
               </button>
-              <button onClick={() => setIsEditing(false)} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+              <button onClick={cancelEdit} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
                 <X size={14} />
               </button>
             </div>

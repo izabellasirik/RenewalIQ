@@ -47,6 +47,12 @@ function isValidIdentifier(raw: string, minLength: number, maxLength: number): b
   return new RegExp(`^\\d{${minLength},${maxLength}}$`).test(trimmed);
 }
 
+/** FEIN is always exactly 9 digits — rejects anything else (including a mis-scoped 9-digit SSN read off the wrong line) and re-formats to the canonical XX-XXXXXXX shape regardless of the source's own punctuation. */
+function asFein(raw: string): string | null {
+  const digits = raw.replace(/[^0-9]/g, '');
+  return digits.length === 9 ? `${digits.slice(0, 2)}-${digits.slice(2)}` : null;
+}
+
 /**
  * Deterministic label/regex patterns for scalar RiskProfile fields, applied line-by-line over a
  * document's raw text. "high"-confidence groups match explicit "Label: value" formatting; "medium"
@@ -86,6 +92,49 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
           /form of business\s*:\s*(.+)/i,
           /(?:type of|business) organization\s*:\s*(.+)/i,
           /business (?:structure|type)\s*:\s*(.+)/i,
+        ],
+      },
+    ],
+  },
+  {
+    // DBA is deliberately "high confidence, label-required" ONLY — no medium-confidence prose
+    // fallback like most other fields get. A trade/assumed name is easy to misread out of loose
+    // prose (any aside mentioning "also known as..." risks becoming a false DBA), so this only ever
+    // populates when the document explicitly labels the value as a DBA/trade/assumed name — if that
+    // label isn't present, the field simply stays missing rather than guessing from context.
+    fieldPath: 'business.dba',
+    coerce: (raw) => raw.trim() || null,
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [
+          /d\/?\s*b\/?\s*a\.?\s*:\s*(.+)/i,
+          /doing business as\s*:\s*(.+)/i,
+          /trade name\s*:\s*(.+)/i,
+          /assumed name\s*:\s*(.+)/i,
+          /fictitious (?:business )?name\s*:\s*(.+)/i,
+        ],
+      },
+    ],
+  },
+  {
+    // FEIN, like DOT/MC, is never inferred from prose — only ever read off an explicit
+    // "FEIN"/"EIN"/"Federal Employer Identification Number"/"Federal Tax ID" label, and only
+    // accepted if what follows is exactly 9 digits (rejecting a 9-digit SSN would require knowing
+    // which label preceded it, which this already guarantees by construction — the SSN line on a
+    // W-9 is never labeled FEIN/EIN). Re-formatted to the canonical XX-XXXXXXX shape regardless of
+    // how the source document punctuated it.
+    fieldPath: 'business.fein',
+    coerce: (raw) => asFein(raw),
+    groups: [
+      {
+        confidence: 'high',
+        patterns: [
+          /f\.?\s*e\.?\s*i\.?\s*n\.?\s*:\s*([\d-]{9,11})/i,
+          /federal employer identification(?:\s*number)?\s*:\s*([\d-]{9,11})/i,
+          /federal tax id(?:entification)?(?:\s*number)?\s*:\s*([\d-]{9,11})/i,
+          /employer identification number\s*:\s*([\d-]{9,11})/i,
+          /\bein\s*:\s*([\d-]{9,11})/i,
         ],
       },
     ],

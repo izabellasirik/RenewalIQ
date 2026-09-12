@@ -82,6 +82,8 @@ export interface VisionExtractionResult {
 const SCALAR_FIELD_VALIDATORS: Record<string, (raw: unknown) => string | number | boolean | string[] | null> = {
   'business.namedInsured': asTrimmedString,
   'business.legalEntity': asTrimmedString,
+  'business.dba': asTrimmedString,
+  'business.fein': asFein,
   'business.address': asTrimmedString,
   'business.city': asTrimmedString,
   'business.state': asStateCode,
@@ -160,6 +162,14 @@ function asDigitsOfLength(raw: unknown, min: number, max: number): string | null
   const s = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw.trim() : null;
   if (!s) return null;
   return new RegExp(`^\\d{${min},${max}}$`).test(s) ? s : null;
+}
+
+/** FEIN is always exactly 9 digits — same validator the regex-based pipeline uses (see scalarPatterns.ts's asFein), applied here too so a model response gets no more trust than a regex match would. */
+function asFein(raw: unknown): string | null {
+  const s = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw : null;
+  if (!s) return null;
+  const digits = s.replace(/[^0-9]/g, '');
+  return digits.length === 9 ? `${digits.slice(0, 2)}-${digits.slice(2)}` : null;
 }
 
 function asBoolean(raw: unknown): boolean | null {

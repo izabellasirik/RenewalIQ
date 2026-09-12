@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { CircleCheck, CircleHelp, TriangleAlert, CircleAlert, Pencil, Check, X, FileText, ChevronDown, ChevronUp, ArrowRight } from 'lucide-react';
 import type { MappedField, MappedFieldStatus } from '../../types';
 import { Badge, type BadgeTone } from '../ui';
+import { isValidDraft, singleLineEditKeyDown } from '../riskProfile/FieldRow';
+import { fieldPathValueType } from '../../utils/fieldLabels';
 
 /** Coverage limits and annual revenue are the monetary fields reachable from this page today — kept as a small local check rather than threading a valueType prop through, since it's just "start the edit from plain digits", not a display change (the value is already formatted via the template's own formatCurrency, see templates.ts). */
 function isCurrencyPath(path?: string): boolean {
@@ -61,7 +63,13 @@ export function ApplicationFieldRow({
   }
 
   function commit() {
+    const valueType = field.riskProfilePath ? fieldPathValueType(field.riskProfilePath) : 'text';
+    if (!isValidDraft(valueType, draft)) return;
     onSaveToRiskProfile?.(draft);
+    setIsEditing(false);
+  }
+
+  function cancelEdit() {
     setIsEditing(false);
   }
 
@@ -99,12 +107,13 @@ export function ApplicationFieldRow({
             autoFocus
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={singleLineEditKeyDown(commit, cancelEdit)}
             className="flex-1 rounded-md border border-[var(--color-brand-500)] px-2.5 py-2 text-sm text-[var(--color-ink-900)] outline-none"
           />
           <button onClick={commit} className="shrink-0 rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
             <Check size={14} />
           </button>
-          <button onClick={() => setIsEditing(false)} className="shrink-0 rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+          <button onClick={cancelEdit} className="shrink-0 rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
             <X size={14} />
           </button>
         </div>

@@ -55,10 +55,16 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
         ],
       },
       {
+        // targetLabel is suffixed "(Current Limit)"/"(Requested Limit)" — every coverage type
+        // appears in BOTH this section and Requested Renewal Coverage below, and completeness.ts's
+        // What's Missing list flattens every field into one list with no section context, so a bare
+        // "General Liability" in both sections would show up twice with an identical, ambiguous
+        // label. These are genuinely two different fields (current vs. requested limit), not
+        // duplicates, so they get distinct names at the source rather than being deduplicated.
         title: 'Current Policy Coverage',
         fields: CURRENT_POLICY_COVERAGE_TYPES.map((type) => ({
           targetFieldId: `current_coverage_${type}`,
-          targetLabel: COVERAGE_LABELS[type],
+          targetLabel: `${COVERAGE_LABELS[type]} (Current Limit)`,
           riskProfilePath: `coverage.${type}.currentLimit`,
           required: false,
         })),
@@ -67,7 +73,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
         title: 'Requested Renewal Coverage',
         fields: REQUESTED_COVERAGE_TYPES.map((type) => ({
           targetFieldId: `coverage_${type}`,
-          targetLabel: COVERAGE_LABELS[type],
+          targetLabel: `${COVERAGE_LABELS[type]} (Requested Limit)`,
           riskProfilePath: `coverage.${type}.requestedLimit`,
         })),
       },

@@ -61,7 +61,7 @@ function IntakeShell({ children }: { children: React.ReactNode }) {
 
 export function IntakeFormPage() {
   const { token } = useParams<{ token: string }>();
-  const [status, setStatus] = useState<'loading' | 'invalid' | 'ready' | 'submitting' | 'submitted' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'invalid' | 'load_error' | 'ready' | 'submitting' | 'submitted' | 'error'>('loading');
   const [link, setLink] = useState<IntakeLink | null>(null);
   const [answers, setAnswers] = useState<IntakeAnswers>(emptyAnswers);
   const [files, setFiles] = useState<File[]>([]);
@@ -73,7 +73,17 @@ export function IntakeFormPage() {
       return;
     }
     fetchIntakeLinkByToken(token).then((result) => {
-      if (!result.ok || !result.data || !result.data.active) {
+      // A failed LOOKUP (Supabase not configured, the backend unreachable, or the table/policies
+      // not provisioned yet) is NOT the same thing as "this token doesn't exist" — collapsing both
+      // into "invalid link" told every applicant their perfectly valid link was broken whenever the
+      // real problem was on the backend, with zero signal for the broker to act on. A genuinely
+      // nonexistent/inactive token (a successful lookup that simply found nothing, or an inactive
+      // link) still reads as 'invalid'.
+      if (!result.ok) {
+        setStatus('load_error');
+        return;
+      }
+      if (!result.data || !result.data.active) {
         setStatus('invalid');
         return;
       }
@@ -139,6 +149,18 @@ export function IntakeFormPage() {
     );
   }
 
+  if (status === 'load_error') {
+    return (
+      <IntakeShell>
+        <div className="flex flex-col items-center gap-2 rounded-xl border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-6 py-14 text-center">
+          <TriangleAlert size={22} className="text-[var(--color-danger-600)]" />
+          <p className="text-sm font-medium text-[var(--color-ink-800)]">Something went wrong loading this form.</p>
+          <p className="max-w-xs text-xs text-[var(--color-ink-500)]">This isn't a problem with your link — please try again in a moment. If it keeps happening, let whoever sent you this link know.</p>
+        </div>
+      </IntakeShell>
+    );
+  }
+
   if (status === 'submitted') {
     return (
       <IntakeShell>
@@ -155,7 +177,14 @@ export function IntakeFormPage() {
     <IntakeShell>
       <div className="mb-2">
         <h1 className="text-lg font-semibold text-[var(--color-ink-900)]">New Submission</h1>
-        <p className="mt-1 text-sm text-[var(--color-ink-500)]">{link?.label ? `Requested by ${link.label}. ` : ''}Tell us a bit about the account and attach whatever documents you already have — you don't need to fill in anything a document already covers.</p>
+        <p className="mt-1 text-sm text-[var(--color-ink-500)]">
+          You're submitting this directly to{' '}
+          {link?.label ? <span className="font-medium text-[var(--color-ink-700)]">{link.label}</span> : 'your insurance broker'} for review.
+        </p>
+        <p className="mt-1 text-sm text-[var(--color-ink-500)]">
+          Tell us a bit about the account and attach whatever documents you already have — you don't need to fill in anything a document already covers. Fields marked{' '}
+          <span className="text-[var(--color-danger-600)]">*</span> are required; everything else is optional.
+        </p>
       </div>
 
       <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-5">

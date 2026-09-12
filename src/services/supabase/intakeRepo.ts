@@ -211,9 +211,20 @@ export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, fil
 // Broker (authenticated) — creating/managing links and reviewing submissions
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The link's own row id can use the app's normal generateId (never a secret, just a key) — but the
+ * TOKEN embedded in the shareable URL is the actual access-control boundary (see the migration's
+ * "anyone can read an intake link to validate it" policy): anyone who has it can open the form.
+ * generateId is Math.random() + Date.now(), neither of which is meant to resist guessing, so the
+ * token specifically gets a real cryptographically-random UUID instead.
+ */
+function generateIntakeToken(): string {
+  return crypto.randomUUID();
+}
+
 export async function createIntakeLink(userId: string, label: string): Promise<RepoResult<IntakeLink>> {
   if (!supabase) return NOT_CONFIGURED;
-  const link: IntakeLink = { id: generateId('ilink'), userId, label, token: generateId('tok'), active: true, createdAt: new Date().toISOString() };
+  const link: IntakeLink = { id: generateId('ilink'), userId, label, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
   try {
     const { error } = await supabase.from('intake_links').insert({ id: link.id, user_id: userId, label, token: link.token, active: true, created_at: link.createdAt });
     if (error) return fail(error.message);
