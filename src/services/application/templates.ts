@@ -13,7 +13,7 @@ const REQUESTED_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physic
 export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
   {
     id: 'renewal_iq_transportation_demo',
-    name: 'Renewal IQ Transportation Application - Demo',
+    name: 'RenewalIQ Transportation Application - Demo',
     description: 'An internal sample transportation insurance application layout for MVP testing. Not a certified/regulatory form.',
     exportTitle: 'Transportation Application',
     sections: [

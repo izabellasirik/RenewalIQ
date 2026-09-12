@@ -588,10 +588,11 @@ export async function deleteSubmissionFiles(userId: string, accountId: string): 
 }
 
 /** A short-lived signed URL for previewing a private document — never a permanent public URL. */
-export async function getSignedDocumentUrl(storagePath: string, expiresInSeconds = 300): Promise<RepoResult<string>> {
+/** `download: true` sets Content-Disposition so the browser saves the file instead of opening it inline — used for the explicit "Download" action; the "Preview" action omits it so a PDF/image opens directly in the browser's own viewer. */
+export async function getSignedDocumentUrl(storagePath: string, options?: { download?: boolean }, expiresInSeconds = 300): Promise<RepoResult<string>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, expiresInSeconds);
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, expiresInSeconds, options?.download ? { download: true } : undefined);
     if (error || !data) return logAndFail('creating document preview link', error ?? new Error('No signed URL returned.'));
     return { ok: true, data: data.signedUrl };
   } catch (err) {

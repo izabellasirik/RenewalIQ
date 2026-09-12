@@ -163,7 +163,7 @@ export function WhatsMissingPanel({
           <div className="flex flex-col items-center gap-2 rounded-lg border border-[var(--color-success-100)] bg-[var(--color-success-100)]/30 px-4 py-8 text-center">
             <CheckCircle2 size={24} className="text-[var(--color-success-600)]" />
             <p className="text-sm font-medium text-[var(--color-ink-800)]">Nothing outstanding.</p>
-            <p className="text-xs text-[var(--color-ink-500)]">Every required field, recommended field, and recommended document Renewal IQ tracks is accounted for.</p>
+            <p className="text-xs text-[var(--color-ink-500)]">Every required field, recommended field, and recommended document RenewalIQ tracks is accounted for.</p>
           </div>
         ) : (
           <div className="flex flex-col gap-5">

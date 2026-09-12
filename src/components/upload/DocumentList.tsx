@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2, Download } from 'lucide-react';
+import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2, Download, Eye } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
@@ -41,27 +41,32 @@ export function DocumentList({
   const [previewDoc, setPreviewDoc] = useState<UploadedDocument | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UploadedDocument | null>(null);
   const [detailDoc, setDetailDoc] = useState<UploadedDocument | null>(null);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (documents.length === 0) return null;
 
   /**
-   * Opens the ORIGINAL uploaded file (not the small capped preview image) via a short-lived signed
-   * URL — the same mechanism for a broker-uploaded document or one that arrived through Submission
-   * Intake and was imported (see services/intake/importIntakeSubmission.ts): both end up as a
-   * normal UploadedDocument with a storagePath once cloud-synced, so this one action covers both.
-   * Only shown when storagePath is present — a local-only (not signed in / not yet synced)
-   * document never had its original bytes retained anywhere to open.
+   * Preview/Download both open the ORIGINAL uploaded file (not the small capped preview image
+   * some image documents also have) via a short-lived signed URL — the same mechanism for a
+   * broker-uploaded document or one that arrived through Submission Intake and was imported (see
+   * services/intake/importIntakeSubmission.ts): both end up as a normal UploadedDocument with a
+   * storagePath once cloud-synced, so these actions cover both identically. Only shown when
+   * storagePath is present — a local-only (not signed in / not yet synced) document never had its
+   * original bytes retained anywhere to open. Preview omits the download flag so a PDF/image opens
+   * directly in the browser's own viewer (a "secure new tab", per the private signed URL); a
+   * format the browser can't render inline (e.g. .docx) simply falls back to a download on its
+   * own, with no extra logic needed here. Download always sets Content-Disposition so the browser
+   * saves the file instead of navigating to it.
    */
-  async function handleOpenOriginal(doc: UploadedDocument) {
+  async function openSignedUrl(doc: UploadedDocument, download: boolean) {
     if (!doc.storagePath) return;
-    setDownloadingId(doc.id);
-    setDownloadError(null);
-    const result = await getSignedDocumentUrl(doc.storagePath);
-    setDownloadingId(null);
+    setActionId(doc.id);
+    setActionError(null);
+    const result = await getSignedDocumentUrl(doc.storagePath, download ? { download: true } : undefined);
+    setActionId(null);
     if (!result.ok) {
-      setDownloadError(result.message);
+      setActionError(result.message);
       return;
     }
     window.open(result.data, '_blank', 'noopener,noreferrer');
@@ -106,7 +111,13 @@ export function DocumentList({
               )}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">
-                  {doc.name}
+                  {doc.storagePath ? (
+                    <button onClick={() => openSignedUrl(doc, false)} disabled={actionId === doc.id} className="truncate text-left hover:underline cursor-pointer disabled:opacity-50">
+                      {doc.name}
+                    </button>
+                  ) : (
+                    doc.name
+                  )}
                   {canPreview && (
                     <button onClick={() => setPreviewDoc(doc)} className="ml-2 text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
                       View image
@@ -151,15 +162,26 @@ export function DocumentList({
                 </Badge>
               )}
               {doc.storagePath && (
-                <button
-                  onClick={() => handleOpenOriginal(doc)}
-                  disabled={downloadingId === doc.id}
-                  className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-300)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer disabled:opacity-50"
-                  aria-label={`Open or download ${doc.name}`}
-                  title="Open/download the original file"
-                >
-                  {downloadingId === doc.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                </button>
+                <>
+                  <button
+                    onClick={() => openSignedUrl(doc, false)}
+                    disabled={actionId === doc.id}
+                    className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-300)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer disabled:opacity-50"
+                    aria-label={`Preview ${doc.name}`}
+                    title="Preview"
+                  >
+                    {actionId === doc.id ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
+                  </button>
+                  <button
+                    onClick={() => openSignedUrl(doc, true)}
+                    disabled={actionId === doc.id}
+                    className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-300)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer disabled:opacity-50"
+                    aria-label={`Download ${doc.name}`}
+                    title="Download"
+                  >
+                    <Download size={14} />
+                  </button>
+                </>
               )}
               {onDelete && (
                 <button
@@ -174,7 +196,7 @@ export function DocumentList({
           );
         })}
       </ul>
-      {downloadError && <p className="text-xs text-[var(--color-danger-600)]">{downloadError}</p>}
+      {actionError && <p className="text-xs text-[var(--color-danger-600)]">{actionError}</p>}
 
       <ImagePreviewModal open={!!previewDoc} onClose={() => setPreviewDoc(null)} src={previewDoc?.previewDataUrl ?? ''} name={previewDoc?.name ?? ''} />
 

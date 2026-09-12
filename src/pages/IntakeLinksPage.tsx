@@ -126,49 +126,46 @@ function LinksSection({ userId }: { userId: string }) {
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-5">
-      <div>
-        <h2 className="text-sm font-semibold text-[var(--color-ink-900)]">Submission Links</h2>
-        <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a Renewal IQ login.</p>
-      </div>
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <input
-          className={inputClass}
-          placeholder="Internal label — who is this link for? e.g. ABC Agency"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-        />
-        <input
-          className={inputClass}
-          placeholder="Your brokerage name, shown to the recipient — e.g. Acme Insurance Group"
-          value={orgName}
-          onChange={(e) => {
-            setOrgName(e.target.value);
-            setOrgNameTouched(true);
-          }}
-          onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-        />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex-1">
+          <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Internal label</label>
+          <input
+            className={inputClass}
+            placeholder="Example: ABC Agency"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+          />
+        </div>
+        <div className="flex-1">
+          <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Brokerage name</label>
+          <input
+            className={inputClass}
+            placeholder="Example: Acme Insurance Group"
+            value={orgName}
+            onChange={(e) => {
+              setOrgName(e.target.value);
+              setOrgNameTouched(true);
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+          />
+        </div>
         <Button disabled={!label.trim() || creating} onClick={handleCreate}>
           {creating ? 'Creating…' : 'New Link'}
         </Button>
       </div>
-      <p className="text-xs text-[var(--color-ink-400)]">
-        The internal label is only ever shown to you — it's how you tell your sources apart. The recipient only ever sees your brokerage name.
-      </p>
       {createError && <p className="text-xs text-[var(--color-danger-600)]">{createError}</p>}
       {loading ? (
         <Skeleton variant="block" className="h-16 w-full" />
       ) : loadError ? (
         <EmptyState icon={<FileWarning size={26} strokeWidth={1.5} />} title="Couldn't load submission links" description={loadError} />
-      ) : links.length === 0 ? (
-        <p className="text-sm text-[var(--color-ink-400)]">No submission links yet.</p>
-      ) : (
+      ) : links.length > 0 ? (
         <div className="flex flex-col gap-2">
           {links.map((l) => (
             <LinkRow key={l.id} link={l} onToggled={load} />
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -301,10 +298,16 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
           </span>
           {documents.map((doc) => (
             <div key={doc.id} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)] px-2.5 py-1.5">
-              <span className="min-w-0 truncate text-xs text-[var(--color-ink-700)]">{doc.fileName}</span>
+              <button
+                onClick={() => openDocument(doc)}
+                disabled={docActionId === doc.id}
+                className="min-w-0 truncate text-left text-xs text-[var(--color-ink-700)] hover:underline cursor-pointer disabled:opacity-50"
+              >
+                {doc.fileName}
+              </button>
               <div className="flex shrink-0 items-center gap-1">
                 <Button size="sm" variant="ghost" disabled={docActionId === doc.id} onClick={() => openDocument(doc)}>
-                  {docActionId === doc.id ? '…' : 'View'}
+                  {docActionId === doc.id ? '…' : 'Preview'}
                 </Button>
                 <Button size="sm" variant="ghost" disabled={docActionId === doc.id} onClick={() => downloadDocument(doc)}>
                   Download
@@ -394,7 +397,7 @@ export function IntakeLinksPage() {
   const session = useBrokerSession();
 
   return (
-    <PageContainer title="Submission Intake" description="Let an agency, safety company, or client submit a new account directly — no Renewal IQ login required.">
+    <PageContainer title="Submission Links">
       {session.status === 'loading' && (
         <div className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
           <Loader2 size={16} className="animate-spin" />
@@ -411,7 +414,7 @@ export function IntakeLinksPage() {
       {session.status === 'signed_out' && (
         <EmptyState
           icon={<Link2 size={26} strokeWidth={1.5} />}
-          title="Sign in to use Submission Intake"
+          title="Sign in to use Submission Links"
           description="Intake links belong to your broker account so submissions land in your own workspace."
         />
       )}

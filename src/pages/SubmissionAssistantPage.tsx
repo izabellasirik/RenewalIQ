@@ -118,7 +118,7 @@ export function SubmissionAssistantPage() {
   return (
     <PageContainer
       title={`Submission Assistant — ${account.namedInsured}`}
-      description="Renewal IQ already knows this account. Review what it filled instead of retyping everything."
+      description="RenewalIQ already knows this account. Review what it filled instead of retyping everything."
       actions={
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)} className="print:hidden">
