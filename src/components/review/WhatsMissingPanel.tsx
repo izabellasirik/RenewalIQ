@@ -137,7 +137,7 @@ export function WhatsMissingPanel({
   const update = { onUpdateField, onUpdateCoverage };
 
   return (
-    <Drawer open={open} onClose={onClose} title="What's Missing?" subtitle={`Submission ${completeness.percent}% complete`}>
+    <Drawer open={open} onClose={onClose} title="What's Missing?" subtitle={`${completeness.percent}% of required fields complete`}>
       <div className="flex flex-col gap-5">
         <div>
           <div className="flex items-center justify-between text-sm">

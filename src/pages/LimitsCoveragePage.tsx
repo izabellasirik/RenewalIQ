@@ -9,10 +9,10 @@ import { useAccountsStore } from '../state/useAccountsStore';
 
 /**
  * Requested/current coverage limits — previously a tab buried inside Risk Profile, promoted to its
- * own workflow step (Risk Profile → Limits & Coverage → Review) since it's a distinct broker task,
- * not a Risk Profile sub-view. Reuses CoverageSection and the exact same coverage store actions
- * Risk Profile's coverage tab used — the underlying RiskProfile.coverage model is unchanged, this
- * is only a different page to reach it from.
+ * own workflow step (Risk Profile → Limits & Coverage → Submission Assistant) since it's a distinct
+ * broker task, not a Risk Profile sub-view. Reuses CoverageSection and the exact same coverage
+ * store actions Risk Profile's coverage tab used — the underlying RiskProfile.coverage model is
+ * unchanged, this is only a different page to reach it from.
  */
 export function LimitsCoveragePage() {
   const { accountId = '' } = useParams();
@@ -44,8 +44,8 @@ export function LimitsCoveragePage() {
         <Button variant="secondary" icon={<ArrowLeft size={15} />} onClick={() => navigate(`/accounts/${accountId}/risk-profile`)}>
           Back to Risk Profile
         </Button>
-        <Button icon={<ArrowRight size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
-          Continue to Review
+        <Button icon={<ArrowRight size={15} />} onClick={() => navigate(`/accounts/${accountId}/submission-assistant`)}>
+          Continue to Submission Assistant
         </Button>
       </div>
     </PageContainer>

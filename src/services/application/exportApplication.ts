@@ -238,13 +238,9 @@ export async function generateApplicationPdf(application: MappedApplication, acc
       y -= 14;
     }
 
-    if (table.rows.length === 0) {
-      ensureSpace(40);
-      tableTitle();
-      text(`No ${table.title.toLowerCase()} on file.`, MARGIN, 9, italic, INK_400);
-      y -= 20;
-      continue;
-    }
+    // An itemized section with no rows at all is omitted entirely — no title, no "No X on file"
+    // placeholder — same "only render what's actually populated" rule as the scalar sections above.
+    if (table.rows.length === 0) continue;
 
     function layoutTableRow(rowIndex: number) {
       const row = table.rows[rowIndex];

@@ -51,17 +51,33 @@ function coverageRequestedOverride(profile: RiskProfile, path: string, base: Map
 }
 
 /**
+ * DOT Number only meaningfully matters for a motor carrier that actually operates power units — an
+ * account with no fleet on file yet (e.g. a warehouse/logistics risk requesting only
+ * warehouse_legal_liability, or a trucking account whose fleet simply hasn't been entered yet)
+ * shouldn't be flagged as missing a *required* field for it. Rather than inventing a new "operation
+ * type"/"is motor carrier" field, this reuses the fleet-size and itemized-vehicle-schedule signals
+ * the Risk Profile already tracks: a fleet on file (either signal) keeps DOT required; no fleet
+ * signal downgrades it to recommended instead of falsely required.
+ */
+function isMotorCarrier(profile: RiskProfile): boolean {
+  return (profile.transportation.fleetSize.value ?? 0) > 0 || profile.vehicles.length > 0;
+}
+
+/**
  * Maps one target field. Never guesses: a missing, conflicting, or below-threshold-confidence
  * source value is flagged accordingly — the value (if any) is still shown so the broker can see
  * what's there, but it's never presented as reliable. A mapping with no riskProfilePath at all
- * (a field the Risk Profile doesn't track yet, e.g. DBA/FEIN) is honestly 'missing', not guessed.
+ * (a field the Risk Profile doesn't track yet) is honestly 'missing', not guessed.
  */
 function mapField(profile: RiskProfile, mapping: FieldMapping): MappedField {
+  const required = mapping.riskProfilePath === 'transportation.dotNumber' && !isMotorCarrier(profile) ? false : mapping.required;
+
   const base = {
     targetFieldId: mapping.targetFieldId,
     targetLabel: mapping.targetLabel,
     editable: mapping.editable ?? true,
-    required: mapping.required,
+    required,
+    neverFlagMissing: mapping.neverFlagMissing,
     riskProfilePath: mapping.riskProfilePath,
   };
 

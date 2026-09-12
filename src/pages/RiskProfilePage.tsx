@@ -14,8 +14,10 @@ import { AccountSummary } from '../components/riskProfile/AccountSummary';
 import { VehiclesTable } from '../components/riskProfile/VehiclesTable';
 import { DriversTable } from '../components/riskProfile/DriversTable';
 import { LossHistoryTable } from '../components/riskProfile/LossHistoryTable';
+import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
+import { computeSubmissionCompleteness } from '../services/application';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { formatDate } from '../utils/dates';
@@ -43,6 +45,7 @@ export function RiskProfilePage() {
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
   const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
   const updateField = useAccountsStore((s) => s.updateField);
+  const updateCoverage = useAccountsStore((s) => s.updateCoverage);
   const resolveField = useAccountsStore((s) => s.resolveField);
   const addVehicle = useAccountsStore((s) => s.addVehicle);
   const updateVehicle = useAccountsStore((s) => s.updateVehicle);
@@ -59,6 +62,8 @@ export function RiskProfilePage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [whatsMissingOpen, setWhatsMissingOpen] = useState(false);
+  const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
 
   async function confirmDelete() {
     setDeleting(true);
@@ -108,7 +113,7 @@ export function RiskProfilePage() {
   const lossSummary = useMemo(() => deriveLossSummary(profile?.lossHistory ?? []), [profile?.lossHistory]);
   const lossRunDocs = documents.filter((d) => d.category === 'loss_run' && d.status === 'processed');
 
-  if (!account || !profile) {
+  if (!account || !profile || !completeness) {
     return <AccountNotFound />;
   }
 
@@ -118,8 +123,8 @@ export function RiskProfilePage() {
       description="Unified, editable view of everything extracted from uploaded documents. Every value shows its confidence and source."
       actions={
         <>
-          <Button icon={<ListChecks size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
-            Review Submission
+          <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)}>
+            What's missing?
           </Button>
           <OverflowMenu
             items={
@@ -344,6 +349,14 @@ export function RiskProfilePage() {
           {deleteError}
         </div>
       )}
+
+      <WhatsMissingPanel
+        open={whatsMissingOpen}
+        onClose={() => setWhatsMissingOpen(false)}
+        completeness={completeness}
+        onUpdateField={(section, key, value) => updateField(accountId, section, key, value)}
+        onUpdateCoverage={(coverageType, field, value) => updateCoverage(accountId, coverageType, field, value)}
+      />
     </PageContainer>
   );
 }

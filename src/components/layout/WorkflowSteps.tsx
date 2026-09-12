@@ -40,7 +40,6 @@ export function computeWorkflowSteps(
     { key: 'upload', label: 'Documents', path: `/accounts/${accountId}/upload`, status: documentsStatus },
     { key: 'risk-profile', label: 'Risk Profile', path: `/accounts/${accountId}/risk-profile`, status: profileStatus },
     { key: 'limits-coverage', label: 'Limits & Coverage', path: `/accounts/${accountId}/limits-coverage`, status: coverageStatus },
-    { key: 'review', label: 'Review', path: `/accounts/${accountId}/review`, status: profileStatus },
     { key: 'submission-assistant', label: 'Submission Assistant', path: `/accounts/${accountId}/submission-assistant`, status: hasDocs ? 'done' : 'not_started' },
     { key: 'carrier-appetite', label: 'Carrier Appetite', path: `/accounts/${accountId}/carrier-appetite`, status: appetiteStatus },
   ];

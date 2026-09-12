@@ -1,5 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, ListChecks, FileText, Compass, Search, BarChart3, ShieldCheck, Link2, Shield } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, ShieldCheck, Link2, Shield } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
@@ -11,7 +11,6 @@ const NAV_ICONS = {
   upload: UploadCloud,
   'risk-profile': ClipboardList,
   'limits-coverage': Shield,
-  review: ListChecks,
   'submission-assistant': FileText,
   'carrier-appetite': Compass,
 };

@@ -9,6 +9,8 @@ export function createEmptyRiskProfile(accountId: string): RiskProfile {
     business: {
       namedInsured: emptyField(),
       legalEntity: emptyField(),
+      dba: emptyField(),
+      fein: emptyField(),
       address: emptyField(),
       city: emptyField(),
       state: emptyField(),

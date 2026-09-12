@@ -25,6 +25,8 @@ export const RISK_PROFILE_GROUPS: RiskFieldGroup[] = [
     fields: [
       { key: 'namedInsured', label: 'Named Insured', type: 'text', section: 'business' },
       { key: 'legalEntity', label: 'Legal Entity', type: 'text', section: 'business' },
+      { key: 'dba', label: 'DBA', type: 'text', section: 'business', hint: 'Optional — leave blank if the business operates only under its named insured.' },
+      { key: 'fein', label: 'FEIN', type: 'text', section: 'business' },
       { key: 'address', label: 'Address', type: 'textarea', section: 'business' },
       { key: 'city', label: 'City', type: 'text', section: 'business' },
       { key: 'state', label: 'State', type: 'text', section: 'business' },

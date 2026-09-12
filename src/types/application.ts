@@ -20,6 +20,13 @@ export interface FieldMapping {
   editable?: boolean;
   /** Purely informational — surfaced in the UI, doesn't block export. */
   required?: boolean;
+  /**
+   * When true, a blank value for this field is never surfaced as a completeness gap (What's
+   * Missing) even though it's still tracked, editable, and reported as 'missing' status everywhere
+   * else — for a field that's genuinely optional and inconsequential when absent (e.g. DBA), where
+   * flagging every blank occurrence would just be noise the broker can't act on meaningfully.
+   */
+  neverFlagMissing?: boolean;
 }
 
 export interface ApplicationTemplateSection {
@@ -85,6 +92,8 @@ export interface MappedField {
   reviewReason?: string;
   editable: boolean;
   required?: boolean;
+  /** See FieldMapping.neverFlagMissing — carried through so completeness.ts can skip this field's blank state without re-deriving it from the template. */
+  neverFlagMissing?: boolean;
   /** Carried through so the UI can offer "also save this to the Risk Profile" / "resolve in Risk Profile" for fields that have one. Undefined for fields with no Risk Profile equivalent. */
   riskProfilePath?: FieldPath;
 }

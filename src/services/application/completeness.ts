@@ -16,9 +16,11 @@ import { buildSubmissionWarnings } from '../extraction/reconciliation';
  *     consolidated list instead of scattered per-field badges.
  *   - Driver/vehicle information reuses the exact "no itemized schedule on file" condition
  *     buildSubmissionWarnings already flags (see services/extraction/reconciliation.ts).
- *   - "Recommended documents" checks for at least one uploaded document in the two DocumentCategory
- *     values ('application', 'loss_run') this product already recognizes as submission-defining —
- *     not a list invented for this feature.
+ *   - "Recommended documents" checks for at least one uploaded loss run — the one source document
+ *     Renewal IQ can't generate itself. An "Insurance Application" is deliberately NOT on this list:
+ *     Renewal IQ generates the application from the structured Risk Profile, so nothing is missing
+ *     just because a broker didn't also upload one (uploading an existing application as a source
+ *     to extract from is still fully supported — it's just never a completeness requirement).
  */
 
 export interface CompletenessItem {
@@ -43,7 +45,10 @@ export interface SubmissionCompleteness {
   conflicts: CompletenessItem[];
 }
 
-const RECOMMENDED_DOCUMENT_CATEGORIES: DocumentCategory[] = ['application', 'loss_run'];
+// Deliberately excludes 'application' — Renewal IQ generates the application itself from the
+// structured Risk Profile, so an uploaded copy of an existing application is a source document to
+// extract from (still fully supported), never a submission-completeness requirement.
+const RECOMMENDED_DOCUMENT_CATEGORIES: DocumentCategory[] = ['loss_run'];
 
 export function computeSubmissionCompleteness(profile: RiskProfile, documents: UploadedDocument[]): SubmissionCompleteness {
   const template = APPLICATION_TEMPLATES.find((t) => t.id === DEFAULT_APPLICATION_TEMPLATE_ID) ?? APPLICATION_TEMPLATES[0];
@@ -57,7 +62,9 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
   for (const section of application.sections) {
     for (const field of section.fields) {
       if (field.status === 'missing') {
-        (field.required ? missingRequiredFields : missingRecommendedFields).push({ label: field.targetLabel, detail: field.reviewReason, riskProfilePath: field.riskProfilePath });
+        if (!field.neverFlagMissing) {
+          (field.required ? missingRequiredFields : missingRecommendedFields).push({ label: field.targetLabel, detail: field.reviewReason, riskProfilePath: field.riskProfilePath });
+        }
       } else if (field.status === 'needs_review') {
         needsReview.push({ label: field.targetLabel, detail: field.reviewReason });
       } else if (field.status === 'conflict') {

@@ -7,9 +7,7 @@ const REQUESTED_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physic
 
 /**
  * One realistic, comprehensive transportation application template for MVP testing — per product
- * direction, not "dozens of carrier applications" yet. Fields with no Risk Profile equivalent
- * (DBA, City, ZIP, FEIN) are declared with no riskProfilePath, so the mapping engine reports them
- * as missing/"enter manually" instead of guessing. Adding a second real carrier/MGA application
+ * direction, not "dozens of carrier applications" yet. Adding a second real carrier/MGA application
  * later is adding a second entry to this array — the engine and extraction pipeline don't change.
  */
 export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
@@ -23,15 +21,22 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
         title: 'Business Information',
         fields: [
           { targetFieldId: 'named_insured', targetLabel: 'Named Insured', riskProfilePath: 'business.namedInsured', required: true },
-          { targetFieldId: 'dba', targetLabel: 'DBA', required: false },
+          // DBA is genuinely optional for most accounts — a blank value is never a completeness gap
+          // (see FieldMapping.neverFlagMissing), so it never appears in What's Missing just because
+          // nobody entered one.
+          { targetFieldId: 'dba', targetLabel: 'DBA', riskProfilePath: 'business.dba', required: false, neverFlagMissing: true },
           { targetFieldId: 'address', targetLabel: 'Address', riskProfilePath: 'business.address', required: true },
           { targetFieldId: 'city', targetLabel: 'City', riskProfilePath: 'business.city', required: false },
           { targetFieldId: 'state', targetLabel: 'State', riskProfilePath: 'business.state', required: true },
           { targetFieldId: 'zip', targetLabel: 'ZIP', riskProfilePath: 'business.zip', required: false },
-          { targetFieldId: 'fein', targetLabel: 'FEIN', required: false },
+          { targetFieldId: 'fein', targetLabel: 'FEIN', riskProfilePath: 'business.fein', required: false },
           { targetFieldId: 'years_in_business', targetLabel: 'Years in Business', riskProfilePath: 'business.yearsInBusiness', required: true },
           { targetFieldId: 'annual_revenue', targetLabel: 'Annual Revenue', riskProfilePath: 'business.annualRevenue', format: formatCurrency, required: true },
           { targetFieldId: 'description_of_operations', targetLabel: 'Description of Operations', riskProfilePath: 'business.descriptionOfOperations', required: true },
+          // Important for a motor carrier — the mapping engine downgrades this to recommended
+          // (rather than required) for an account with no fleet on file, instead of treating every
+          // transportation risk as if it must have a USDOT number (see isMotorCarrier in
+          // fieldMappingEngine.ts).
           { targetFieldId: 'dot_number', targetLabel: 'DOT Number', riskProfilePath: 'transportation.dotNumber', required: true },
           { targetFieldId: 'mc_number', targetLabel: 'MC Number', riskProfilePath: 'transportation.mcNumber' },
           { targetFieldId: 'effective_date', targetLabel: 'Requested Effective Date', riskProfilePath: 'business.effectiveDate', required: true },
