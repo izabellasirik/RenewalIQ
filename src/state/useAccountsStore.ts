@@ -58,15 +58,18 @@ interface AccountsState {
   // --- Broker cloud sync (see services/supabase/submissionsRepo.ts) -----------------------------
   /** The signed-in broker's id, or null when signed out / Supabase isn't configured. Ephemeral — never persisted, always re-derived from the live Supabase session on load (see App.tsx). */
   currentUserId: string | null;
-  /** Which local account ids are mirrored to the signed-in broker's Supabase account. An id absent here is local-only (this browser only), regardless of whether anyone is currently signed in. Persisted, so the distinction survives a reload. */
-  cloudAccountIds: Record<string, true>;
+  /** The identity (or null) whose data is currently reflected in this store, as of the last handleAuthChange call. Persisted so a page reload can tell "same broker signed back in" (keep cache, let cloud-wins hydration refresh it) apart from "a different broker is now using this device" (purge the departing identity's cloud-owned data — see handleAuthChange). */
+  lastKnownUserId: string | null;
+  /** Maps a local account id to the id of the broker it's mirrored to in Supabase. An id absent here is local-only (this browser only), regardless of whether anyone is currently signed in. Persisted, so the distinction survives a reload. Never trust presence alone as "mine" — compare the value against currentUserId. */
+  cloudAccountIds: Record<string, string>;
   /** Per-account cloud save status, for the "Saving… / Saved / Failed to save" indicator. Ephemeral — never persisted, since a stale "saving" from a previous session would be meaningless. */
   syncStatus: Record<string, 'saving' | 'saved' | 'error'>;
-  /** Local accounts the signed-in broker explicitly dismissed ("Not now") from the "import to your account" prompt, or already imported — either way, never prompt again for these ids. Persisted. */
-  dismissedImportIds: Record<string, true>;
+  /** Maps a local-only account id to the id of the broker who explicitly dismissed ("Not now") or imported it from the "import to your account" prompt — never prompt that same broker again for this id. An account with no entry here (and not created by a currently-different signed-in broker) is still eligible to be offered to whichever broker next signs in on this device. Persisted. */
+  dismissedImportIds: Record<string, string>;
 
-  setCurrentUserId: (userId: string | null) => void;
-  /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud. Never touches local-only (not-yet-imported) accounts. */
+  /** The one entry point for every Supabase auth transition (initial load, sign-in, sign-out, or a different broker signing in on this device) — see App.tsx. Never call setCurrentUserId-style state directly from a component; this is what keeps one broker's cached data from lingering into another broker's session on a shared browser. */
+  handleAuthChange: (userId: string | null) => void;
+  /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud; a cloud account cached here under this broker's id but absent from this fetch was deleted elsewhere and is dropped rather than left as a ghost. Never touches local-only (not-yet-imported) accounts. */
   hydrateCloudSubmissions: () => Promise<void>;
   /** The broker's explicit "Import to account" action from the local-submissions-found prompt — marks each given local account as cloud and pushes its current state up, without waiting to be asked again. */
   importAccountsToCloud: (accountIds: string[]) => Promise<void>;
@@ -150,7 +153,7 @@ export const useAccountsStore = create<AccountsState>()(
        */
       function syncNow(accountId: string) {
         const s = get();
-        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        if (!isSupabaseConfigured || !s.currentUserId || s.cloudAccountIds[accountId] !== s.currentUserId) return;
         const account = s.accounts.find((a) => a.id === accountId);
         const profile = s.riskProfiles[accountId];
         if (!account || !profile) return;
@@ -171,7 +174,7 @@ export const useAccountsStore = create<AccountsState>()(
        */
       async function syncDocumentToCloud(accountId: string, documentId: string, file: File) {
         const s = get();
-        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        if (!isSupabaseConfigured || !s.currentUserId || s.cloudAccountIds[accountId] !== s.currentUserId) return;
         const userId = s.currentUserId;
         const uploadResult = await cloudRepo.uploadDocumentFile(userId, accountId, documentId, file);
         if (uploadResult.ok) {
@@ -192,6 +195,7 @@ export const useAccountsStore = create<AccountsState>()(
       documents: {},
       riskProfiles: {},
       currentUserId: null,
+      lastKnownUserId: null,
       cloudAccountIds: {},
       syncStatus: {},
       dismissedImportIds: {},
@@ -202,14 +206,15 @@ export const useAccountsStore = create<AccountsState>()(
 
       createAccount: (namedInsured, state) => {
         const account = newAccount(namedInsured, state);
-        const cloud = isSupabaseConfigured && !!get().currentUserId;
+        const userId = get().currentUserId;
+        const cloud = isSupabaseConfigured && !!userId;
         set((s) => ({
           accounts: [...s.accounts, account],
           riskProfiles: { ...s.riskProfiles, [account.id]: createEmptyRiskProfile(account.id) },
           documents: { ...s.documents, [account.id]: [] },
           activityLog: appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`),
           activeAccountId: account.id,
-          cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
+          cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: userId as string } : s.cloudAccountIds,
         }));
         if (cloud) syncNow(account.id);
         return account.id;
@@ -246,7 +251,7 @@ export const useAccountsStore = create<AccountsState>()(
             documents: { ...s.documents, [account.id]: finalDocs },
             activityLog: log,
             activeAccountId: account.id,
-            cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
+            cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: s.currentUserId as string } : s.cloudAccountIds,
           };
         });
         get().runMatching(account.id);
@@ -426,7 +431,7 @@ export const useAccountsStore = create<AccountsState>()(
         get().runMatching(accountId);
         syncNow(accountId);
         const s = get();
-        if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId] && doc) {
+        if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId] === s.currentUserId && doc) {
           Promise.all([doc.storagePath ? cloudRepo.deleteDocumentFile(doc.storagePath) : Promise.resolve({ ok: true as const, data: undefined }), cloudRepo.deleteDocumentRow(documentId)]).then(
             ([fileRes, rowRes]) => {
               const ok = fileRes.ok && rowRes.ok;
@@ -746,7 +751,7 @@ export const useAccountsStore = create<AccountsState>()(
         // database row, which cascades to every dependent table) before touching local state. If
         // either cloud step fails, local state is left completely untouched and the broker sees a
         // real error — never a "deleted" submission that quietly still exists in their account.
-        if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId]) {
+        if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId] === s.currentUserId) {
           const filesResult = await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
           if (!filesResult.ok) return { ok: false, message: `Couldn't remove this submission's files from your account: ${filesResult.message}` };
           const deleteResult = await cloudRepo.deleteSubmissionCloud(accountId);
@@ -774,19 +779,73 @@ export const useAccountsStore = create<AccountsState>()(
         return { ok: true };
       },
 
-      setCurrentUserId: (userId) => set({ currentUserId: userId }),
+      handleAuthChange: (userId) => {
+        const s = get();
+        const departingUserId = s.lastKnownUserId;
+        // A different identity than the one this device's cache currently reflects is now active
+        // (a sign-out to null, or a different broker signing in) — purge whatever locally-cached
+        // data belonged to the departing identity before adopting the new one. Without this, a
+        // second broker signing in on the same browser would see the first broker's cloud
+        // submissions (and vice versa on sign-out, edits would keep looking "Saved" locally while
+        // silently no longer reaching anyone's account, since syncNow requires currentUserId to
+        // match the account's recorded owner).
+        if (departingUserId && departingUserId !== userId) {
+          set((st) => {
+            const staleCloudIds = new Set(Object.entries(st.cloudAccountIds).filter(([, owner]) => owner === departingUserId).map(([id]) => id));
+            // Only purge already-claimed (dismissed/imported) local-only drafts when a genuinely
+            // different broker is now signing in — never on a plain sign-out to anonymous/local
+            // mode, so the "local-only always works, even signed out" experience stays intact.
+            const staleLocalIds =
+              userId != null
+                ? new Set(Object.entries(st.dismissedImportIds).filter(([, owner]) => owner === departingUserId).map(([id]) => id))
+                : new Set<string>();
+            const staleIds = new Set<string>([...staleCloudIds, ...staleLocalIds]);
+            if (staleIds.size === 0) return {};
+            const drop = <T,>(rec: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(rec).filter(([id]) => !staleIds.has(id)));
+            return {
+              accounts: st.accounts.filter((a) => !staleIds.has(a.id)),
+              documents: drop(st.documents),
+              riskProfiles: drop(st.riskProfiles),
+              matchResults: drop(st.matchResults),
+              activityLog: drop(st.activityLog),
+              cloudAccountIds: drop(st.cloudAccountIds),
+              syncStatus: drop(st.syncStatus),
+              dismissedImportIds: drop(st.dismissedImportIds),
+              activeAccountId: st.activeAccountId && staleIds.has(st.activeAccountId) ? null : st.activeAccountId,
+            };
+          });
+        }
+        set({ currentUserId: userId, lastKnownUserId: userId });
+      },
 
       hydrateCloudSubmissions: async () => {
         const userId = get().currentUserId;
         if (!isSupabaseConfigured || !userId) return;
         const result = await cloudRepo.fetchUserSubmissions(userId);
         if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
+        const fetchedIds = new Set(result.data.map((b) => b.account.id));
         set((s) => {
-          const accounts = [...s.accounts];
+          // Cloud is authoritative: an account cached here as owned by this broker but absent from
+          // this fetch was deleted (e.g. from another device) — drop it now rather than leave a
+          // ghost that a later local edit's upsert would silently resurrect in Supabase.
+          const staleIds = new Set(Object.entries(s.cloudAccountIds).filter(([id, owner]) => owner === userId && !fetchedIds.has(id)).map(([id]) => id));
+
+          const accounts = s.accounts.filter((a) => !staleIds.has(a.id));
           const documents = { ...s.documents };
           const riskProfiles = { ...s.riskProfiles };
           const activityLog = { ...s.activityLog };
           const cloudAccountIds = { ...s.cloudAccountIds };
+          const matchResults = { ...s.matchResults };
+          const syncStatus = { ...s.syncStatus };
+          for (const id of staleIds) {
+            delete documents[id];
+            delete riskProfiles[id];
+            delete activityLog[id];
+            delete cloudAccountIds[id];
+            delete matchResults[id];
+            delete syncStatus[id];
+          }
+
           for (const bundle of result.data) {
             const idx = accounts.findIndex((a) => a.id === bundle.account.id);
             if (idx === -1) accounts.push(bundle.account);
@@ -794,9 +853,18 @@ export const useAccountsStore = create<AccountsState>()(
             documents[bundle.account.id] = bundle.documents;
             riskProfiles[bundle.account.id] = bundle.profile;
             activityLog[bundle.account.id] = bundle.activity;
-            cloudAccountIds[bundle.account.id] = true;
+            cloudAccountIds[bundle.account.id] = userId;
           }
-          return { accounts, documents, riskProfiles, activityLog, cloudAccountIds };
+          return {
+            accounts,
+            documents,
+            riskProfiles,
+            activityLog,
+            cloudAccountIds,
+            matchResults,
+            syncStatus,
+            activeAccountId: staleIds.has(s.activeAccountId ?? '') ? null : s.activeAccountId,
+          };
         });
         for (const bundle of result.data) get().runMatching(bundle.account.id);
       },
@@ -805,25 +873,42 @@ export const useAccountsStore = create<AccountsState>()(
         const userId = get().currentUserId;
         if (!isSupabaseConfigured || !userId) return;
         set((s) => ({
-          cloudAccountIds: { ...s.cloudAccountIds, ...Object.fromEntries(accountIds.map((id) => [id, true as const])) },
-          dismissedImportIds: { ...s.dismissedImportIds, ...Object.fromEntries(accountIds.map((id) => [id, true as const])) },
+          cloudAccountIds: { ...s.cloudAccountIds, ...Object.fromEntries(accountIds.map((id) => [id, userId])) },
+          dismissedImportIds: { ...s.dismissedImportIds, ...Object.fromEntries(accountIds.map((id) => [id, userId])) },
         }));
         for (const accountId of accountIds) syncNow(accountId);
       },
 
       dismissLocalImport: (accountIds) => {
-        set((s) => ({ dismissedImportIds: { ...s.dismissedImportIds, ...Object.fromEntries(accountIds.map((id) => [id, true as const])) } }));
+        const userId = get().currentUserId;
+        if (!userId) return;
+        set((s) => ({ dismissedImportIds: { ...s.dismissedImportIds, ...Object.fromEntries(accountIds.map((id) => [id, userId])) } }));
       },
       };
     },
     {
-      name: 'renewaliq.state.v1',
+      name: 'renewaliq.state.v2',
+      version: 2,
+      // v1 -> v2: cloudAccountIds/dismissedImportIds changed from `Record<string, true>` to
+      // `Record<string, ownerUserId>` so a device shared by two brokers can tell whose cached data
+      // is whose (see handleAuthChange). A v1 cache can't be trusted to carry the right owner
+      // forward, so it's dropped here rather than guessed at — accounts/documents/riskProfiles
+      // themselves are kept as plain local-only data, and a broker who was previously synced simply
+      // gets it re-hydrated fresh (cloud-wins) the next time they sign in.
+      migrate: (persisted) => {
+        const state = persisted as Record<string, unknown>;
+        // Cast: zustand's persist typing wants the full store shape back, but it only ever shallow-
+        // merges this onto the store's own initial state (actions included) — a partial object of
+        // just the changed/kept data fields is exactly what every other persisted store here relies on.
+        return { ...state, cloudAccountIds: {}, dismissedImportIds: {}, lastKnownUserId: null } as AccountsState;
+      },
       // effectiveAppetiteRecords is derived (base + fetched overrides), re-loaded on demand — never
       // persisted, so a stale override can't get stuck in one broker's browser after an admin change.
       partialize: (state) => {
         // effectiveAppetiteRecords: derived, always re-fetched — see its own comment above.
         // currentUserId: re-derived from the live Supabase session on load, never trusted from a
-        // stale persisted value (see App.tsx's bootstrap effect).
+        // stale persisted value (see App.tsx's bootstrap effect) — lastKnownUserId (persisted, see
+        // its own comment above) is the one identity-tracking field that must survive a reload.
         // syncStatus: a snapshot of in-flight/last save outcome — meaningless across a reload.
         const { effectiveAppetiteRecords: _effectiveAppetiteRecords, currentUserId: _currentUserId, syncStatus: _syncStatus, ...rest } = state;
         return rest;
