@@ -220,6 +220,7 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         ...(sub.contact_name ? { contactName: sub.contact_name } : {}),
         ...(sub.contact_email ? { contactEmail: sub.contact_email } : {}),
         ...(sub.contact_phone ? { contactPhone: sub.contact_phone } : {}),
+        ...(sub.intake_link_label ? { intakeSourceLabel: sub.intake_link_label } : {}),
       };
 
       const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
@@ -359,6 +360,7 @@ export async function saveSubmissionSnapshot(
       contact_name: account.contactName || null,
       contact_email: account.contactEmail || null,
       contact_phone: account.contactPhone || null,
+      intake_link_label: account.intakeSourceLabel || null,
     };
     const { error: subErr } = await client.from('submissions').upsert(submissionRow);
     if (subErr) return logAndFail('saving submission header (submissions table)', subErr);

@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2 } from 'lucide-react';
+import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { previewDocumentRemovalImpact } from '../../services/extraction';
+import { getSignedDocumentUrl } from '../../services/supabase/submissionsRepo';
 import { Badge, ConfirmDialog } from '../ui';
 import { ImagePreviewModal } from './ImagePreviewModal';
 import { DocumentExtractionDetail } from './DocumentExtractionDetail';
@@ -40,8 +41,31 @@ export function DocumentList({
   const [previewDoc, setPreviewDoc] = useState<UploadedDocument | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UploadedDocument | null>(null);
   const [detailDoc, setDetailDoc] = useState<UploadedDocument | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   if (documents.length === 0) return null;
+
+  /**
+   * Opens the ORIGINAL uploaded file (not the small capped preview image) via a short-lived signed
+   * URL — the same mechanism for a broker-uploaded document or one that arrived through Submission
+   * Intake and was imported (see services/intake/importIntakeSubmission.ts): both end up as a
+   * normal UploadedDocument with a storagePath once cloud-synced, so this one action covers both.
+   * Only shown when storagePath is present — a local-only (not signed in / not yet synced)
+   * document never had its original bytes retained anywhere to open.
+   */
+  async function handleOpenOriginal(doc: UploadedDocument) {
+    if (!doc.storagePath) return;
+    setDownloadingId(doc.id);
+    setDownloadError(null);
+    const result = await getSignedDocumentUrl(doc.storagePath);
+    setDownloadingId(null);
+    if (!result.ok) {
+      setDownloadError(result.message);
+      return;
+    }
+    window.open(result.data, '_blank', 'noopener,noreferrer');
+  }
 
   const impact = deleteTarget && profile ? previewDocumentRemovalImpact(profile, deleteTarget.id) : null;
   const impactParts = impact
@@ -126,6 +150,17 @@ export function DocumentList({
                   {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted
                 </Badge>
               )}
+              {doc.storagePath && (
+                <button
+                  onClick={() => handleOpenOriginal(doc)}
+                  disabled={downloadingId === doc.id}
+                  className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-300)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer disabled:opacity-50"
+                  aria-label={`Open or download ${doc.name}`}
+                  title="Open/download the original file"
+                >
+                  {downloadingId === doc.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                </button>
+              )}
               {onDelete && (
                 <button
                   onClick={() => setDeleteTarget(doc)}
@@ -139,6 +174,7 @@ export function DocumentList({
           );
         })}
       </ul>
+      {downloadError && <p className="text-xs text-[var(--color-danger-600)]">{downloadError}</p>}
 
       <ImagePreviewModal open={!!previewDoc} onClose={() => setPreviewDoc(null)} src={previewDoc?.previewDataUrl ?? ''} name={previewDoc?.name ?? ''} />
 

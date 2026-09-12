@@ -1,0 +1,28 @@
+-- Fixes a real product bug: the public intake form (IntakeFormPage.tsx) was showing the intake
+-- link's own `label` — a broker-internal note identifying which source produced a submission, e.g.
+-- "ABC Agency" — as if it were the brokerage's own name ("You're submitting this directly to ABC
+-- Agency for review."). `label` and the recipient-facing brokerage name are two different concepts
+-- that happened to share one column: `label` must stay internal (it's how a broker tells their
+-- sources apart — see the "Source: {label}" display on the broker's incoming-submission review
+-- screen), while the recipient needs to see the broker's own brokerage/organization name instead,
+-- which every one of that broker's links should share.
+--
+-- This repo has no organization/workspace table yet (see 0003_broker_workspaces.sql's own comment:
+-- "organization_id is present but unused and unenforced today") — per product direction, this
+-- migration deliberately does NOT invent one. `organization_name` here is the cleanest available
+-- temporary source: a broker enters it once (the app pre-fills it from their most recently created
+-- link so they don't retype it every time) and it's stored per-link, right alongside the label,
+-- using the exact same anon-readable RLS this table already has (no policy change needed — the
+-- existing "anyone can read an intake link to validate it" policy already covers every column).
+--
+-- MIGRATES LATER TO: once real organization/workspace architecture exists, this becomes
+-- `organizations.display_name` (one value per organization instead of repeated per link) — a
+-- follow-up migration would backfill it from whichever value is most common/most recent across a
+-- broker's own intake_links rows, then this column can be dropped. Nothing here should be treated
+-- as a preview of that architecture; it is a deliberately narrow, disposable fix.
+--
+-- Nullable and additive — safe to run against a live project with existing rows (every existing
+-- link simply has organization_name = null until the broker creates or is prompted to update one;
+-- the app falls back to a generic "your insurance broker" phrase on the public form when null).
+
+alter table intake_links add column if not exists organization_name text;

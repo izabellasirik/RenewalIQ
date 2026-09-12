@@ -4,9 +4,18 @@ import { Check, Copy, FileText, FileWarning, Inbox, Link2, Loader2, X } from 'lu
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState, Skeleton, Tabs } from '../components/ui';
 import { COVERAGE_LABELS } from '../types';
-import type { IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
+import type { IntakeDocument, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
 import { useBrokerSession } from '../hooks/useBrokerSession';
-import { createIntakeLink, dismissIntakeSubmission, fetchIntakeDocuments, fetchIntakeLinks, fetchIntakeSubmissions, setIntakeLinkActive } from '../services/supabase/intakeRepo';
+import {
+  createIntakeLink,
+  dismissIntakeSubmission,
+  fetchIntakeDocuments,
+  fetchIntakeLinkById,
+  fetchIntakeLinks,
+  fetchIntakeSubmissions,
+  getSignedIntakeDocumentUrl,
+  setIntakeLinkActive,
+} from '../services/supabase/intakeRepo';
 import { importIntakeSubmission } from '../services/intake/importIntakeSubmission';
 import { formatDate } from '../utils/dates';
 
@@ -43,6 +52,10 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{link.label}</p>
           <p className="truncate text-xs text-[var(--color-ink-400)]">{url}</p>
+          {/* So the broker can confirm what recipients actually see, distinct from the internal label above. */}
+          <p className="truncate text-xs text-[var(--color-ink-400)]">
+            Shown to recipients as: <span className="font-medium text-[var(--color-ink-600)]">{link.organizationName || 'your insurance broker (not set)'}</span>
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <Badge tone={link.active ? 'success' : 'neutral'}>{link.active ? 'Active' : 'Inactive'}</Badge>
@@ -64,6 +77,8 @@ function LinksSection({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState('');
+  const [orgName, setOrgName] = useState('');
+  const [orgNameTouched, setOrgNameTouched] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -83,11 +98,20 @@ function LinksSection({ userId }: { userId: string }) {
     load();
   }, [load]);
 
+  // Pre-fill "shown to recipients as" from the broker's own most recently created link, so they
+  // only have to type their brokerage name once rather than for every new link — but never
+  // overwrite something the broker has already started typing this session.
+  useEffect(() => {
+    if (orgNameTouched || orgName) return;
+    const mostRecentWithOrgName = links.find((l) => l.organizationName);
+    if (mostRecentWithOrgName?.organizationName) setOrgName(mostRecentWithOrgName.organizationName);
+  }, [links, orgName, orgNameTouched]);
+
   async function handleCreate() {
     if (!label.trim()) return;
     setCreating(true);
     setCreateError(null);
-    const result = await createIntakeLink(userId, label.trim());
+    const result = await createIntakeLink(userId, label.trim(), orgName.trim() || null);
     setCreating(false);
     if (!result.ok) {
       // Never fail silently — a broker clicking "New Link" and seeing nothing happen (no new row,
@@ -106,12 +130,31 @@ function LinksSection({ userId }: { userId: string }) {
         <h2 className="text-sm font-semibold text-[var(--color-ink-900)]">Submission Links</h2>
         <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a Renewal IQ login.</p>
       </div>
-      <div className="flex gap-2">
-        <input className={inputClass} placeholder="Label, e.g. Acme Safety Group" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input
+          className={inputClass}
+          placeholder="Internal label — who is this link for? e.g. ABC Agency"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+        />
+        <input
+          className={inputClass}
+          placeholder="Your brokerage name, shown to the recipient — e.g. DXP"
+          value={orgName}
+          onChange={(e) => {
+            setOrgName(e.target.value);
+            setOrgNameTouched(true);
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+        />
         <Button disabled={!label.trim() || creating} onClick={handleCreate}>
           {creating ? 'Creating…' : 'New Link'}
         </Button>
       </div>
+      <p className="text-xs text-[var(--color-ink-400)]">
+        The internal label is only ever shown to you — it's how you tell your sources apart. The recipient only ever sees your brokerage name.
+      </p>
       {createError && <p className="text-xs text-[var(--color-danger-600)]">{createError}</p>}
       {loading ? (
         <Skeleton variant="block" className="h-16 w-full" />
@@ -137,19 +180,53 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
   const navigate = useNavigate();
   const [busy, setBusy] = useState<'import' | 'dismiss' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Fetched once per card so a broker can see what was attached before deciding to import — the
-  // "review it" step in the intake flow otherwise had no visibility into documents at all.
-  const [documentNames, setDocumentNames] = useState<string[] | null>(null);
+  // Fetched once per card so a broker can see what was attached, and open/download it, before
+  // deciding whether to import — the "review it" step in the intake flow otherwise had no
+  // visibility into documents at all.
+  const [documents, setDocuments] = useState<IntakeDocument[] | null>(null);
+  const [docActionId, setDocActionId] = useState<string | null>(null);
+  const [docError, setDocError] = useState<string | null>(null);
+  // The intake link's own internal label — "Source: {label}" — so a broker can always tell which
+  // link/source produced this submission, distinct from the recipient-facing organization name
+  // (see IntakeLink's own type comment).
+  const [sourceLabel, setSourceLabel] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetchIntakeDocuments(submission.id).then((result) => {
-      if (!cancelled && result.ok) setDocumentNames(result.data.map((d) => d.fileName));
+      if (!cancelled && result.ok) setDocuments(result.data);
+    });
+    fetchIntakeLinkById(submission.intakeLinkId).then((result) => {
+      if (!cancelled && result.ok) setSourceLabel(result.data?.label ?? null);
     });
     return () => {
       cancelled = true;
     };
-  }, [submission.id]);
+  }, [submission.id, submission.intakeLinkId]);
+
+  async function openDocument(doc: IntakeDocument) {
+    setDocActionId(doc.id);
+    setDocError(null);
+    const result = await getSignedIntakeDocumentUrl(doc.storagePath);
+    setDocActionId(null);
+    if (!result.ok) {
+      setDocError(result.message);
+      return;
+    }
+    window.open(result.data, '_blank', 'noopener,noreferrer');
+  }
+
+  async function downloadDocument(doc: IntakeDocument) {
+    setDocActionId(doc.id);
+    setDocError(null);
+    const result = await getSignedIntakeDocumentUrl(doc.storagePath, { download: true });
+    setDocActionId(null);
+    if (!result.ok) {
+      setDocError(result.message);
+      return;
+    }
+    window.open(result.data, '_blank', 'noopener,noreferrer');
+  }
 
   async function handleImport() {
     setBusy('import');
@@ -179,6 +256,11 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
           <p className="text-xs text-[var(--color-ink-400)]">
             {[submission.contactName, submission.contactEmail, submission.contactPhone].filter(Boolean).join(' · ')}
           </p>
+          {sourceLabel && (
+            <p className="mt-0.5 text-xs font-medium text-[var(--color-ink-500)]">
+              Source: <span className="text-[var(--color-ink-700)]">{sourceLabel}</span>
+            </p>
+          )}
         </div>
         <p className="text-xs text-[var(--color-ink-400)]">Submitted {formatDate(submission.createdAt)}</p>
       </div>
@@ -211,22 +293,29 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
         <p className="mt-3 whitespace-pre-line rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-xs text-[var(--color-ink-600)]">{submission.additionalNotes}</p>
       )}
 
-      {documentNames && documentNames.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+      {documents && documents.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1.5">
           <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-ink-500)]">
             <FileText size={12} />
-            {documentNames.length} document{documentNames.length === 1 ? '' : 's'} attached:
+            {documents.length} document{documents.length === 1 ? '' : 's'} attached
           </span>
-          {documentNames.map((name, i) => (
-            <Badge key={i} tone="neutral">
-              {name}
-            </Badge>
+          {documents.map((doc) => (
+            <div key={doc.id} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)] px-2.5 py-1.5">
+              <span className="min-w-0 truncate text-xs text-[var(--color-ink-700)]">{doc.fileName}</span>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button size="sm" variant="ghost" disabled={docActionId === doc.id} onClick={() => openDocument(doc)}>
+                  {docActionId === doc.id ? '…' : 'View'}
+                </Button>
+                <Button size="sm" variant="ghost" disabled={docActionId === doc.id} onClick={() => downloadDocument(doc)}>
+                  Download
+                </Button>
+              </div>
+            </div>
           ))}
         </div>
       )}
-      {documentNames && documentNames.length === 0 && (
-        <p className="mt-3 text-xs italic text-[var(--color-ink-400)]">No documents attached.</p>
-      )}
+      {documents && documents.length === 0 && <p className="mt-3 text-xs italic text-[var(--color-ink-400)]">No documents attached.</p>}
+      {docError && <p className="mt-1.5 text-xs text-[var(--color-danger-600)]">{docError}</p>}
 
       {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]">{error}</p>}
 

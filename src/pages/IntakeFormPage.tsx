@@ -178,8 +178,11 @@ export function IntakeFormPage() {
       <div className="mb-2">
         <h1 className="text-lg font-semibold text-[var(--color-ink-900)]">New Submission</h1>
         <p className="mt-1 text-sm text-[var(--color-ink-500)]">
+          {/* organizationName is the recipient-facing brokerage name — never link.label, which is
+              the broker's own internal note for telling sources apart (e.g. "ABC Agency") and was
+              never meant for this sentence. */}
           You're submitting this directly to{' '}
-          {link?.label ? <span className="font-medium text-[var(--color-ink-700)]">{link.label}</span> : 'your insurance broker'} for review.
+          {link?.organizationName ? <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName}</span> : 'your insurance broker'} for review.
         </p>
         <p className="mt-1 text-sm text-[var(--color-ink-500)]">
           Tell us a bit about the account and attach whatever documents you already have — you don't need to fill in anything a document already covers. Fields marked{' '}

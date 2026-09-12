@@ -27,13 +27,14 @@ interface IntakeLinkRow {
   id: string;
   user_id: string;
   label: string;
+  organization_name: string | null;
   token: string;
   active: boolean;
   created_at: string;
 }
 
 function rowToLink(row: IntakeLinkRow): IntakeLink {
-  return { id: row.id, userId: row.user_id, label: row.label, token: row.token, active: row.active, createdAt: row.created_at };
+  return { id: row.id, userId: row.user_id, label: row.label, organizationName: row.organization_name, token: row.token, active: row.active, createdAt: row.created_at };
 }
 
 interface IntakeSubmissionRow {
@@ -222,11 +223,14 @@ function generateIntakeToken(): string {
   return crypto.randomUUID();
 }
 
-export async function createIntakeLink(userId: string, label: string): Promise<RepoResult<IntakeLink>> {
+/** `organizationName` is the recipient-facing brokerage name (see IntakeLink's own comment) — null when the broker hasn't set one yet, in which case the public form falls back to a generic phrase. */
+export async function createIntakeLink(userId: string, label: string, organizationName: string | null): Promise<RepoResult<IntakeLink>> {
   if (!supabase) return NOT_CONFIGURED;
-  const link: IntakeLink = { id: generateId('ilink'), userId, label, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
+  const link: IntakeLink = { id: generateId('ilink'), userId, label, organizationName, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
   try {
-    const { error } = await supabase.from('intake_links').insert({ id: link.id, user_id: userId, label, token: link.token, active: true, created_at: link.createdAt });
+    const { error } = await supabase
+      .from('intake_links')
+      .insert({ id: link.id, user_id: userId, label, organization_name: organizationName, token: link.token, active: true, created_at: link.createdAt });
     if (error) return fail(error.message);
     return { ok: true, data: link };
   } catch (err) {
@@ -242,6 +246,18 @@ export async function fetchIntakeLinks(userId: string): Promise<RepoResult<Intak
     return { ok: true, data: ((data ?? []) as IntakeLinkRow[]).map(rowToLink) };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not load your intake links.');
+  }
+}
+
+/** Looks up one intake link by its row id (not its token) — used by the broker's own incoming-submission review screen to show "Source: {label}" for a given intake_submissions.intake_link_id. Relies on the same "anyone can read an intake link to validate it" policy fetchIntakeLinkByToken uses (see 0004_intake_submissions.sql) — already covers authenticated reads, no RLS change needed. */
+export async function fetchIntakeLinkById(id: string): Promise<RepoResult<IntakeLink | null>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('intake_links').select('*').eq('id', id).maybeSingle();
+    if (error) return fail(error.message);
+    return { ok: true, data: data ? rowToLink(data as IntakeLinkRow) : null };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not load this link.');
   }
 }
 
@@ -271,6 +287,28 @@ export async function fetchIntakeDocuments(intakeSubmissionId: string): Promise<
     return { ok: true, data: ((data ?? []) as IntakeDocumentRow[]).map(rowToDocument) };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not load this submission’s documents.');
+  }
+}
+
+/**
+ * A short-lived signed URL for the broker to open/preview or download one attached document
+ * BEFORE deciding whether to import the submission — same pattern as
+ * submissionsRepo.ts's getSignedDocumentUrl for already-imported documents, scoped to the private
+ * intake-uploads bucket instead. Never a permanent public URL; the intake-uploads bucket stays
+ * fully private — only an authenticated broker whose own intake_submissions row this document
+ * belongs to can request one (see the "owner can read their intake documents" Storage policy in
+ * 0004_intake_submissions.sql). `download: true` sets Content-Disposition so the browser saves the
+ * file instead of navigating to it inline — used for the explicit "Download" action; the "View"
+ * action omits it so a PDF/image opens directly in a new tab.
+ */
+export async function getSignedIntakeDocumentUrl(storagePath: string, options?: { download?: boolean }, expiresInSeconds = 300): Promise<RepoResult<string>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, expiresInSeconds, options?.download ? { download: true } : undefined);
+    if (error || !data) return fail(error?.message ?? 'Could not create a preview link.');
+    return { ok: true, data: data.signedUrl };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not create a preview link.');
   }
 }
 

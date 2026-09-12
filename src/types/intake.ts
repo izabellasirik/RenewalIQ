@@ -14,7 +14,10 @@ export type IntakeSubmissionStatus = 'pending' | 'imported' | 'dismissed';
 export interface IntakeLink {
   id: string;
   userId: string;
+  /** Broker-internal — identifies which source this link is for (e.g. "ABC Agency"), never shown to the applicant/recipient. See components/IntakeLinksPage.tsx's "Source: {label}" display and organizationName below for the recipient-facing equivalent. */
   label: string;
+  /** The recipient-facing brokerage/organization name ("You're submitting this directly to {organizationName} for review.") — deliberately a separate concept from `label`. Null until the broker sets one (the app pre-fills new links from the broker's most recently created link). See 0007_intake_link_organization_name.sql for why this lives here rather than on a real organization/workspace table, which doesn't exist yet. */
+  organizationName: string | null;
   token: string;
   active: boolean;
   createdAt: string;

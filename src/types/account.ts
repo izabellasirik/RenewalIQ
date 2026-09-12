@@ -13,4 +13,6 @@ export interface Account {
   contactName?: string;
   contactEmail?: string;
   contactPhone?: string;
+  /** Set only for accounts created by importing an external intake submission — the intake link's internal `label` at the time of import (e.g. "ABC Agency"), so a broker can always tell which source produced this account. Never shown to the applicant. See 0008_submission_intake_source_label.sql. */
+  intakeSourceLabel?: string;
 }

@@ -160,9 +160,13 @@ export function SubmissionAssistantPage() {
       <div className="flex flex-col gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-4 print:hidden">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-base font-semibold text-[var(--color-ink-900)]">{applicationTitleFor(account.namedInsured, application.templateName)}</h2>
-          <span className="text-sm font-semibold text-[var(--color-ink-900)]">{stats.percentComplete}% Complete</span>
+          {/* Canonical completeness percent — the exact same computeSubmissionCompleteness() value
+              the "What's Missing?" panel shows, never computeApplicationStats().percentComplete
+              (a separate, unweighted count that doesn't exclude non-applicable fields or gate on
+              needs-review/conflicts) — the two used to disagree since they measured different things. */}
+          <span className="text-sm font-semibold text-[var(--color-ink-900)]">{completeness.percent}% Complete</span>
         </div>
-        <ProgressBar value={stats.percentComplete} />
+        <ProgressBar value={completeness.percent} />
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
           <span className="flex items-center gap-1.5 text-[var(--color-success-600)]">
             <CircleCheck size={14} />

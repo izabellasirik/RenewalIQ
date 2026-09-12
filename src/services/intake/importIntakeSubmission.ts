@@ -1,7 +1,7 @@
 import type { ExtractedFieldResult, IntakeSubmission } from '../../types';
 import { createEmptyRiskProfile, mergeIntoRiskProfile } from '../extraction';
 import { useAccountsStore } from '../../state/useAccountsStore';
-import { fetchIntakeDocuments, downloadIntakeDocumentFile, markIntakeSubmissionImported } from '../supabase/intakeRepo';
+import { fetchIntakeDocuments, downloadIntakeDocumentFile, fetchIntakeLinkById, markIntakeSubmissionImported } from '../supabase/intakeRepo';
 
 function splitList(raw: string | null): string[] {
   return (raw ?? '')
@@ -87,12 +87,28 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   const namedInsured = submission.namedInsured?.trim() || 'Untitled Submission';
   const state = deriveDomicileState(submission.operatingStates);
 
+  // The intake link's internal label (e.g. "ABC Agency") — never shown to the applicant, but the
+  // whole reason this import must not silently lose it: it's how the broker tells their sources
+  // apart afterward (see Account.intakeSourceLabel). A failed lookup here (deleted link, transient
+  // error) still lets the import proceed — losing source attribution on one edge case is better
+  // than blocking the import entirely.
+  const linkResult = await fetchIntakeLinkById(submission.intakeLinkId);
+  const sourceLabel = linkResult.ok ? (linkResult.data?.label ?? undefined) : undefined;
+
   const { createAccountFromExtraction, addFiles } = useAccountsStore.getState();
-  const accountId = createAccountFromExtraction(namedInsured, state, [], profile, undefined, {
-    name: submission.contactName ?? undefined,
-    email: submission.contactEmail ?? undefined,
-    phone: submission.contactPhone ?? undefined,
-  });
+  const accountId = createAccountFromExtraction(
+    namedInsured,
+    state,
+    [],
+    profile,
+    undefined,
+    {
+      name: submission.contactName ?? undefined,
+      email: submission.contactEmail ?? undefined,
+      phone: submission.contactPhone ?? undefined,
+    },
+    sourceLabel
+  );
 
   if (files.length > 0) addFiles(accountId, files);
 
