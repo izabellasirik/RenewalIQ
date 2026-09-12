@@ -21,6 +21,8 @@ import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '..
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { formatDate } from '../utils/dates';
 import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
+import { getFieldValueByPath } from '../utils/riskProfilePath';
+import { emptyField } from '../types';
 import { cn } from '../utils/cn';
 
 const TREND_ICON = { increasing: TrendingUp, decreasing: TrendingDown, stable: Minus, insufficient_data: Minus };
@@ -190,7 +192,12 @@ export function RiskProfilePage() {
                       label={f.label}
                       valueType={f.type}
                       pending={anyProcessing}
-                      field={profile[f.section][f.key as keyof (typeof profile)[typeof f.section]] as any}
+                      // Falls back to an empty field rather than reading profile[section][key]
+                      // directly — a profile persisted before a field config entry existed (e.g. an
+                      // account created before "Requested Effective Date" was added) has no key for
+                      // it at all, and FieldRow crashes on `undefined`. Same fallback
+                      // useRiskProfileStats already uses for exactly this reason.
+                      field={(getFieldValueByPath(profile, `${f.section}.${f.key}`) ?? emptyField()) as any}
                       onSave={(value) => updateField(accountId, f.section, f.key, value)}
                       onResolve={(resolution) => resolveField(accountId, f.section, f.key, resolution)}
                       autoExpand={highlightFieldId === `field-${f.section}-${f.key}`}
