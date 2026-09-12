@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronDown, ChevronRight, Copy, FileText, FileWarning, Inbox, Link2, Loader2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, FileText, FileWarning, Inbox, Link2, Loader2, RefreshCw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Button, Badge, EmptyState, Skeleton, Tabs } from '../components/ui';
+import { Button, Badge, ConfirmDialog, EmptyState, Skeleton, Tabs } from '../components/ui';
 import { COVERAGE_LABELS } from '../types';
 import type { IntakeDocument, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
 import { useBrokerSession } from '../hooks/useBrokerSession';
@@ -15,7 +15,9 @@ import {
   getSignedIntakeDocumentUrl,
   setIntakeLinkActive,
 } from '../services/supabase/intakeRepo';
-import { importIntakeSubmission } from '../services/intake/importIntakeSubmission';
+import { importIntakeSubmission, reimportIntakeSubmission } from '../services/intake/importIntakeSubmission';
+import { findLikelyDuplicateAccount, type DuplicateMatch } from '../services/intake/duplicateDetection';
+import { useAccountsStore } from '../state/useAccountsStore';
 import { formatDate } from '../utils/dates';
 
 const inputClass =
@@ -195,8 +197,9 @@ function SubmissionRow({
   onChanged: () => void;
 }) {
   const navigate = useNavigate();
-  const [busy, setBusy] = useState<'import' | 'dismiss' | null>(null);
+  const [busy, setBusy] = useState<'import' | 'dismiss' | 'reimport' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDuplicate, setConfirmDuplicate] = useState<DuplicateMatch | null>(null);
   // Fetched lazily — only once this row is actually expanded — so scanning a long compact list
   // never fires N document queries for rows the broker hasn't opened.
   const [documents, setDocuments] = useState<IntakeDocument[] | null>(null);
@@ -263,6 +266,41 @@ function SubmissionRow({
     await dismissIntakeSubmission(submission.id);
     setBusy(null);
     onChanged();
+  }
+
+  async function performReimport() {
+    setConfirmDuplicate(null);
+    setBusy('reimport');
+    setError(null);
+    const result = await reimportIntakeSubmission(submission);
+    setBusy(null);
+    if (!result.ok) {
+      setError(result.message ?? 'Could not create a new submission from this intake.');
+      return;
+    }
+    if (result.message) setError(result.message);
+    // The intake row itself is untouched by re-import (no claim, no status change, no overwritten
+    // imported_account_id) — onChanged() just re-syncs this list with the cloud, it never removes
+    // this row from the Imported tab.
+    onChanged();
+    if (result.accountId) navigate(`/accounts/${result.accountId}/risk-profile`);
+  }
+
+  /**
+   * Re-import is an explicit, occasional action (the original import failed/partially failed, or
+   * the broker genuinely wants a second submission from the same intake) — never automatic
+   * deduplication. A likely-duplicate match only ever produces a confirmation dialog; the broker
+   * always makes the final call, and nothing here can overwrite the account findLikelyDuplicateAccount
+   * found.
+   */
+  function handleReimportClick() {
+    const { accounts, riskProfiles } = useAccountsStore.getState();
+    const match = findLikelyDuplicateAccount(submission, accounts, riskProfiles);
+    if (match) {
+      setConfirmDuplicate(match);
+      return;
+    }
+    performReimport();
   }
 
   const summaryParts = [submission.contactName, submission.contactEmail, submission.contactPhone].filter(Boolean).join(' · ');
@@ -365,15 +403,35 @@ function SubmissionRow({
               </Button>
             </div>
           )}
-          {submission.status === 'imported' && submission.importedAccountId && (
-            <div className="mt-4 border-t border-[var(--color-ink-100)] pt-3">
-              <Button size="sm" variant="secondary" onClick={() => navigate(`/accounts/${submission.importedAccountId}/risk-profile`)}>
-                View Submission
+          {submission.status === 'imported' && (
+            <div className="mt-4 flex gap-2 border-t border-[var(--color-ink-100)] pt-3">
+              {submission.importedAccountId && (
+                <Button size="sm" variant="secondary" onClick={() => navigate(`/accounts/${submission.importedAccountId}/risk-profile`)}>
+                  View Submission
+                </Button>
+              )}
+              {/* Always available on an Imported row, even with no importedAccountId (the original
+                  import failed to record the link) or one pointing at an account that no longer
+                  exists — re-import never depends on the original account still being there. */}
+              <Button size="sm" variant="ghost" icon={<RefreshCw size={13} />} disabled={busy !== null} onClick={handleReimportClick}>
+                {busy === 'reimport' ? 'Re-importing…' : 'Re-import'}
               </Button>
             </div>
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!confirmDuplicate}
+        onCancel={() => setConfirmDuplicate(null)}
+        onConfirm={performReimport}
+        variant="default"
+        title="Possible duplicate found"
+        description={`An account with matching information already exists${confirmDuplicate ? ` — ${confirmDuplicate.reason}` : ''}. Do you want to create another submission anyway?`}
+        confirmLabel="Continue anyway"
+        cancelLabel="Cancel"
+        confirming={busy === 'reimport'}
+      />
     </div>
   );
 }

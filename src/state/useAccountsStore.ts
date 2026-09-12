@@ -87,7 +87,9 @@ interface AccountsState {
     profile: RiskProfile,
     files?: File[],
     contact?: { name?: string; email?: string; phone?: string },
-    intakeSourceLabel?: string
+    intakeSourceLabel?: string,
+    /** Skips this action's own fire-and-forget syncNow() call — for a caller (importIntakeSubmission.ts) that immediately awaits syncAccountAndAwait() itself right afterward, so the account's cloud save fires exactly once instead of two overlapping saves racing each other's delete-then-reinsert of field_values/coverage_lines/vehicles/drivers/losses. */
+    options?: { skipAutoSync?: boolean }
   ) => string;
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
@@ -259,7 +261,7 @@ export const useAccountsStore = create<AccountsState>()(
         return account.id;
       },
 
-      createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact, intakeSourceLabel) => {
+      createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact, intakeSourceLabel, options) => {
         const account = {
           ...newAccount(namedInsured, state),
           status: 'documents_uploaded' as const,
@@ -295,7 +297,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(account.id);
-        syncNow(account.id);
+        if (!options?.skipAutoSync) syncNow(account.id);
         if (isSupabaseConfigured && get().currentUserId && files) {
           finalDocs.forEach((doc, i) => {
             const file = files[i];

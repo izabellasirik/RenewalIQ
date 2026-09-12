@@ -306,6 +306,12 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
           fieldsExtracted: d.fields_extracted ?? undefined,
           warnings: (d.warnings as string[] | null) ?? undefined,
           previewDataUrl: d.preview_data_url ?? undefined,
+          // Without this, every document's Preview/Download buttons (gated on storagePath — see
+          // DocumentList.tsx) disappear after any fresh cloud hydration (a page refresh, sign-out/
+          // sign-in, or opening the account on another device) even though the file is safely in
+          // Storage and this column has always recorded its path (see upsertDocumentMetadata) —
+          // this mapping just never read it back.
+          storagePath: d.storage_path ?? undefined,
           uploadedAt: d.uploaded_at,
         }));
 

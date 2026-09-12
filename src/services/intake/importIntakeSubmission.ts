@@ -65,39 +65,24 @@ function buildApplicantFieldResults(submission: IntakeSubmission): ExtractedFiel
   return results;
 }
 
-export interface ImportResult {
+interface CreateResult {
   ok: boolean;
   accountId?: string;
   message?: string;
-  /** True when the reason this call didn't create an account is that the submission was already imported (by an earlier click, another tab, or another device) — the caller should refresh its list and show the existing imported state rather than treating this as a failure to report. */
-  alreadyImported?: boolean;
 }
 
 /**
- * The broker's one-click "Import" action — turns a pending intake_submissions row into a real
- * account using the exact same primitives any other submission uses: createAccountFromExtraction to
- * commit the applicant-provided profile, then addFiles for each uploaded document so the real
- * OCR/vision extraction pipeline runs on them exactly as if the broker had just uploaded them
- * directly. Adds no new account-creation or extraction logic of its own.
- *
- * Claims the submission (an atomic, conditional status flip) BEFORE creating anything — see
- * claimIntakeSubmissionForImport's own comment. This is what makes a double-click, a second browser
- * tab, or a retried request safe: only the first caller to win the claim ever creates an account.
+ * The actual account-creation work, shared by importIntakeSubmission() and reimportIntakeSubmission()
+ * — builds the applicant-provided profile, downloads whatever documents came through, creates the
+ * account via the same createAccountFromExtraction/addFiles primitives any other submission uses,
+ * and confirms the account's core data actually reached Supabase before reporting success (see
+ * syncAccountAndAwait's own comment) — rolling the local account back out if that save fails, so a
+ * failed attempt never leaves an orphaned local-only account behind. Never touches
+ * intake_submissions itself; callers own the claim/status/imported_account_id bookkeeping.
  */
-export async function importIntakeSubmission(submission: IntakeSubmission): Promise<ImportResult> {
-  const claim = await claimIntakeSubmissionForImport(submission.id);
-  if (!claim.ok) return { ok: false, message: claim.message };
-  if (!claim.data) {
-    return { ok: false, alreadyImported: true, message: 'This submission was already imported.' };
-  }
-
+async function createAccountFromIntakeSubmission(submission: IntakeSubmission): Promise<CreateResult> {
   const docsResult = await fetchIntakeDocuments(submission.id);
-  if (!docsResult.ok) {
-    // Nothing was created yet — put the claim back so this isn't stuck "imported" with no account
-    // behind it, and the broker can just click Import again.
-    await revertIntakeSubmissionClaim(submission.id);
-    return { ok: false, message: docsResult.message };
-  }
+  if (!docsResult.ok) return { ok: false, message: docsResult.message };
 
   const files: File[] = [];
   for (const doc of docsResult.data) {
@@ -131,7 +116,11 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
       email: submission.contactEmail ?? undefined,
       phone: submission.contactPhone ?? undefined,
     },
-    sourceLabel
+    sourceLabel,
+    // The very next line awaits syncAccountAndAwait() itself — without this, createAccountFromExtraction's
+    // own fire-and-forget syncNow() would race it, both saving the same account's field_values/
+    // coverage_lines/vehicles/drivers/losses (a delete-then-reinsert each) at nearly the same time.
+    { skipAutoSync: true }
   );
 
   // Confirm the account's core data (submissions/field_values/field_alternates/coverage_lines/
@@ -150,11 +139,7 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
     // eslint-disable-next-line no-console
     console.error(`[RenewalIQ intake import] Cloud save failed for intake submission ${submission.id}:`, syncResult.message);
 
-    // Nothing durable exists yet — undo the local account and the claim so Import can just be
-    // retried cleanly, instead of leaving an "Imported" row with a broken/local-only account
-    // behind it, or risking a duplicate account on the next attempt.
     const deleteResult = await deleteAccountPermanently(accountId);
-    await revertIntakeSubmissionClaim(submission.id);
     if (!deleteResult.ok) {
       // eslint-disable-next-line no-console
       console.error(`[RenewalIQ intake import] Cleanup after failed import also failed for account ${accountId}:`, deleteResult.message);
@@ -167,15 +152,62 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
 
   if (files.length > 0) addFiles(accountId, files);
 
+  return { ok: true, accountId };
+}
+
+export interface ImportResult {
+  ok: boolean;
+  accountId?: string;
+  message?: string;
+  /** True when the reason this call didn't create an account is that the submission was already imported (by an earlier click, another tab, or another device) — the caller should refresh its list and show the existing imported state rather than treating this as a failure to report. */
+  alreadyImported?: boolean;
+}
+
+/**
+ * The broker's one-click "Import" action for a PENDING submission. Claims the submission (an
+ * atomic, conditional status flip) BEFORE creating anything — see claimIntakeSubmissionForImport's
+ * own comment. This is what makes a double-click, a second browser tab, or a retried request safe:
+ * only the first caller to win the claim ever creates an account. See reimportIntakeSubmission()
+ * for the separate, explicit "create another account from an already-imported submission" action —
+ * this claim-first path is never loosened for that.
+ */
+export async function importIntakeSubmission(submission: IntakeSubmission): Promise<ImportResult> {
+  const claim = await claimIntakeSubmissionForImport(submission.id);
+  if (!claim.ok) return { ok: false, message: claim.message };
+  if (!claim.data) {
+    return { ok: false, alreadyImported: true, message: 'This submission was already imported.' };
+  }
+
+  const created = await createAccountFromIntakeSubmission(submission);
+  if (!created.ok) {
+    // Nothing durable exists yet — put the claim back so this isn't stuck "imported" with no
+    // account behind it, and the broker can just click Import again.
+    await revertIntakeSubmissionClaim(submission.id);
+    return { ok: false, message: created.message };
+  }
+
   // The account is now confirmed durable, so the claim stands even if this last linking step
   // fails — reverting here would risk a second account being created on retry. The broker still
   // gets a clear signal that the link may not have saved.
-  const linkAccountResult = await setImportedAccountId(submission.id, accountId);
+  const linkAccountResult = await setImportedAccountId(submission.id, created.accountId as string);
   if (!linkAccountResult.ok) {
     // eslint-disable-next-line no-console
     console.error(`[RenewalIQ intake import] Couldn't record imported_account_id for intake submission ${submission.id}:`, linkAccountResult.message);
-    return { ok: true, accountId, message: 'Account created, but the link back to this intake submission may not have saved. (See the browser console for details.)' };
+    return { ok: true, accountId: created.accountId, message: 'Account created, but the link back to this intake submission may not have saved. (See the browser console for details.)' };
   }
 
-  return { ok: true, accountId };
+  return { ok: true, accountId: created.accountId };
+}
+
+/**
+ * The broker's explicit "Re-import" action on an already-Imported submission — for when the
+ * original import failed/partially failed, or the broker intentionally wants a second submission
+ * from the same intake answers. Deliberately does NOT touch intake_submissions at all: no claim, no
+ * status change, no overwriting the original imported_account_id. The original Imported row and its
+ * original linked account (if it still exists) are left exactly as they are — this only ever adds a
+ * new, independent account, never replaces one. Duplicate detection (findLikelyDuplicateAccount) and
+ * the broker's confirmation happen in the caller (IntakeLinksPage.tsx) before this is ever called.
+ */
+export async function reimportIntakeSubmission(submission: IntakeSubmission): Promise<ImportResult> {
+  return createAccountFromIntakeSubmission(submission);
 }
