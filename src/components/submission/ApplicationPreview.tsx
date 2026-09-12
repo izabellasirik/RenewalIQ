@@ -5,14 +5,10 @@ import { ApplicationTableSection } from './ApplicationTableSection';
 
 export function ApplicationPreview({
   application,
-  values,
-  onChange,
   onSaveToRiskProfile,
   onResolveConflict,
 }: {
   application: MappedApplication;
-  values: Record<string, string>;
-  onChange: (fieldId: string, value: string) => void;
   onSaveToRiskProfile: (field: MappedApplication['sections'][number]['fields'][number], value: string) => void;
   onResolveConflict: (field: MappedApplication['sections'][number]['fields'][number]) => void;
 }) {
@@ -24,19 +20,14 @@ export function ApplicationPreview({
             <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">{section.title}</h3>
           </CardHeader>
           <CardBody className="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
-            {section.fields.map((field, fIdx) => {
-              const id = `${sIdx}-${fIdx}`;
-              return (
-                <ApplicationFieldRow
-                  key={id}
-                  field={field}
-                  value={values[id] ?? field.value}
-                  onLocalChange={(value) => onChange(id, value)}
-                  onSaveToRiskProfile={field.riskProfilePath ? (value) => onSaveToRiskProfile(field, value) : undefined}
-                  onResolveConflict={field.status === 'conflict' ? () => onResolveConflict(field) : undefined}
-                />
-              );
-            })}
+            {section.fields.map((field, fIdx) => (
+              <ApplicationFieldRow
+                key={`${sIdx}-${fIdx}`}
+                field={field}
+                onSaveToRiskProfile={field.riskProfilePath ? (value) => onSaveToRiskProfile(field, value) : undefined}
+                onResolveConflict={field.status === 'conflict' ? () => onResolveConflict(field) : undefined}
+              />
+            ))}
           </CardBody>
         </Card>
       ))}

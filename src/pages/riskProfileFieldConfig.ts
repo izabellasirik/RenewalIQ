@@ -31,6 +31,7 @@ export const RISK_PROFILE_GROUPS: RiskFieldGroup[] = [
       { key: 'zip', label: 'ZIP', type: 'text', section: 'business' },
       { key: 'yearsInBusiness', label: 'Years in Business', type: 'number', section: 'business' },
       { key: 'annualRevenue', label: 'Annual Revenue', type: 'number', section: 'business', hint: 'Used for GL rating and required by most carrier appetite checks.' },
+      { key: 'effectiveDate', label: 'Requested Effective Date', type: 'text', section: 'business', hint: 'When the client wants coverage to start.' },
     ],
   },
   {

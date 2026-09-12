@@ -17,6 +17,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
     id: 'renewal_iq_transportation_demo',
     name: 'Renewal IQ Transportation Application - Demo',
     description: 'An internal sample transportation insurance application layout for MVP testing. Not a certified/regulatory form.',
+    exportTitle: 'Transportation Application',
     sections: [
       {
         title: 'Business Information',
@@ -33,6 +34,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           { targetFieldId: 'description_of_operations', targetLabel: 'Description of Operations', riskProfilePath: 'business.descriptionOfOperations', required: true },
           { targetFieldId: 'dot_number', targetLabel: 'DOT Number', riskProfilePath: 'transportation.dotNumber', required: true },
           { targetFieldId: 'mc_number', targetLabel: 'MC Number', riskProfilePath: 'transportation.mcNumber' },
+          { targetFieldId: 'effective_date', targetLabel: 'Requested Effective Date', riskProfilePath: 'business.effectiveDate', required: true },
         ],
       },
       {

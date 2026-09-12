@@ -49,7 +49,7 @@ export async function generateApplicationPdf(application: MappedApplication, acc
   y -= 20;
   text(accountName, MARGIN, 12, font, INK_600);
   y -= 16;
-  text(`Generated ${new Date(application.generatedAt).toLocaleDateString('en-US')} · Demo template — not a certified/regulatory form`, MARGIN, 8, italic, INK_400);
+  text(`Generated ${new Date(application.generatedAt).toLocaleDateString('en-US')}`, MARGIN, 8, italic, INK_400);
   y -= 10;
   rule();
   y -= 22;
@@ -71,8 +71,10 @@ export async function generateApplicationPdf(application: MappedApplication, acc
         if (!field) continue;
         const x = MARGIN + c * colWidth;
         page.drawText(field.targetLabel.toUpperCase(), { x, y: rowY, size: 7, font, color: INK_400 });
-        const display = field.status === 'conflict' ? 'Needs review — conflicting sources' : field.value || (field.status === 'missing' ? 'Not provided' : '');
-        page.drawText(truncate(display || '—', 42), { x, y: rowY - 12, size: 10, font, color: field.value ? INK_900 : INK_400 });
+        // A field with no value (missing, or an unresolved conflict) prints as a blank line, never
+        // internal workflow language like "Not provided" or "Needs review — conflicting sources" —
+        // see the "What's Missing?" panel in the broker UI for that information instead.
+        if (field.value) page.drawText(truncate(field.value, 42), { x, y: rowY - 12, size: 10, font, color: INK_900 });
       }
       y -= 28;
     }
@@ -106,39 +108,18 @@ export async function generateApplicationPdf(application: MappedApplication, acc
       ensureSpace(16);
       table.columns.forEach((col, i) => {
         const cell = row.cells[col.key];
-        const display = cell?.status === 'missing' ? '—' : truncate(cell?.value ?? '', 16);
-        page.drawText(display, { x: MARGIN + i * colWidth, y, size: 8, font, color: cell?.status === 'missing' ? INK_400 : INK_900 });
+        if (cell?.status === 'missing' || !cell?.value) return; // blank cell — no placeholder text
+        page.drawText(truncate(cell.value, 16), { x: MARGIN + i * colWidth, y, size: 8, font, color: INK_900 });
       });
       y -= 14;
     }
     y -= 14;
   }
 
-  // --- Missing / Needs Review ---
-  const flaggedFields = application.sections.flatMap((section) =>
-    section.fields.filter((f) => f.status === 'missing' || f.status === 'conflict' || f.status === 'needs_review').map((f) => ({ label: f.targetLabel, text: `${f.targetLabel}: ${f.reviewReason ?? 'Needs review.'}` }))
-  );
-  // Submission-quality warnings restate some of the same facts a flagged field already covers
-  // (e.g. "MC Number is missing" vs. the MC Number field's own reviewReason) — only the ones that
-  // add information no field above already carries (fleet/vehicle-count conflicts, a missing
-  // vehicle schedule) are worth a second line.
-  const warningsNotAlreadyFlagged = application.warnings.filter((w) => !flaggedFields.some((f) => w.includes(f.label)));
-  const reviewItems = [...flaggedFields.map((f) => f.text), ...warningsNotAlreadyFlagged];
-
-  if (reviewItems.length > 0) {
-    ensureSpace(30);
-    text('MISSING / NEEDS REVIEW', MARGIN, 10, bold, INK_600);
-    y -= 6;
-    rule();
-    y -= 16;
-
-    for (const item of reviewItems) {
-      ensureSpace(14);
-      page.drawText('•', { x: MARGIN, y, size: 8, font, color: INK_600 });
-      page.drawText(truncate(item, 100), { x: MARGIN + 10, y, size: 8, font, color: INK_900 });
-      y -= 14;
-    }
-  }
+  // Deliberately no "Missing / Needs Review" section here — this exported PDF is the client-facing
+  // application, not an internal QA report. That information (missing required/recommended fields,
+  // conflicts, needs-review items, missing recommended documents) lives in the broker UI's
+  // "What's Missing?" panel (see services/application/completeness.ts) instead.
 
   return doc.save();
 }

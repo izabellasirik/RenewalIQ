@@ -12,4 +12,6 @@ export interface BusinessInfo {
   yearsInBusiness: FieldValue<number>;
   annualRevenue: FieldValue<number>;
   descriptionOfOperations: FieldValue<string>;
+  /** Requested policy effective date, as a plain string (e.g. "2026-01-01") — not parsed/validated as a real date type, same treatment as every other date-shaped field in this app (DriverEntry.dob, LossEntry.lossDate). */
+  effectiveDate: FieldValue<string>;
 }

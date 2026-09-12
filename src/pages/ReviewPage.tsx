@@ -1,14 +1,17 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, CheckCircle2, ChevronDown, ChevronUp, CircleHelp, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronUp, CircleHelp, ListChecks, Sparkles, TriangleAlert } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, Card, CardBody } from '../components/ui';
 import { FieldRow } from '../components/riskProfile/FieldRow';
 import { SuggestedFixRow } from '../components/review/SuggestedFixRow';
+import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
+import { computeSubmissionCompleteness } from '../services/application';
+import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { cn } from '../utils/cn';
 
 function StatCard({
@@ -46,11 +49,14 @@ export function ReviewPage() {
   const navigate = useNavigate();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
+  const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
   const updateField = useAccountsStore((s) => s.updateField);
   const stats = useRiskProfileStats(profile);
+  const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [whatsMissingOpen, setWhatsMissingOpen] = useState(false);
 
-  if (!account || !profile) {
+  if (!account || !profile || !completeness) {
     return <AccountNotFound />;
   }
 
@@ -60,6 +66,16 @@ export function ReviewPage() {
     <PageContainer
       title={`Submission Review — ${account.namedInsured}`}
       description="An AI-assisted pass over the risk profile before the application is generated."
+      actions={
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-[var(--color-ink-500)]">
+            Submission <span className="font-semibold text-[var(--color-ink-900)]">{completeness.percent}%</span> complete
+          </span>
+          <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)}>
+            What's missing?
+          </Button>
+        </div>
+      }
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard icon={<CheckCircle2 size={19} />} tone="success" label="Fields completed" value={stats.completed.length + stats.conflicting.length} />
@@ -155,6 +171,8 @@ export function ReviewPage() {
           Generate Application <ArrowRight size={15} />
         </Button>
       </div>
+
+      <WhatsMissingPanel open={whatsMissingOpen} onClose={() => setWhatsMissingOpen(false)} completeness={completeness} />
     </PageContainer>
   );
 }

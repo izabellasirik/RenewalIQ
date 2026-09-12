@@ -16,6 +16,7 @@ export function createEmptyRiskProfile(accountId: string): RiskProfile {
       yearsInBusiness: emptyField(),
       annualRevenue: emptyField(),
       descriptionOfOperations: emptyField(),
+      effectiveDate: emptyField(),
     },
     transportation: {
       dotNumber: emptyField(),

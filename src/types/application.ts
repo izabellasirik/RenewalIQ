@@ -52,6 +52,13 @@ export interface ApplicationTemplate {
   id: string;
   name: string;
   description?: string;
+  /**
+   * Title printed on the exported, client-facing PDF — defaults to `name` when omitted. Kept
+   * separate from `name` because `name` is shown in Renewal IQ's own broker-facing template picker,
+   * where internal labeling ("... - Demo") is fine context; the exported application a client sees
+   * should never carry that internal wording.
+   */
+  exportTitle?: string;
   /** Which carrier/MGA this template represents, if any — undefined for a generic sample template. */
   marketName?: string;
   sections: ApplicationTemplateSection[];

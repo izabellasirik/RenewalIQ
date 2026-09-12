@@ -28,9 +28,9 @@ function deriveDomicileState(operatingStates: string | null): string {
  * mergeIntoRiskProfile/mergeFieldValue pipeline any document's results do, so a document extraction
  * that later disagrees with what the applicant typed produces a genuine, visible conflict rather
  * than a silent overwrite (see utils/dataStatus.ts's fieldDataStatus). Deliberately does NOT touch
- * currentCarrier/effectiveDate/additionalNotes/operationType — none of those has a corresponding
- * Risk Profile field, so they stay as intake-submission-only reference data shown to the broker
- * during import (see IntakeLinksPage.tsx) instead of being forced into a field that doesn't fit them.
+ * currentCarrier/additionalNotes/operationType — none of those has a corresponding Risk Profile
+ * field, so they stay as intake-submission-only reference data shown to the broker during import
+ * (see IntakeLinksPage.tsx) instead of being forced into a field that doesn't fit them.
  */
 function buildApplicantFieldResults(submission: IntakeSubmission): ExtractedFieldResult[] {
   const source = { documentId: `intake:${submission.id}`, documentName: 'Intake form submission' };
@@ -44,6 +44,7 @@ function buildApplicantFieldResults(submission: IntakeSubmission): ExtractedFiel
 
   push('business.namedInsured', submission.namedInsured);
   push('business.yearsInBusiness', submission.yearsInBusiness);
+  push('business.effectiveDate', submission.effectiveDate);
   push('business.state', deriveDomicileState(submission.operatingStates) || null);
   push('transportation.dotNumber', submission.dotNumber);
   push('transportation.mcNumber', submission.mcNumber);

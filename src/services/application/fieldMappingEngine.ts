@@ -180,7 +180,7 @@ export function mapRiskProfileToApplication(profile: RiskProfile, template: Appl
   return {
     accountId: profile.accountId,
     templateId: template.id,
-    templateName: template.name,
+    templateName: template.exportTitle ?? template.name,
     generatedAt: new Date().toISOString(),
     sections,
     tableSections,

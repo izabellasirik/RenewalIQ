@@ -1,15 +1,17 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Compass, Printer, TriangleAlert, CircleCheck, CircleHelp, Download, FileJson, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, Download, FileJson, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, OverflowMenu, ConfirmDialog } from '../components/ui';
 import { ApplicationPreview } from '../components/submission/ApplicationPreview';
+import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { useAccountsStore } from '../state/useAccountsStore';
-import { mapRiskProfileToApplication, computeApplicationStats, APPLICATION_TEMPLATES, DEFAULT_APPLICATION_TEMPLATE_ID } from '../services/application';
+import { mapRiskProfileToApplication, computeApplicationStats, computeSubmissionCompleteness, APPLICATION_TEMPLATES, DEFAULT_APPLICATION_TEMPLATE_ID } from '../services/application';
 import { parseDraft } from '../components/riskProfile/FieldRow';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { downloadBlob } from '../utils/download';
+import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import type { CoverageType, MappedField } from '../types';
 
 function fieldValueType(section: 'business' | 'transportation', key: string) {
@@ -37,23 +39,28 @@ function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
+type ExportKind = 'pdf' | 'json' | 'csv';
+
 export function SubmissionAssistantPage() {
   const { accountId = '' } = useParams();
   const navigate = useNavigate();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
+  const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
   const updateField = useAccountsStore((s) => s.updateField);
   const updateCoverage = useAccountsStore((s) => s.updateCoverage);
-  const [values, setValues] = useState<Record<string, string>>({});
   const [templateId, setTemplateId] = useState(DEFAULT_APPLICATION_TEMPLATE_ID);
   const [exportingPdf, setExportingPdf] = useState(false);
-  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [pendingExport, setPendingExport] = useState<ExportKind | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [whatsMissingOpen, setWhatsMissingOpen] = useState(false);
 
   const template = APPLICATION_TEMPLATES.find((t) => t.id === templateId) ?? APPLICATION_TEMPLATES[0];
   const application = useMemo(() => (profile ? mapRiskProfileToApplication(profile, template) : null), [profile, template]);
   const stats = useMemo(() => (application ? computeApplicationStats(application) : null), [application]);
+  const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
 
-  if (!account || !profile || !application || !stats) {
+  if (!account || !profile || !application || !stats || !completeness) {
     return <AccountNotFound />;
   }
 
@@ -79,36 +86,48 @@ export function SubmissionAssistantPage() {
     }
   }
 
-  /** Gates Print/Download behind an explicit "continue anyway" when fields still need review — a
-   *  broker can always proceed (missing/conflicting fields are never force-filled, just visibly
-   *  flagged), but never lands on a printed/exported application without being told first. */
-  function guardExport(action: () => void) {
-    if (stats!.conflict + stats!.missing + stats!.needsReview > 0) {
-      setPendingAction(() => action);
-    } else {
-      action();
-    }
-  }
-
-  async function handleDownloadPdf() {
-    setExportingPdf(true);
+  async function runExport(kind: ExportKind) {
+    setExportError(null);
     try {
-      const { generateApplicationPdf } = await import('../services/application/exportApplication');
-      const bytes = await generateApplicationPdf(application!, account!.namedInsured);
-      downloadBlob(new Uint8Array(bytes), `${slugify(account!.namedInsured)}_${slugify(application!.templateName)}.pdf`, 'application/pdf');
+      if (kind === 'pdf') {
+        setExportingPdf(true);
+        const { generateApplicationPdf } = await import('../services/application/exportApplication');
+        const bytes = await generateApplicationPdf(application!, account!.namedInsured);
+        downloadBlob(new Uint8Array(bytes), `${slugify(account!.namedInsured)}_${slugify(application!.templateName)}.pdf`, 'application/pdf');
+      } else if (kind === 'json') {
+        const { generateApplicationJson } = await import('../services/application/exportApplication');
+        downloadBlob(generateApplicationJson(application!), `${slugify(account!.namedInsured)}_application.json`, 'application/json');
+      } else {
+        const { generateApplicationCsv } = await import('../services/application/exportApplication');
+        downloadBlob(generateApplicationCsv(application!), `${slugify(account!.namedInsured)}_application.csv`, 'text/csv');
+      }
+    } catch (err) {
+      // Never fail silently — an export that neither downloads nor explains why is indistinguishable
+      // from "Continue anyway" simply not working.
+      setExportError(err instanceof Error ? err.message : 'Something went wrong generating this file. Nothing was downloaded — try again.');
     } finally {
       setExportingPdf(false);
     }
   }
 
-  async function handleDownloadJson() {
-    const { generateApplicationJson } = await import('../services/application/exportApplication');
-    downloadBlob(generateApplicationJson(application!), `${slugify(account!.namedInsured)}_application.json`, 'application/json');
+  /**
+   * Gates export behind an explicit "continue anyway" when fields still need review — a broker can
+   * always proceed (missing/conflicting fields are never force-filled, just visibly flagged). Once
+   * the broker confirms, the export ALWAYS actually runs — the warning explains what's missing, it
+   * never silently blocks the download afterward.
+   */
+  function guardExport(kind: ExportKind) {
+    if (stats!.conflict + stats!.missing + stats!.needsReview > 0) {
+      setPendingExport(kind);
+    } else {
+      runExport(kind);
+    }
   }
 
-  async function handleDownloadCsv() {
-    const { generateApplicationCsv } = await import('../services/application/exportApplication');
-    downloadBlob(generateApplicationCsv(application!), `${slugify(account!.namedInsured)}_application.csv`, 'text/csv');
+  async function confirmPendingExport() {
+    const kind = pendingExport;
+    setPendingExport(null);
+    if (kind) await runExport(kind);
   }
 
   return (
@@ -117,16 +136,16 @@ export function SubmissionAssistantPage() {
       description="Renewal IQ already knows this account. Review what it filled instead of retyping everything."
       actions={
         <>
-          <Button variant="secondary" icon={<Printer size={15} />} onClick={() => guardExport(() => window.print())} className="print:hidden">
-            Print
+          <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)} className="print:hidden">
+            What's missing?
           </Button>
           <OverflowMenu
             items={[
-              { key: 'json', label: 'Export as JSON', icon: <FileJson size={14} />, onSelect: () => guardExport(handleDownloadJson) },
-              { key: 'csv', label: 'Export as CSV', icon: <FileSpreadsheet size={14} />, onSelect: () => guardExport(handleDownloadCsv) },
+              { key: 'json', label: 'Export as JSON', icon: <FileJson size={14} />, onSelect: () => guardExport('json') },
+              { key: 'csv', label: 'Export as CSV', icon: <FileSpreadsheet size={14} />, onSelect: () => guardExport('csv') },
             ]}
           />
-          <Button icon={exportingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} onClick={() => guardExport(handleDownloadPdf)} disabled={exportingPdf} className="print:hidden">
+          <Button icon={exportingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} onClick={() => guardExport('pdf')} disabled={exportingPdf} className="print:hidden">
             Download PDF
           </Button>
           <Button variant="secondary" icon={<Compass size={15} />} onClick={() => navigate(`/accounts/${accountId}/carrier-appetite`)} className="print:hidden">
@@ -139,10 +158,7 @@ export function SubmissionAssistantPage() {
         {APPLICATION_TEMPLATES.length > 1 ? (
           <select
             value={template.id}
-            onChange={(e) => {
-              setTemplateId(e.target.value);
-              setValues({});
-            }}
+            onChange={(e) => setTemplateId(e.target.value)}
             className="w-fit rounded-lg border border-[var(--color-ink-200)] px-3 py-1.5 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)]"
           >
             {APPLICATION_TEMPLATES.map((t) => (
@@ -200,21 +216,19 @@ export function SubmissionAssistantPage() {
         </div>
       )}
 
-      <ApplicationPreview
-        application={application}
-        values={values}
-        onChange={(id, value) => setValues((v) => ({ ...v, [id]: value }))}
-        onSaveToRiskProfile={saveFieldToRiskProfile}
-        onResolveConflict={resolveFieldConflict}
-      />
+      {exportError && (
+        <div className="flex items-center gap-2 rounded-lg border border-[var(--color-danger-300)] bg-[var(--color-danger-100)]/40 px-4 py-3 text-sm text-[var(--color-danger-700)] print:hidden">
+          <TriangleAlert size={16} className="shrink-0" />
+          {exportError}
+        </div>
+      )}
+
+      <ApplicationPreview application={application} onSaveToRiskProfile={saveFieldToRiskProfile} onResolveConflict={resolveFieldConflict} />
 
       <ConfirmDialog
-        open={pendingAction !== null}
-        onCancel={() => setPendingAction(null)}
-        onConfirm={() => {
-          pendingAction?.();
-          setPendingAction(null);
-        }}
+        open={pendingExport !== null}
+        onCancel={() => setPendingExport(null)}
+        onConfirm={confirmPendingExport}
         variant="default"
         title="This application isn't complete yet"
         description={`${stats.conflict + stats.missing + stats.needsReview} field${stats.conflict + stats.missing + stats.needsReview === 1 ? '' : 's'} require review before this application is complete${
@@ -223,6 +237,8 @@ export function SubmissionAssistantPage() {
         confirmLabel="Continue anyway"
         cancelLabel="Review fields"
       />
+
+      <WhatsMissingPanel open={whatsMissingOpen} onClose={() => setWhatsMissingOpen(false)} completeness={completeness} />
     </PageContainer>
   );
 }

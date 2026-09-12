@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, History, ListChecks, TrendingUp, TrendingDown, Minus, Trash2 } from 'lucide-react';
+import { ArrowRight, ListChecks, TrendingUp, TrendingDown, Minus, Trash2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, Tabs, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../components/ui';
@@ -15,13 +15,12 @@ import { VehiclesTable } from '../components/riskProfile/VehiclesTable';
 import { DriversTable } from '../components/riskProfile/DriversTable';
 import { LossHistoryTable } from '../components/riskProfile/LossHistoryTable';
 import { CoverageSection } from '../components/riskProfile/CoverageSection';
-import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
 import { formatDate } from '../utils/dates';
-import { EMPTY_ACTIVITY_EVENTS, EMPTY_DOCUMENTS } from '../utils/emptyArrays';
+import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { cn } from '../utils/cn';
 
 const TREND_ICON = { increasing: TrendingUp, decreasing: TrendingDown, stable: Minus, insufficient_data: Minus };
@@ -42,7 +41,6 @@ export function RiskProfilePage() {
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const profile = useAccountsStore((s) => s.riskProfiles[accountId]);
   const documents = useAccountsStore((s) => s.documents[accountId]) ?? EMPTY_DOCUMENTS;
-  const activityLog = useAccountsStore((s) => s.activityLog[accountId]) ?? EMPTY_ACTIVITY_EVENTS;
   const updateField = useAccountsStore((s) => s.updateField);
   const resolveField = useAccountsStore((s) => s.resolveField);
   const updateCoverage = useAccountsStore((s) => s.updateCoverage);
@@ -60,7 +58,6 @@ export function RiskProfilePage() {
   const deleteLoss = useAccountsStore((s) => s.deleteLoss);
   const deleteAccountPermanently = useAccountsStore((s) => s.deleteAccountPermanently);
   const [tab, setTab] = useState<TabKey>('details');
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [highlightFieldId, setHighlightFieldId] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -124,9 +121,6 @@ export function RiskProfilePage() {
       description="Unified, editable view of everything extracted from uploaded documents. Every value shows its confidence and source."
       actions={
         <>
-          <Button variant="secondary" icon={<History size={15} />} onClick={() => setHistoryOpen(true)}>
-            History
-          </Button>
           <Button icon={<ListChecks size={15} />} onClick={() => navigate(`/accounts/${accountId}/review`)}>
             Review Submission
           </Button>
@@ -346,7 +340,6 @@ export function RiskProfilePage() {
         </Button>
       </div>
 
-      <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} accountName={account.namedInsured} events={activityLog} />
 
       <ConfirmDialog
         open={deleteConfirmOpen}
