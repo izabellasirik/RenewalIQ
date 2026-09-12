@@ -67,6 +67,12 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           targetLabel: `${COVERAGE_LABELS[type]} (Current Limit)`,
           riskProfilePath: `coverage.${type}.currentLimit`,
           required: false,
+          // Never a completeness gap: a new-business or no-current-coverage account legitimately
+          // has nothing to report here, and there's no reliable signal in the Risk Profile to tell
+          // that case apart from "broker just hasn't filled it in yet" — so this is informational
+          // (still shown, still editable) but never blocks What's Missing/the Limits & Coverage
+          // workflow-nav checkmark the way a blank Requested Limit does.
+          neverFlagMissing: true,
         })),
       },
       {
