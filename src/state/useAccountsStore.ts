@@ -174,21 +174,30 @@ export const useAccountsStore = create<AccountsState>()(
         if (!account || !profile) return { ok: true };
         const userId = s.currentUserId;
         set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'saving' }, syncErrors: { ...st.syncErrors, [accountId]: undefined as unknown as string } }));
-        const [snapRes, actRes] = await Promise.all([
-          cloudRepo.saveSubmissionSnapshot(userId, account, profile),
-          cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []),
-        ]);
-        const ok = snapRes.ok && actRes.ok;
+
+        // Sequential, not Promise.all: activity_events.submission_id has a foreign key onto
+        // submissions.id (see 0003_broker_workspaces.sql), so inserting activity events before the
+        // submission header has actually landed produces a confusing secondary FK-violation error
+        // (23503) that has nothing to do with the real problem — the header insert itself failing.
+        // Stop immediately and report the header's own error; never attempt the child write for a
+        // parent that isn't there.
+        const snapRes = await cloudRepo.saveSubmissionSnapshot(userId, account, profile);
+        if (!snapRes.ok) {
+          set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'error' }, syncErrors: { ...st.syncErrors, [accountId]: snapRes.message } }));
+          return snapRes;
+        }
+
+        const actRes = await cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []);
         // The real Supabase error (code/message/details/hint) is already logged in full by
         // logAndFail inside submissionsRepo.ts at the moment it happens — this just keeps the
         // human-readable summary around so the UI can show *which* save failed and why, instead
         // of only a generic "Failed to save to your account" with no way to find out more.
-        const message = !snapRes.ok ? snapRes.message : !actRes.ok ? actRes.message : undefined;
+        const message = actRes.ok ? undefined : actRes.message;
         set((st) => ({
-          syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' },
+          syncStatus: { ...st.syncStatus, [accountId]: actRes.ok ? 'saved' : 'error' },
           syncErrors: { ...st.syncErrors, [accountId]: message as string },
         }));
-        return { ok, message };
+        return { ok: actRes.ok, message };
       }
 
       /** Fire-and-forget cloud mirror for one submission — never blocks the caller: local state is always the immediate source of truth for the current session (see file header in submissionsRepo.ts), this just pushes the resulting state outward and reflects success/failure via syncStatus. */
