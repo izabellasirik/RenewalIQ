@@ -252,7 +252,16 @@ export function MarketFinderPage() {
           </p>
         </div>
 
-        <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-4 lg:sticky lg:top-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto scrollbar-thin">
+        {/*
+          lg:top-8 matches PageContainer's own top padding (py-8) so the sticky and static
+          positions coincide — no visual jump once scrolling engages sticky. max-h subtracts
+          TopBar's height (h-14 = 3.5rem, see components/layout/TopBar.tsx) plus that same top-8
+          offset (2rem) plus a 1rem bottom margin — 6.5rem total — from 100vh. TopBar sits outside
+          this page's own scroll container, so the previous calc(100vh-2rem) didn't account for
+          it: the panel's content extended past the bottom of the actual visible viewport with no
+          way to reach it short of scrolling the whole page, even though overflow-y-auto was
+          already on. */}
+        <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-4 lg:sticky lg:top-8 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:max-h-[calc(100vh-6.5rem)] lg:overflow-y-auto scrollbar-thin">
           <p className="text-sm font-semibold text-[var(--color-ink-900)]">Filters</p>
 
           <div>
