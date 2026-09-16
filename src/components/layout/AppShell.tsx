@@ -3,7 +3,6 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
-import { FeedbackWidget } from '../feedback/FeedbackWidget';
 
 export function AppShell() {
   const location = useLocation();
@@ -27,7 +26,6 @@ export function AppShell() {
           </motion.div>
         </main>
       </div>
-      <FeedbackWidget />
     </div>
   );
 }
