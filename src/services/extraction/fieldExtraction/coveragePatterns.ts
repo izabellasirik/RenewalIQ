@@ -8,6 +8,8 @@ export const COVERAGE_TYPE_ALIASES: { match: RegExp; type: CoverageType }[] = [
   { match: /physical\s*damage/i, type: 'physical_damage' },
   { match: /warehouse(?:\s*legal)?\s*liability/i, type: 'warehouse_legal_liability' },
   { match: /general\s*liability/i, type: 'general_liability' },
+  { match: /trailer\s*interchange/i, type: 'trailer_interchange' },
+  { match: /non[\s-]*trucking\s*liability|\bntl\b|bobtail/i, type: 'non_trucking_liability' },
 ];
 
 const DESIRED_COVERAGE_LABEL_PATTERNS = [
@@ -60,7 +62,8 @@ export interface CurrentPolicyCoverageMatch {
 }
 
 /** A coverage-type name directly followed by a dollar amount, with only ordinary single-space gaps — how OCR'd text usually renders a declarations-page row, since visual multi-space column gaps rarely survive OCR as literal repeated spaces. */
-const INLINE_COVERAGE_AMOUNT = /^(auto\s*liability|csl|combined single limit|(?:motor truck )?cargo|physical\s*damage|warehouse(?:\s*legal)?\s*liability|general\s*liability)\s+\$?([\d,]+(?:\.\d+)?)\s*(?:csl)?$/i;
+const INLINE_COVERAGE_AMOUNT =
+  /^(auto\s*liability|csl|combined single limit|(?:motor truck )?cargo|physical\s*damage|warehouse(?:\s*legal)?\s*liability|general\s*liability|trailer\s*interchange|non[\s-]*trucking\s*liability|ntl|bobtail)\s+\$?([\d,]+(?:\.\d+)?)\s*(?:csl)?$/i;
 
 /**
  * Reads a current/expiring-policy coverage table rendered as one line per row. Two shapes are

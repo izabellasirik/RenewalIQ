@@ -176,7 +176,15 @@ function asBoolean(raw: unknown): boolean | null {
   return typeof raw === 'boolean' ? raw : null;
 }
 
-const COVERAGE_TYPES = new Set(['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability', 'warehouse_legal_liability']);
+const COVERAGE_TYPES = new Set([
+  'auto_liability',
+  'motor_truck_cargo',
+  'physical_damage',
+  'general_liability',
+  'warehouse_legal_liability',
+  'trailer_interchange',
+  'non_trucking_liability',
+]);
 function asCoverageType(raw: unknown): string | null {
   return typeof raw === 'string' && COVERAGE_TYPES.has(raw) ? raw : null;
 }
