@@ -114,6 +114,10 @@ const SCALAR_FIELD_VALIDATORS: Record<string, (raw: unknown) => string | number 
   'coverage.general_liability.currentLimit': asCoverageLimit,
   'coverage.warehouse_legal_liability.requestedLimit': asCoverageLimit,
   'coverage.warehouse_legal_liability.currentLimit': asCoverageLimit,
+  'coverage.trailer_interchange.requestedLimit': asCoverageLimit,
+  'coverage.trailer_interchange.currentLimit': asCoverageLimit,
+  'coverage.non_trucking_liability.requestedLimit': asCoverageLimit,
+  'coverage.non_trucking_liability.currentLimit': asCoverageLimit,
 };
 
 /**
