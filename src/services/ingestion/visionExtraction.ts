@@ -114,6 +114,10 @@ const SCALAR_FIELD_VALIDATORS: Record<string, (raw: unknown) => string | number 
   'coverage.general_liability.currentLimit': asCoverageLimit,
   'coverage.warehouse_legal_liability.requestedLimit': asCoverageLimit,
   'coverage.warehouse_legal_liability.currentLimit': asCoverageLimit,
+  'coverage.trailer_interchange.requestedLimit': asCoverageLimit,
+  'coverage.trailer_interchange.currentLimit': asCoverageLimit,
+  'coverage.non_trucking_liability.requestedLimit': asCoverageLimit,
+  'coverage.non_trucking_liability.currentLimit': asCoverageLimit,
 };
 
 /**
@@ -176,7 +180,15 @@ function asBoolean(raw: unknown): boolean | null {
   return typeof raw === 'boolean' ? raw : null;
 }
 
-const COVERAGE_TYPES = new Set(['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability', 'warehouse_legal_liability']);
+const COVERAGE_TYPES = new Set([
+  'auto_liability',
+  'motor_truck_cargo',
+  'physical_damage',
+  'general_liability',
+  'warehouse_legal_liability',
+  'trailer_interchange',
+  'non_trucking_liability',
+]);
 function asCoverageType(raw: unknown): string | null {
   return typeof raw === 'string' && COVERAGE_TYPES.has(raw) ? raw : null;
 }
