@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { Check, Pencil, X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { useAccountsStore } from '../../state/useAccountsStore';
 
-/** The workspace header's client name, editable in place (Enter or click away saves, Esc cancels). */
+/** The workspace header's client name, editable in place by clicking it (Enter or click away saves, Esc cancels). */
 export function EditableAccountName({ accountId, name }: { accountId: string; name: string }) {
   const updateAccountInfo = useAccountsStore((s) => s.updateAccountInfo);
   const [editing, setEditing] = useState(false);
@@ -46,9 +46,9 @@ export function EditableAccountName({ accountId, name }: { accountId: string; na
   }
 
   return (
-    <button onClick={start} className="group flex min-w-0 items-center gap-2 text-left cursor-pointer" title="Edit client name">
+    // No pencil icon — the name itself is the control (click to rename; subtle hover underline hints it).
+    <button onClick={start} className="min-w-0 rounded-md text-left cursor-text decoration-[var(--color-ink-300)] decoration-dashed underline-offset-4 hover:underline" title="Click to rename">
       <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">{name}</h1>
-      <Pencil size={15} className="shrink-0 text-[var(--color-ink-300)] group-hover:text-[var(--color-brand-700)]" />
     </button>
   );
 }
