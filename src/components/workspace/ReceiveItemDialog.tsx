@@ -4,6 +4,7 @@ import { Button, Modal } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { findTemplateItem } from '../../services/workflow/checklistTemplates';
+import { carriersFor } from '../../services/workflow/requirementKey';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { inputClass, labelClass } from './formStyles';
 
@@ -17,7 +18,7 @@ export function ReceiveItemDialog({ accountId, itemId, open, onClose }: { accoun
   const markItemReceived = useAccountsStore((s) => s.markItemReceived);
   const addFiles = useAccountsStore((s) => s.addFiles);
   const item = items.find((i) => i.id === itemId);
-  const quote = item?.neededByQuoteId ? quotes.find((q) => q.id === item.neededByQuoteId) : undefined;
+  const carrierNames = item ? carriersFor(item).map((id) => quotes.find((q) => q.id === id)?.marketName).filter(Boolean) : [];
 
   const [documentId, setDocumentId] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -54,7 +55,7 @@ export function ReceiveItemDialog({ accountId, itemId, open, onClose }: { accoun
       open={open}
       onClose={onClose}
       title={`Mark received — ${item.label}`}
-      subtitle={quote ? `Needed by ${quote.marketName}. It will show as ready to send to them.` : undefined}
+      subtitle={carrierNames.length ? `Needed by ${carrierNames.join(', ')}. It will show as ready to send to ${carrierNames.length === 1 ? 'them' : 'each of them'}.` : undefined}
       footer={
         <>
           <Button variant="ghost" size="sm" onClick={onClose}>

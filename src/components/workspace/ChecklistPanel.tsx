@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { Ban, CheckCircle2, Circle, ClipboardList, Clock, Mail, PackageCheck, Pencil, Plus, RotateCcw, Send, Trash2 } from 'lucide-react';
-import type { MissingItem, MissingItemStatus, MissingItemType, UploadedDocument } from '../../types';
+import type { MarketQuote, MissingItem, MissingItemStatus, MissingItemType, UploadedDocument } from '../../types';
+import { carriersFor, forwardedAt } from '../../services/workflow/requirementKey';
 import { MISSING_ITEM_STATUS_LABELS } from '../../types';
 import { Badge, Button, Card, CardBody, EmptyState, OverflowMenu, ProgressBar, type OverflowMenuItem } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -14,9 +15,14 @@ import { DateInput } from './DateInput';
 import { inputClass, labelClass, linkButtonClass, smallInputClass } from './formStyles';
 import { cn } from '../../utils/cn';
 
+/** Received, but at least one carrier that asked for it hasn't been sent it yet. */
+function awaitingSend(item: MissingItem): boolean {
+  return item.status === 'received' && carriersFor(item).some((q) => !forwardedAt(item, q));
+}
+
 function statusRank(item: MissingItem): number {
-  if (item.status === 'received' && item.neededByQuoteId && !item.forwardedToCarrierAt) return 0;
-  if (item.status === 'missing') return item.neededByQuoteId ? 1 : 2;
+  if (awaitingSend(item)) return 0;
+  if (item.status === 'missing') return carriersFor(item).length ? 1 : 2;
   if (item.status === 'requested') return 3;
   if (item.status === 'received') return 4;
   return 5;
@@ -36,7 +42,7 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
   const [adding, setAdding] = useState(false);
 
   const sorted = useMemo(() => [...items].sort((a, b) => statusRank(a) - statusRank(b) || (a.createdAt < b.createdAt ? -1 : 1)), [items]);
-  const outstanding = sorted.filter((i) => i.status === 'missing' || i.status === 'requested' || (i.status === 'received' && i.neededByQuoteId && !i.forwardedToCarrierAt));
+  const outstanding = sorted.filter((i) => i.status === 'missing' || i.status === 'requested' || awaitingSend(i));
   const visible = compact ? outstanding : sorted;
   const unrequested = items.filter((i) => i.status === 'missing');
   const active = items.filter((i) => i.status !== 'waived');
@@ -128,7 +134,7 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
                 key={item.id}
                 accountId={accountId}
                 item={item}
-                carrierName={item.neededByQuoteId ? quotes.find((q) => q.id === item.neededByQuoteId)?.marketName : undefined}
+                carriers={carriersFor(item).map((id) => quotes.find((q) => q.id === id)).filter((q): q is MarketQuote => !!q)}
                 contactName={contacts.find((c) => c.id === item.requestedFromContactId)?.name}
                 document={documents.find((d) => d.id === item.documentId)}
                 suggestedDoc={
@@ -163,7 +169,7 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
 function ItemRow({
   accountId,
   item,
-  carrierName,
+  carriers,
   contactName,
   document,
   suggestedDoc,
@@ -172,7 +178,8 @@ function ItemRow({
 }: {
   accountId: string;
   item: MissingItem;
-  carrierName?: string;
+  /** Every carrier linked to this requirement. */
+  carriers: MarketQuote[];
   contactName?: string;
   document?: UploadedDocument;
   suggestedDoc?: UploadedDocument;
@@ -188,7 +195,9 @@ function ItemRow({
   const [draftLabel, setDraftLabel] = useState(item.label);
   const [draftNotes, setDraftNotes] = useState(item.notes ?? '');
 
-  const readyToSend = item.status === 'received' && !!carrierName && !item.forwardedToCarrierAt;
+  // One "Mark sent" per carrier still waiting on this (received) requirement.
+  const readyToSend = item.status === 'received' ? carriers.filter((q) => q.status !== 'declined' && q.status !== 'bound' && !forwardedAt(item, q.id)) : [];
+  const sentTo = carriers.filter((q) => forwardedAt(item, q.id));
   const followUpDue = item.status === 'requested' && item.followUpDate && item.followUpDate <= todayKey();
 
   const menu: OverflowMenuItem[] = [
@@ -220,7 +229,7 @@ function ItemRow({
     <li
       className={cn(
         'rounded-lg border px-3 py-2.5',
-        readyToSend ? 'border-[var(--color-accent-500)]/40 bg-[var(--color-accent-100)]/40' : 'border-[var(--color-ink-100)] bg-white',
+        readyToSend.length > 0 ? 'border-[var(--color-accent-500)]/40 bg-[var(--color-accent-100)]/40' : 'border-[var(--color-ink-100)] bg-white',
         item.status === 'waived' && 'opacity-60'
       )}
     >
@@ -253,9 +262,9 @@ function ItemRow({
                   <p className={cn('text-sm font-medium text-[var(--color-ink-800)]', item.status === 'waived' && 'line-through')}>{item.label}</p>
                   {item.type === 'information' && <span className="rounded bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-500)]">Info</span>}
                   <ItemStatusSelect value={item.status} onChange={(status) => setItemStatus(accountId, item.id, status)} label={item.label} />
-                  {carrierName && (
+                  {carriers.length > 0 && (
                     <Badge tone="brand" className="px-2 py-0.5 text-[11px]">
-                      Needed by {carrierName}
+                      Needed by {carriers.map((q) => q.marketName).join(', ')}
                     </Badge>
                   )}
                 </div>
@@ -278,7 +287,7 @@ function ItemRow({
                   {item.status === 'received' && (
                     <span>
                       Received {item.receivedAt ? formatShortDate(item.receivedAt) : ''}
-                      {item.forwardedToCarrierAt && carrierName ? ` · Sent to ${carrierName} ${formatShortDate(item.forwardedToCarrierAt)}` : ''}
+                      {sentTo.map((q) => ` · Sent to ${q.marketName} ${formatShortDate(forwardedAt(item, q.id))}`).join('')}
                     </span>
                   )}
                   {document && <DocumentPreviewLink doc={document} />}
@@ -299,11 +308,11 @@ function ItemRow({
 
         {!editing && (
           <div className="flex shrink-0 flex-wrap items-center gap-1.5 pl-6 sm:pl-0">
-            {readyToSend && (
-              <Button size="sm" icon={<Send size={13} />} onClick={() => markItemSentToCarrier(accountId, item.id)}>
-                Mark sent to {carrierName}
+            {readyToSend.map((q) => (
+              <Button key={q.id} size="sm" icon={<Send size={13} />} onClick={() => markItemSentToCarrier(accountId, item.id, q.id)}>
+                Mark sent to {q.marketName}
               </Button>
-            )}
+            ))}
             {(item.status === 'missing' || item.status === 'requested') && (
               <>
                 <Button size="sm" variant={item.status === 'missing' ? 'primary' : 'secondary'} icon={<Mail size={13} />} onClick={onRequest}>

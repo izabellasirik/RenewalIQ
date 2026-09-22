@@ -66,9 +66,17 @@ export interface MissingItem {
   notes?: string;
   /** Which checklist template entry created this item, if any (e.g. "loss_runs") — lets requirements vary by line/carrier later without changing the item shape. */
   templateKey?: string;
-  /** Set when a carrier/MGA asked for this item — the MarketQuote that is waiting on it. */
+  /**
+   * Every carrier/MGA (MarketQuote id) waiting on this requirement. One logical requirement per
+   * account (see services/workflow/requirementKey.ts) — a second carrier asking for the same
+   * document is linked here rather than creating another row.
+   */
+  neededByQuoteIds?: string[];
+  /** When the received item was passed on to each carrier, keyed by quote id. Received + in neededByQuoteIds + no entry here = "Ready to send" to that carrier. */
+  forwardedTo?: Record<string, string>;
+  /** @deprecated Single-carrier link from before requirements could be shared — read only, folded into neededByQuoteIds by normalizeMissingItems. */
   neededByQuoteId?: string;
-  /** Once received, when it was passed on to the requesting carrier. Received + neededByQuoteId + no forwardedToCarrierAt = "Ready to send". */
+  /** @deprecated Paired with neededByQuoteId — folded into forwardedTo by normalizeMissingItems. */
   forwardedToCarrierAt?: string;
   /** An uploaded document (UploadedDocument.id) that satisfies this item. */
   documentId?: string;

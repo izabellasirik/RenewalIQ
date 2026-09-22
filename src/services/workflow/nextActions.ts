@@ -1,6 +1,7 @@
 import type { Account, Contact, MarketQuote, MissingItem } from '../../types';
 import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS } from '../../types';
 import { daysBetween, describeDue, formatShortDate, todayKey } from './dates';
+import { carriersFor, forwardedAt } from './requirementKey';
 
 /**
  * ACCOUNT STATE → NEXT ACTION. Everything on Today's Plate and every "what happens next" hint on
@@ -75,9 +76,13 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
   let unrequestedChecklist = 0;
 
   for (const item of items) {
-    const quote = item.neededByQuoteId ? quoteById.get(item.neededByQuoteId) : undefined;
-    const carrierClosed = quote && (quote.status === 'declined' || quote.status === 'bound');
-    const neededBy = quote ? ` · Needed by ${quote.marketName}` : '';
+    // Every carrier still in play that is waiting on this requirement (one row can serve several).
+    const openCarriers = carriersFor(item)
+      .map((id) => quoteById.get(id))
+      .filter((q): q is MarketQuote => !!q && q.status !== 'declined' && q.status !== 'bound');
+    const linkedCarriers = carriersFor(item).map((id) => quoteById.get(id)).filter((q): q is MarketQuote => !!q);
+    const names = (qs: MarketQuote[]) => qs.map((q) => q.marketName).join(', ');
+    const neededBy = linkedCarriers.length ? ` · Needed by ${names(linkedCarriers)}` : '';
 
     if (item.status === 'requested' && item.followUpDate) {
       const who = contactName(item.requestedFromContactId);
@@ -92,33 +97,37 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
         itemId: item.id,
       });
     } else if (item.status === 'missing') {
-      if (quote && !carrierClosed) {
+      if (openCarriers.length > 0) {
         now.push({
           ...base,
           id: `carrier-req-${item.id}`,
           kind: 'action_required',
-          title: `${quote.marketName} requested ${item.label}`,
+          title: `${names(openCarriers)} requested ${item.label}`,
           detail: 'Not yet requested from the client',
           overdue: false,
           tab: 'checklist',
           itemId: item.id,
-          quoteId: quote.id,
+          quoteId: openCarriers[0].id,
         });
-      } else if (!quote) {
+      } else if (linkedCarriers.length === 0) {
         unrequestedChecklist++;
       }
-    } else if (item.status === 'received' && quote && !item.forwardedToCarrierAt && !carrierClosed) {
-      now.push({
-        ...base,
-        id: `ready-${item.id}`,
-        kind: 'ready_to_send',
-        title: `Send ${item.label} to ${quote.marketName}`,
-        detail: `Received${item.receivedAt ? ` ${formatShortDate(item.receivedAt)}` : ''} · ${quote.marketName} is waiting for it`,
-        overdue: false,
-        tab: 'quotes',
-        itemId: item.id,
-        quoteId: quote.id,
-      });
+    } else if (item.status === 'received') {
+      // One "send" action per carrier that asked for it and hasn't been sent it yet.
+      for (const quote of openCarriers) {
+        if (forwardedAt(item, quote.id)) continue;
+        now.push({
+          ...base,
+          id: `ready-${item.id}-${quote.id}`,
+          kind: 'ready_to_send',
+          title: `Send ${item.label} to ${quote.marketName}`,
+          detail: `Received${item.receivedAt ? ` ${formatShortDate(item.receivedAt)}` : ''} · ${quote.marketName} is waiting for it`,
+          overdue: false,
+          tab: 'quotes',
+          itemId: item.id,
+          quoteId: quote.id,
+        });
+      }
     }
   }
 

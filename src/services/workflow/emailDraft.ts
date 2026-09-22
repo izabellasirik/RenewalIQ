@@ -1,6 +1,7 @@
 import type { Account, Contact, MissingItem } from '../../types';
 import { firstName } from './contacts';
 import { formatShortDate } from './dates';
+import { carriersFor } from './requirementKey';
 
 export interface EmailDraft {
   subject: string;
@@ -27,7 +28,7 @@ export function draftClientRequestEmail({
   brokerName?: string;
 }): EmailDraft {
   const greeting = contact ? `Hi ${firstName(contact.name)},` : 'Hi,';
-  const carriers = [...new Set(items.map((i) => (i.neededByQuoteId ? carrierNamesByQuoteId?.[i.neededByQuoteId] : undefined)).filter((c): c is string => !!c))];
+  const carriers = [...new Set(items.flatMap((i) => carriersFor(i).map((q) => carrierNamesByQuoteId?.[q])).filter((c): c is string => !!c))];
   const one = items.length === 1;
 
   const subject = one ? `${account.namedInsured} — ${items[0].label} needed` : `${account.namedInsured} — items needed for your insurance submission`;

@@ -77,7 +77,7 @@ function ActionRow({
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 pl-9 sm:pl-0">
         {action.kind === 'ready_to_send' && action.itemId && (
-          <Button size="sm" icon={<Send size={13} />} onClick={() => markItemSentToCarrier(action.accountId, action.itemId!)}>
+          <Button size="sm" icon={<Send size={13} />} onClick={() => markItemSentToCarrier(action.accountId, action.itemId!, action.quoteId)}>
             Mark sent
           </Button>
         )}

@@ -25,6 +25,7 @@ import type {
 import { emptyField, ACCOUNT_STAGE_LABELS, AWAITING_CARRIER_STATUSES, MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { getAccountContacts } from '../services/workflow/contacts';
 import { addBusinessDays, formatShortDate, todayKey } from '../services/workflow/dates';
+import { carriersFor, findRequirement, forwardedAt, normalizeMissingItems } from '../services/workflow/requirementKey';
 import type { FieldResolution } from '../services/extraction';
 import {
   createEmptyRiskProfile,
@@ -145,13 +146,13 @@ interface AccountsState {
   /** Set the account's pipeline status by hand; null returns it to automatic. */
   setAccountStage: (accountId: string, stage: AccountStage | null) => void;
   deleteMissingItem: (accountId: string, itemId: string) => void;
-  /** A received carrier-requested item was passed on to the carrier that asked for it. */
-  markItemSentToCarrier: (accountId: string, itemId: string) => void;
+  /** A received carrier-requested item was passed on to one carrier that asked for it. `quoteId` may be omitted when exactly one carrier is still waiting on it. */
+  markItemSentToCarrier: (accountId: string, itemId: string, quoteId?: string) => void;
   addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
   updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason'>>) => void;
   addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
   deleteQuote: (accountId: string, quoteId: string) => void;
-  /** A carrier/MGA asked for more — creates a linked missing item ("Needed by <carrier>") and flags the quote. */
+  /** A carrier/MGA asked for more — links the carrier to the account's existing requirement for that document (same logical requirement, see requirementKey), or creates it; flags the quote. Returns the item id. */
   recordCarrierRequest: (accountId: string, quoteId: string, input: { label: string; type: MissingItemType; notes?: string }) => string;
 }
 
@@ -956,21 +957,56 @@ export const useAccountsStore = create<AccountsState>()(
       addMissingItems: (accountId, seeds) => {
         if (seeds.length === 0) return [];
         const now = new Date().toISOString();
-        const created: MissingItem[] = seeds.map((seed) => ({
-          id: generateId('item'),
-          accountId,
-          type: seed.type,
-          label: seed.label,
-          status: seed.status ?? 'missing',
-          templateKey: seed.templateKey,
-          neededByQuoteId: seed.neededByQuoteId,
-          notes: seed.notes,
-          ...(seed.status === 'received' ? { receivedAt: now } : {}),
-          createdAt: now,
-          updatedAt: now,
-        }));
+        // One row per logical requirement: a seed matching an existing item (or an earlier seed in
+        // this batch) reuses it — only linking its carrier, if it names one — instead of adding a row.
+        let list = [...(get().missingItems[accountId] ?? [])];
+        const created: MissingItem[] = [];
+        const ids: string[] = [];
+        for (const seed of seeds) {
+          const existing = findRequirement(list, seed);
+          if (existing) {
+            ids.push(existing.id);
+            const linkCarrier = !!seed.neededByQuoteId && !carriersFor(existing).includes(seed.neededByQuoteId);
+            // A template seed adopts the matching manual/carrier row, so it gets the template's document suggestions.
+            const adoptTemplate = !!seed.templateKey && !existing.templateKey;
+            if (linkCarrier || adoptTemplate) {
+              list = list.map((i) =>
+                i.id === existing.id
+                  ? {
+                      ...i,
+                      ...(linkCarrier ? { neededByQuoteIds: [...carriersFor(i), seed.neededByQuoteId!] } : {}),
+                      ...(adoptTemplate ? { templateKey: seed.templateKey } : {}),
+                      updatedAt: now,
+                    }
+                  : i
+              );
+            }
+            continue;
+          }
+          const item: MissingItem = {
+            id: generateId('item'),
+            accountId,
+            type: seed.type,
+            label: seed.label,
+            status: seed.status ?? 'missing',
+            templateKey: seed.templateKey,
+            neededByQuoteIds: seed.neededByQuoteId ? [seed.neededByQuoteId] : undefined,
+            notes: seed.notes,
+            ...(seed.status === 'received' ? { receivedAt: now } : {}),
+            createdAt: now,
+            updatedAt: now,
+          };
+          created.push(item);
+          list.push(item);
+          ids.push(item.id);
+        }
+        if (created.length === 0) {
+          set((s) => ({ missingItems: { ...s.missingItems, [accountId]: list } }));
+          syncNow(accountId);
+          return ids;
+        }
         set((s) => ({
-          missingItems: { ...s.missingItems, [accountId]: [...(s.missingItems[accountId] ?? []), ...created] },
+          missingItems: { ...s.missingItems, [accountId]: list },
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(
             s.activityLog,
@@ -980,7 +1016,7 @@ export const useAccountsStore = create<AccountsState>()(
           ),
         }));
         syncNow(accountId);
-        return created.map((i) => i.id);
+        return ids;
       },
 
       updateMissingItem: (accountId, itemId, patch) => {
@@ -998,7 +1034,8 @@ export const useAccountsStore = create<AccountsState>()(
           }
           if (patch.label !== undefined && patch.label !== before.label) log = appendEvent(log, accountId, 'item_added', `Renamed checklist item "${before.label}" to "${patch.label}".`);
           return {
-            missingItems: { ...s.missingItems, [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, ...patch, updatedAt: new Date().toISOString() })) },
+            // Renaming can make two rows the same requirement ("App" → "Application") — merge them.
+            missingItems: { ...s.missingItems, [accountId]: normalizeMissingItems(updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, ...patch, updatedAt: new Date().toISOString() }))) },
             accounts: touchAccount(s.accounts, accountId),
             activityLog: log,
           };
@@ -1040,7 +1077,7 @@ export const useAccountsStore = create<AccountsState>()(
         const item = (s0.missingItems[accountId] ?? []).find((i) => i.id === itemId);
         if (!item) return;
         const doc = opts?.documentId ? (s0.documents[accountId] ?? []).find((d) => d.id === opts.documentId) : undefined;
-        const quote = item.neededByQuoteId ? (s0.quotes[accountId] ?? []).find((q) => q.id === item.neededByQuoteId) : undefined;
+        const waiting = (s0.quotes[accountId] ?? []).filter((q) => carriersFor(item).includes(q.id) && q.status !== 'declined' && q.status !== 'bound' && !forwardedAt(item, q.id));
         const now = new Date().toISOString();
         set((s) => ({
           missingItems: {
@@ -1058,7 +1095,7 @@ export const useAccountsStore = create<AccountsState>()(
             s.activityLog,
             accountId,
             'item_received',
-            `Received ${item.label}${doc ? ` (${doc.name})` : ''}.${quote ? ` Ready to send to ${quote.marketName}.` : ''}`
+            `Received ${item.label}${doc ? ` (${doc.name})` : ''}.${waiting.length ? ` Ready to send to ${waiting.map((q) => q.marketName).join(', ')}.` : ''}`
           ),
         }));
         syncNow(accountId);
@@ -1081,6 +1118,7 @@ export const useAccountsStore = create<AccountsState>()(
                 requestedAt: i.requestedAt ?? now,
                 followUpDate,
                 receivedAt: undefined,
+                forwardedTo: undefined,
                 forwardedToCarrierAt: undefined,
                 updatedAt: now,
               })),
@@ -1096,7 +1134,7 @@ export const useAccountsStore = create<AccountsState>()(
             ...s.missingItems,
             [accountId]: updateInList(s.missingItems[accountId], itemId, (i) =>
               status === 'missing'
-                ? { ...i, status, receivedAt: undefined, requestedAt: undefined, followUpDate: undefined, forwardedToCarrierAt: undefined, updatedAt: now }
+                ? { ...i, status, receivedAt: undefined, requestedAt: undefined, followUpDate: undefined, forwardedTo: undefined, forwardedToCarrierAt: undefined, updatedAt: now }
                 : { ...i, status, updatedAt: now }
             ),
           },
@@ -1140,23 +1178,29 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
-      markItemSentToCarrier: (accountId, itemId) => {
+      markItemSentToCarrier: (accountId, itemId, quoteId) => {
         const s0 = get();
         const items = s0.missingItems[accountId] ?? [];
         const item = items.find((i) => i.id === itemId);
-        const quote = item?.neededByQuoteId ? (s0.quotes[accountId] ?? []).find((q) => q.id === item.neededByQuoteId) : undefined;
-        if (!item || !quote) return;
+        if (!item) return;
+        const pending = carriersFor(item).filter((q) => !forwardedAt(item, q));
+        const targetId = quoteId ?? (pending.length === 1 ? pending[0] : undefined);
+        const quote = targetId && carriersFor(item).includes(targetId) ? (s0.quotes[accountId] ?? []).find((q) => q.id === targetId) : undefined;
+        if (!quote) return;
         const nowIso = new Date().toISOString();
         // Once nothing else this carrier asked for is still outstanding, the ball is back in the
         // carrier's court — flip the quote back to waiting and (re)arm a follow-up.
-        const stillOutstanding = items.some((i) => i.id !== itemId && i.neededByQuoteId === quote.id && i.status !== 'waived' && !i.forwardedToCarrierAt);
+        const stillOutstanding = items.some((i) => i.id !== itemId && carriersFor(i).includes(quote.id) && i.status !== 'waived' && !forwardedAt(i, quote.id));
         const reopen = quote.status === 'additional_info_requested' && !stillOutstanding;
         const followUp = reopen && (!quote.followUpDate || quote.followUpDate <= todayKey()) ? addBusinessDays(new Date(), 3) : quote.followUpDate;
         set((s) => {
           let log = appendEvent(s.activityLog, accountId, 'item_sent_to_carrier', `Sent ${item.label} to ${quote.marketName}.`);
           if (reopen) log = appendEvent(log, accountId, 'quote_status_changed', `${quote.marketName}: all requested items sent — waiting on carrier${followUp ? `, follow up ${formatShortDate(followUp)}` : ''}.`);
           return {
-            missingItems: { ...s.missingItems, [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, forwardedToCarrierAt: nowIso, updatedAt: nowIso })) },
+            missingItems: {
+              ...s.missingItems,
+              [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, forwardedTo: { ...(i.forwardedTo ?? {}), [quote.id]: nowIso }, updatedAt: nowIso })),
+            },
             quotes: {
               ...s.quotes,
               [accountId]: updateInList(s.quotes[accountId], quote.id, (q) => ({
@@ -1280,7 +1324,15 @@ export const useAccountsStore = create<AccountsState>()(
         set((s) => ({
           quotes: { ...s.quotes, [accountId]: (s.quotes[accountId] ?? []).filter((q) => q.id !== quoteId) },
           // Items this carrier asked for stay on the checklist (the client may still owe them), just no longer tied to a carrier.
-          missingItems: { ...s.missingItems, [accountId]: (s.missingItems[accountId] ?? []).map((i) => (i.neededByQuoteId === quoteId ? { ...i, neededByQuoteId: undefined } : i)) },
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: (s.missingItems[accountId] ?? []).map((i) => {
+              if (!carriersFor(i).includes(quoteId)) return i;
+              const { [quoteId]: _removed, ...forwardedTo } = i.forwardedTo ?? {};
+              const remaining = carriersFor(i).filter((q) => q !== quoteId);
+              return { ...i, neededByQuoteId: undefined, forwardedToCarrierAt: undefined, neededByQuoteIds: remaining.length ? remaining : undefined, forwardedTo: Object.keys(forwardedTo).length ? forwardedTo : undefined };
+            }),
+          },
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(s.activityLog, accountId, 'market_removed', `Removed ${quote.marketName} from Markets & Quotes.`),
         }));
@@ -1292,19 +1344,29 @@ export const useAccountsStore = create<AccountsState>()(
         const label = input.label.trim();
         if (!quote || !label) return '';
         const now = new Date().toISOString();
-        const item: MissingItem = {
-          id: generateId('item'),
-          accountId,
-          type: input.type,
-          label,
-          status: 'missing',
-          neededByQuoteId: quoteId,
-          notes: input.notes?.trim() || undefined,
-          createdAt: now,
-          updatedAt: now,
-        };
+        const items = get().missingItems[accountId] ?? [];
+        const existing = findRequirement(items, { label });
+        const note = input.notes?.trim();
+        let item: MissingItem;
+        let list: MissingItem[];
+        if (existing) {
+          // Same logical requirement already on the checklist — link this carrier to it. A waived
+          // item comes back to missing (the carrier needs it after all); a received one is simply
+          // "ready to send" to this carrier too.
+          item = {
+            ...existing,
+            neededByQuoteIds: carriersFor(existing).includes(quoteId) ? carriersFor(existing) : [...carriersFor(existing), quoteId],
+            ...(existing.status === 'waived' ? { status: 'missing' as const } : {}),
+            ...(note ? { notes: existing.notes ? `${existing.notes}\n${note}` : note } : {}),
+            updatedAt: now,
+          };
+          list = items.map((i) => (i.id === existing.id ? item : i));
+        } else {
+          item = { id: generateId('item'), accountId, type: input.type, label, status: 'missing', neededByQuoteIds: [quoteId], notes: note || undefined, createdAt: now, updatedAt: now };
+          list = [...items, item];
+        }
         set((s) => ({
-          missingItems: { ...s.missingItems, [accountId]: [...(s.missingItems[accountId] ?? []), item] },
+          missingItems: { ...s.missingItems, [accountId]: list },
           quotes: {
             ...s.quotes,
             [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
@@ -1315,7 +1377,12 @@ export const useAccountsStore = create<AccountsState>()(
             })),
           },
           accounts: touchAccount(s.accounts, accountId),
-          activityLog: appendEvent(s.activityLog, accountId, 'carrier_requested_item', `${quote.marketName} requested ${label}.`),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'carrier_requested_item',
+            existing ? `${quote.marketName} requested ${label} — linked to the existing checklist item "${existing.label}".` : `${quote.marketName} requested ${label}.`
+          ),
         }));
         syncNow(accountId);
         return item.id;
@@ -1345,7 +1412,7 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog[bundle.account.id] = bundle.activity;
             // undefined = the workflow columns don't exist yet (migration 0007 not applied) — keep
             // whatever this device has rather than wiping it with an empty list.
-            if (bundle.missingItems) missingItems[bundle.account.id] = bundle.missingItems;
+            if (bundle.missingItems) missingItems[bundle.account.id] = normalizeMissingItems(bundle.missingItems);
             if (bundle.quotes) quotes[bundle.account.id] = bundle.quotes;
             cloudAccountIds[bundle.account.id] = true;
           }
@@ -1371,6 +1438,13 @@ export const useAccountsStore = create<AccountsState>()(
     },
     {
       name: 'renewaliq.state.v1',
+      // Reconcile checklists saved before requirements were shared across carriers: one row per
+      // logical requirement, legacy single-carrier links folded in. Idempotent, runs on every load.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<AccountsState>;
+        const missingItems = Object.fromEntries(Object.entries(p.missingItems ?? {}).map(([id, items]) => [id, normalizeMissingItems(items ?? [])]));
+        return { ...current, ...p, missingItems };
+      },
       // effectiveAppetiteRecords is derived (base + fetched overrides), re-loaded on demand — never
       // persisted, so a stale override can't get stuck in one broker's browser after an admin change.
       partialize: (state) => {

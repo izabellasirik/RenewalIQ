@@ -8,6 +8,7 @@ import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { addBusinessDays, formatShortDate, todayKey } from '../../services/workflow/dates';
 import { RequestItemsDialog } from './RequestItemsDialog';
 import { DateInput } from './DateInput';
+import { carriersFor, forwardedAt } from '../../services/workflow/requirementKey';
 import { formatTimestampShort } from './time';
 import { QUOTE_STATUS_TONE } from './quoteStatus';
 import { inputClass, labelClass, smallInputClass } from './formStyles';
@@ -53,7 +54,7 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
             accountId={accountId}
             quote={quote}
             highlighted={quote.id === focusQuoteId}
-            requestedItems={items.filter((i) => i.neededByQuoteId === quote.id)}
+            requestedItems={items.filter((i) => carriersFor(i).includes(quote.id))}
             contactName={(id) => contacts.find((c) => c.id === id)?.name}
             onRequestFromClient={(ids) => setRequestIds(ids)}
           />
@@ -335,7 +336,8 @@ function QuoteCard({
             <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Requested by {quote.marketName}</p>
             <ul className="flex flex-col gap-1.5">
               {requestedItems.map((item) => {
-                const ready = item.status === 'received' && !item.forwardedToCarrierAt;
+                const sentAt = forwardedAt(item, quote.id);
+                const ready = item.status === 'received' && !sentAt;
                 return (
                   <li
                     key={item.id}
@@ -347,8 +349,8 @@ function QuoteCard({
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-[var(--color-ink-800)]">{item.label}</p>
                       <p className="text-xs text-[var(--color-ink-500)]">
-                        {item.forwardedToCarrierAt
-                          ? `Sent to ${quote.marketName} ${formatShortDate(item.forwardedToCarrierAt)}`
+                        {sentAt
+                          ? `Sent to ${quote.marketName} ${formatShortDate(sentAt)}`
                           : item.status === 'received'
                             ? `Received ${item.receivedAt ? formatShortDate(item.receivedAt) : ''} — ready to send`
                             : item.status === 'requested'
@@ -359,7 +361,7 @@ function QuoteCard({
                       </p>
                     </div>
                     {ready && (
-                      <Button size="sm" icon={<Send size={13} />} onClick={() => markItemSentToCarrier(accountId, item.id)}>
+                      <Button size="sm" icon={<Send size={13} />} onClick={() => markItemSentToCarrier(accountId, item.id, quote.id)}>
                         Mark sent to {quote.marketName}
                       </Button>
                     )}

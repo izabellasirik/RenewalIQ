@@ -19,6 +19,7 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { useAccountWorkflow } from '../hooks/useAccountWorkflow';
 import { summarizeWaiting, type WorkspaceTab } from '../services/workflow/nextActions';
 import { formatShortDate } from '../services/workflow/dates';
+import { carriersFor, forwardedAt } from '../services/workflow/requirementKey';
 import { QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { EMPTY_ACTIVITY_EVENTS } from '../utils/emptyArrays';
 
@@ -55,7 +56,7 @@ export function AccountWorkspacePage() {
     setParams(p, { replace: true });
   }
 
-  const openCarrierRequests = items.filter((i) => i.neededByQuoteId && i.status !== 'waived' && !i.forwardedToCarrierAt).length;
+  const openCarrierRequests = items.filter((i) => i.status !== 'waived' && carriersFor(i).some((q) => !forwardedAt(i, q))).length;
 
   return (
     <PageContainer>
