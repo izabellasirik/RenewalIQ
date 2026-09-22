@@ -8,6 +8,7 @@ import { AccountInfoCard } from '../components/workspace/AccountInfoCard';
 import { EditableAccountName } from '../components/workspace/EditableAccountName';
 import { AccountStageSelect } from '../components/workspace/AccountStageSelect';
 import { ContactsCard } from '../components/workspace/ContactsCard';
+import { FollowUpsCard } from '../components/workspace/FollowUpsCard';
 import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
 import { ActionList } from '../components/workspace/ActionList';
@@ -131,6 +132,7 @@ export function AccountWorkspacePage() {
           </div>
 
           <div className="flex min-w-0 flex-col gap-5">
+            <FollowUpsCard accountId={accountId} />
             <AccountInfoCard accountId={accountId} />
             <ContactsCard accountId={accountId} />
             <Card>

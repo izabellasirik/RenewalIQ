@@ -14,6 +14,7 @@ import type {
   LossEntry,
   MarketQuote,
   QuoteOption,
+  FollowUp,
   MatchResult,
   MissingItem,
   MissingItemStatus,
@@ -69,6 +70,8 @@ interface AccountsState {
   missingItems: Record<string, MissingItem[]>;
   /** Markets the account has been (or will be) submitted to, and where each one stands. Persisted and cloud-synced with the submission. */
   quotes: Record<string, MarketQuote[]>;
+  /** Manually scheduled follow-ups per account (see types/workflow.ts FollowUp). Persisted and cloud-synced. */
+  followUps: Record<string, FollowUp[]>;
   activeAccountId: string | null;
   /** Base appetite records with any admin-approved Supabase overrides merged on top. Starts as the static base data; `loadEffectiveAppetiteRecords` refreshes it. Never persisted to localStorage — always re-fetched, so a stale override can't get stuck client-side. */
   effectiveAppetiteRecords: AppetiteRecord[];
@@ -162,6 +165,12 @@ interface AccountsState {
   addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
   updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason'>>) => void;
   addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
+  addFollowUp: (accountId: string, input: { subject: string; dueDate: string; notes?: string }) => string;
+  updateFollowUp: (accountId: string, followUpId: string, patch: Partial<Pick<FollowUp, 'subject' | 'dueDate' | 'notes'>>) => void;
+  completeFollowUp: (accountId: string, followUpId: string) => void;
+  deleteFollowUp: (accountId: string, followUpId: string) => void;
+  /** Reschedule the client follow-up for several requested items at once (one request email = one follow-up). */
+  setItemsFollowUp: (accountId: string, itemIds: string[], followUpDate: string) => void;
   /** Record one quote from a market (a market can return several), optionally with the quote file. Marks the market Quoted. */
   addQuoteOption: (accountId: string, quoteId: string, input: { label?: string; premium?: number; notes?: string; file?: File }) => string;
   attachQuoteFile: (accountId: string, quoteId: string, optionId: string, file: File) => void;
@@ -295,7 +304,7 @@ export const useAccountsStore = create<AccountsState>()(
           syncStatus: { ...st.syncStatus, [accountId]: 'saving' },
           accountOwners: st.accountOwners[accountId] === userId ? st.accountOwners : { ...st.accountOwners, [accountId]: userId },
         }));
-        const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [] };
+        const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [], followUps: s.followUps[accountId] ?? [] };
         Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
           const message = !snapRes.ok ? snapRes.message : !actRes.ok ? `Activity history: ${actRes.message}` : null;
           recordSync(accountId, message);
@@ -368,6 +377,7 @@ export const useAccountsStore = create<AccountsState>()(
       activityLog: {},
       missingItems: {},
       quotes: {},
+      followUps: {},
       activeAccountId: null,
       effectiveAppetiteRecords: sampleAppetiteRecords,
 
@@ -950,6 +960,7 @@ export const useAccountsStore = create<AccountsState>()(
           const { [accountId]: _log, ...activityLog } = st.activityLog;
           const { [accountId]: _items, ...missingItems } = st.missingItems;
           const { [accountId]: _quotes, ...quotes } = st.quotes;
+          const { [accountId]: _followUps, ...followUps } = st.followUps;
           const { [accountId]: _cloud, ...cloudAccountIds } = st.cloudAccountIds;
           const { [accountId]: _sync, ...syncStatus } = st.syncStatus;
           return {
@@ -960,6 +971,7 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog,
             missingItems,
             quotes,
+            followUps,
             cloudAccountIds,
             syncStatus,
             activeAccountId: st.activeAccountId === accountId ? null : st.activeAccountId,
@@ -1427,6 +1439,82 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
+      addFollowUp: (accountId, input) => {
+        const subject = input.subject.trim();
+        if (!subject || !input.dueDate) return '';
+        const now = new Date().toISOString();
+        const followUp: FollowUp = { id: generateId('fu'), accountId, subject, dueDate: input.dueDate, notes: input.notes?.trim() || undefined, createdAt: now, updatedAt: now };
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: [...(s.followUps[accountId] ?? []), followUp] },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'follow_up_scheduled',
+            `Follow-up with ${subject} scheduled for ${formatShortDate(followUp.dueDate)}${followUp.notes ? ` — ${followUp.notes}` : ''}${actorSuffix(s.currentUserEmail)}.`
+          ),
+        }));
+        syncNow(accountId);
+        return followUp.id;
+      },
+
+      updateFollowUp: (accountId, followUpId, patch) => {
+        const before = (get().followUps[accountId] ?? []).find((f) => f.id === followUpId);
+        if (!before) return;
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: updateInList(s.followUps[accountId], followUpId, (f) => ({ ...f, ...patch, updatedAt: new Date().toISOString() })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog:
+            patch.dueDate && patch.dueDate !== before.dueDate
+              ? appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Follow-up with ${patch.subject ?? before.subject} moved to ${formatShortDate(patch.dueDate)}.`)
+              : s.activityLog,
+        }));
+        syncNow(accountId);
+      },
+
+      completeFollowUp: (accountId, followUpId) => {
+        const f = (get().followUps[accountId] ?? []).find((x) => x.id === followUpId);
+        if (!f || f.doneAt) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: updateInList(s.followUps[accountId], followUpId, (x) => ({ ...x, doneAt: now, updatedAt: now })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'follow_up_completed', `Followed up with ${f.subject}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      deleteFollowUp: (accountId, followUpId) => {
+        const f = (get().followUps[accountId] ?? []).find((x) => x.id === followUpId);
+        if (!f) return;
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: (s.followUps[accountId] ?? []).filter((x) => x.id !== followUpId) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Removed the follow-up with ${f.subject} (was ${formatShortDate(f.dueDate)}).`),
+        }));
+        syncNow(accountId);
+      },
+
+      setItemsFollowUp: (accountId, itemIds, followUpDate) => {
+        const items = (get().missingItems[accountId] ?? []).filter((i) => itemIds.includes(i.id));
+        if (items.length === 0 || !followUpDate) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: (s.missingItems[accountId] ?? []).map((i) => (itemIds.includes(i.id) ? { ...i, followUpDate, updatedAt: now } : i)),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'follow_up_scheduled',
+            items.length === 1 ? `Client follow-up for "${items[0].label}" set for ${formatShortDate(followUpDate)}.` : `Client follow-up for ${items.length} requested items set for ${formatShortDate(followUpDate)}.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
       addQuoteOption: (accountId, quoteId, input) => {
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         if (!quote) return '';
@@ -1626,6 +1714,7 @@ export const useAccountsStore = create<AccountsState>()(
           const activityLog = { ...s.activityLog };
           const missingItems = { ...s.missingItems };
           const quotes = { ...s.quotes };
+          const followUps = { ...s.followUps };
           const cloudAccountIds = { ...s.cloudAccountIds };
           for (const bundle of result.data) {
             const id = bundle.account.id;
@@ -1663,9 +1752,10 @@ export const useAccountsStore = create<AccountsState>()(
             // whatever this device has rather than wiping it with an empty list.
             if (bundle.missingItems) missingItems[bundle.account.id] = normalizeMissingItems(bundle.missingItems);
             if (bundle.quotes) quotes[bundle.account.id] = bundle.quotes;
+            if (bundle.followUps) followUps[bundle.account.id] = bundle.followUps;
             cloudAccountIds[bundle.account.id] = true;
           }
-          return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, cloudAccountIds };
+          return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, followUps, cloudAccountIds };
         });
         for (const bundle of result.data) get().runMatching(bundle.account.id);
         // Push back anything this device had that the cloud didn't (e.g. events lost to the old sync bug).

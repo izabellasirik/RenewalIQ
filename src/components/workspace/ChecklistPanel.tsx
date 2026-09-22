@@ -43,7 +43,9 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
 
   const sorted = useMemo(() => [...items].sort((a, b) => statusRank(a) - statusRank(b) || (a.createdAt < b.createdAt ? -1 : 1)), [items]);
   const outstanding = sorted.filter((i) => i.status === 'missing' || i.status === 'requested' || awaitingSend(i));
-  const visible = compact ? outstanding : sorted;
+  // Overview shows what's outstanding first, then what's been received (so a just-clicked
+  // "Received" stays visible to double-check); waived items only in the full checklist.
+  const visible = compact ? [...outstanding, ...sorted.filter((i) => i.status === 'received' && !outstanding.includes(i))] : sorted;
   const unrequested = items.filter((i) => i.status === 'missing');
   const active = items.filter((i) => i.status !== 'waived');
   const receivedCount = active.filter((i) => i.status === 'received').length;
@@ -68,7 +70,7 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
           <div className="min-w-0">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--color-ink-900)]">
               <ClipboardList size={16} className="text-[var(--color-ink-500)]" />
-              {compact ? 'Missing items' : 'Submission checklist'}
+              {compact ? 'Missing & received items' : 'Submission checklist'}
             </h3>
             {active.length > 0 && (
               <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">
@@ -129,6 +131,12 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
           </p>
         ) : (
           <ul className="mt-4 flex flex-col gap-2">
+            {compact && outstanding.length === 0 && (
+              <li className="flex items-center gap-1.5 rounded-lg bg-[var(--color-success-100)]/50 px-3 py-2 text-sm text-[var(--color-success-600)]">
+                <CheckCircle2 size={15} />
+                Nothing outstanding — received items below.
+              </li>
+            )}
             {visible.map((item) => (
               <ItemRow
                 key={item.id}

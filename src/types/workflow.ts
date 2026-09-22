@@ -40,6 +40,23 @@ export const ACCOUNT_STAGE_LABELS: Record<AccountStage, string> = {
 
 export const ACCOUNT_STAGE_ORDER: AccountStage[] = ['new', 'collecting_info', 'ready_to_submit', 'submitted', 'quoted', 'bound', 'on_hold', 'lost'];
 
+/**
+ * A follow-up the broker schedules by hand ("call Sara about the renewal on Oct 3") — for
+ * anything the checklist and markets don't already track. Shows on Today's Plate on its date.
+ */
+export interface FollowUp {
+  id: string;
+  accountId: string;
+  /** Who/what to follow up with — a contact, a market, or free text. */
+  subject: string;
+  /** Local calendar date, YYYY-MM-DD. */
+  dueDate: string;
+  notes?: string;
+  doneAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type MissingItemType = 'document' | 'information';
 
 export type MissingItemStatus = 'missing' | 'requested' | 'received' | 'waived';

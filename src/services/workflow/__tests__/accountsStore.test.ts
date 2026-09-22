@@ -76,3 +76,52 @@ describe('follow-ups on any open market status', () => {
     expect(store().activityLog[id].some((e) => e.message === 'Carrier follow-up with Adriatic Ins Co set for Sep 25.')).toBe(true);
   });
 });
+
+describe('one task per request email', () => {
+  it('groups items requested from the same contact with the same follow-up date', async () => {
+    const { deriveAccountActions } = await import('../nextActions');
+    const id = store().createAccount('Blue Ridge', 'TX');
+    const sara = store().addContact(id, { name: 'Sara' });
+    const ids = store().addMissingItems(id, [
+      { label: 'Application', type: 'document' },
+      { label: 'MVR — Marcus Hill', type: 'document' },
+      { label: 'MVR — Anthony Reed', type: 'document' },
+      { label: 'IFTA', type: 'document' },
+    ]);
+    store().markItemsRequested(id, ids.slice(0, 3), { contactId: sara, followUpDate: '2026-09-25' });
+    store().markItemsRequested(id, [ids[3]], { contactId: sara, followUpDate: '2026-09-28' });
+    const account = store().accounts.find((a) => a.id === id)!;
+    const derive = () => deriveAccountActions({ account, items: store().missingItems[id], quotes: [], contacts: [{ id: sara, name: 'Sara' }] }, '2026-09-22');
+
+    const clientFollowUps = derive().upcoming.filter((a) => a.kind === 'client_follow_up');
+    expect(clientFollowUps).toHaveLength(2);
+    const group = clientFollowUps.find((a) => a.itemIds)!;
+    expect(group.title).toBe('3 documents requested from Sara');
+    expect(group.itemIds!.sort()).toEqual(ids.slice(0, 3).sort());
+
+    // Rescheduling the group moves all three together (and stays one task).
+    store().setItemsFollowUp(id, group.itemIds!, '2026-09-26');
+    const moved = derive().upcoming.filter((a) => a.kind === 'client_follow_up' && a.itemIds);
+    expect(moved).toHaveLength(1);
+    expect(moved[0].dueDate).toBe('2026-09-26');
+  });
+});
+
+describe('manual follow-ups', () => {
+  it('shows on Today\'s Plate on its date and disappears once done', async () => {
+    const { deriveAccountActions } = await import('../nextActions');
+    const id = store().createAccount('Blue Ridge', 'TX');
+    const fu = store().addFollowUp(id, { subject: 'Sara', dueDate: '2026-09-24', notes: 'Confirm new driver start date' });
+    const account = store().accounts.find((a) => a.id === id)!;
+    const derive = (today: string) => deriveAccountActions({ account, items: [], quotes: [], contacts: [], followUps: store().followUps[id] }, today);
+
+    expect(derive('2026-09-22').upcoming.find((a) => a.followUpId === fu)?.title).toBe('Follow up with Sara');
+    const due = derive('2026-09-24').now.find((a) => a.followUpId === fu)!;
+    expect(due.kind).toBe('follow_up');
+    expect(due.detail).toContain('Confirm new driver start date');
+
+    store().completeFollowUp(id, fu);
+    expect(derive('2026-09-24').now.some((a) => a.followUpId === fu)).toBe(false);
+    expect(store().activityLog[id].map((e) => e.message)).toEqual(expect.arrayContaining(['Follow-up with Sara scheduled for Sep 24 — Confirm new driver start date.', 'Followed up with Sara.']));
+  });
+});

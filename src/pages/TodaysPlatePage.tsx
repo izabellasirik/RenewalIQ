@@ -15,6 +15,7 @@ const SECTION_ORDER: { kind: ActionKind; title: string; hint: string }[] = [
   { kind: 'ready_to_send', title: 'Ready to send', hint: 'Received from the client — a carrier is waiting for it.' },
   { kind: 'action_required', title: 'Action required', hint: 'Carrier requests, unsent submissions, and quotes to present.' },
   { kind: 'carrier_follow_up', title: 'Carrier follow-ups', hint: 'Submissions waiting on a carrier or MGA.' },
+  { kind: 'follow_up', title: 'Follow-ups', hint: 'Follow-ups you scheduled on an account.' },
   { kind: 'client_follow_up', title: 'Client follow-ups', hint: 'Items requested from the client that are due for a nudge.' },
   { kind: 'renewal', title: 'Renewals coming up', hint: 'Effective within 45 days and not bound yet.' },
 ];
@@ -30,6 +31,7 @@ export function TodaysPlatePage() {
   const riskProfiles = useAccountsStore((s) => s.riskProfiles);
   const missingItems = useAccountsStore((s) => s.missingItems);
   const quotes = useAccountsStore((s) => s.quotes);
+  const followUps = useAccountsStore((s) => s.followUps);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
   const session = useBrokerSession();
   const [mineOnly, setMineOnly] = useState(false);
@@ -53,6 +55,7 @@ export function TodaysPlatePage() {
           quotes: quotes[account.id] ?? [],
           contacts: getAccountContacts(account),
           effectiveDate: normalizeDateKey((profile?.business?.effectiveDate?.value as string | null | undefined) ?? null),
+          followUps: followUps[account.id] ?? [],
         },
         today
       );
@@ -60,7 +63,7 @@ export function TodaysPlatePage() {
       allUpcoming.push(...derived.upcoming);
     }
     return { now: sortActions(allNow), upcoming: sortActions(allUpcoming) };
-  }, [accounts, riskProfiles, missingItems, quotes, mineOnly, session.status, session.userId, session.email, today]);
+  }, [accounts, riskProfiles, missingItems, quotes, followUps, mineOnly, session.status, session.userId, session.email, today]);
 
   const overdue = now.filter((a) => a.overdue).length;
   const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });

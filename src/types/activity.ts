@@ -24,6 +24,7 @@ export type ActivityEventType =
   | 'item_added'
   | 'item_requested'
   | 'follow_up_scheduled'
+  | 'follow_up_completed'
   | 'item_received'
   | 'item_waived'
   | 'item_removed'
@@ -49,6 +50,7 @@ export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<Acti
   'item_added',
   'item_requested',
   'follow_up_scheduled',
+  'follow_up_completed',
   'item_received',
   'item_waived',
   'item_removed',

@@ -1,4 +1,4 @@
-import type { ActivityEvent, MarketQuote, MatchResult, MissingItem, UploadedDocument } from '../types';
+import type { ActivityEvent, FollowUp, MarketQuote, MatchResult, MissingItem, UploadedDocument } from '../types';
 
 /**
  * Stable empty-array fallbacks for store selectors like `s.documents[id] ?? EMPTY_DOCUMENTS`.
@@ -10,3 +10,4 @@ export const EMPTY_MATCH_RESULTS: MatchResult[] = [];
 export const EMPTY_ACTIVITY_EVENTS: ActivityEvent[] = [];
 export const EMPTY_MISSING_ITEMS: MissingItem[] = [];
 export const EMPTY_QUOTES: MarketQuote[] = [];
+export const EMPTY_FOLLOW_UPS: FollowUp[] = [];

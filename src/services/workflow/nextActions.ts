@@ -1,4 +1,4 @@
-import type { Account, Contact, MarketQuote, MissingItem } from '../../types';
+import type { Account, Contact, FollowUp, MarketQuote, MissingItem } from '../../types';
 import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS } from '../../types';
 import { daysBetween, describeDue, formatShortDate, todayKey } from './dates';
 import { carriersFor, forwardedAt } from './requirementKey';
@@ -10,7 +10,7 @@ import { carriersFor, forwardedAt } from './requirementKey';
  * item received, logging a carrier status) is what clears or creates an action.
  */
 
-export type ActionKind = 'client_follow_up' | 'carrier_follow_up' | 'action_required' | 'ready_to_send' | 'renewal';
+export type ActionKind = 'client_follow_up' | 'carrier_follow_up' | 'action_required' | 'ready_to_send' | 'follow_up' | 'renewal';
 
 export type WorkspaceTab = 'overview' | 'checklist' | 'quotes' | 'activity';
 
@@ -27,7 +27,11 @@ export interface ActionItem {
   overdue: boolean;
   tab: WorkspaceTab;
   itemId?: string;
+  /** Several requested items followed up together (one request email) — opens as one task. */
+  itemIds?: string[];
   quoteId?: string;
+  /** A broker-scheduled follow-up (FollowUp.id). */
+  followUpId?: string;
 }
 
 export interface AccountWorkflowInput {
@@ -37,6 +41,8 @@ export interface AccountWorkflowInput {
   contacts: Contact[];
   /** The Risk Profile's requested effective date (renewal date), if known. */
   effectiveDate?: string | null;
+  /** Broker-scheduled follow-ups. */
+  followUps?: FollowUp[];
 }
 
 export interface DerivedActions {
@@ -53,12 +59,13 @@ const KIND_PRIORITY: Record<ActionKind, number> = {
   ready_to_send: 0,
   action_required: 1,
   carrier_follow_up: 2,
-  client_follow_up: 3,
-  renewal: 4,
+  follow_up: 3,
+  client_follow_up: 4,
+  renewal: 5,
 };
 
 export function deriveAccountActions(input: AccountWorkflowInput, today = todayKey()): DerivedActions {
-  const { account, items, quotes, contacts, effectiveDate } = input;
+  const { account, items, quotes, contacts, effectiveDate, followUps = [] } = input;
   const now: ActionItem[] = [];
   const upcoming: ActionItem[] = [];
   if (account.archived) return { now, upcoming };
@@ -74,6 +81,7 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
   }
 
   let unrequestedChecklist = 0;
+  const clientGroups = new Map<string, { item: MissingItem; neededBy: string }[]>();
 
   for (const item of items) {
     // Every carrier still in play that is waiting on this requirement (one row can serve several).
@@ -85,17 +93,11 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
     const neededBy = linkedCarriers.length ? ` · Needed by ${names(linkedCarriers)}` : '';
 
     if (item.status === 'requested' && item.followUpDate) {
-      const who = contactName(item.requestedFromContactId);
-      placeDated({
-        ...base,
-        id: `client-fu-${item.id}`,
-        kind: 'client_follow_up',
-        title: `${item.label} requested${who ? ` from ${who}` : ' from client'}`,
-        detail: `${describeDue(item.followUpDate, today)}${item.requestedAt ? ` · Requested ${formatShortDate(item.requestedAt)}` : ''}${neededBy}`,
-        dueDate: item.followUpDate,
-        tab: 'checklist',
-        itemId: item.id,
-      });
+      // Grouped below: everything asked of the same person with the same follow-up date is one task.
+      const key = `${item.requestedFromContactId ?? ''}|${item.followUpDate}`;
+      const g = clientGroups.get(key);
+      if (g) g.push({ item, neededBy });
+      else clientGroups.set(key, [{ item, neededBy }]);
     } else if (item.status === 'missing') {
       if (openCarriers.length > 0) {
         now.push({
@@ -129,6 +131,52 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
         });
       }
     }
+  }
+
+  for (const [key, group] of clientGroups) {
+    const first = group[0].item;
+    const who = contactName(first.requestedFromContactId);
+    const from = who ? ` from ${who}` : ' from client';
+    const requestedAt = group.map((g) => g.item.requestedAt).filter(Boolean).sort()[0];
+    const requested = requestedAt ? ` · Requested ${formatShortDate(requestedAt)}` : '';
+    if (group.length === 1) {
+      placeDated({
+        ...base,
+        id: `client-fu-${first.id}`,
+        kind: 'client_follow_up',
+        title: `${first.label} requested${from}`,
+        detail: `${describeDue(first.followUpDate!, today)}${requested}${group[0].neededBy}`,
+        dueDate: first.followUpDate!,
+        tab: 'checklist',
+        itemId: first.id,
+      });
+    } else {
+      const labels = group.map((g) => g.item.label);
+      placeDated({
+        ...base,
+        id: `client-fu-group-${key}`,
+        kind: 'client_follow_up',
+        title: `${group.length} documents requested${from}`,
+        detail: `${describeDue(first.followUpDate!, today)}${requested} · ${labels.slice(0, 2).join(', ')}${labels.length > 2 ? ` +${labels.length - 2} more` : ''}`,
+        dueDate: first.followUpDate!,
+        tab: 'checklist',
+        itemIds: group.map((g) => g.item.id),
+      });
+    }
+  }
+
+  for (const f of followUps) {
+    if (f.doneAt) continue;
+    placeDated({
+      ...base,
+      id: `followup-${f.id}`,
+      kind: 'follow_up',
+      title: `Follow up with ${f.subject}`,
+      detail: `${describeDue(f.dueDate, today)}${f.notes ? ` · ${f.notes}` : ''}`,
+      dueDate: f.dueDate,
+      tab: 'overview',
+      followUpId: f.id,
+    });
   }
 
   if (unrequestedChecklist > 0) {
