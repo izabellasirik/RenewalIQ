@@ -17,7 +17,7 @@ sufficient for this workload.
 
 ## 2. Run the migrations
 
-Seven migration files, run in order — all are required, and **none has been applied to any live
+Eight migration files, run in order — all are required, and **none has been applied to any live
 Supabase project by this repo automatically**. Run each one yourself, once, via the Supabase SQL
 editor (paste the file's contents and run) or the Supabase CLI (`supabase db push`):
 
@@ -79,6 +79,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   after 0003. Until it's applied, cloud-backed accounts still sync their Risk Profile, but the
   workspace shows "Failed to save to your account" and contacts/checklist/quotes stay in this
   browser only.
+- **`supabase/migrations/0008_account_stage.sql`** — adds a nullable `stage` column to
+  `submissions` for the broker-set client status (New, Collecting info, Out to market, Quoted,
+  Bound, On hold, …) used by the Accounts list filters. NULL means "automatic". Additive, no new
+  policies, safe to re-run. Must run after 0003. Until it's applied, a manually-set status stays in
+  this browser only and the app shows "Failed to save to your account".
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -106,6 +111,7 @@ from (values
   ('0005_submission_contact_fields',  exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'contact_name')),
   ('0006_widen_coverage_type_check',  exists (select 1 from pg_constraint where conrelid = to_regclass('public.coverage_lines') and pg_get_constraintdef(oid) like '%trailer_interchange%')),
   ('0007_account_workflow',           exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'missing_items')),
+  ('0008_account_stage',              exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'stage')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

@@ -6,6 +6,7 @@ import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Badge, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { AccountInfoCard } from '../components/workspace/AccountInfoCard';
 import { EditableAccountName } from '../components/workspace/EditableAccountName';
+import { AccountStageSelect } from '../components/workspace/AccountStageSelect';
 import { ContactsCard } from '../components/workspace/ContactsCard';
 import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
@@ -82,6 +83,7 @@ export function AccountWorkspacePage() {
               </span>
             </div>
           </div>
+          <AccountStageSelect accountId={accountId} />
         </div>
 
         <div className="flex flex-wrap gap-2 text-xs">

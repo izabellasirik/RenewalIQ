@@ -167,7 +167,6 @@ function QuoteCard({
   const [reason, setReason] = useState('');
   const [reqLabel, setReqLabel] = useState('');
   const [reqType, setReqType] = useState<MissingItemType>('document');
-  const [reqAskClient, setReqAskClient] = useState(true);
   const [note, setNote] = useState('');
 
   const awaiting = AWAITING_CARRIER_STATUSES.includes(quote.status);
@@ -197,8 +196,8 @@ function QuoteCard({
     if (form === 'note') addQuoteNote(accountId, quote.id, note);
     if (form === 'request') {
       if (!reqLabel.trim()) return;
-      const id = recordCarrierRequest(accountId, quote.id, { label: reqLabel.trim(), type: reqType });
-      if (id && reqAskClient) onRequestFromClient([id]);
+      // Only records the request. The client email is drafted when the broker clicks "Request from client".
+      recordCarrierRequest(accountId, quote.id, { label: reqLabel.trim(), type: reqType });
     }
     setForm(null);
   }
@@ -328,12 +327,6 @@ function QuoteCard({
                 Save
               </Button>
             </div>
-            {form === 'request' && (
-              <label className="flex items-center gap-1.5 text-xs text-[var(--color-ink-600)] sm:col-span-3">
-                <input type="checkbox" checked={reqAskClient} onChange={(e) => setReqAskClient(e.target.checked)} />
-                Draft the request to the client now
-              </label>
-            )}
           </form>
         )}
 

@@ -21,6 +21,25 @@ export interface AssignedBroker {
   userId?: string;
 }
 
+/**
+ * Where the account stands in the pipeline. Set by the broker by hand, or — when never set —
+ * derived from the checklist and quotes (see deriveAccountStage in services/workflow/accountStage.ts).
+ */
+export type AccountStage = 'new' | 'collecting_info' | 'ready_to_submit' | 'submitted' | 'quoted' | 'bound' | 'on_hold' | 'lost';
+
+export const ACCOUNT_STAGE_LABELS: Record<AccountStage, string> = {
+  new: 'New',
+  collecting_info: 'Collecting info',
+  ready_to_submit: 'Ready to submit',
+  submitted: 'Out to market',
+  quoted: 'Quoted',
+  bound: 'Bound',
+  on_hold: 'On hold',
+  lost: 'Lost / not renewing',
+};
+
+export const ACCOUNT_STAGE_ORDER: AccountStage[] = ['new', 'collecting_info', 'ready_to_submit', 'submitted', 'quoted', 'bound', 'on_hold', 'lost'];
+
 export type MissingItemType = 'document' | 'information';
 
 export type MissingItemStatus = 'missing' | 'requested' | 'received' | 'waived';

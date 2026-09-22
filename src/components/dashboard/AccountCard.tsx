@@ -10,6 +10,9 @@ import { formatDate } from '../../utils/dates';
 import { EMPTY_DOCUMENTS, EMPTY_MATCH_RESULTS } from '../../utils/emptyArrays';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { summarizeWaiting } from '../../services/workflow/nextActions';
+import { effectiveAccountStage } from '../../services/workflow/accountStage';
+import { ACCOUNT_STAGE_TONE } from '../workspace/accountStageStyle';
+import { ACCOUNT_STAGE_LABELS } from '../../types';
 
 export function AccountCard({ account, index, onOpenHistory }: { account: Account; index: number; onOpenHistory: () => void }) {
   const navigate = useNavigate();
@@ -33,6 +36,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   const { items, quotes, dotNumber, actions } = useAccountWorkflow(account.id);
   const waiting = summarizeWaiting(items, quotes);
   const nextAction = actions.now[0] ?? actions.upcoming[0];
+  const { stage, manual } = effectiveAccountStage(account, items, quotes);
 
   function commitRename() {
     const trimmed = draftName.trim();
@@ -122,7 +126,10 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <Badge tone={status.tone}>{status.label}</Badge>
+              {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}
+              <Badge tone={ACCOUNT_STAGE_TONE[stage]} title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'}>
+                {ACCOUNT_STAGE_LABELS[stage]}
+              </Badge>
               <OverflowMenu items={menuItems} />
             </div>
           </div>

@@ -5,6 +5,7 @@ import type {
   ActivityEvent,
   ActivityEventType,
   AppetiteRecord,
+  AccountStage,
   AssignedBroker,
   Contact,
   CoverageLine,
@@ -21,7 +22,7 @@ import type {
   UploadedDocument,
   VehicleEntry,
 } from '../types';
-import { emptyField, AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
+import { emptyField, ACCOUNT_STAGE_LABELS, AWAITING_CARRIER_STATUSES, MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { getAccountContacts } from '../services/workflow/contacts';
 import { addBusinessDays, formatShortDate, todayKey } from '../services/workflow/dates';
 import type { FieldResolution } from '../services/extraction';
@@ -139,8 +140,10 @@ interface AccountsState {
   /** The broker sent the client a request (the email itself is sent outside Renewal IQ). */
   markItemsRequested: (accountId: string, itemIds: string[], opts: { contactId?: string; followUpDate?: string }) => void;
   markItemReceived: (accountId: string, itemId: string, opts?: { documentId?: string }) => void;
-  /** Waive, or move back to missing. */
-  setItemStatus: (accountId: string, itemId: string, status: Extract<MissingItemStatus, 'missing' | 'waived'>) => void;
+  /** Set a checklist item's status directly (the broker's manual override of the request/receive flow). */
+  setItemStatus: (accountId: string, itemId: string, status: MissingItemStatus) => void;
+  /** Set the account's pipeline status by hand; null returns it to automatic. */
+  setAccountStage: (accountId: string, stage: AccountStage | null) => void;
   deleteMissingItem: (accountId: string, itemId: string) => void;
   /** A received carrier-requested item was passed on to the carrier that asked for it. */
   markItemSentToCarrier: (accountId: string, itemId: string) => void;
@@ -1063,8 +1066,31 @@ export const useAccountsStore = create<AccountsState>()(
 
       setItemStatus: (accountId, itemId, status) => {
         const item = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
-        if (!item) return;
+        if (!item || item.status === status) return;
+        if (status === 'received') return get().markItemReceived(accountId, itemId);
         const now = new Date().toISOString();
+        if (status === 'requested') {
+          // Marked by hand (e.g. asked on the phone) — stamp it and arm a follow-up so it still lands on Today's Plate.
+          const followUpDate = item.followUpDate ?? addBusinessDays(new Date(), 3);
+          set((s) => ({
+            missingItems: {
+              ...s.missingItems,
+              [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({
+                ...i,
+                status,
+                requestedAt: i.requestedAt ?? now,
+                followUpDate,
+                receivedAt: undefined,
+                forwardedToCarrierAt: undefined,
+                updatedAt: now,
+              })),
+            },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'item_requested', `Marked "${item.label}" as ${MISSING_ITEM_STATUS_LABELS.requested.toLowerCase()} — follow up ${formatShortDate(followUpDate)}.`),
+          }));
+          syncNow(accountId);
+          return;
+        }
         set((s) => ({
           missingItems: {
             ...s.missingItems,
@@ -1080,6 +1106,24 @@ export const useAccountsStore = create<AccountsState>()(
             accountId,
             status === 'waived' ? 'item_waived' : 'item_added',
             status === 'waived' ? `Waived "${item.label}" — not needed.` : `Moved "${item.label}" back to missing.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      setAccountStage: (accountId, stage) => {
+        const account = get().accounts.find((a) => a.id === accountId);
+        if (!account || (account.stage ?? null) === stage) return;
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, stage: stage ?? undefined } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'stage_changed',
+            stage ? `Status set to ${ACCOUNT_STAGE_LABELS[stage]}.` : 'Status set back to automatic.'
           ),
         }));
         syncNow(accountId);

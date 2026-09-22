@@ -1,5 +1,5 @@
 import { supabase } from './client';
-import type { Account, ActivityEvent, AssignedBroker, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
+import type { Account, AccountStage, ActivityEvent, AssignedBroker, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
 
 export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
@@ -158,7 +158,7 @@ export interface CloudSubmissionBundle {
  * and written together with the submission, the existing owner-only RLS on `submissions` covers
  * it with no new policies, and it keeps this file's full-snapshot save a single upsert.
  */
-const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes'] as const;
+const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage'] as const;
 
 function isMissingWorkflowColumnError(error: { message: string; code?: string }): boolean {
   return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
@@ -216,6 +216,7 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         ...(sub.contact_phone ? { contactPhone: sub.contact_phone } : {}),
         ...(Array.isArray(sub.contacts) ? { contacts: sub.contacts as Contact[] } : {}),
         ...(sub.assigned_broker && typeof sub.assigned_broker === 'object' ? { assignedBroker: sub.assigned_broker as AssignedBroker } : {}),
+        ...(sub.stage ? { stage: sub.stage as AccountStage } : {}),
       };
 
       const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
@@ -364,22 +365,27 @@ export async function saveSubmissionSnapshot(
       contact_email: account.contactEmail || null,
       contact_phone: account.contactPhone || null,
     };
-    const submissionRow = {
+    const workflowRow = {
       ...legacyRow,
       contacts: account.contacts ?? null,
       assigned_broker: account.assignedBroker ?? null,
       ...(workflow ? { missing_items: workflow.missingItems, market_quotes: workflow.quotes } : {}),
     };
-    let workflowNotSaved = false;
-    const { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
-    if (subErr) {
-      // A project that hasn't applied 0007 yet: still save everything else (so the Risk Profile
-      // never stops syncing), but report the failure honestly instead of claiming "Saved".
-      if (!isMissingWorkflowColumnError(subErr)) return fail(subErr.message);
-      const { error: legacyErr } = await supabase.from('submissions').upsert(legacyRow);
-      if (legacyErr) return fail(legacyErr.message);
-      workflowNotSaved = true;
+    const submissionRow = { ...workflowRow, stage: account.stage ?? null };
+    // A project that hasn't applied the newest migrations still saves everything it can (so the
+    // Risk Profile never stops syncing), stepping down one migration at a time — 0008 (stage),
+    // then 0007 (workflow) — and reports the gap honestly instead of claiming "Saved".
+    let notSavedMessage: string | null = null;
+    let { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
+    if (subErr && isMissingWorkflowColumnError(subErr)) {
+      ({ error: subErr } = await supabase.from('submissions').upsert(workflowRow));
+      notSavedMessage = 'Account status was not saved to your account — the database needs migration 0008_account_stage.sql.';
+      if (subErr && isMissingWorkflowColumnError(subErr)) {
+        ({ error: subErr } = await supabase.from('submissions').upsert(legacyRow));
+        notSavedMessage = 'Contacts, checklist, quotes, and status were not saved to your account — the database needs migrations 0007_account_workflow.sql and 0008_account_stage.sql.';
+      }
     }
+    if (subErr) return fail(subErr.message);
 
     const { values, alternates } = collectFieldValueRows(userId, account.id, profile);
 
@@ -473,7 +479,7 @@ export async function saveSubmissionSnapshot(
     const insErr = insRes.find((r) => r.error);
     if (insErr?.error) return fail(insErr.error.message);
 
-    if (workflowNotSaved) return fail('Contacts, checklist, and quotes were not saved to your account — the database needs migration 0007_account_workflow.sql.');
+    if (notSavedMessage) return fail(notSavedMessage);
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not save to your account.');

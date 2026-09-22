@@ -1,8 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { Ban, CheckCircle2, Circle, ClipboardList, Clock, Mail, PackageCheck, Pencil, Plus, RotateCcw, Send, Trash2 } from 'lucide-react';
-import type { MissingItem, MissingItemType, UploadedDocument } from '../../types';
+import type { MissingItem, MissingItemStatus, MissingItemType, UploadedDocument } from '../../types';
 import { MISSING_ITEM_STATUS_LABELS } from '../../types';
-import { Badge, Button, Card, CardBody, EmptyState, OverflowMenu, ProgressBar, type BadgeTone, type OverflowMenuItem } from '../ui';
+import { Badge, Button, Card, CardBody, EmptyState, OverflowMenu, ProgressBar, type OverflowMenuItem } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { CHECKLIST_TEMPLATES, expandTemplate, findTemplateItem } from '../../services/workflow/checklistTemplates';
@@ -13,8 +13,6 @@ import { DocumentPreviewLink } from './DocumentPreviewLink';
 import { DateInput } from './DateInput';
 import { inputClass, labelClass, linkButtonClass, smallInputClass } from './formStyles';
 import { cn } from '../../utils/cn';
-
-const STATUS_TONE: Record<MissingItem['status'], BadgeTone> = { missing: 'danger', requested: 'warning', received: 'success', waived: 'neutral' };
 
 function statusRank(item: MissingItem): number {
   if (item.status === 'received' && item.neededByQuoteId && !item.forwardedToCarrierAt) return 0;
@@ -254,9 +252,7 @@ function ItemRow({
                 <div className="flex flex-wrap items-center gap-1.5">
                   <p className={cn('text-sm font-medium text-[var(--color-ink-800)]', item.status === 'waived' && 'line-through')}>{item.label}</p>
                   {item.type === 'information' && <span className="rounded bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-500)]">Info</span>}
-                  <Badge tone={STATUS_TONE[item.status]} className="px-2 py-0.5 text-[11px]">
-                    {MISSING_ITEM_STATUS_LABELS[item.status]}
-                  </Badge>
+                  <ItemStatusSelect value={item.status} onChange={(status) => setItemStatus(accountId, item.id, status)} label={item.label} />
                   {carrierName && (
                     <Badge tone="brand" className="px-2 py-0.5 text-[11px]">
                       Needed by {carrierName}
@@ -323,6 +319,33 @@ function ItemRow({
         )}
       </div>
     </li>
+  );
+}
+
+const MISSING_ITEM_STATUS_ORDER: MissingItemStatus[] = ['missing', 'requested', 'received', 'waived'];
+
+const STATUS_SELECT_CLASS: Record<MissingItemStatus, string> = {
+  missing: 'border-[var(--color-danger-100)] bg-[var(--color-danger-100)] text-[var(--color-danger-600)]',
+  requested: 'border-[var(--color-warning-100)] bg-[var(--color-warning-100)] text-[var(--color-warning-600)]',
+  received: 'border-[var(--color-success-100)] bg-[var(--color-success-100)] text-[var(--color-success-600)]',
+  waived: 'border-[var(--color-ink-100)] bg-[var(--color-ink-100)] text-[var(--color-ink-600)]',
+};
+
+/** Pill-styled status picker — lets the broker set any status directly (e.g. requested by phone, received by fax). */
+function ItemStatusSelect({ value, onChange, label }: { value: MissingItemStatus; onChange: (status: MissingItemStatus) => void; label: string }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value as MissingItemStatus)}
+      aria-label={`Status for ${label}`}
+      className={cn('cursor-pointer rounded-full border px-2 py-0.5 text-[11px] font-medium outline-none focus:ring-2 focus:ring-[var(--color-brand-500)]/20', STATUS_SELECT_CLASS[value])}
+    >
+      {MISSING_ITEM_STATUS_ORDER.map((s) => (
+        <option key={s} value={s}>
+          {MISSING_ITEM_STATUS_LABELS[s]}
+        </option>
+      ))}
+    </select>
   );
 }
 

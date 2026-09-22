@@ -26,6 +26,7 @@ import {
   XCircle,
   ArrowRightLeft,
   ShieldCheck,
+  Flag,
   type LucideIcon,
 } from 'lucide-react';
 import type { ActivityEvent, ActivityEventType } from '../../types';
@@ -49,6 +50,7 @@ const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   record_deleted: Trash2,
   matching_run: Compass,
   account_updated: Pencil,
+  stage_changed: Flag,
   broker_assigned: UserCog,
   contact_added: UserPlus,
   contact_updated: UserCog,
