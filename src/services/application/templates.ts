@@ -39,7 +39,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           // fieldMappingEngine.ts).
           { targetFieldId: 'dot_number', targetLabel: 'DOT Number', riskProfilePath: 'transportation.dotNumber', required: true },
           { targetFieldId: 'mc_number', targetLabel: 'MC Number', riskProfilePath: 'transportation.mcNumber' },
-          { targetFieldId: 'effective_date', targetLabel: 'Requested Effective Date', riskProfilePath: 'business.effectiveDate', required: true },
+          { targetFieldId: 'effective_date', targetLabel: 'Requested Effective Date', riskProfilePath: 'business.effectiveDate', format: formatDateMDY, required: true },
         ],
       },
       {

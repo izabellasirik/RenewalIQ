@@ -602,6 +602,18 @@ export async function deleteSubmissionFiles(userId: string, accountId: string): 
   }
 }
 
+/** The original file's bytes from the private bucket — for the in-app document preview (nothing is saved to the broker's disk). */
+export async function downloadDocumentFile(storagePath: string): Promise<RepoResult<Blob>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.storage.from(BUCKET).download(storagePath);
+    if (error || !data) return fail(error?.message ?? 'Could not load this file.');
+    return { ok: true, data };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not load this file.');
+  }
+}
+
 /** A short-lived signed URL for previewing a private document — never a permanent public URL. */
 export async function getSignedDocumentUrl(storagePath: string, expiresInSeconds = 300): Promise<RepoResult<string>> {
   if (!supabase) return NOT_CONFIGURED;

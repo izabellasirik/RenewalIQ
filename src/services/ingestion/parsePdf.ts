@@ -1,5 +1,6 @@
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// Legacy build: same API, plus polyfills for JS features newer than current Safari / older Chromium.
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { RawDocument, RawDocumentPage } from './types';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;

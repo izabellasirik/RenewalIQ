@@ -53,6 +53,7 @@ import { generateId } from '../utils/id';
 import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { isSupabaseConfigured } from '../services/supabase/client';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
+import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
 
@@ -333,6 +334,10 @@ export const useAccountsStore = create<AccountsState>()(
         });
         get().runMatching(account.id);
         syncNow(account.id);
+        // Keep the originals in this browser for in-app preview.
+        files?.forEach((file, i) => {
+          if (file && finalDocs[i]) void saveLocalFile(finalDocs[i].id, file, file.name);
+        });
         if (isSupabaseConfigured && get().currentUserId && files) {
           finalDocs.forEach((doc, i) => {
             const file = files[i];
@@ -384,6 +389,9 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog: log,
           };
         });
+
+        // Keep the originals in this browser for in-app preview (fire-and-forget, never blocks extraction).
+        newDocs.forEach((doc, i) => void saveLocalFile(doc.id, files[i], files[i].name));
 
         newDocs.forEach((doc, i) => {
           const file = files[i];
@@ -492,6 +500,7 @@ export const useAccountsStore = create<AccountsState>()(
       },
 
       deleteDocument: (accountId, documentId) => {
+        void deleteLocalFiles([documentId]);
         const before = get().documents[accountId] ?? [];
         const doc = before.find((d) => d.id === documentId);
         set((s) => {
@@ -804,6 +813,7 @@ export const useAccountsStore = create<AccountsState>()(
         const clonedAccount: Account = { ...source, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false };
         const clonedProfile: RiskProfile = { ...sourceProfile, id: generateId('risk'), accountId: newId, updatedAt: now };
         const clonedDocs = (s.documents[accountId] ?? []).map((d) => ({ ...d, id: generateId('doc'), accountId: newId }));
+        (s.documents[accountId] ?? []).forEach((d, i) => void copyLocalFile(d.id, clonedDocs[i].id));
 
         set((state) => ({
           accounts: [...state.accounts, clonedAccount],
@@ -839,6 +849,7 @@ export const useAccountsStore = create<AccountsState>()(
           if (!deleteResult.ok) return { ok: false, message: `Couldn't delete this submission from your account: ${deleteResult.message}` };
         }
 
+        void deleteLocalFiles((s.documents[accountId] ?? []).map((d) => d.id));
         set((st) => {
           const { [accountId]: _doc, ...documents } = st.documents;
           const { [accountId]: _profile, ...riskProfiles } = st.riskProfiles;

@@ -7,9 +7,11 @@ import { cn } from '../../utils/cn';
 import { relativeTime } from '../../utils/dates';
 import { DATA_STATUS_LABELS, fieldDataStatus } from '../../utils/dataStatus';
 import { formatCurrencyValue, parseCurrencyInput } from '../../utils/currency';
+import { normalizeDateKey } from '../../services/workflow/dates';
 
 /** 'currency' is for true numeric monetary fields (e.g. annualRevenue) — stores/parses a clean number, displays with $ and comma separators. A monetary field that's fundamentally free text (coverage limits, which can legitimately hold "$1M/$2M CSL") stays 'text' and is normalized at its own save call site instead — see utils/currency.ts's normalizeCurrencyText. */
-export type FieldValueType = 'text' | 'textarea' | 'number' | 'currency' | 'boolean' | 'list';
+/** 'date' stores a YYYY-MM-DD string and edits with a date picker; an older free-text value ("10/01/2026") is still shown and pre-fills the picker when it can be read. */
+export type FieldValueType = 'text' | 'textarea' | 'number' | 'currency' | 'boolean' | 'list' | 'date';
 
 const EXTRACTION_METHOD_LABELS: Record<ExtractionMethod, string> = {
   ai_extraction: 'AI-extracted',
@@ -47,7 +49,21 @@ export function parseDraft(valueType: FieldValueType, raw: string): unknown {
   if (valueType === 'currency') return parseCurrencyInput(raw);
   if (valueType === 'list') return raw.split(',').map((s) => s.trim()).filter(Boolean);
   if (valueType === 'boolean') return raw === 'Yes';
+  if (valueType === 'date') return raw.trim() === '' ? null : (normalizeDateKey(raw) ?? raw.trim());
   return raw;
+}
+
+/** Read-only display for a value of this type ('date' → "Oct 1, 2026"). */
+function displayTypedValue(valueType: FieldValueType, value: unknown): string {
+  if (valueType === 'currency') return formatCurrencyValue(value as number | null);
+  if (valueType === 'date' && typeof value === 'string') {
+    const key = normalizeDateKey(value);
+    if (key) {
+      const [y, m, d] = key.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  }
+  return displayReadValue(value);
 }
 
 /**
@@ -60,6 +76,11 @@ export function parseDraft(valueType: FieldValueType, raw: string): unknown {
 export function isValidDraft(valueType: FieldValueType, raw: string): boolean {
   if ((valueType === 'currency' || valueType === 'number') && raw.trim() !== '') {
     return parseDraft(valueType, raw) !== null;
+  }
+  // Picker values are always complete; the year guard stops a half-typed "0002-…" from saving.
+  if (valueType === 'date' && raw.trim() !== '') {
+    const key = normalizeDateKey(raw);
+    return !!key && Number(key.slice(0, 4)) >= 1900;
   }
   return true;
 }
@@ -109,6 +130,18 @@ export function ValueInput({
   autoFocus?: boolean;
   onKeyDown?: (e: React.KeyboardEvent) => void;
 }) {
+  if (valueType === 'date') {
+    return (
+      <input
+        type="date"
+        autoFocus={autoFocus}
+        value={normalizeDateKey(value) ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        className="w-full rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
+      />
+    );
+  }
   if (valueType === 'boolean') {
     return (
       <select autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} className="rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none">
@@ -276,7 +309,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                   {displayReadValue(field.value)}
                 </button>
               ) : (
-                <p className="text-sm text-[var(--color-ink-900)]">{valueType === 'currency' ? formatCurrencyValue(field.value) : displayReadValue(field.value)}</p>
+                <p className="text-sm text-[var(--color-ink-900)]">{displayTypedValue(valueType, field.value)}</p>
               )}
             </div>
           ) : (
