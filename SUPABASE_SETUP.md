@@ -88,6 +88,32 @@ which re-checks admin status itself server-side; updating a feedback entry's sta
 RLS-gated `UPDATE`, gated the same way (`is_admin()`) but without a dedicated function, since it
 doesn't need the multi-table atomic transaction the appetite-update review does.
 
+### Checking which migrations are applied
+
+Not sure what's already been run on a project? Paste this read-only query into the SQL editor —
+any row showing `MISSING` is a migration you still need to apply (in number order). A
+"Could not find the table 'public.<name>' in the schema cache" error in the app almost always
+means the migration that creates that table was never run (e.g. `product_feedback` → 0002).
+
+```sql
+-- RenewalIQ: which migrations are applied? (read-only)
+select m.migration, case when m.applied then 'applied' else 'MISSING' end as status
+from (values
+  ('0001_appetite_update_workflow',   to_regclass('public.appetite_update_requests') is not null and to_regprocedure('public.is_admin()') is not null),
+  ('0002_product_feedback',           to_regclass('public.product_feedback') is not null),
+  ('0003_broker_workspaces',          to_regclass('public.submissions') is not null),
+  ('0004_intake_submissions',         to_regclass('public.intake_links') is not null),
+  ('0005_submission_contact_fields',  exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'contact_name')),
+  ('0006_widen_coverage_type_check',  exists (select 1 from pg_constraint where conrelid = to_regclass('public.coverage_lines') and pg_get_constraintdef(oid) like '%trailer_interchange%')),
+  ('0007_account_workflow',           exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'missing_items')),
+  ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
+  ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
+) as m(migration, applied);
+```
+
+If a table was just created and the app still reports the schema-cache error, run
+`notify pgrst, 'reload schema';` once in the SQL editor.
+
 ## 3. Get your API credentials
 
 Project Settings → API in the Supabase dashboard:
