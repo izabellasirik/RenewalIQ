@@ -5,6 +5,7 @@ import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Badge, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { AccountInfoCard } from '../components/workspace/AccountInfoCard';
+import { EditableAccountName } from '../components/workspace/EditableAccountName';
 import { ContactsCard } from '../components/workspace/ContactsCard';
 import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
@@ -61,7 +62,7 @@ export function AccountWorkspacePage() {
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">{account.namedInsured}</h1>
+            <EditableAccountName key={account.namedInsured} accountId={accountId} name={account.namedInsured} />
             <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-ink-600)]">
               <span className="inline-flex items-center gap-1">
                 <Hash size={13} className="text-[var(--color-ink-400)]" />
