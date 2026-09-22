@@ -1,5 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, ShieldCheck, Link2, Shield } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, ShieldCheck, Link2, Shield, CalendarCheck, Briefcase } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
@@ -15,7 +15,7 @@ const NAV_ICONS = {
   'carrier-appetite': Compass,
 };
 
-export function Sidebar() {
+export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boolean; onNavigate?: () => void }) {
   const { accountId: routeAccountId } = useParams();
   const activeAccountId = useAccountsStore((s) => s.activeAccountId);
   const accounts = useAccountsStore((s) => s.accounts);
@@ -24,7 +24,16 @@ export function Sidebar() {
   const steps = useWorkflowStatus(account?.id);
 
   return (
-    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-[var(--color-ink-100)] bg-white">
+    <aside
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('a')) onNavigate?.();
+      }}
+      className={cn(
+        'h-full w-64 shrink-0 flex-col border-r border-[var(--color-ink-100)] bg-white',
+        // Below md the sidebar is an overlay toggled from the TopBar menu button.
+        mobileOpen ? 'fixed inset-y-0 left-0 z-40 flex shadow-2xl md:static md:shadow-none' : 'hidden md:flex'
+      )}
+    >
       <div className="flex items-center gap-2.5 px-5 py-6">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-brand-800)] text-sm font-bold text-white">
           R
@@ -48,8 +57,24 @@ export function Sidebar() {
             )
           }
         >
+          <CalendarCheck size={17} />
+          Today's Plate
+        </NavLink>
+
+        <NavLink
+          to="/accounts"
+          end
+          className={({ isActive }) =>
+            cn(
+              navItemClass,
+              isActive
+                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+            )
+          }
+        >
           <LayoutGrid size={17} />
-          Dashboard
+          Accounts
         </NavLink>
 
         <NavLink
@@ -102,6 +127,21 @@ export function Sidebar() {
             <p className="mb-1 mt-5 truncate px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">
               {account.namedInsured}
             </p>
+            <NavLink
+              to={`/accounts/${account.id}`}
+              end
+              className={({ isActive }) =>
+                cn(
+                  navItemClass,
+                  isActive
+                    ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                    : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+                )
+              }
+            >
+              <Briefcase size={17} />
+              <span className="flex-1">Workspace</span>
+            </NavLink>
             {steps.map((step) => {
               const Icon = NAV_ICONS[step.key as keyof typeof NAV_ICONS];
               return (

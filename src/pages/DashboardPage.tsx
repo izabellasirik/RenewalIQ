@@ -39,7 +39,7 @@ export function DashboardPage() {
 
   return (
     <PageContainer
-      title={showArchived ? 'Archived Submissions' : 'Submissions'}
+      title={showArchived ? 'Archived Accounts' : 'Accounts'}
       description={showArchived ? 'Restore an archived submission or remove it for good.' : "Every account and renewal you're working, in one place."}
       actions={
         showArchived ? (
@@ -76,7 +76,7 @@ export function DashboardPage() {
                 icon={<Sparkles size={16} />}
                 onClick={() => {
                   const id = ensureSampleAccount();
-                  navigate(`/accounts/${id}/upload`);
+                  navigate(`/accounts/${id}`);
                 }}
               >
                 Try Sample Account

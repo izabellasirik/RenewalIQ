@@ -8,6 +8,8 @@ import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, deriveSubmissionStatusLabel } from '../layout/WorkflowSteps';
 import { formatDate } from '../../utils/dates';
 import { EMPTY_DOCUMENTS, EMPTY_MATCH_RESULTS } from '../../utils/emptyArrays';
+import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
+import { summarizeWaiting } from '../../services/workflow/nextActions';
 
 export function AccountCard({ account, index, onOpenHistory }: { account: Account; index: number; onOpenHistory: () => void }) {
   const navigate = useNavigate();
@@ -28,6 +30,9 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   const steps = useWorkflowStatus(account.id);
   const status = deriveSubmissionStatusLabel(steps);
   const likelyMatches = matchResults.filter((m) => m.verdict === 'likely_match').length;
+  const { items, quotes, dotNumber, actions } = useAccountWorkflow(account.id);
+  const waiting = summarizeWaiting(items, quotes);
+  const nextAction = actions.now[0] ?? actions.upcoming[0];
 
   function commitRename() {
     const trimmed = draftName.trim();
@@ -88,7 +93,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04, duration: 0.25 }}>
       <Card
         className="group relative cursor-pointer transition-shadow hover:[box-shadow:var(--shadow-card-hover)]"
-        onClick={() => !isRenaming && navigate(`/accounts/${account.id}/risk-profile`)}
+        onClick={() => !isRenaming && navigate(`/accounts/${account.id}`)}
       >
         <CardBody className="pt-5">
           <div className="flex items-start justify-between gap-2">
@@ -112,7 +117,9 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
               ) : (
                 <p className="truncate font-semibold text-[var(--color-ink-900)]">{account.namedInsured}</p>
               )}
-              <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{account.state} · Commercial Auto</p>
+              <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">
+                {account.state || '—'} · DOT {dotNumber || '—'} · Commercial Auto
+              </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <Badge tone={status.tone}>{status.label}</Badge>
@@ -128,6 +135,17 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
               </span>
             )}
           </div>
+
+          {(waiting.onClient > 0 || waiting.onCarriers.length > 0) && (
+            <p className="mt-2 text-xs text-[var(--color-ink-600)]">
+              Waiting on {[waiting.onClient > 0 ? `client (${waiting.onClient})` : null, ...waiting.onCarriers].filter(Boolean).join(', ')}
+            </p>
+          )}
+          {nextAction && (
+            <p className={`mt-1 truncate text-xs font-medium ${nextAction.overdue ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-brand-700)]'}`} title={nextAction.detail}>
+              Next: {nextAction.title}
+            </p>
+          )}
 
           <div className="mt-4 flex items-center justify-between border-t border-[var(--color-ink-100)] pt-3 text-xs">
             <span className="flex items-center gap-1 text-[var(--color-ink-400)]">

@@ -17,7 +17,7 @@ sufficient for this workload.
 
 ## 2. Run the migrations
 
-Five migration files, run in order — all are required, and **none has been applied to any live
+Seven migration files, run in order — all are required, and **none has been applied to any live
 Supabase project by this repo automatically**. Run each one yourself, once, via the Supabase SQL
 editor (paste the file's contents and run) or the Supabase CLI (`supabase db push`):
 
@@ -70,6 +70,15 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   (`contact_name`, `contact_email`, `contact_phone`) to the existing `submissions` table from 0003,
   so an account created by importing an intake submission keeps the applicant's contact info after
   a reload. Must run after 0003.
+- **`supabase/migrations/0006_widen_coverage_type_check.sql`** — widens the `coverage_lines`
+  coverage-type check to include Trailer Interchange and Non-Trucking Liability. Must run after 0003.
+- **`supabase/migrations/0007_account_workflow.sql`** — adds the account-workflow columns to
+  `submissions`: `contacts`, `assigned_broker`, `missing_items` (the submission checklist, including
+  carrier-requested items), and `market_quotes` (Markets & Quotes with dated notes). Purely additive
+  jsonb columns, covered by the existing owner-only RLS on `submissions` — no new policies. Must run
+  after 0003. Until it's applied, cloud-backed accounts still sync their Risk Profile, but the
+  workspace shows "Failed to save to your account" and contacts/checklist/quotes stay in this
+  browser only.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides

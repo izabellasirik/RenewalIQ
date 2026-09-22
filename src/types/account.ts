@@ -1,5 +1,7 @@
 export type AccountStatus = 'new' | 'documents_uploaded' | 'profile_in_review' | 'ready_for_market';
 
+import type { AssignedBroker, Contact } from './workflow';
+
 export interface Account {
   id: string;
   namedInsured: string;
@@ -13,4 +15,7 @@ export interface Account {
   contactName?: string;
   contactEmail?: string;
   contactPhone?: string;
+  /** Every person at the insured the broker may contact. Absent on accounts persisted before contacts existed — read through getAccountContacts(), which falls back to the legacy contactName/Email/Phone fields above. */
+  contacts?: Contact[];
+  assignedBroker?: AssignedBroker;
 }

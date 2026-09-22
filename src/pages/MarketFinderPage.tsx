@@ -5,6 +5,7 @@ import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
+import { AddToQuotesAction } from '../components/appetite/AddToQuotesAction';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { matchAllMarkets, VERDICT_RANK } from '../services/appetite/matchingEngine';
 import {
@@ -410,7 +411,13 @@ export function MarketFinderPage() {
         </div>
       </div>
 
-      <MarketDetailDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} record={selectedRecord} result={selected} />
+      <MarketDetailDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        record={selectedRecord}
+        result={selected}
+        actions={(record) => <AddToQuotesAction key={record.id} record={record} />}
+      />
     </PageContainer>
   );
 }

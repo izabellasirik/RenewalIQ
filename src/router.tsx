@@ -4,6 +4,8 @@ import { AdminShell } from './components/layout/AdminShell';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { TodaysPlatePage } from './pages/TodaysPlatePage';
+import { AccountWorkspacePage } from './pages/AccountWorkspacePage';
 import { MarketFinderPage } from './pages/MarketFinderPage';
 import { NewAccountPage } from './pages/NewAccountPage';
 import { UploadPage } from './pages/UploadPage';
@@ -27,11 +29,13 @@ export const router = createBrowserRouter([
   {
     element: <AppShell />,
     children: [
-      { path: '/', element: <DashboardPage /> },
+      { path: '/', element: <TodaysPlatePage /> },
+      { path: '/accounts', element: <DashboardPage /> },
       { path: '/market-finder', element: <MarketFinderPage /> },
       { path: '/analytics', element: <AnalyticsPage /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },
       { path: '/accounts/new', element: <NewAccountPage /> },
+      { path: '/accounts/:accountId', element: <AccountWorkspacePage /> },
       { path: '/accounts/:accountId/upload', element: <UploadPage /> },
       { path: '/accounts/:accountId/risk-profile', element: <RiskProfilePage /> },
       { path: '/accounts/:accountId/limits-coverage', element: <LimitsCoveragePage /> },

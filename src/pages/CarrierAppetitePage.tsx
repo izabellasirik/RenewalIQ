@@ -7,6 +7,7 @@ import { Tabs, EmptyState, Button } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketCardSkeleton } from '../components/appetite/MarketCardSkeleton';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
+import { AddToQuotesAction } from '../components/appetite/AddToQuotesAction';
 import { useAccountsStore } from '../state/useAccountsStore';
 import type { MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
@@ -134,7 +135,13 @@ export function CarrierAppetitePage() {
         </>
       )}
 
-      <MarketDetailDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} record={selectedRecord} result={selected} />
+      <MarketDetailDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        record={selectedRecord}
+        result={selected}
+        actions={(record) => <AddToQuotesAction record={record} accountId={accountId} />}
+      />
     </PageContainer>
   );
 }

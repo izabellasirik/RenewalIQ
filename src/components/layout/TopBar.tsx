@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, Check, ChevronDown, LogOut, CloudOff, CloudUpload, AlertTriangle } from 'lucide-react';
+import { Bell, Check, ChevronDown, LogOut, CloudOff, CloudUpload, AlertTriangle, Menu } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, WorkflowStepsBar } from './WorkflowSteps';
@@ -50,7 +50,7 @@ function AccountMenu() {
     <div ref={ref} className="relative">
       <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-2.5 rounded-lg px-1.5 py-1 hover:bg-[var(--color-ink-50)] cursor-pointer">
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-brand-800)]/10 text-xs font-semibold text-[var(--color-brand-800)]">{initials}</div>
-        <div className="leading-tight text-left">
+        <div className="hidden leading-tight text-left sm:block">
           <p className="max-w-[160px] truncate text-sm font-medium text-[var(--color-ink-800)]">{session.email}</p>
           <p className="text-[11px] text-[var(--color-ink-400)]">Signed in</p>
         </div>
@@ -77,7 +77,7 @@ function AccountMenu() {
   );
 }
 
-export function TopBar() {
+export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
   const { accountId } = useParams();
   const location = useLocation();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
@@ -86,10 +86,15 @@ export function TopBar() {
   const activeKey = steps.find((s) => location.pathname.startsWith(s.path))?.key ?? '';
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-ink-100)] bg-white px-8">
-      <div className="min-w-0">{account && <WorkflowStepsBar steps={steps} activeKey={activeKey} />}</div>
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[var(--color-ink-100)] bg-white px-3 sm:px-8">
+      <div className="flex min-w-0 items-center gap-2">
+        <button onClick={onOpenNav} className="rounded-md p-2 text-[var(--color-ink-500)] hover:bg-[var(--color-ink-50)] md:hidden cursor-pointer" aria-label="Open navigation">
+          <Menu size={18} />
+        </button>
+        <div className="hidden min-w-0 overflow-x-auto md:block">{account && <WorkflowStepsBar steps={steps} activeKey={activeKey} />}</div>
+      </div>
 
-      <div className="flex shrink-0 items-center gap-4">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-4">
         {account && syncStatus === 'saving' && (
           <span className="flex items-center gap-1.5 text-xs text-[var(--color-ink-400)]">
             <Check size={13} className="animate-pulse text-[var(--color-ink-300)]" />
@@ -108,7 +113,7 @@ export function TopBar() {
             Saved {relativeTime(account.updatedAt)}
           </span>
         )}
-        <button className="rounded-full p-2 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-50)] hover:text-[var(--color-ink-600)]" aria-label="Notifications">
+        <button className="hidden rounded-full p-2 text-[var(--color-ink-400)] sm:block hover:bg-[var(--color-ink-50)] hover:text-[var(--color-ink-600)]" aria-label="Notifications">
           <Bell size={17} />
         </button>
         <AccountMenu />

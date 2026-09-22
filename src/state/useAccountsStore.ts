@@ -5,16 +5,25 @@ import type {
   ActivityEvent,
   ActivityEventType,
   AppetiteRecord,
+  AssignedBroker,
+  Contact,
   CoverageLine,
   CoverageType,
   DriverEntry,
   LossEntry,
+  MarketQuote,
   MatchResult,
+  MissingItem,
+  MissingItemStatus,
+  MissingItemType,
+  QuoteStatus,
   RiskProfile,
   UploadedDocument,
   VehicleEntry,
 } from '../types';
-import { emptyField } from '../types';
+import { emptyField, AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
+import { getAccountContacts } from '../services/workflow/contacts';
+import { addBusinessDays, formatShortDate, todayKey } from '../services/workflow/dates';
 import type { FieldResolution } from '../services/extraction';
 import {
   createEmptyRiskProfile,
@@ -51,6 +60,10 @@ interface AccountsState {
   riskProfiles: Record<string, RiskProfile>;
   matchResults: Record<string, MatchResult[]>;
   activityLog: Record<string, ActivityEvent[]>;
+  /** Account workflow (see types/workflow.ts): the submission checklist / missing items per account, including items a carrier asked for. Persisted and cloud-synced with the submission. */
+  missingItems: Record<string, MissingItem[]>;
+  /** Markets the account has been (or will be) submitted to, and where each one stands. Persisted and cloud-synced with the submission. */
+  quotes: Record<string, MarketQuote[]>;
   activeAccountId: string | null;
   /** Base appetite records with any admin-approved Supabase overrides merged on top. Starts as the static base data; `loadEffectiveAppetiteRecords` refreshes it. Never persisted to localStorage — always re-fetched, so a stale override can't get stuck client-side. */
   effectiveAppetiteRecords: AppetiteRecord[];
@@ -85,7 +98,8 @@ interface AccountsState {
   ) => string;
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
-  addFiles: (accountId: string, files: File[]) => void;
+  /** Returns the new document ids, in the same order as `files`, so a caller can link one to a checklist item. */
+  addFiles: (accountId: string, files: File[]) => string[];
   loadSampleDocuments: (accountId: string) => Promise<void>;
   /** Removes an uploaded file and safely retracts any extracted data that depended only on it (see removeDocumentFromRiskProfile) — never leaves stale facts pointing at a source that no longer exists. */
   deleteDocument: (accountId: string, documentId: string) => void;
@@ -113,6 +127,38 @@ interface AccountsState {
   restoreAccount: (accountId: string) => void;
   /** Returns { ok: false, message } if this account is cloud-backed and the cloud deletion fails — local state is left untouched in that case (see the STOP-and-report note in the implementation), so the broker never sees "deleted" when the cloud copy is still there. */
   deleteAccountPermanently: (accountId: string) => Promise<{ ok: boolean; message?: string }>;
+
+  // --- Account workflow (contacts, checklist, markets & quotes) ------------------------------
+  updateAccountInfo: (accountId: string, patch: { namedInsured?: string; state?: string }) => void;
+  setAssignedBroker: (accountId: string, broker: AssignedBroker | null) => void;
+  addContact: (accountId: string, contact: Omit<Contact, 'id'>) => string;
+  updateContact: (accountId: string, contactId: string, patch: Partial<Omit<Contact, 'id'>>) => void;
+  deleteContact: (accountId: string, contactId: string) => void;
+  addMissingItems: (accountId: string, seeds: MissingItemSeed[]) => string[];
+  updateMissingItem: (accountId: string, itemId: string, patch: Partial<Pick<MissingItem, 'label' | 'type' | 'notes' | 'followUpDate' | 'documentId'>>) => void;
+  /** The broker sent the client a request (the email itself is sent outside Renewal IQ). */
+  markItemsRequested: (accountId: string, itemIds: string[], opts: { contactId?: string; followUpDate?: string }) => void;
+  markItemReceived: (accountId: string, itemId: string, opts?: { documentId?: string }) => void;
+  /** Waive, or move back to missing. */
+  setItemStatus: (accountId: string, itemId: string, status: Extract<MissingItemStatus, 'missing' | 'waived'>) => void;
+  deleteMissingItem: (accountId: string, itemId: string) => void;
+  /** A received carrier-requested item was passed on to the carrier that asked for it. */
+  markItemSentToCarrier: (accountId: string, itemId: string) => void;
+  addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
+  updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason'>>) => void;
+  addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
+  deleteQuote: (accountId: string, quoteId: string) => void;
+  /** A carrier/MGA asked for more — creates a linked missing item ("Needed by <carrier>") and flags the quote. */
+  recordCarrierRequest: (accountId: string, quoteId: string, input: { label: string; type: MissingItemType; notes?: string }) => string;
+}
+
+export interface MissingItemSeed {
+  label: string;
+  type: MissingItemType;
+  templateKey?: string;
+  neededByQuoteId?: string;
+  notes?: string;
+  status?: MissingItemStatus;
 }
 
 function newAccount(namedInsured: string, state: string): Account {
@@ -135,7 +181,33 @@ function touchAccount(accounts: Account[], accountId: string): Account[] {
 function appendEvent(log: Record<string, ActivityEvent[]>, accountId: string, type: ActivityEventType, message: string): Record<string, ActivityEvent[]> {
   const event: ActivityEvent = { id: generateId('evt'), accountId, type, message, timestamp: new Date().toISOString() };
   const existing = log[accountId] ?? [];
-  return { ...log, [accountId]: [...existing, event].slice(-MAX_EVENTS_PER_ACCOUNT) };
+  return { ...log, [accountId]: trimEvents([...existing, event]) };
+}
+
+/**
+ * Keeps the local log bounded. Technical events (matching_run fires on every edit) are dropped
+ * first, oldest first, so broker-meaningful workflow history isn't pushed out by noise. The cloud
+ * copy is append-only and unaffected.
+ */
+function trimEvents(events: ActivityEvent[]): ActivityEvent[] {
+  if (events.length <= MAX_EVENTS_PER_ACCOUNT) return events;
+  let excess = events.length - MAX_EVENTS_PER_ACCOUNT;
+  const kept = events.filter((e) => {
+    if (excess > 0 && !WORKFLOW_EVENT_TYPES.has(e.type)) {
+      excess--;
+      return false;
+    }
+    return true;
+  });
+  return kept.slice(-MAX_EVENTS_PER_ACCOUNT);
+}
+
+function updateInList<T extends { id: string }>(list: T[] | undefined, id: string, fn: (item: T) => T): T[] {
+  return (list ?? []).map((x) => (x.id === id ? fn(x) : x));
+}
+
+function money(n: number): string {
+  return `$${n.toLocaleString('en-US')}`;
 }
 
 export const useAccountsStore = create<AccountsState>()(
@@ -156,7 +228,8 @@ export const useAccountsStore = create<AccountsState>()(
         if (!account || !profile) return;
         const userId = s.currentUserId;
         set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'saving' } }));
-        Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
+        const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [] };
+        Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
           const ok = snapRes.ok && actRes.ok;
           set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
         });
@@ -197,6 +270,8 @@ export const useAccountsStore = create<AccountsState>()(
       dismissedImportIds: {},
       matchResults: {},
       activityLog: {},
+      missingItems: {},
+      quotes: {},
       activeAccountId: null,
       effectiveAppetiteRecords: sampleAppetiteRecords,
 
@@ -222,6 +297,9 @@ export const useAccountsStore = create<AccountsState>()(
           ...(contact?.name ? { contactName: contact.name } : {}),
           ...(contact?.email ? { contactEmail: contact.email } : {}),
           ...(contact?.phone ? { contactPhone: contact.phone } : {}),
+          ...(contact?.name || contact?.email || contact?.phone
+            ? { contacts: [{ id: generateId('contact'), name: contact.name || contact.email || 'Primary contact', email: contact.email, phone: contact.phone, primary: true }] }
+            : {}),
         };
         const finalDocs: UploadedDocument[] = documents.map((d) => ({ ...d, accountId: account.id }));
         const finalProfile: RiskProfile = { ...profile, accountId: account.id };
@@ -395,6 +473,7 @@ export const useAccountsStore = create<AccountsState>()(
               syncDocumentToCloud(accountId, doc.id, file);
             });
         });
+        return newDocs.map((d) => d.id);
       },
 
       loadSampleDocuments: async (accountId) => {
@@ -418,6 +497,9 @@ export const useAccountsStore = create<AccountsState>()(
           const updatedProfile = profile ? removeDocumentFromRiskProfile({ ...profile }, documentId) : profile;
           return {
             documents: { ...s.documents, [accountId]: docs.filter((d) => d.id !== documentId) },
+            missingItems: s.missingItems[accountId]
+              ? { ...s.missingItems, [accountId]: s.missingItems[accountId].map((i) => (i.documentId === documentId ? { ...i, documentId: undefined } : i)) }
+              : s.missingItems,
             riskProfiles: updatedProfile ? { ...s.riskProfiles, [accountId]: updatedProfile } : s.riskProfiles,
             accounts: touchAccount(s.accounts, accountId),
             activityLog: appendEvent(s.activityLog, accountId, 'document_deleted', `Deleted ${doc.name}. Data that depended only on this file was removed or updated; broker-confirmed values were kept.`),
@@ -758,6 +840,8 @@ export const useAccountsStore = create<AccountsState>()(
           const { [accountId]: _profile, ...riskProfiles } = st.riskProfiles;
           const { [accountId]: _matches, ...matchResults } = st.matchResults;
           const { [accountId]: _log, ...activityLog } = st.activityLog;
+          const { [accountId]: _items, ...missingItems } = st.missingItems;
+          const { [accountId]: _quotes, ...quotes } = st.quotes;
           const { [accountId]: _cloud, ...cloudAccountIds } = st.cloudAccountIds;
           const { [accountId]: _sync, ...syncStatus } = st.syncStatus;
           return {
@@ -766,12 +850,431 @@ export const useAccountsStore = create<AccountsState>()(
             riskProfiles,
             matchResults,
             activityLog,
+            missingItems,
+            quotes,
             cloudAccountIds,
             syncStatus,
             activeAccountId: st.activeAccountId === accountId ? null : st.activeAccountId,
           };
         });
         return { ok: true };
+      },
+
+      // --- Account workflow -------------------------------------------------------------------
+      // Every action below updates the record, appends a broker-meaningful activity event, and
+      // pushes the submission to the cloud (a no-op for local-only accounts) — same pattern as the
+      // Risk Profile edits above.
+
+      updateAccountInfo: (accountId, patch) => {
+        const before = get().accounts.find((a) => a.id === accountId);
+        if (!before) return;
+        const changes: string[] = [];
+        if (patch.namedInsured !== undefined && patch.namedInsured.trim() && patch.namedInsured.trim() !== before.namedInsured) changes.push(`named insured to "${patch.namedInsured.trim()}"`);
+        if (patch.state !== undefined && patch.state !== before.state) changes.push(`state to ${patch.state || '—'}`);
+        if (changes.length === 0) return;
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) =>
+              a.id === accountId
+                ? { ...a, ...(patch.namedInsured?.trim() ? { namedInsured: patch.namedInsured.trim() } : {}), ...(patch.state !== undefined ? { state: patch.state } : {}) }
+                : a
+            ),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'account_updated', `Changed ${changes.join(' and ')}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      setAssignedBroker: (accountId, broker) => {
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, assignedBroker: broker ?? undefined } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'broker_assigned', broker ? `Assigned to ${broker.name}.` : 'Removed the assigned broker.'),
+        }));
+        syncNow(accountId);
+      },
+
+      addContact: (accountId, contact) => {
+        const id = generateId('contact');
+        set((s) => {
+          const account = s.accounts.find((a) => a.id === accountId);
+          if (!account) return {};
+          let contacts = [...getAccountContacts(account)];
+          const makePrimary = contact.primary || contacts.length === 0;
+          if (makePrimary) contacts = contacts.map((c) => ({ ...c, primary: false }));
+          contacts.push({ ...contact, id, primary: makePrimary });
+          return {
+            accounts: touchAccount(s.accounts.map((a) => (a.id === accountId ? { ...a, contacts } : a)), accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'contact_added', `Added contact ${contact.name}${contact.role ? ` (${contact.role})` : ''}.`),
+          };
+        });
+        syncNow(accountId);
+        return id;
+      },
+
+      updateContact: (accountId, contactId, patch) => {
+        set((s) => {
+          const account = s.accounts.find((a) => a.id === accountId);
+          if (!account) return {};
+          let contacts = getAccountContacts(account).map((c) => (c.id === contactId ? { ...c, ...patch } : c));
+          if (patch.primary) contacts = contacts.map((c) => ({ ...c, primary: c.id === contactId }));
+          const name = contacts.find((c) => c.id === contactId)?.name ?? 'contact';
+          return {
+            accounts: touchAccount(s.accounts.map((a) => (a.id === accountId ? { ...a, contacts } : a)), accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'contact_updated', patch.primary && Object.keys(patch).length === 1 ? `Made ${name} the primary contact.` : `Updated contact ${name}.`),
+          };
+        });
+        syncNow(accountId);
+      },
+
+      deleteContact: (accountId, contactId) => {
+        set((s) => {
+          const account = s.accounts.find((a) => a.id === accountId);
+          if (!account) return {};
+          const existing = getAccountContacts(account);
+          const removed = existing.find((c) => c.id === contactId);
+          let contacts = existing.filter((c) => c.id !== contactId);
+          if (removed?.primary && contacts.length > 0 && !contacts.some((c) => c.primary)) contacts = contacts.map((c, i) => ({ ...c, primary: i === 0 }));
+          return {
+            // Legacy single-contact fields are cleared too, so a removed legacy contact doesn't reappear via the fallback.
+            accounts: touchAccount(
+              s.accounts.map((a) => (a.id === accountId ? { ...a, contacts, contactName: undefined, contactEmail: undefined, contactPhone: undefined } : a)),
+              accountId
+            ),
+            activityLog: appendEvent(s.activityLog, accountId, 'contact_removed', `Removed contact ${removed?.name ?? ''}.`.replace(' .', '.')),
+          };
+        });
+        syncNow(accountId);
+      },
+
+      addMissingItems: (accountId, seeds) => {
+        if (seeds.length === 0) return [];
+        const now = new Date().toISOString();
+        const created: MissingItem[] = seeds.map((seed) => ({
+          id: generateId('item'),
+          accountId,
+          type: seed.type,
+          label: seed.label,
+          status: seed.status ?? 'missing',
+          templateKey: seed.templateKey,
+          neededByQuoteId: seed.neededByQuoteId,
+          notes: seed.notes,
+          ...(seed.status === 'received' ? { receivedAt: now } : {}),
+          createdAt: now,
+          updatedAt: now,
+        }));
+        set((s) => ({
+          missingItems: { ...s.missingItems, [accountId]: [...(s.missingItems[accountId] ?? []), ...created] },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'item_added',
+            created.length === 1 ? `Added "${created[0].label}" to the checklist.` : `Added ${created.length} items to the checklist: ${created.map((i) => i.label).join(', ')}.`
+          ),
+        }));
+        syncNow(accountId);
+        return created.map((i) => i.id);
+      },
+
+      updateMissingItem: (accountId, itemId, patch) => {
+        const before = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!before) return;
+        set((s) => {
+          let log = s.activityLog;
+          if (patch.followUpDate !== undefined && patch.followUpDate !== before.followUpDate) {
+            log = appendEvent(
+              log,
+              accountId,
+              'follow_up_scheduled',
+              patch.followUpDate ? `Client follow-up for "${before.label}" set for ${formatShortDate(patch.followUpDate)}.` : `Cleared the follow-up date for "${before.label}".`
+            );
+          }
+          if (patch.label !== undefined && patch.label !== before.label) log = appendEvent(log, accountId, 'item_added', `Renamed checklist item "${before.label}" to "${patch.label}".`);
+          return {
+            missingItems: { ...s.missingItems, [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, ...patch, updatedAt: new Date().toISOString() })) },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+      },
+
+      markItemsRequested: (accountId, itemIds, { contactId, followUpDate }) => {
+        const s0 = get();
+        const account = s0.accounts.find((a) => a.id === accountId);
+        const items = (s0.missingItems[accountId] ?? []).filter((i) => itemIds.includes(i.id));
+        if (!account || items.length === 0) return;
+        const contact = getAccountContacts(account).find((c) => c.id === contactId);
+        const now = new Date().toISOString();
+        set((s) => {
+          let log = appendEvent(
+            s.activityLog,
+            accountId,
+            'item_requested',
+            `Requested ${items.map((i) => i.label).join(', ')} from ${contact ? contact.name : 'the client'}.`
+          );
+          if (followUpDate) log = appendEvent(log, accountId, 'follow_up_scheduled', `Client follow-up scheduled for ${formatShortDate(followUpDate)}.`);
+          return {
+            missingItems: {
+              ...s.missingItems,
+              [accountId]: (s.missingItems[accountId] ?? []).map((i) =>
+                itemIds.includes(i.id) ? { ...i, status: 'requested' as const, requestedAt: now, requestedFromContactId: contactId, followUpDate: followUpDate || undefined, updatedAt: now } : i
+              ),
+            },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+      },
+
+      markItemReceived: (accountId, itemId, opts) => {
+        const s0 = get();
+        const item = (s0.missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!item) return;
+        const doc = opts?.documentId ? (s0.documents[accountId] ?? []).find((d) => d.id === opts.documentId) : undefined;
+        const quote = item.neededByQuoteId ? (s0.quotes[accountId] ?? []).find((q) => q.id === item.neededByQuoteId) : undefined;
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({
+              ...i,
+              status: 'received' as const,
+              receivedAt: now,
+              documentId: opts?.documentId ?? i.documentId,
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'item_received',
+            `Received ${item.label}${doc ? ` (${doc.name})` : ''}.${quote ? ` Ready to send to ${quote.marketName}.` : ''}`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      setItemStatus: (accountId, itemId, status) => {
+        const item = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!item) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: updateInList(s.missingItems[accountId], itemId, (i) =>
+              status === 'missing'
+                ? { ...i, status, receivedAt: undefined, requestedAt: undefined, followUpDate: undefined, forwardedToCarrierAt: undefined, updatedAt: now }
+                : { ...i, status, updatedAt: now }
+            ),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            status === 'waived' ? 'item_waived' : 'item_added',
+            status === 'waived' ? `Waived "${item.label}" — not needed.` : `Moved "${item.label}" back to missing.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      deleteMissingItem: (accountId, itemId) => {
+        const item = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!item) return;
+        set((s) => ({
+          missingItems: { ...s.missingItems, [accountId]: (s.missingItems[accountId] ?? []).filter((i) => i.id !== itemId) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'item_removed', `Removed "${item.label}" from the checklist.`),
+        }));
+        syncNow(accountId);
+      },
+
+      markItemSentToCarrier: (accountId, itemId) => {
+        const s0 = get();
+        const items = s0.missingItems[accountId] ?? [];
+        const item = items.find((i) => i.id === itemId);
+        const quote = item?.neededByQuoteId ? (s0.quotes[accountId] ?? []).find((q) => q.id === item.neededByQuoteId) : undefined;
+        if (!item || !quote) return;
+        const nowIso = new Date().toISOString();
+        // Once nothing else this carrier asked for is still outstanding, the ball is back in the
+        // carrier's court — flip the quote back to waiting and (re)arm a follow-up.
+        const stillOutstanding = items.some((i) => i.id !== itemId && i.neededByQuoteId === quote.id && i.status !== 'waived' && !i.forwardedToCarrierAt);
+        const reopen = quote.status === 'additional_info_requested' && !stillOutstanding;
+        const followUp = reopen && (!quote.followUpDate || quote.followUpDate <= todayKey()) ? addBusinessDays(new Date(), 3) : quote.followUpDate;
+        set((s) => {
+          let log = appendEvent(s.activityLog, accountId, 'item_sent_to_carrier', `Sent ${item.label} to ${quote.marketName}.`);
+          if (reopen) log = appendEvent(log, accountId, 'quote_status_changed', `${quote.marketName}: all requested items sent — waiting on carrier${followUp ? `, follow up ${formatShortDate(followUp)}` : ''}.`);
+          return {
+            missingItems: { ...s.missingItems, [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, forwardedToCarrierAt: nowIso, updatedAt: nowIso })) },
+            quotes: {
+              ...s.quotes,
+              [accountId]: updateInList(s.quotes[accountId], quote.id, (q) => ({
+                ...q,
+                ...(reopen ? { status: 'waiting_on_carrier' as const, followUpDate: followUp } : {}),
+                notes: [...q.notes, { id: generateId('note'), text: `Sent ${item.label}.`, createdAt: nowIso }],
+                updatedAt: nowIso,
+              })),
+            },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+      },
+
+      addQuote: (accountId, input) => {
+        const now = new Date().toISOString();
+        const status = input.status ?? 'preparing';
+        const awaiting = AWAITING_CARRIER_STATUSES.includes(status);
+        const quote: MarketQuote = {
+          id: generateId('quote'),
+          accountId,
+          marketName: input.marketName.trim(),
+          appetiteRecordId: input.appetiteRecordId,
+          status,
+          submittedAt: input.submittedAt ?? (awaiting ? todayKey() : undefined),
+          followUpDate: input.followUpDate ?? (awaiting ? addBusinessDays(new Date(), 3) : undefined),
+          notes: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        set((s) => {
+          let log = appendEvent(s.activityLog, accountId, 'market_added', `Added ${quote.marketName} to Markets & Quotes.`);
+          if (awaiting) log = appendEvent(log, accountId, 'submission_sent', `Submission sent to ${quote.marketName}${quote.submittedAt ? ` on ${formatShortDate(quote.submittedAt)}` : ''}.`);
+          if (quote.followUpDate) log = appendEvent(log, accountId, 'follow_up_scheduled', `Carrier follow-up with ${quote.marketName} set for ${formatShortDate(quote.followUpDate)}.`);
+          return {
+            quotes: { ...s.quotes, [accountId]: [...(s.quotes[accountId] ?? []), quote] },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+        return quote.id;
+      },
+
+      updateQuote: (accountId, quoteId, patch) => {
+        const before = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!before) return;
+        const next: MarketQuote = { ...before, ...patch, updatedAt: new Date().toISOString() };
+        const name = next.marketName;
+        const statusChanged = patch.status !== undefined && patch.status !== before.status;
+
+        // Moving into a "waiting on the carrier" state: default the sent date to today and arm a
+        // follow-up, unless the broker already gave one.
+        if (statusChanged && AWAITING_CARRIER_STATUSES.includes(next.status)) {
+          if (!next.submittedAt) next.submittedAt = todayKey();
+          if (patch.followUpDate === undefined && (!next.followUpDate || next.followUpDate < todayKey())) next.followUpDate = addBusinessDays(new Date(), 3);
+        }
+        if (patch.premium !== undefined && (patch.premium === null || Number.isNaN(patch.premium))) next.premium = undefined;
+
+        const events: [ActivityEventType, string][] = [];
+        if (statusChanged) {
+          switch (next.status) {
+            case 'submitted':
+              events.push(['submission_sent', `Submission sent to ${name}${next.submittedAt ? ` on ${formatShortDate(next.submittedAt)}` : ''}.`]);
+              break;
+            case 'quoted':
+              events.push(['quote_received', `${name} quoted${next.premium ? ` ${money(next.premium)}` : ''}.`]);
+              break;
+            case 'declined':
+              events.push(['carrier_declined', `${name} declined${next.declineReason ? `: ${next.declineReason}` : '.'}`]);
+              break;
+            case 'bound':
+              events.push(['policy_bound', `Bound with ${name}${next.premium ? ` at ${money(next.premium)}` : ''}.`]);
+              break;
+            default:
+              events.push(['quote_status_changed', `${name}: ${QUOTE_STATUS_LABELS[before.status]} → ${QUOTE_STATUS_LABELS[next.status]}.`]);
+          }
+        } else {
+          if (patch.premium !== undefined && next.premium !== before.premium && next.premium) events.push(['quote_received', `Recorded ${name} premium of ${money(next.premium)}.`]);
+          if (patch.declineReason !== undefined && patch.declineReason !== before.declineReason && next.declineReason) events.push(['carrier_declined', `${name} decline reason: ${next.declineReason}`]);
+          if (patch.submittedAt !== undefined && patch.submittedAt !== before.submittedAt && next.submittedAt) events.push(['submission_sent', `Recorded submission to ${name} as sent ${formatShortDate(next.submittedAt)}.`]);
+          if (patch.marketName !== undefined && patch.marketName !== before.marketName) events.push(['quote_status_changed', `Renamed market ${before.marketName} to ${name}.`]);
+        }
+        if (next.followUpDate !== before.followUpDate && AWAITING_CARRIER_STATUSES.includes(next.status)) {
+          events.push(['follow_up_scheduled', next.followUpDate ? `Carrier follow-up with ${name} set for ${formatShortDate(next.followUpDate)}.` : `Cleared the follow-up date for ${name}.`]);
+        }
+
+        set((s) => {
+          let log = s.activityLog;
+          for (const [type, message] of events) log = appendEvent(log, accountId, type, message);
+          return {
+            quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], quoteId, () => next) },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+      },
+
+      addQuoteNote: (accountId, quoteId, text) => {
+        const trimmed = text.trim();
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!trimmed || !quote) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, notes: [...q.notes, { id: generateId('note'), text: trimmed, createdAt: now }], updatedAt: now })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'carrier_note_added', `Note on ${quote.marketName}: ${trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed}`),
+        }));
+        syncNow(accountId);
+      },
+
+      deleteQuote: (accountId, quoteId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!quote) return;
+        set((s) => ({
+          quotes: { ...s.quotes, [accountId]: (s.quotes[accountId] ?? []).filter((q) => q.id !== quoteId) },
+          // Items this carrier asked for stay on the checklist (the client may still owe them), just no longer tied to a carrier.
+          missingItems: { ...s.missingItems, [accountId]: (s.missingItems[accountId] ?? []).map((i) => (i.neededByQuoteId === quoteId ? { ...i, neededByQuoteId: undefined } : i)) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'market_removed', `Removed ${quote.marketName} from Markets & Quotes.`),
+        }));
+        syncNow(accountId);
+      },
+
+      recordCarrierRequest: (accountId, quoteId, input) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const label = input.label.trim();
+        if (!quote || !label) return '';
+        const now = new Date().toISOString();
+        const item: MissingItem = {
+          id: generateId('item'),
+          accountId,
+          type: input.type,
+          label,
+          status: 'missing',
+          neededByQuoteId: quoteId,
+          notes: input.notes?.trim() || undefined,
+          createdAt: now,
+          updatedAt: now,
+        };
+        set((s) => ({
+          missingItems: { ...s.missingItems, [accountId]: [...(s.missingItems[accountId] ?? []), item] },
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              status: q.status === 'quoted' || q.status === 'bound' ? q.status : ('additional_info_requested' as const),
+              notes: [...q.notes, { id: generateId('note'), text: `Requested ${label}.`, createdAt: now }],
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'carrier_requested_item', `${quote.marketName} requested ${label}.`),
+        }));
+        syncNow(accountId);
+        return item.id;
       },
 
       setCurrentUserId: (userId) => set({ currentUserId: userId }),
@@ -786,6 +1289,8 @@ export const useAccountsStore = create<AccountsState>()(
           const documents = { ...s.documents };
           const riskProfiles = { ...s.riskProfiles };
           const activityLog = { ...s.activityLog };
+          const missingItems = { ...s.missingItems };
+          const quotes = { ...s.quotes };
           const cloudAccountIds = { ...s.cloudAccountIds };
           for (const bundle of result.data) {
             const idx = accounts.findIndex((a) => a.id === bundle.account.id);
@@ -794,9 +1299,13 @@ export const useAccountsStore = create<AccountsState>()(
             documents[bundle.account.id] = bundle.documents;
             riskProfiles[bundle.account.id] = bundle.profile;
             activityLog[bundle.account.id] = bundle.activity;
+            // undefined = the workflow columns don't exist yet (migration 0007 not applied) — keep
+            // whatever this device has rather than wiping it with an empty list.
+            if (bundle.missingItems) missingItems[bundle.account.id] = bundle.missingItems;
+            if (bundle.quotes) quotes[bundle.account.id] = bundle.quotes;
             cloudAccountIds[bundle.account.id] = true;
           }
-          return { accounts, documents, riskProfiles, activityLog, cloudAccountIds };
+          return { accounts, documents, riskProfiles, activityLog, missingItems, quotes, cloudAccountIds };
         });
         for (const bundle of result.data) get().runMatching(bundle.account.id);
       },

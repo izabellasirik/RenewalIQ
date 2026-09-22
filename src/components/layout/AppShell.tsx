@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
@@ -8,6 +8,7 @@ import { FeedbackWidget } from '../feedback/FeedbackWidget';
 export function AppShell() {
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     mainRef.current?.scrollTo(0, 0);
@@ -15,9 +16,10 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--color-ink-50)]">
-      <Sidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar />
+      <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} />
+      {mobileNavOpen && <div className="fixed inset-0 z-30 bg-[var(--color-ink-950)]/30 md:hidden" onClick={() => setMobileNavOpen(false)} />}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <TopBar onOpenNav={() => setMobileNavOpen(true)} />
         <main ref={mainRef} className="flex-1 overflow-y-auto scrollbar-thin [overflow-anchor:none]">
           {/* No AnimatePresence/mode="wait" here: combined with StrictMode it caused a delayed phantom
               remount ~180ms after navigation, silently resetting page-local state (e.g. an active tab)

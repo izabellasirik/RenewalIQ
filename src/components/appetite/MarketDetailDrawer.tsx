@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus, Link2 } from 'lucide-react';
 import type { AppetiteCriterion, AppetiteRecord, MatchReason, MatchResult, ReasonGroup, RuleType } from '../../types';
 import { SOURCE_TYPE_LABELS } from '../../types';
@@ -232,11 +232,14 @@ export function MarketDetailDrawer({
   onClose,
   record,
   result,
+  actions,
 }: {
   open: boolean;
   onClose: () => void;
   record: AppetiteRecord | null;
   result: MatchResult | null;
+  /** Optional workflow actions (e.g. "Add to Quotes") rendered under the verdict. */
+  actions?: (record: AppetiteRecord) => ReactNode;
 }) {
   const [updateFormOpen, setUpdateFormOpen] = useState(false);
   if (!record || !result) return null;
@@ -260,6 +263,8 @@ export function MarketDetailDrawer({
           <VerdictBadge verdict={result.verdict} className="text-sm" />
           {record.availableThrough && <AvailableThroughTag carrierName={record.availableThrough} />}
         </div>
+
+        {actions?.(record)}
 
         {updateFormOpen ? (
           <RequestAppetiteUpdateForm record={record} onClose={() => setUpdateFormOpen(false)} />

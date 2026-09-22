@@ -1,5 +1,5 @@
 import { supabase } from './client';
-import type { Account, ActivityEvent, CoverageType, DriverEntry, FieldValue, LossEntry, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
+import type { Account, ActivityEvent, AssignedBroker, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
 
 export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
@@ -147,6 +147,41 @@ export interface CloudSubmissionBundle {
   profile: RiskProfile;
   documents: UploadedDocument[];
   activity: ActivityEvent[];
+  /** undefined when the workflow columns don't exist yet (migration 0007 not applied) — callers must keep local data in that case rather than treat it as "no items". */
+  missingItems?: MissingItem[];
+  quotes?: MarketQuote[];
+}
+
+/**
+ * Account workflow data (contacts, assigned broker, checklist items, market quotes) lives in jsonb
+ * columns on `submissions` (see 0007_account_workflow.sql) rather than new tables: it's always read
+ * and written together with the submission, the existing owner-only RLS on `submissions` covers
+ * it with no new policies, and it keeps this file's full-snapshot save a single upsert.
+ */
+const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes'] as const;
+
+function isMissingWorkflowColumnError(error: { message: string; code?: string }): boolean {
+  return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
+}
+
+function asArray<T>(value: unknown): T[] | undefined {
+  return Array.isArray(value) ? (value as T[]) : undefined;
+}
+
+function normalizeQuotes(value: unknown, accountId: string): MarketQuote[] | undefined {
+  const arr = asArray<Partial<MarketQuote>>(value);
+  if (!arr) return undefined;
+  return arr
+    .filter((q): q is Partial<MarketQuote> & { id: string; marketName: string } => !!q && typeof q.id === 'string' && typeof q.marketName === 'string')
+    .map((q) => ({ ...q, accountId, status: q.status ?? 'preparing', notes: Array.isArray(q.notes) ? q.notes : [], createdAt: q.createdAt ?? new Date().toISOString(), updatedAt: q.updatedAt ?? new Date().toISOString() }) as MarketQuote);
+}
+
+function normalizeItems(value: unknown, accountId: string): MissingItem[] | undefined {
+  const arr = asArray<Partial<MissingItem>>(value);
+  if (!arr) return undefined;
+  return arr
+    .filter((i): i is Partial<MissingItem> & { id: string; label: string } => !!i && typeof i.id === 'string' && typeof i.label === 'string')
+    .map((i) => ({ ...i, accountId, type: i.type ?? 'document', status: i.status ?? 'missing', createdAt: i.createdAt ?? new Date().toISOString(), updatedAt: i.updatedAt ?? new Date().toISOString() }) as MissingItem);
 }
 
 /** Fetches every submission owned by the current user, fully hydrated. Used on sign-in to populate the workspace. */
@@ -179,6 +214,8 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         ...(sub.contact_name ? { contactName: sub.contact_name } : {}),
         ...(sub.contact_email ? { contactEmail: sub.contact_email } : {}),
         ...(sub.contact_phone ? { contactPhone: sub.contact_phone } : {}),
+        ...(Array.isArray(sub.contacts) ? { contacts: sub.contacts as Contact[] } : {}),
+        ...(sub.assigned_broker && typeof sub.assigned_broker === 'object' ? { assignedBroker: sub.assigned_broker as AssignedBroker } : {}),
       };
 
       const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
@@ -284,7 +321,15 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         updatedAt: sub.updated_at,
       };
 
-      return { account, profile, documents, activity };
+      const hasWorkflowColumns = 'missing_items' in sub;
+      return {
+        account,
+        profile,
+        documents,
+        activity,
+        missingItems: hasWorkflowColumns ? (normalizeItems(sub.missing_items, sub.id) ?? []) : undefined,
+        quotes: hasWorkflowColumns ? (normalizeQuotes(sub.market_quotes, sub.id) ?? []) : undefined,
+      };
     });
 
     return { ok: true, data: bundles };
@@ -301,11 +346,12 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
 export async function saveSubmissionSnapshot(
   userId: string,
   account: Account,
-  profile: RiskProfile
+  profile: RiskProfile,
+  workflow?: { missingItems: MissingItem[]; quotes: MarketQuote[] }
 ): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const submissionRow = {
+    const legacyRow = {
       id: account.id,
       user_id: userId,
       named_insured: account.namedInsured,
@@ -318,8 +364,22 @@ export async function saveSubmissionSnapshot(
       contact_email: account.contactEmail || null,
       contact_phone: account.contactPhone || null,
     };
+    const submissionRow = {
+      ...legacyRow,
+      contacts: account.contacts ?? null,
+      assigned_broker: account.assignedBroker ?? null,
+      ...(workflow ? { missing_items: workflow.missingItems, market_quotes: workflow.quotes } : {}),
+    };
+    let workflowNotSaved = false;
     const { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
-    if (subErr) return fail(subErr.message);
+    if (subErr) {
+      // A project that hasn't applied 0007 yet: still save everything else (so the Risk Profile
+      // never stops syncing), but report the failure honestly instead of claiming "Saved".
+      if (!isMissingWorkflowColumnError(subErr)) return fail(subErr.message);
+      const { error: legacyErr } = await supabase.from('submissions').upsert(legacyRow);
+      if (legacyErr) return fail(legacyErr.message);
+      workflowNotSaved = true;
+    }
 
     const { values, alternates } = collectFieldValueRows(userId, account.id, profile);
 
@@ -413,6 +473,7 @@ export async function saveSubmissionSnapshot(
     const insErr = insRes.find((r) => r.error);
     if (insErr?.error) return fail(insErr.error.message);
 
+    if (workflowNotSaved) return fail('Contacts, checklist, and quotes were not saved to your account — the database needs migration 0007_account_workflow.sql.');
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not save to your account.');
