@@ -147,16 +147,17 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
 
   for (const quote of quotes) {
     if (quote.status === 'preparing') {
-      now.push({
+      const prep = {
         ...base,
         id: `prep-${quote.id}`,
-        kind: 'action_required',
+        kind: 'action_required' as const,
         title: `Submission to ${quote.marketName} not sent yet`,
-        detail: 'Send the submission, then record it as submitted',
-        overdue: false,
-        tab: 'quotes',
+        tab: 'quotes' as const,
         quoteId: quote.id,
-      });
+      };
+      // With a follow-up date it's scheduled (shows up on that day); without one it needs doing now.
+      if (quote.followUpDate) placeDated({ ...prep, detail: describeDue(quote.followUpDate, today), dueDate: quote.followUpDate });
+      else now.push({ ...prep, detail: 'Send the submission, then record it as submitted', overdue: false });
     } else if (AWAITING_CARRIER_STATUSES.includes(quote.status)) {
       const sent = quote.submittedAt ? `Submitted ${formatShortDate(quote.submittedAt)} · ` : '';
       if (quote.followUpDate) {
@@ -183,16 +184,16 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
         });
       }
     } else if (quote.status === 'quoted' && !anyBound) {
-      now.push({
+      const quoted = {
         ...base,
         id: `quoted-${quote.id}`,
-        kind: 'action_required',
+        kind: 'action_required' as const,
         title: `Quote from ${quote.marketName}${quote.premium ? ` — $${quote.premium.toLocaleString('en-US')}` : ''}`,
-        detail: 'Present to client, then mark bound or declined',
-        overdue: false,
-        tab: 'quotes',
+        tab: 'quotes' as const,
         quoteId: quote.id,
-      });
+      };
+      if (quote.followUpDate) placeDated({ ...quoted, detail: `${describeDue(quote.followUpDate, today)} · present to client`, dueDate: quote.followUpDate });
+      else now.push({ ...quoted, detail: 'Present to client, then mark bound or declined', overdue: false });
     }
   }
 

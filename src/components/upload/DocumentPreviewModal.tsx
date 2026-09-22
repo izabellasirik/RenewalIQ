@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, FileQuestion, Loader2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { UploadedDocument } from '../../types';
-import { getLocalFile } from '../../services/documents/localFileStore';
-import { downloadDocumentFile } from '../../services/supabase/submissionsRepo';
+import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
 
 type Content =
   | { kind: 'loading' }
@@ -16,18 +15,10 @@ type Content =
 
 const MAX_TABLE_ROWS = 500;
 
-/** The original bytes: this browser's copy first, then the broker's cloud account. */
-async function loadBlob(doc: UploadedDocument): Promise<Blob | null> {
-  const local = await getLocalFile(doc.id);
-  if (local) return local.blob;
-  if (doc.storagePath) {
-    const res = await downloadDocumentFile(doc.storagePath);
-    if (res.ok) return res.data;
-  }
-  return null;
-}
+/** What the viewer needs — an uploaded document, or a quote attachment shaped like one. */
+export type PreviewableFile = Pick<UploadedDocument, 'id' | 'name' | 'fileType' | 'storagePath' | 'previewDataUrl'>;
 
-async function render(doc: UploadedDocument, blob: Blob): Promise<Content> {
+async function render(doc: PreviewableFile, blob: Blob): Promise<Content> {
   const file = new File([blob], doc.name, { type: blob.type });
   switch (doc.fileType) {
     case 'image':
@@ -104,7 +95,7 @@ function PdfPages({ blob }: { blob: Blob }) {
   return <div ref={ref} className="min-h-40" />;
 }
 
-export function DocumentPreviewModal({ doc, onClose }: { doc: UploadedDocument | null; onClose: () => void }) {
+export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | null; onClose: () => void }) {
   const [content, setContent] = useState<Content>({ kind: 'loading' });
   const [blob, setBlob] = useState<Blob | null>(null);
   const [sheet, setSheet] = useState(0);
@@ -117,14 +108,16 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: UploadedDocument |
     setBlob(null);
     setSheet(0);
     (async () => {
-      const b = await loadBlob(doc);
+      const b = await loadStoredFile(doc);
       if (cancelled) return;
       if (!b) {
         // Photos always have a small preview copy even when the original isn't available.
         if (doc.previewDataUrl) return setContent({ kind: 'image', url: doc.previewDataUrl });
         return setContent({
           kind: 'error',
-          message: "The original file isn't available on this device. Files uploaded before previews were added weren't kept — re-upload it to preview.",
+          message: doc.storagePath
+            ? "Couldn't load this file from your account — check that you're signed in, then try again."
+            : "The original file isn't available on this device. Files uploaded before previews were added weren't kept, and this one isn't in your cloud account — re-upload it to preview.",
         });
       }
       setBlob(b);
@@ -144,12 +137,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: UploadedDocument |
 
   function download() {
     if (!blob || !doc) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = doc.name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    saveBlobAs(blob, doc.name);
   }
 
   return (

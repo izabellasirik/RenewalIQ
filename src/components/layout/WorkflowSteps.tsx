@@ -34,13 +34,12 @@ export function computeWorkflowSteps(
       : 'done';
   const appetiteStatus: StepStatus = matchResults.length === 0 ? (hasDocs ? 'in_progress' : 'not_started') : 'done';
 
-  // Limits aren't required data, so an incomplete coverage section stays neutral grey (never the
-  // amber "needs attention" dot) — and only goes green once every coverage line has both its
-  // current and requested limit filled in.
+  // Amber while any coverage line is missing its current or requested limit (same as other steps
+  // with unfilled data); green only once every line has both.
   const coverage = profile?.coverage ?? [];
   const limitFilled = (f: { isMissing: boolean; value: unknown } | undefined) => !!f && !f.isMissing && f.value !== null && f.value !== '';
   const coverageComplete = coverage.length > 0 && coverage.every((line) => limitFilled(line.currentLimit) && limitFilled(line.requestedLimit));
-  const coverageStatus: StepStatus = coverageComplete ? 'done' : 'not_started';
+  const coverageStatus: StepStatus = !hasDocs && coverage.length === 0 ? 'not_started' : coverageComplete ? 'done' : 'in_progress';
 
   return [
     { key: 'upload', label: 'Documents', path: `/accounts/${accountId}/upload`, status: documentsStatus },

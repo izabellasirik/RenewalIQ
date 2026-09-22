@@ -107,6 +107,26 @@ export interface QuoteNote {
   createdAt: string;
 }
 
+/** A file attached to a quote (the carrier's quote PDF). Bytes live in this browser's IndexedDB and, for cloud accounts, the private submission-documents bucket — never run through extraction. */
+export interface QuoteAttachment {
+  id: string;
+  name: string;
+  sizeBytes: number;
+  fileType: import('./document').DocumentFileType;
+  storagePath?: string;
+}
+
+/** One quote received from a market — a carrier often returns several (limits/deductible options). */
+export interface QuoteOption {
+  id: string;
+  /** e.g. "Option B — $1M CSL, $2,500 ded" */
+  label?: string;
+  premium?: number;
+  notes?: string;
+  receivedAt: string;
+  attachment?: QuoteAttachment;
+}
+
 export interface MarketQuote {
   id: string;
   accountId: string;
@@ -117,7 +137,12 @@ export interface MarketQuote {
   submittedAt?: string;
   status: QuoteStatus;
   followUpDate?: string;
+  /** The headline premium: the selected quote's, else the most recent one's (or a premium recorded before multiple quotes existed). */
   premium?: number;
+  /** Every quote this market returned, oldest first. */
+  options?: QuoteOption[];
+  /** The quote the broker chose (e.g. the one being bound). */
+  selectedOptionId?: string;
   declineReason?: string;
   notes: QuoteNote[];
   createdAt: string;

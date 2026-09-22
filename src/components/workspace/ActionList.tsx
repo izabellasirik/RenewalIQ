@@ -56,11 +56,12 @@ function ActionRow({
   function reschedule(date: string) {
     if (!date) return;
     if (action.kind === 'client_follow_up' && action.itemId) updateMissingItem(action.accountId, action.itemId, { followUpDate: date });
-    if (action.kind === 'carrier_follow_up' && action.quoteId) updateQuote(action.accountId, action.quoteId, { followUpDate: date });
+    else if (action.quoteId && !action.itemId) updateQuote(action.accountId, action.quoteId, { followUpDate: date });
     setRescheduling(false);
   }
 
-  const canReschedule = (action.kind === 'client_follow_up' && action.itemId) || (action.kind === 'carrier_follow_up' && action.quoteId);
+  // Any market-level action (carrier follow-up, unsent submission, quote to present) can be (re)scheduled via the market's follow-up date.
+  const canReschedule = (action.kind === 'client_follow_up' && action.itemId) || (!!action.quoteId && !action.itemId && action.kind !== 'ready_to_send');
   const carrierRequestPending = action.kind === 'action_required' && action.itemId && action.id.startsWith('carrier-req-');
 
   return (

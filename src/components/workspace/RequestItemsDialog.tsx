@@ -17,7 +17,10 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
   const markItemsRequested = useAccountsStore((s) => s.markItemsRequested);
   const addContact = useAccountsStore((s) => s.addContact);
 
-  const selectedItems = useMemo(() => items.filter((i) => itemIds.includes(i.id)), [items, itemIds]);
+  // Every item that can still be requested — the broker ticks which ones go in this one email.
+  const candidates = useMemo(() => items.filter((i) => i.status === 'missing' || i.status === 'requested' || itemIds.includes(i.id)), [items, itemIds]);
+  const [selectedIds, setSelectedIds] = useState<string[]>(itemIds);
+  const selectedItems = useMemo(() => candidates.filter((i) => selectedIds.includes(i.id)), [candidates, selectedIds]);
   const [contactId, setContactId] = useState('');
   const [followUpDate, setFollowUpDate] = useState(() => addBusinessDays(new Date(), 3));
   const [subject, setSubject] = useState('');
@@ -32,6 +35,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
     const previous = selectedItems.find((i) => i.requestedFromContactId)?.requestedFromContactId;
     const initial = contacts.find((c) => c.id === previous) ?? contacts.find((c) => c.primary) ?? contacts[0];
     setContactId(initial?.id ?? '');
+    setSelectedIds(itemIds);
     setFollowUpDate(addBusinessDays(new Date(), 3));
     setCopied(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -53,7 +57,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
     setSubject(draft.subject);
     setBody(draft.body);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, contactId, itemIds.join(','), account?.id]);
+  }, [open, contactId, selectedIds.join(','), account?.id]);
 
   if (!account) return null;
 
@@ -77,7 +81,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
   }
 
   function markSent() {
-    markItemsRequested(accountId, itemIds, { contactId: contactId || undefined, followUpDate: followUpDate || undefined });
+    markItemsRequested(accountId, selectedItems.map((i) => i.id), { contactId: contactId || undefined, followUpDate: followUpDate || undefined });
     onClose();
   }
 
@@ -86,7 +90,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
       open={open}
       onClose={onClose}
       size="lg"
-      title={selectedItems.length === 1 ? `Request ${selectedItems[0].label}` : `Request ${selectedItems.length} items`}
+      title={selectedItems.length === 1 ? `Request ${selectedItems[0].label}` : `Request ${selectedItems.length} items in one email`}
       subtitle={account.namedInsured}
       footer={
         <>
@@ -108,13 +112,41 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
     >
       <div className="flex flex-col gap-4">
         <div>
-          <p className={labelClass}>Requesting</p>
+          <div className="flex items-center justify-between">
+            <p className={labelClass}>
+              Requesting {selectedItems.length} of {candidates.length} — all in one email
+            </p>
+            {candidates.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setSelectedIds(selectedItems.length === candidates.length ? [] : candidates.map((i) => i.id))}
+                className="text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"
+              >
+                {selectedItems.length === candidates.length ? 'Clear all' : 'Select all'}
+              </button>
+            )}
+          </div>
           <ul className="flex flex-wrap gap-1.5">
-            {selectedItems.map((i) => (
-              <li key={i.id} className="rounded-full bg-[var(--color-ink-100)] px-2.5 py-1 text-xs font-medium text-[var(--color-ink-700)]">
-                {i.label}
-              </li>
-            ))}
+            {candidates.map((i) => {
+              const on = selectedIds.includes(i.id);
+              return (
+                <li key={i.id}>
+                  <label
+                    className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${on ? 'border-[var(--color-brand-500)] bg-[var(--color-brand-800)]/8 text-[var(--color-brand-800)]' : 'border-[var(--color-ink-200)] text-[var(--color-ink-500)]'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => setSelectedIds((cur) => (on ? cur.filter((x) => x !== i.id) : [...cur, i.id]))}
+                      className="h-3 w-3"
+                      aria-label={`Include ${i.label}`}
+                    />
+                    {i.label}
+                    {i.status === 'requested' && <span className="font-normal text-[var(--color-ink-400)]">(again)</span>}
+                  </label>
+                </li>
+              );
+            })}
           </ul>
         </div>
 

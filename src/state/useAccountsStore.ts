@@ -13,6 +13,7 @@ import type {
   DriverEntry,
   LossEntry,
   MarketQuote,
+  QuoteOption,
   MatchResult,
   MissingItem,
   MissingItemStatus,
@@ -54,6 +55,7 @@ import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/do
 import { isSupabaseConfigured } from '../services/supabase/client';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
 import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
+import { inferFileType as inferQuoteFileType } from '../utils/documents';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
 
@@ -78,10 +80,18 @@ interface AccountsState {
   cloudAccountIds: Record<string, true>;
   /** Per-account cloud save status, for the "Saving… / Saved / Failed to save" indicator. Ephemeral — never persisted, since a stale "saving" from a previous session would be meaningless. */
   syncStatus: Record<string, 'saving' | 'saved' | 'error'>;
+  /** Why the last cloud save for an account failed (e.g. a missing migration), shown behind "Failed to save". Ephemeral. */
+  syncError: Record<string, string>;
   /** Local accounts the signed-in broker explicitly dismissed ("Not now") from the "import to your account" prompt, or already imported — either way, never prompt again for these ids. Persisted. */
   dismissedImportIds: Record<string, true>;
 
-  setCurrentUserId: (userId: string | null) => void;
+  /** The signed-in broker's email, for "by …" in activity. Ephemeral, like currentUserId. */
+  currentUserEmail: string | null;
+  /** Which broker's cloud account each cloud-backed account belongs to — so signing out (or in as someone else) hides it. Persisted. */
+  accountOwners: Record<string, string>;
+  /** Cloud-backed accounts hidden because their owner isn't the one signed in. Kept (not deleted) so nothing unsynced is lost; restored when the owner signs back in. Persisted. */
+  hiddenAccounts: Account[];
+  setCurrentUserId: (userId: string | null, email?: string | null) => void;
   /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud. Never touches local-only (not-yet-imported) accounts. */
   hydrateCloudSubmissions: () => Promise<void>;
   /** The broker's explicit "Import to account" action from the local-submissions-found prompt — marks each given local account as cloud and pushes its current state up, without waiting to be asked again. */
@@ -152,6 +162,11 @@ interface AccountsState {
   addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
   updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason'>>) => void;
   addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
+  /** Record one quote from a market (a market can return several), optionally with the quote file. Marks the market Quoted. */
+  addQuoteOption: (accountId: string, quoteId: string, input: { label?: string; premium?: number; notes?: string; file?: File }) => string;
+  attachQuoteFile: (accountId: string, quoteId: string, optionId: string, file: File) => void;
+  selectQuoteOption: (accountId: string, quoteId: string, optionId: string) => void;
+  deleteQuoteOption: (accountId: string, quoteId: string, optionId: string) => void;
   deleteQuote: (accountId: string, quoteId: string) => void;
   /** A carrier/MGA asked for more — links the carrier to the account's existing requirement for that document (same logical requirement, see requirementKey), or creates it; flags the quote. Returns the item id. */
   recordCarrierRequest: (accountId: string, quoteId: string, input: { label: string; type: MissingItemType; notes?: string }) => string;
@@ -207,6 +222,40 @@ function trimEvents(events: ActivityEvent[]): ActivityEvent[] {
   return kept.slice(-MAX_EVENTS_PER_ACCOUNT);
 }
 
+/**
+ * Which accounts this browser should show: every local-only account, plus cloud accounts that
+ * belong to whoever is signed in (or whose owner isn't recorded yet — accounts synced before
+ * owners were tracked, claimed on their next save). Everything else is set aside, not deleted.
+ */
+function partitionAccounts(all: Account[], cloudAccountIds: Record<string, true>, owners: Record<string, string>, userId: string | null): { accounts: Account[]; hiddenAccounts: Account[] } {
+  const seen = new Set<string>();
+  const accounts: Account[] = [];
+  const hiddenAccounts: Account[] = [];
+  for (const a of all) {
+    if (seen.has(a.id)) continue;
+    seen.add(a.id);
+    const visible = !cloudAccountIds[a.id] || (!!userId && (owners[a.id] === undefined || owners[a.id] === userId));
+    (visible ? accounts : hiddenAccounts).push(a);
+  }
+  return { accounts, hiddenAccounts };
+}
+
+/** " by jane@agency.com" — who made the change, when a broker is signed in ("by themselves" reads oddly, so self-assignment says so). */
+function actorSuffix(actorEmail: string | null, subjectEmail?: string): string {
+  if (!actorEmail) return '';
+  if (subjectEmail && subjectEmail.toLowerCase() === actorEmail.toLowerCase()) return ' (self-assigned)';
+  return ` by ${actorEmail}`;
+}
+
+/** Selected quote's premium, else the newest quote's, else a premium recorded before multiple quotes existed. */
+function headlinePremium(q: MarketQuote): number | undefined {
+  const opts = q.options ?? [];
+  const selected = opts.find((o) => o.id === q.selectedOptionId);
+  if (selected) return selected.premium;
+  const latest = [...opts].reverse().find((o) => o.premium !== undefined);
+  return latest?.premium ?? (opts.length ? undefined : q.premium);
+}
+
 function updateInList<T extends { id: string }>(list: T[] | undefined, id: string, fn: (item: T) => T): T[] {
   return (list ?? []).map((x) => (x.id === id ? fn(x) : x));
 }
@@ -225,6 +274,16 @@ export const useAccountsStore = create<AccountsState>()(
        * immediate source of truth for the current session (see file header in submissionsRepo.ts),
        * this just pushes the resulting state outward and reflects success/failure via syncStatus.
        */
+      function recordSync(accountId: string, errorMessage: string | null) {
+        set((st) => {
+          const { [accountId]: _prev, ...rest } = st.syncError;
+          return {
+            syncStatus: { ...st.syncStatus, [accountId]: errorMessage ? 'error' : 'saved' },
+            syncError: errorMessage ? { ...rest, [accountId]: errorMessage } : rest,
+          };
+        });
+      }
+
       function syncNow(accountId: string) {
         const s = get();
         if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
@@ -232,11 +291,14 @@ export const useAccountsStore = create<AccountsState>()(
         const profile = s.riskProfiles[accountId];
         if (!account || !profile) return;
         const userId = s.currentUserId;
-        set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'saving' } }));
+        set((st) => ({
+          syncStatus: { ...st.syncStatus, [accountId]: 'saving' },
+          accountOwners: st.accountOwners[accountId] === userId ? st.accountOwners : { ...st.accountOwners, [accountId]: userId },
+        }));
         const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [] };
         Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
-          const ok = snapRes.ok && actRes.ok;
-          set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
+          const message = !snapRes.ok ? snapRes.message : !actRes.ok ? `Activity history: ${actRes.message}` : null;
+          recordSync(accountId, message);
         });
       }
 
@@ -247,11 +309,36 @@ export const useAccountsStore = create<AccountsState>()(
        * Runs after local processing finishes (success or failure) so even a document that failed
        * to read still has its original bytes preserved in the broker's account, not just discarded.
        */
+      /** Keeps a quote file for preview/download: always in this browser, and in the cloud bucket for cloud accounts (path recorded on the attachment). */
+      async function storeQuoteFile(accountId: string, quoteId: string, optionId: string, attachmentId: string, file: File) {
+        await saveLocalFile(attachmentId, file, file.name);
+        const s = get();
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        const res = await cloudRepo.uploadDocumentFile(s.currentUserId, accountId, attachmentId, file);
+        if (!res.ok) return recordSync(accountId, `Uploading ${file.name} failed: ${res.message}`);
+        set((st) => ({
+          quotes: {
+            ...st.quotes,
+            [accountId]: updateInList(st.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              options: (q.options ?? []).map((o) => (o.id === optionId && o.attachment?.id === attachmentId ? { ...o, attachment: { ...o.attachment, storagePath: res.data } } : o)),
+            })),
+          },
+        }));
+        syncNow(accountId);
+      }
+
+      function removeQuoteFile(attachment: { id: string; storagePath?: string }) {
+        void deleteLocalFiles([attachment.id]);
+        if (attachment.storagePath && isSupabaseConfigured && get().currentUserId) void cloudRepo.deleteDocumentFile(attachment.storagePath);
+      }
+
       async function syncDocumentToCloud(accountId: string, documentId: string, file: File) {
         const s = get();
         if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
         const userId = s.currentUserId;
         const uploadResult = await cloudRepo.uploadDocumentFile(userId, accountId, documentId, file);
+        if (!uploadResult.ok) recordSync(accountId, `Uploading ${file.name} failed: ${uploadResult.message}`);
         if (uploadResult.ok) {
           set((st) => ({
             documents: {
@@ -272,6 +359,10 @@ export const useAccountsStore = create<AccountsState>()(
       currentUserId: null,
       cloudAccountIds: {},
       syncStatus: {},
+      syncError: {},
+      currentUserEmail: null,
+      accountOwners: {},
+      hiddenAccounts: [],
       dismissedImportIds: {},
       matchResults: {},
       activityLog: {},
@@ -524,8 +615,7 @@ export const useAccountsStore = create<AccountsState>()(
         if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId] && doc) {
           Promise.all([doc.storagePath ? cloudRepo.deleteDocumentFile(doc.storagePath) : Promise.resolve({ ok: true as const, data: undefined }), cloudRepo.deleteDocumentRow(documentId)]).then(
             ([fileRes, rowRes]) => {
-              const ok = fileRes.ok && rowRes.ok;
-              set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
+              recordSync(accountId, !fileRes.ok ? fileRes.message : !rowRes.ok ? rowRes.message : null);
             }
           );
         }
@@ -849,7 +939,10 @@ export const useAccountsStore = create<AccountsState>()(
           if (!deleteResult.ok) return { ok: false, message: `Couldn't delete this submission from your account: ${deleteResult.message}` };
         }
 
-        void deleteLocalFiles((s.documents[accountId] ?? []).map((d) => d.id));
+        void deleteLocalFiles([
+          ...(s.documents[accountId] ?? []).map((d) => d.id),
+          ...(s.quotes[accountId] ?? []).flatMap((q) => (q.options ?? []).flatMap((o) => (o.attachment ? [o.attachment.id] : []))),
+        ]);
         set((st) => {
           const { [accountId]: _doc, ...documents } = st.documents;
           const { [accountId]: _profile, ...riskProfiles } = st.riskProfiles;
@@ -907,7 +1000,12 @@ export const useAccountsStore = create<AccountsState>()(
             s.accounts.map((a) => (a.id === accountId ? { ...a, assignedBroker: broker ?? undefined } : a)),
             accountId
           ),
-          activityLog: appendEvent(s.activityLog, accountId, 'broker_assigned', broker ? `Assigned to ${broker.name}.` : 'Removed the assigned broker.'),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'broker_assigned',
+            `${broker ? `Assigned to ${broker.name}` : 'Removed the assigned broker'}${actorSuffix(s.currentUserEmail, broker?.email)}.`
+          ),
         }));
         syncNow(accountId);
       },
@@ -1172,7 +1270,7 @@ export const useAccountsStore = create<AccountsState>()(
             s.activityLog,
             accountId,
             'stage_changed',
-            stage ? `Status set to ${ACCOUNT_STAGE_LABELS[stage]}.` : 'Status set back to automatic.'
+            `${stage ? `Status set to ${ACCOUNT_STAGE_LABELS[stage]}` : 'Status set back to automatic'}${actorSuffix(s.currentUserEmail)}.`
           ),
         }));
         syncNow(accountId);
@@ -1297,7 +1395,7 @@ export const useAccountsStore = create<AccountsState>()(
           if (patch.submittedAt !== undefined && patch.submittedAt !== before.submittedAt && next.submittedAt) events.push(['submission_sent', `Recorded submission to ${name} as sent ${formatShortDate(next.submittedAt)}.`]);
           if (patch.marketName !== undefined && patch.marketName !== before.marketName) events.push(['quote_status_changed', `Renamed market ${before.marketName} to ${name}.`]);
         }
-        if (next.followUpDate !== before.followUpDate && AWAITING_CARRIER_STATUSES.includes(next.status)) {
+        if (next.followUpDate !== before.followUpDate && next.status !== 'declined' && next.status !== 'bound') {
           events.push(['follow_up_scheduled', next.followUpDate ? `Carrier follow-up with ${name} set for ${formatShortDate(next.followUpDate)}.` : `Cleared the follow-up date for ${name}.`]);
         }
 
@@ -1329,9 +1427,114 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
+      addQuoteOption: (accountId, quoteId, input) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!quote) return '';
+        const now = new Date().toISOString();
+        const option: QuoteOption = {
+          id: generateId('qopt'),
+          label: input.label?.trim() || undefined,
+          premium: input.premium,
+          notes: input.notes?.trim() || undefined,
+          receivedAt: now,
+          ...(input.file ? { attachment: { id: generateId('qfile'), name: input.file.name, sizeBytes: input.file.size, fileType: inferQuoteFileType(input.file.name) } } : {}),
+        };
+        const options = [...(quote.options ?? []), option];
+        const count = options.length;
+        const name = option.label ?? `Quote ${count}`;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              options,
+              status: q.status === 'bound' ? q.status : ('quoted' as const),
+              premium: headlinePremium({ ...q, options }),
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'quote_received',
+            `${quote.marketName} quoted${option.premium ? ` ${money(option.premium)}` : ''}${count > 1 || option.label ? ` (${name})` : ''}${option.attachment ? ` — ${option.attachment.name} attached` : ''}.`
+          ),
+        }));
+        if (input.file && option.attachment) storeQuoteFile(accountId, quoteId, option.id, option.attachment.id, input.file);
+        syncNow(accountId);
+        return option.id;
+      },
+
+      attachQuoteFile: (accountId, quoteId, optionId, file) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        if (!quote || !option) return;
+        const attachment = { id: generateId('qfile'), name: file.name, sizeBytes: file.size, fileType: inferQuoteFileType(file.name) };
+        const replaced = option.attachment;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              options: (q.options ?? []).map((o) => (o.id === optionId ? { ...o, attachment } : o)),
+              updatedAt: new Date().toISOString(),
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'carrier_note_added', `Attached ${file.name} to ${quote.marketName} ${option.label ?? 'quote'}.`),
+        }));
+        if (replaced) removeQuoteFile(replaced);
+        storeQuoteFile(accountId, quoteId, optionId, attachment.id, file);
+        syncNow(accountId);
+      },
+
+      selectQuoteOption: (accountId, quoteId, optionId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        if (!quote || !option || quote.selectedOptionId === optionId) return;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => {
+              const next = { ...q, selectedOptionId: optionId };
+              return { ...next, premium: headlinePremium(next), updatedAt: new Date().toISOString() };
+            }),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'quote_status_changed',
+            `Selected ${quote.marketName} ${option.label ?? 'quote'}${option.premium ? ` at ${money(option.premium)}` : ''}${actorSuffix(s.currentUserEmail)}.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      deleteQuoteOption: (accountId, quoteId, optionId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        if (!quote || !option) return;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => {
+              const next = { ...q, options: (q.options ?? []).filter((o) => o.id !== optionId), selectedOptionId: q.selectedOptionId === optionId ? undefined : q.selectedOptionId };
+              return { ...next, premium: headlinePremium(next), updatedAt: new Date().toISOString() };
+            }),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'quote_status_changed', `Removed ${quote.marketName} ${option.label ?? 'quote'}${option.premium ? ` (${money(option.premium)})` : ''}.`),
+        }));
+        if (option.attachment) removeQuoteFile(option.attachment);
+        syncNow(accountId);
+      },
+
       deleteQuote: (accountId, quoteId) => {
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         if (!quote) return;
+        for (const o of quote.options ?? []) if (o.attachment) removeQuoteFile(o.attachment);
         set((s) => ({
           quotes: { ...s.quotes, [accountId]: (s.quotes[accountId] ?? []).filter((q) => q.id !== quoteId) },
           // Items this carrier asked for stay on the checklist (the client may still owe them), just no longer tied to a carrier.
@@ -1399,15 +1602,25 @@ export const useAccountsStore = create<AccountsState>()(
         return item.id;
       },
 
-      setCurrentUserId: (userId) => set({ currentUserId: userId }),
+      setCurrentUserId: (userId, email) =>
+        set((s) => {
+          const { accounts, hiddenAccounts } = partitionAccounts([...s.accounts, ...s.hiddenAccounts], s.cloudAccountIds, s.accountOwners, userId);
+          const activeVisible = accounts.some((a) => a.id === s.activeAccountId);
+          return { currentUserId: userId, currentUserEmail: userId ? (email ?? s.currentUserEmail) : null, accounts, hiddenAccounts, activeAccountId: activeVisible ? s.activeAccountId : null };
+        }),
 
       hydrateCloudSubmissions: async () => {
         const userId = get().currentUserId;
         if (!isSupabaseConfigured || !userId) return;
         const result = await cloudRepo.fetchUserSubmissions(userId);
         if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
+        const needsPush: string[] = [];
         set((s) => {
-          const accounts = [...s.accounts];
+          const cloudIds = new Set(result.data.map((b) => b.account.id));
+          // A cloud account hidden at sign-out comes back as this device's local copy to merge with.
+          const accounts = [...s.accounts, ...s.hiddenAccounts.filter((a) => cloudIds.has(a.id))];
+          const hiddenAccounts = s.hiddenAccounts.filter((a) => !cloudIds.has(a.id));
+          const accountOwners = { ...s.accountOwners, ...Object.fromEntries([...cloudIds].map((id) => [id, userId])) };
           const documents = { ...s.documents };
           const riskProfiles = { ...s.riskProfiles };
           const activityLog = { ...s.activityLog };
@@ -1415,21 +1628,48 @@ export const useAccountsStore = create<AccountsState>()(
           const quotes = { ...s.quotes };
           const cloudAccountIds = { ...s.cloudAccountIds };
           for (const bundle of result.data) {
-            const idx = accounts.findIndex((a) => a.id === bundle.account.id);
-            if (idx === -1) accounts.push(bundle.account);
-            else accounts[idx] = bundle.account; // cloud is authoritative for an already-known cloud account
-            documents[bundle.account.id] = bundle.documents;
-            riskProfiles[bundle.account.id] = bundle.profile;
-            activityLog[bundle.account.id] = bundle.activity;
+            const id = bundle.account.id;
+            const idx = accounts.findIndex((a) => a.id === id);
+            const local = idx === -1 ? undefined : accounts[idx];
+            // Cloud is authoritative for an already-known cloud account — except for fields the
+            // project's database can't hold yet (0007 / 0008 not applied), which would otherwise be
+            // wiped on every reload (e.g. the assigned broker "disappearing").
+            const merged: Account = {
+              ...bundle.account,
+              ...(!bundle.hasWorkflowColumns && local ? { contacts: local.contacts, assignedBroker: local.assignedBroker } : {}),
+              ...(!bundle.hasStageColumn && local ? { stage: local.stage } : {}),
+            };
+            if (idx === -1) accounts.push(merged);
+            else accounts[idx] = merged;
+            // Documents: cloud rows win, but keep what the cloud never stores (per-document extracted
+            // fields, candidate notes) and a storage path the cloud row is missing; keep local-only rows.
+            const localDocs = s.documents[id] ?? [];
+            const cloudDocIds = new Set(bundle.documents.map((d) => d.id));
+            documents[id] = [
+              ...bundle.documents.map((d) => {
+                const l = localDocs.find((x) => x.id === d.id);
+                return l ? { ...l, ...d, storagePath: d.storagePath ?? l.storagePath, previewDataUrl: d.previewDataUrl ?? l.previewDataUrl } : d;
+              }),
+              ...localDocs.filter((d) => !cloudDocIds.has(d.id)),
+            ];
+            riskProfiles[id] = bundle.profile;
+            // Activity is append-only: union by id, so events that never reached the cloud aren't lost.
+            const byId = new Map<string, ActivityEvent>();
+            for (const e of [...(s.activityLog[id] ?? []), ...bundle.activity]) byId.set(e.id, e);
+            const localHadMore = (s.activityLog[id] ?? []).some((e) => !bundle.activity.some((c) => c.id === e.id));
+            if (localHadMore) needsPush.push(id);
+            activityLog[id] = trimEvents([...byId.values()].sort((x, y) => (x.timestamp < y.timestamp ? -1 : 1)));
             // undefined = the workflow columns don't exist yet (migration 0007 not applied) — keep
             // whatever this device has rather than wiping it with an empty list.
             if (bundle.missingItems) missingItems[bundle.account.id] = normalizeMissingItems(bundle.missingItems);
             if (bundle.quotes) quotes[bundle.account.id] = bundle.quotes;
             cloudAccountIds[bundle.account.id] = true;
           }
-          return { accounts, documents, riskProfiles, activityLog, missingItems, quotes, cloudAccountIds };
+          return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, cloudAccountIds };
         });
         for (const bundle of result.data) get().runMatching(bundle.account.id);
+        // Push back anything this device had that the cloud didn't (e.g. events lost to the old sync bug).
+        for (const id of needsPush) syncNow(id);
       },
 
       importAccountsToCloud: async (accountIds) => {
@@ -1454,7 +1694,11 @@ export const useAccountsStore = create<AccountsState>()(
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<AccountsState>;
         const missingItems = Object.fromEntries(Object.entries(p.missingItems ?? {}).map(([id, items]) => [id, normalizeMissingItems(items ?? [])]));
-        return { ...current, ...p, missingItems };
+        const merged = { ...current, ...p, missingItems };
+        // Nobody is known to be signed in until App.tsx reads the session, so cloud accounts start
+        // hidden — no flash of another broker's accounts after they signed out.
+        const { accounts, hiddenAccounts } = partitionAccounts([...(merged.accounts ?? []), ...(merged.hiddenAccounts ?? [])], merged.cloudAccountIds ?? {}, merged.accountOwners ?? {}, null);
+        return { ...merged, accounts, hiddenAccounts };
       },
       // effectiveAppetiteRecords is derived (base + fetched overrides), re-loaded on demand — never
       // persisted, so a stale override can't get stuck in one broker's browser after an admin change.
@@ -1463,7 +1707,7 @@ export const useAccountsStore = create<AccountsState>()(
         // currentUserId: re-derived from the live Supabase session on load, never trusted from a
         // stale persisted value (see App.tsx's bootstrap effect).
         // syncStatus: a snapshot of in-flight/last save outcome — meaningless across a reload.
-        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, currentUserId: _currentUserId, syncStatus: _syncStatus, ...rest } = state;
+        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, currentUserId: _currentUserId, currentUserEmail: _currentUserEmail, syncStatus: _syncStatus, syncError: _syncError, ...rest } = state;
         return rest;
       },
     }

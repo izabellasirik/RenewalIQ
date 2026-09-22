@@ -62,9 +62,10 @@ function AccountMenu() {
             <p className="truncate text-xs text-[var(--color-ink-500)]">{session.email}</p>
           </div>
           <button
-            onClick={() => {
+            onClick={async () => {
               setOpen(false);
-              signOutBroker();
+              await signOutBroker();
+              navigate('/login', { replace: true });
             }}
             className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-[var(--color-ink-700)] hover:bg-[var(--color-ink-50)] cursor-pointer"
           >
@@ -82,6 +83,8 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
   const location = useLocation();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const syncStatus = useAccountsStore((s) => (accountId ? s.syncStatus[accountId] : undefined));
+  const syncError = useAccountsStore((s) => (accountId ? s.syncError[accountId] : undefined));
+  const [errorOpen, setErrorOpen] = useState(false);
   const steps = useWorkflowStatus(account?.id);
   const activeKey = steps.find((s) => location.pathname.startsWith(s.path))?.key ?? '';
 
@@ -102,10 +105,24 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
           </span>
         )}
         {account && syncStatus === 'error' && (
-          <span className="flex items-center gap-1.5 text-xs text-[var(--color-danger-600)]" title="This change is only saved in this browser — it did not reach your account. Try again.">
-            <AlertTriangle size={13} />
-            Failed to save to your account
-          </span>
+          <div className="relative">
+            <button
+              onClick={() => setErrorOpen((v) => !v)}
+              className="flex items-center gap-1.5 text-xs text-[var(--color-danger-600)] hover:underline cursor-pointer"
+              title={syncError ?? 'This change is only saved in this browser — it did not reach your account.'}
+            >
+              <AlertTriangle size={13} />
+              <span className="hidden sm:inline">Failed to save to your account</span>
+              <span className="sm:hidden">Not saved</span>
+            </button>
+            {errorOpen && (
+              <div className="absolute right-0 top-full z-30 mt-2 w-80 rounded-lg border border-[var(--color-danger-100)] bg-white p-3 text-xs text-[var(--color-ink-700)] [box-shadow:var(--shadow-popover)]">
+                <p className="font-semibold text-[var(--color-danger-600)]">This change is saved in this browser only.</p>
+                <p className="mt-1 break-words">{syncError ?? 'The cloud save failed.'}</p>
+                <p className="mt-2 text-[var(--color-ink-500)]">It will be retried on your next edit. If the message mentions a migration, apply it in Supabase (see SUPABASE_SETUP.md).</p>
+              </div>
+            )}
+          </div>
         )}
         {account && (syncStatus === 'saved' || syncStatus === undefined) && (
           <span className="flex items-center gap-1.5 text-xs text-[var(--color-ink-400)]" title={syncStatus === 'saved' ? 'Saved to your RenewalIQ account' : 'Autosaved to this browser'}>

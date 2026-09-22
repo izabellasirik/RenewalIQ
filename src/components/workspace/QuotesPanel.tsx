@@ -11,10 +11,10 @@ import { DateInput } from './DateInput';
 import { carriersFor, forwardedAt } from '../../services/workflow/requirementKey';
 import { formatTimestampShort } from './time';
 import { QUOTE_STATUS_TONE } from './quoteStatus';
+import { QuoteOptionsList } from './QuoteOptionsList';
 import { inputClass, labelClass, smallInputClass } from './formStyles';
 import { cn } from '../../utils/cn';
 
-const STATUS_SORT: Record<QuoteStatus, number> = { additional_info_requested: 0, quoted: 1, waiting_on_carrier: 2, submitted: 3, preparing: 4, bound: 5, declined: 6 };
 
 export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; focusQuoteId?: string }) {
   const { quotes, items, contacts } = useAccountWorkflow(accountId);
@@ -22,7 +22,8 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
   const [adding, setAdding] = useState(false);
   const [requestIds, setRequestIds] = useState<string[] | null>(null);
 
-  const sorted = useMemo(() => [...quotes].sort((a, b) => STATUS_SORT[a.status] - STATUS_SORT[b.status] || (a.createdAt < b.createdAt ? -1 : 1)), [quotes]);
+  // Newest market first, so one just added is right at the top.
+  const sorted = useMemo(() => [...quotes].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)), [quotes]);
   const marketNames = useMemo(() => [...new Set(appetiteRecords.map((r) => r.marketName))].sort(), [appetiteRecords]);
 
   return (
@@ -76,7 +77,8 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
   const addQuote = useAccountsStore((s) => s.addQuote);
   const appetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const [name, setName] = useState('');
-  const [sent, setSent] = useState(false);
+  const [status, setStatus] = useState<QuoteStatus>('preparing');
+  const sent = AWAITING_CARRIER_STATUSES.includes(status);
   const [submittedAt, setSubmittedAt] = useState(todayKey());
   const [followUpDate, setFollowUpDate] = useState(addBusinessDays(new Date(), 3));
 
@@ -88,7 +90,7 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
     addQuote(accountId, {
       marketName: record?.marketName ?? trimmed,
       appetiteRecordId: record?.id,
-      status: sent ? 'submitted' : 'preparing',
+      status,
       submittedAt: sent ? submittedAt : undefined,
       followUpDate: sent ? followUpDate : undefined,
     });
@@ -99,13 +101,25 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
     <Card>
       <CardBody className="pt-4">
         <form onSubmit={submit} className="flex flex-col gap-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr_1fr]">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr]">
             <div>
               <label className={labelClass}>Market / carrier</label>
               <input value={name} onChange={(e) => setName(e.target.value)} list="market-name-options" className={inputClass} placeholder="e.g. Progressive" autoFocus />
               {marketNames.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-ink-400)]">Type any carrier or MGA — known markets autocomplete.</p>}
             </div>
-            {sent && (
+            <div>
+              <label className={labelClass}>Status</label>
+              <select value={status} onChange={(e) => setStatus(e.target.value as QuoteStatus)} className={inputClass} aria-label="Market status">
+                {QUOTE_STATUS_ORDER.map((st) => (
+                  <option key={st} value={st}>
+                    {QUOTE_STATUS_LABELS[st]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {sent && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <>
                 <div>
                   <label className={labelClass}>Submission sent</label>
@@ -116,13 +130,9 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
                   <input type="date" value={followUpDate} onChange={(e) => setFollowUpDate(e.target.value)} className={inputClass} />
                 </div>
               </>
-            )}
-          </div>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-1.5 text-sm text-[var(--color-ink-700)]">
-              <input type="checkbox" checked={sent} onChange={(e) => setSent(e.target.checked)} />
-              Submission already sent
-            </label>
             <div className="ml-auto flex gap-2">
               <Button type="button" size="sm" variant="ghost" onClick={onDone}>
                 Cancel
@@ -165,20 +175,24 @@ function QuoteCard({
   const [date, setDate] = useState(todayKey());
   const [followUp, setFollowUp] = useState(addBusinessDays(new Date(), 3));
   const [premium, setPremium] = useState('');
+  const [optionLabel, setOptionLabel] = useState('');
+  const [quoteFile, setQuoteFile] = useState<File | null>(null);
+  const addQuoteOption = useAccountsStore((s) => s.addQuoteOption);
   const [reason, setReason] = useState('');
   const [reqLabel, setReqLabel] = useState('');
   const [reqType, setReqType] = useState<MissingItemType>('document');
   const [note, setNote] = useState('');
 
-  const awaiting = AWAITING_CARRIER_STATUSES.includes(quote.status);
   const closed = quote.status === 'declined' || quote.status === 'bound';
-  const followUpDue = awaiting && quote.followUpDate && quote.followUpDate <= todayKey();
+  const followUpDue = !closed && quote.followUpDate && quote.followUpDate <= todayKey();
 
   function open(f: InlineForm) {
     setForm((cur) => (cur === f ? null : f));
     setDate(todayKey());
     setFollowUp(addBusinessDays(new Date(), 3));
-    setPremium(quote.premium ? String(quote.premium) : '');
+    setPremium('');
+    setOptionLabel('');
+    setQuoteFile(null);
     setReason(quote.declineReason ?? '');
     setReqLabel('');
     setNote('');
@@ -192,7 +206,7 @@ function QuoteCard({
   function submitInline(e: FormEvent) {
     e.preventDefault();
     if (form === 'submit') updateQuote(accountId, quote.id, { status: 'submitted', submittedAt: date, followUpDate: followUp || undefined });
-    if (form === 'quote') updateQuote(accountId, quote.id, { status: 'quoted', premium: parsePremium(premium) });
+    if (form === 'quote') addQuoteOption(accountId, quote.id, { label: optionLabel, premium: parsePremium(premium), file: quoteFile ?? undefined });
     if (form === 'decline') updateQuote(accountId, quote.id, { status: 'declined', declineReason: reason.trim() || undefined });
     if (form === 'note') addQuoteNote(accountId, quote.id, note);
     if (form === 'request') {
@@ -244,7 +258,7 @@ function QuoteCard({
             Sent
             <DateInput value={quote.submittedAt} onCommit={(v) => updateQuote(accountId, quote.id, { submittedAt: v })} className={smallInputClass} aria-label={`Date sent to ${quote.marketName}`} />
           </label>
-          {awaiting && (
+          {!closed && (
             <label className={cn('inline-flex items-center gap-1.5', followUpDue && 'font-medium text-[var(--color-danger-600)]')}>
               Follow up
               <DateInput value={quote.followUpDate} onCommit={(v) => updateQuote(accountId, quote.id, { followUpDate: v })} className={smallInputClass} aria-label={`Follow-up date for ${quote.marketName}`} />
@@ -263,11 +277,9 @@ function QuoteCard({
             <Button size="sm" variant="secondary" icon={<FileQuestion size={13} />} onClick={() => open('request')}>
               Carrier requested…
             </Button>
-            {quote.status !== 'quoted' && (
-              <Button size="sm" variant="secondary" icon={<BadgeDollarSign size={13} />} onClick={() => open('quote')}>
-                Record quote
-              </Button>
-            )}
+            <Button size="sm" variant={quote.status === 'quoted' ? 'primary' : 'secondary'} icon={<BadgeDollarSign size={13} />} onClick={() => open('quote')}>
+              {(quote.options?.length ?? 0) > 0 || quote.status === 'quoted' ? 'Add another quote' : 'Record quote'}
+            </Button>
             {quote.status === 'quoted' && (
               <Button size="sm" variant="secondary" icon={<ShieldCheck size={13} />} onClick={() => updateQuote(accountId, quote.id, { status: 'bound' })}>
                 Mark bound
@@ -294,10 +306,24 @@ function QuoteCard({
               </>
             )}
             {form === 'quote' && (
-              <div className="sm:col-span-2">
-                <label className={labelClass}>Premium</label>
-                <input value={premium} onChange={(e) => setPremium(e.target.value)} className={inputClass} placeholder="$12,500" inputMode="decimal" autoFocus />
-              </div>
+              <>
+                <div>
+                  <label className={labelClass}>Premium</label>
+                  <input value={premium} onChange={(e) => setPremium(e.target.value)} className={inputClass} placeholder="$12,500" inputMode="decimal" autoFocus />
+                </div>
+                <div>
+                  <label className={labelClass}>Name (optional)</label>
+                  <input value={optionLabel} onChange={(e) => setOptionLabel(e.target.value)} className={inputClass} placeholder="e.g. Option B — $1M CSL, $2,500 ded" />
+                </div>
+                <div className="sm:col-span-3">
+                  <label className={labelClass}>Quote file (optional)</label>
+                  <input
+                    type="file"
+                    onChange={(e) => setQuoteFile(e.target.files?.[0] ?? null)}
+                    className="block w-full text-xs text-[var(--color-ink-600)] file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-[var(--color-ink-200)] file:bg-white file:px-2.5 file:py-1.5 file:text-xs file:font-medium file:text-[var(--color-ink-800)] hover:file:bg-[var(--color-ink-50)]"
+                  />
+                </div>
+              </>
             )}
             {form === 'decline' && (
               <div className="sm:col-span-2">
@@ -330,6 +356,8 @@ function QuoteCard({
             </div>
           </form>
         )}
+
+        <QuoteOptionsList accountId={accountId} quote={quote} />
 
         {requestedItems.length > 0 && (
           <div className="mt-4">
