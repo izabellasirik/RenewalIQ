@@ -35,12 +35,12 @@ export function LocalImportPrompt({ accounts }: { accounts: Account[] }) {
         <p className="mt-0.5 text-sm text-[var(--color-ink-600)]">
           {accounts.length === 1 ? (
             <>
-              "<span className="font-medium">{accounts[0].namedInsured}</span>" was created in this browser before you signed in. Save it to your Renewal IQ account so it
+              "<span className="font-medium">{accounts[0].namedInsured}</span>" was created in this browser before you signed in. Save it to your RenewalIQ account so it
               follows you across devices?
             </>
           ) : (
             <>
-              {accounts.length} submissions ({accounts.map((a) => a.namedInsured).join(', ')}) were created in this browser before you signed in. Save them to your Renewal IQ
+              {accounts.length} submissions ({accounts.map((a) => a.namedInsured).join(', ')}) were created in this browser before you signed in. Save them to your RenewalIQ
               account so they follow you across devices?
             </>
           )}

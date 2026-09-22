@@ -150,7 +150,7 @@ export function NewAccountPage() {
   return (
     <PageContainer
       title="New Submission"
-      description="Give Renewal IQ the documents you already have. We'll organize the account for you."
+      description="Give RenewalIQ the documents you already have. We'll organize the account for you."
     >
       <div className="mx-auto w-full max-w-xl">
         {mode === 'choice' && (

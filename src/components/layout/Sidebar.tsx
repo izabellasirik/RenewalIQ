@@ -3,6 +3,7 @@ import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarC
 import { cn } from '../../utils/cn';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
+import { BrandLogo } from '../branding/Logo';
 
 const navItemClass =
   'group flex items-center gap-3 rounded-lg border-l-2 border-transparent px-3 py-2.5 text-sm font-medium transition-colors';
@@ -35,12 +36,9 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
       )}
     >
       <div className="flex items-center gap-2.5 px-5 py-6">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--color-brand-800)] text-sm font-bold text-white">
-          R
-        </div>
         <div>
-          <p className="text-sm font-semibold tracking-tight text-[var(--color-ink-900)]">Renewal IQ</p>
-          <p className="text-[11px] text-[var(--color-ink-400)]">Broker Workspace</p>
+          <BrandLogo size={30} />
+          <p className="mt-0.5 text-[11px] text-[var(--color-ink-400)]">Broker Workspace</p>
         </div>
       </div>
 
@@ -57,12 +55,12 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
             )
           }
         >
-          <CalendarCheck size={17} />
-          Today's Plate
+          <LayoutGrid size={17} />
+          Accounts
         </NavLink>
 
         <NavLink
-          to="/accounts"
+          to="/today"
           end
           className={({ isActive }) =>
             cn(
@@ -73,8 +71,8 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
             )
           }
         >
-          <LayoutGrid size={17} />
-          Accounts
+          <CalendarCheck size={17} />
+          Today's Plate
         </NavLink>
 
         <NavLink
@@ -168,7 +166,7 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
       </nav>
 
       <div className="border-t border-[var(--color-ink-100)] px-5 py-4">
-        <p className="text-[11px] text-[var(--color-ink-400)]">Renewal IQ MVP · Design Preview</p>
+        <p className="text-[11px] text-[var(--color-ink-400)]">RenewalIQ MVP · Design Preview</p>
         {/* Deliberately understated — this is an access point for the site owner, not a broker-facing
             product feature. Real authorization happens in AdminAuthGate/Supabase, not by hiding this link. */}
         <NavLink to="/admin" className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-[var(--color-ink-300)] transition-colors hover:text-[var(--color-ink-500)]">

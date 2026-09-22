@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { AdminShell } from './components/layout/AdminShell';
 import { LoginPage } from './pages/LoginPage';
@@ -29,8 +29,10 @@ export const router = createBrowserRouter([
   {
     element: <AppShell />,
     children: [
-      { path: '/', element: <TodaysPlatePage /> },
-      { path: '/accounts', element: <DashboardPage /> },
+      { path: '/', element: <DashboardPage /> },
+      { path: '/today', element: <TodaysPlatePage /> },
+      // Old link to the accounts list, from when Today's Plate was the home page.
+      { path: '/accounts', element: <Navigate to="/" replace /> },
       { path: '/market-finder', element: <MarketFinderPage /> },
       { path: '/analytics', element: <AnalyticsPage /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },

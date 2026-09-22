@@ -175,7 +175,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
           </label>
           <textarea id="req-body" value={body} onChange={(e) => setBody(e.target.value)} rows={11} className={`${inputClass} font-[inherit] leading-relaxed`} />
         </div>
-        <p className="text-[11px] text-[var(--color-ink-400)]">Renewal IQ doesn't send email. Copy it or open it in your email app, send it, then click “Mark as sent” to start the follow-up clock.</p>
+        <p className="text-[11px] text-[var(--color-ink-400)]">RenewalIQ doesn't send email. Copy it or open it in your email app, send it, then click “Mark as sent” to start the follow-up clock.</p>
       </div>
     </Modal>
   );

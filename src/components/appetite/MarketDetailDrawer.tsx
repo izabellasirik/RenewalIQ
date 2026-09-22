@@ -68,7 +68,7 @@ function criterionTier(status: AppetiteCriterion<unknown>['verificationStatus'])
 function SourcePanel({ criterion }: { criterion: AppetiteCriterion<unknown> }) {
   const tier = criterionTier(criterion.verificationStatus);
   if (tier === 'unknown') {
-    return <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">Renewal IQ has no source at all for this criterion.</p>;
+    return <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">RenewalIQ has no source at all for this criterion.</p>;
   }
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-[var(--color-ink-500)]">
@@ -192,7 +192,7 @@ function CriterionCard({ row }: { row: CriterionRow }) {
           )}
         </div>
       ) : (
-        <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">Renewal IQ has no source at all for this criterion.</p>
+        <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">RenewalIQ has no source at all for this criterion.</p>
       )}
     </div>
   );

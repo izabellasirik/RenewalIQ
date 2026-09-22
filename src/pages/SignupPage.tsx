@@ -44,7 +44,7 @@ export function SignupPage() {
     return (
       <AuthShell>
         <div className="rounded-xl border border-[var(--color-warning-100)] bg-[var(--color-warning-50)] p-6 text-center text-sm text-[var(--color-warning-700)]">
-          Cloud accounts aren't configured in this environment. Renewal IQ still works fully in this browser — see SUPABASE_SETUP.md to enable cross-device accounts.
+          Cloud accounts aren't configured in this environment. RenewalIQ still works fully in this browser — see SUPABASE_SETUP.md to enable cross-device accounts.
         </div>
         <p className="mt-4 text-center text-sm">
           <Link to="/" className="font-medium text-[var(--color-brand-700)] hover:underline">

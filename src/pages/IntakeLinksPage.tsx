@@ -104,7 +104,7 @@ function LinksSection({ userId }: { userId: string }) {
     <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-5">
       <div>
         <h2 className="text-sm font-semibold text-[var(--color-ink-900)]">Submission Links</h2>
-        <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a Renewal IQ login.</p>
+        <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a RenewalIQ login.</p>
       </div>
       <div className="flex gap-2">
         <input className={inputClass} placeholder="Label, e.g. Acme Safety Group" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
@@ -305,7 +305,7 @@ export function IntakeLinksPage() {
   const session = useBrokerSession();
 
   return (
-    <PageContainer title="Submission Intake" description="Let an agency, safety company, or client submit a new account directly — no Renewal IQ login required.">
+    <PageContainer title="Submission Intake" description="Let an agency, safety company, or client submit a new account directly — no RenewalIQ login required.">
       {session.status === 'loading' && (
         <div className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
           <Loader2 size={16} className="animate-spin" />

@@ -249,7 +249,7 @@ export function MarketFinderPage() {
           <p className="mt-1 text-sm text-[var(--color-ink-500)]">Search trucking markets based on risk characteristics — no submission required.</p>
           <p className="mt-2 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
             <Info size={13} className="mt-0.5 shrink-0" />
-            Carrier appetite changes frequently. Renewal IQ recommendations are based on the latest information available and should be confirmed with the market before binding.
+            Carrier appetite changes frequently. RenewalIQ recommendations are based on the latest information available and should be confirmed with the market before binding.
           </p>
         </div>
 

@@ -89,7 +89,7 @@ function ResetPasswordForm() {
       <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-success-100)] bg-[var(--color-success-50)] p-6 text-center">
         <p className="text-sm font-medium text-[var(--color-ink-800)]">Password updated.</p>
         <Button size="sm" onClick={() => navigate('/')}>
-          Continue to Renewal IQ
+          Continue to RenewalIQ
         </Button>
       </div>
     );
@@ -144,7 +144,7 @@ export function LoginPage() {
     return (
       <AuthShell>
         <div className="rounded-xl border border-[var(--color-warning-100)] bg-[var(--color-warning-50)] p-6 text-center text-sm text-[var(--color-warning-700)]">
-          Cloud sign-in isn't configured in this environment. Renewal IQ still works fully in this browser — see SUPABASE_SETUP.md to enable cross-device accounts.
+          Cloud sign-in isn't configured in this environment. RenewalIQ still works fully in this browser — see SUPABASE_SETUP.md to enable cross-device accounts.
         </div>
         <p className="mt-4 text-center text-sm">
           <Link to="/" className="font-medium text-[var(--color-brand-700)] hover:underline">

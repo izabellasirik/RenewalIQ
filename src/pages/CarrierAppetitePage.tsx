@@ -64,7 +64,7 @@ export function CarrierAppetitePage() {
     >
       <p className="mb-5 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
         <Info size={13} className="mt-0.5 shrink-0" />
-        Carrier appetite changes frequently. Renewal IQ recommendations are based on the latest information available and should be confirmed with the market before binding.
+        Carrier appetite changes frequently. RenewalIQ recommendations are based on the latest information available and should be confirmed with the market before binding.
       </p>
 
       {isAnalyzing ? (

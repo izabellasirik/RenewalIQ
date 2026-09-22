@@ -11,7 +11,7 @@ export function AccountNotFound() {
         icon={<FileQuestion size={28} strokeWidth={1.5} />}
         title="This submission doesn't exist"
         description="It may have been on a different device, or the link is out of date."
-        action={<Button onClick={() => navigate('/')}>Back to Dashboard</Button>}
+        action={<Button onClick={() => navigate('/')}>Back to Accounts</Button>}
       />
     </PageContainer>
   );

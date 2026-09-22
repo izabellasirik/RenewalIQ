@@ -108,7 +108,7 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
           </span>
         )}
         {account && (syncStatus === 'saved' || syncStatus === undefined) && (
-          <span className="flex items-center gap-1.5 text-xs text-[var(--color-ink-400)]" title={syncStatus === 'saved' ? 'Saved to your Renewal IQ account' : 'Autosaved to this browser'}>
+          <span className="flex items-center gap-1.5 text-xs text-[var(--color-ink-400)]" title={syncStatus === 'saved' ? 'Saved to your RenewalIQ account' : 'Autosaved to this browser'}>
             <Check size={13} className="text-[var(--color-success-500)]" />
             Saved {relativeTime(account.updatedAt)}
           </span>

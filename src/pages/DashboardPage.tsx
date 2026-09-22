@@ -65,7 +65,7 @@ export function DashboardPage() {
         <EmptyState
           icon={<Building2 size={28} strokeWidth={1.5} />}
           title="No submissions yet"
-          description="Create your first account to start uploading documents and building a risk profile, or load the sample transportation account to explore Renewal IQ."
+          description="Create your first account to start uploading documents and building a risk profile, or load the sample transportation account to explore RenewalIQ."
           action={
             <div className="mt-2 flex items-center gap-2">
               <Button icon={<Plus size={16} />} onClick={() => navigate('/accounts/new')}>

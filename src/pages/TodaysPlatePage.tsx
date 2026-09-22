@@ -99,7 +99,7 @@ export function TodaysPlatePage() {
       title="Today's Plate"
       description={`${dateLabel} · ${now.length === 0 ? 'Nothing due' : `${now.length} to do${overdue ? `, ${overdue} overdue` : ''}`}`}
       actions={
-        <Button variant="secondary" icon={<LayoutGrid size={15} />} onClick={() => navigate('/accounts')}>
+        <Button variant="secondary" icon={<LayoutGrid size={15} />} onClick={() => navigate('/')}>
           All accounts
         </Button>
       }

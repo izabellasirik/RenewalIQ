@@ -6,6 +6,7 @@ import { Dropzone } from '../components/upload/Dropzone';
 import { COVERAGE_LABELS } from '../types';
 import type { CoverageType, IntakeLink } from '../types';
 import { fetchIntakeLinkByToken, submitIntake, type IntakeAnswers } from '../services/supabase/intakeRepo';
+import { BrandLogo } from '../components/branding/Logo';
 
 const COVERAGE_OPTIONS = Object.keys(COVERAGE_LABELS) as CoverageType[];
 
@@ -50,8 +51,7 @@ function IntakeShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-[var(--color-ink-50)] px-4 py-8 sm:py-12">
       <div className="mx-auto flex w-full max-w-xl flex-col gap-2">
         <div className="mb-2 flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--color-brand-800)] text-sm font-bold text-white">R</div>
-          <p className="text-sm font-semibold tracking-tight text-[var(--color-ink-900)]">Renewal IQ</p>
+          <BrandLogo size={36} />
         </div>
         {children}
       </div>

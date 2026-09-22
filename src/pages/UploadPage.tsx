@@ -38,7 +38,7 @@ export function UploadPage() {
   return (
     <PageContainer
       title={`Upload Documents — ${account.namedInsured}`}
-      description="Drag in client documents. Renewal IQ extracts key fields and builds a unified, editable risk profile."
+      description="Drag in client documents. RenewalIQ extracts key fields and builds a unified, editable risk profile."
     >
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
