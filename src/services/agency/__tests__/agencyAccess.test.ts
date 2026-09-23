@@ -60,10 +60,10 @@ vi.mock('../../supabase/submissionsRepo', async () => {
     },
     saveSubmissionSnapshot: async (uid: string, account: Account) => {
       const existing = cloud.rows.find((r) => r.id === account.id);
-      if (existing) return visible(existing, uid) ? { ok: true, data: undefined } : { ok: false, message: 'new row violates row-level security policy' };
+      if (existing) return visible(existing, uid) ? { ok: true, data: undefined, headerSaved: true } : { ok: false, message: 'new row violates row-level security policy', headerSaved: false };
       const agencyId = cloud.profiles[uid]?.agencyId ?? null;
       cloud.rows.push({ id: account.id, namedInsured: account.namedInsured, creator: uid, agencyId, assignedUserId: uid });
-      return { ok: true, data: undefined };
+      return { ok: true, data: undefined, headerSaved: true };
     },
     appendActivityEvents: async () => ({ ok: true, data: undefined }),
   };

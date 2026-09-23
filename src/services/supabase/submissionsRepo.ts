@@ -382,8 +382,12 @@ export async function saveSubmissionSnapshot(
   account: Account,
   profile: RiskProfile,
   workflow?: { missingItems: MissingItem[]; quotes: MarketQuote[]; followUps?: FollowUp[] }
-): Promise<RepoResult> {
-  if (!supabase) return NOT_CONFIGURED;
+): Promise<RepoResult & { headerSaved: boolean }> {
+  if (!supabase) return { ...NOT_CONFIGURED, headerSaved: false };
+  // headerSaved: whether the `submissions` row itself landed — callers only write rows that
+  // reference it (activity_events has a foreign key onto it) once it has, even when some other
+  // part of the snapshot couldn't be saved (e.g. a migration not applied yet).
+  let headerSaved = false;
   try {
     const legacyRow = {
       id: account.id,
@@ -422,7 +426,8 @@ export async function saveSubmissionSnapshot(
       notSavedMessage = attempt.missing || null;
       if (!subErr || !isMissingWorkflowColumnError(subErr)) break;
     }
-    if (subErr) return fail(subErr.message);
+    if (subErr) return { ...fail(subErr.message), headerSaved };
+    headerSaved = true;
 
     const { values, alternates } = collectFieldValueRows(userId, account.id, profile);
 
@@ -436,7 +441,7 @@ export async function saveSubmissionSnapshot(
       supabase.from('losses').delete().eq('submission_id', account.id),
     ]);
     const delErr = del.find((r) => r.error);
-    if (delErr?.error) return fail(delErr.error.message);
+    if (delErr?.error) return { ...fail(delErr.error.message), headerSaved };
 
     const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
     let driverMonthsNotSaved = false;
@@ -526,13 +531,13 @@ export async function saveSubmissionSnapshot(
 
     const insRes = await Promise.all(inserts);
     const insErr = insRes.find((r) => r.error);
-    if (insErr?.error) return fail(insErr.error.message);
+    if (insErr?.error) return { ...fail(insErr.error.message), headerSaved };
 
-    if (notSavedMessage) return fail(notSavedMessage);
-    if (driverMonthsNotSaved) return fail('Driver experience was saved as whole years only — the database needs migration 0010_driver_experience_months.sql to keep months.');
-    return { ok: true, data: undefined };
+    if (notSavedMessage) return { ...fail(notSavedMessage), headerSaved };
+    if (driverMonthsNotSaved) return { ...fail('Driver experience was saved as whole years only — the database needs migration 0010_driver_experience_months.sql to keep months.'), headerSaved };
+    return { ok: true, data: undefined, headerSaved };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not save to your account.');
+    return { ...fail(err instanceof Error ? err.message : 'Could not save to your account.'), headerSaved };
   }
 }
 

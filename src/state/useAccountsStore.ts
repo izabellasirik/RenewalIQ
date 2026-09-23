@@ -357,10 +357,14 @@ export const useAccountsStore = create<AccountsState>()(
           accountOwners: st.accountOwners[accountId] === userId ? st.accountOwners : { ...st.accountOwners, [accountId]: userId },
         }));
         const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [], followUps: s.followUps[accountId] ?? [] };
-        Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
-          const message = !snapRes.ok ? snapRes.message : !actRes.ok ? `Activity history: ${actRes.message}` : null;
+        // Account row first, then activity: activity_events has a foreign key onto submissions, so
+        // writing both at once on a brand-new account could fail with a confusing secondary error.
+        void (async () => {
+          const snapRes = await cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow);
+          const actRes = snapRes.headerSaved ? await cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []) : null;
+          const message = !snapRes.ok ? snapRes.message : actRes && !actRes.ok ? `Activity history: ${actRes.message}` : null;
           recordSync(accountId, message);
-        });
+        })();
       }
 
       /**
