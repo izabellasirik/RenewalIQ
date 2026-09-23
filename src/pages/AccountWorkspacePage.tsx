@@ -150,7 +150,8 @@ export function AccountWorkspacePage() {
                   <p className="mt-2 text-sm italic text-[var(--color-ink-400)]">No markets yet.</p>
                 ) : (
                   <ul className="mt-3 flex flex-col gap-2">
-                    {quotes.map((q) => (
+                    {/* Most recently added market first — same order as the Markets & Quotes tab. */}
+                    {[...quotes].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)).map((q) => (
                       <li key={q.id} className="flex items-center justify-between gap-2 text-sm">
                         <span className="truncate font-medium text-[var(--color-ink-800)]">{q.marketName}</span>
                         <Badge tone={QUOTE_STATUS_TONE[q.status]} className="shrink-0 px-2 py-0.5 text-[11px]">
