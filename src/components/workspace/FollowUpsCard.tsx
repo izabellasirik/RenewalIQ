@@ -56,12 +56,12 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
         </div>
 
         {adding && (
-          <form onSubmit={submit} className="mt-3 flex flex-col gap-2 rounded-lg border border-dashed border-[var(--color-ink-200)] p-3">
+          <form onSubmit={submit} className="mt-3 grid grid-cols-1 gap-2 rounded-lg border border-dashed border-[var(--color-ink-200)] p-3 sm:grid-cols-[2fr_1fr]">
             <div>
               <label className={labelClass} htmlFor="fu-subject">
-                Follow up with
+                Follow up for
               </label>
-              <input id="fu-subject" value={subject} onChange={(e) => setSubject(e.target.value)} list={`fu-suggest-${accountId}`} className={inputClass} placeholder="e.g. Sara, Progressive, the client" autoFocus />
+              <input id="fu-subject" value={subject} onChange={(e) => setSubject(e.target.value)} list={`fu-suggest-${accountId}`} className={inputClass} placeholder="e.g. Sara — renewal questions, Progressive quote" autoFocus />
               <datalist id={`fu-suggest-${accountId}`}>
                 {suggestions.map((n) => (
                   <option key={n} value={n} />
@@ -70,17 +70,17 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
             </div>
             <div>
               <label className={labelClass} htmlFor="fu-date">
-                Date
+                Follow-up date
               </label>
               <input id="fu-date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputClass} />
             </div>
-            <div>
+            <div className="sm:col-span-2">
               <label className={labelClass} htmlFor="fu-notes">
                 Notes (optional)
               </label>
               <textarea id="fu-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={inputClass} placeholder="e.g. Confirm new driver start date" />
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 sm:col-span-2">
               <Button type="button" size="sm" variant="ghost" onClick={() => setAdding(false)}>
                 Cancel
               </Button>
@@ -103,17 +103,17 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
                     {f.notes && <p className="mt-0.5 whitespace-pre-line text-xs text-[var(--color-ink-600)]">{f.notes}</p>}
                   </div>
                   <div className="flex shrink-0 items-center gap-0.5">
-                    <button onClick={() => completeFollowUp(accountId, f.id)} className="rounded-md p-1.5 text-[var(--color-success-600)] hover:bg-[var(--color-success-100)] cursor-pointer" aria-label={`Mark follow-up with ${f.subject} done`} title="Done">
+                    <button onClick={() => completeFollowUp(accountId, f.id)} className="rounded-md p-1.5 text-[var(--color-success-600)] hover:bg-[var(--color-success-100)] cursor-pointer" aria-label={`Mark follow-up for ${f.subject} done`} title="Done">
                       <Check size={14} />
                     </button>
-                    <button onClick={() => deleteFollowUp(accountId, f.id)} className="rounded-md p-1.5 text-[var(--color-ink-300)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] cursor-pointer" aria-label={`Remove follow-up with ${f.subject}`} title="Remove">
+                    <button onClick={() => deleteFollowUp(accountId, f.id)} className="rounded-md p-1.5 text-[var(--color-ink-300)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] cursor-pointer" aria-label={`Remove follow-up for ${f.subject}`} title="Remove">
                       <Trash2 size={13} />
                     </button>
                   </div>
                 </div>
                 <label className={cn('mt-1 inline-flex items-center gap-1.5 text-xs', due ? 'font-medium text-[var(--color-danger-600)]' : 'text-[var(--color-ink-500)]')}>
                   {due ? (f.dueDate < today ? 'Overdue' : 'Due today') : 'Due'}
-                  <DateInput value={f.dueDate} onCommit={(v) => v && updateFollowUp(accountId, f.id, { dueDate: v })} className={smallInputClass} aria-label={`Date for follow-up with ${f.subject}`} />
+                  <DateInput value={f.dueDate} onCommit={(v) => v && updateFollowUp(accountId, f.id, { dueDate: v })} className={smallInputClass} aria-label={`Date for follow-up for ${f.subject}`} />
                 </label>
               </li>
             );

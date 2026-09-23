@@ -171,7 +171,7 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
       ...base,
       id: `followup-${f.id}`,
       kind: 'follow_up',
-      title: `Follow up with ${f.subject}`,
+      title: `Follow up: ${f.subject}`,
       detail: `${describeDue(f.dueDate, today)}${f.notes ? ` · ${f.notes}` : ''}`,
       dueDate: f.dueDate,
       tab: 'overview',

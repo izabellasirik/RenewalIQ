@@ -115,13 +115,13 @@ describe('manual follow-ups', () => {
     const account = store().accounts.find((a) => a.id === id)!;
     const derive = (today: string) => deriveAccountActions({ account, items: [], quotes: [], contacts: [], followUps: store().followUps[id] }, today);
 
-    expect(derive('2026-09-22').upcoming.find((a) => a.followUpId === fu)?.title).toBe('Follow up with Sara');
+    expect(derive('2026-09-22').upcoming.find((a) => a.followUpId === fu)?.title).toBe('Follow up: Sara');
     const due = derive('2026-09-24').now.find((a) => a.followUpId === fu)!;
     expect(due.kind).toBe('follow_up');
     expect(due.detail).toContain('Confirm new driver start date');
 
     store().completeFollowUp(id, fu);
     expect(derive('2026-09-24').now.some((a) => a.followUpId === fu)).toBe(false);
-    expect(store().activityLog[id].map((e) => e.message)).toEqual(expect.arrayContaining(['Follow-up with Sara scheduled for Sep 24 — Confirm new driver start date.', 'Followed up with Sara.']));
+    expect(store().activityLog[id].map((e) => e.message)).toEqual(expect.arrayContaining(['Follow-up for Sara scheduled for Sep 24 — Confirm new driver start date.', 'Followed up: Sara.']));
   });
 });

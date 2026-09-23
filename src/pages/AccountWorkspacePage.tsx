@@ -128,11 +128,11 @@ export function AccountWorkspacePage() {
                 )}
               </CardBody>
             </Card>
-            <ChecklistPanel accountId={accountId} compact onViewAll={() => setTab('checklist')} />
+            {/* Follow-ups right under "Needs your attention"; the checklist itself lives on its own tab. */}
+            <FollowUpsCard accountId={accountId} />
           </div>
 
           <div className="flex min-w-0 flex-col gap-5">
-            <FollowUpsCard accountId={accountId} />
             <AccountInfoCard accountId={accountId} />
             <ContactsCard accountId={accountId} />
             <Card>

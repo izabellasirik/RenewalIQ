@@ -1451,7 +1451,7 @@ export const useAccountsStore = create<AccountsState>()(
             s.activityLog,
             accountId,
             'follow_up_scheduled',
-            `Follow-up with ${subject} scheduled for ${formatShortDate(followUp.dueDate)}${followUp.notes ? ` — ${followUp.notes}` : ''}${actorSuffix(s.currentUserEmail)}.`
+            `Follow-up for ${subject} scheduled for ${formatShortDate(followUp.dueDate)}${followUp.notes ? ` — ${followUp.notes}` : ''}${actorSuffix(s.currentUserEmail)}.`
           ),
         }));
         syncNow(accountId);
@@ -1466,7 +1466,7 @@ export const useAccountsStore = create<AccountsState>()(
           accounts: touchAccount(s.accounts, accountId),
           activityLog:
             patch.dueDate && patch.dueDate !== before.dueDate
-              ? appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Follow-up with ${patch.subject ?? before.subject} moved to ${formatShortDate(patch.dueDate)}.`)
+              ? appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Follow-up for ${patch.subject ?? before.subject} moved to ${formatShortDate(patch.dueDate)}.`)
               : s.activityLog,
         }));
         syncNow(accountId);
@@ -1479,7 +1479,7 @@ export const useAccountsStore = create<AccountsState>()(
         set((s) => ({
           followUps: { ...s.followUps, [accountId]: updateInList(s.followUps[accountId], followUpId, (x) => ({ ...x, doneAt: now, updatedAt: now })) },
           accounts: touchAccount(s.accounts, accountId),
-          activityLog: appendEvent(s.activityLog, accountId, 'follow_up_completed', `Followed up with ${f.subject}${actorSuffix(s.currentUserEmail)}.`),
+          activityLog: appendEvent(s.activityLog, accountId, 'follow_up_completed', `Followed up: ${f.subject}${actorSuffix(s.currentUserEmail)}.`),
         }));
         syncNow(accountId);
       },
@@ -1490,7 +1490,7 @@ export const useAccountsStore = create<AccountsState>()(
         set((s) => ({
           followUps: { ...s.followUps, [accountId]: (s.followUps[accountId] ?? []).filter((x) => x.id !== followUpId) },
           accounts: touchAccount(s.accounts, accountId),
-          activityLog: appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Removed the follow-up with ${f.subject} (was ${formatShortDate(f.dueDate)}).`),
+          activityLog: appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Removed the follow-up for ${f.subject} (was ${formatShortDate(f.dueDate)}).`),
         }));
         syncNow(accountId);
       },
