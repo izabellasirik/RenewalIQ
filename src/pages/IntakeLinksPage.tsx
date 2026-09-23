@@ -42,6 +42,9 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{link.label}</p>
+          <p className="truncate text-xs text-[var(--color-ink-500)]">
+            Shown to the client as: <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName || 'your insurance broker (no agency name set)'}</span>
+          </p>
           <p className="truncate text-xs text-[var(--color-ink-400)]">{url}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -64,6 +67,9 @@ function LinksSection({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState('');
+  // The agency name clients see on the form — pre-filled from the most recent link that has one.
+  const [orgName, setOrgName] = useState('');
+  const [orgNameTouched, setOrgNameTouched] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -77,6 +83,8 @@ function LinksSection({ userId }: { userId: string }) {
     }
     setLoadError(null);
     setLinks(result.data);
+    const lastName = result.data.find((l) => l.organizationName)?.organizationName;
+    if (lastName) setOrgName((cur) => cur || lastName);
   }, [userId]);
 
   useEffect(() => {
@@ -87,7 +95,7 @@ function LinksSection({ userId }: { userId: string }) {
     if (!label.trim()) return;
     setCreating(true);
     setCreateError(null);
-    const result = await createIntakeLink(userId, label.trim());
+    const result = await createIntakeLink(userId, label.trim(), orgName.trim() || null);
     setCreating(false);
     if (!result.ok) {
       // Never fail silently — a broker clicking "New Link" and seeing nothing happen (no new row,
@@ -97,6 +105,7 @@ function LinksSection({ userId }: { userId: string }) {
       return;
     }
     setLabel('');
+    setOrgNameTouched(false);
     load();
   }
 
@@ -106,12 +115,29 @@ function LinksSection({ userId }: { userId: string }) {
         <h2 className="text-sm font-semibold text-[var(--color-ink-900)]">Submission Links</h2>
         <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a RenewalIQ login.</p>
       </div>
-      <div className="flex gap-2">
-        <input className={inputClass} placeholder="Label, e.g. Acme Safety Group" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <label className="flex-1 text-xs font-medium text-[var(--color-ink-600)]">
+          Label (only you see this)
+          <input className={`${inputClass} mt-1`} placeholder="e.g. Acme Safety Group" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+        </label>
+        <label className="flex-1 text-xs font-medium text-[var(--color-ink-600)]">
+          Agency name (shown to the client)
+          <input
+            className={`${inputClass} mt-1`}
+            placeholder="e.g. Adriatic Insurance Agency"
+            value={orgName}
+            onChange={(e) => {
+              setOrgName(e.target.value);
+              setOrgNameTouched(true);
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+          />
+        </label>
         <Button disabled={!label.trim() || creating} onClick={handleCreate}>
           {creating ? 'Creating…' : 'New Link'}
         </Button>
       </div>
+      {!orgName.trim() && !orgNameTouched && <p className="-mt-2 text-xs text-[var(--color-ink-400)]">Without an agency name, the form says “your insurance broker”.</p>}
       {createError && <p className="text-xs text-[var(--color-danger-600)]">{createError}</p>}
       {loading ? (
         <Skeleton variant="block" className="h-16 w-full" />

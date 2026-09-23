@@ -27,13 +27,15 @@ interface IntakeLinkRow {
   id: string;
   user_id: string;
   label: string;
+  /** Absent until 0013 is applied. */
+  organization_name?: string | null;
   token: string;
   active: boolean;
   created_at: string;
 }
 
 function rowToLink(row: IntakeLinkRow): IntakeLink {
-  return { id: row.id, userId: row.user_id, label: row.label, token: row.token, active: row.active, createdAt: row.created_at };
+  return { id: row.id, userId: row.user_id, label: row.label, organizationName: row.organization_name ?? null, token: row.token, active: row.active, createdAt: row.created_at };
 }
 
 interface IntakeSubmissionRow {
@@ -222,11 +224,18 @@ function generateIntakeToken(): string {
   return crypto.randomUUID();
 }
 
-export async function createIntakeLink(userId: string, label: string): Promise<RepoResult<IntakeLink>> {
+/** `organizationName` is what the person filling in the form sees; null falls back to "your insurance broker". */
+export async function createIntakeLink(userId: string, label: string, organizationName: string | null): Promise<RepoResult<IntakeLink>> {
   if (!supabase) return NOT_CONFIGURED;
-  const link: IntakeLink = { id: generateId('ilink'), userId, label, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
+  const link: IntakeLink = { id: generateId('ilink'), userId, label, organizationName, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
   try {
-    const { error } = await supabase.from('intake_links').insert({ id: link.id, user_id: userId, label, token: link.token, active: true, created_at: link.createdAt });
+    const row: Record<string, unknown> = { id: link.id, user_id: userId, label, token: link.token, active: true, created_at: link.createdAt };
+    let { error } = await supabase.from('intake_links').insert(organizationName ? { ...row, organization_name: organizationName } : row);
+    // Migration 0013 not applied yet: still create the link, just without the agency name.
+    if (error && organizationName && (error.code === 'PGRST204' || error.code === '42703' || error.message.includes('organization_name'))) {
+      ({ error } = await supabase.from('intake_links').insert(row));
+      if (!error) link.organizationName = null;
+    }
     if (error) return fail(error.message);
     return { ok: true, data: link };
   } catch (err) {

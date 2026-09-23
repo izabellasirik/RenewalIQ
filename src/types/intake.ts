@@ -14,7 +14,10 @@ export type IntakeSubmissionStatus = 'pending' | 'imported' | 'dismissed';
 export interface IntakeLink {
   id: string;
   userId: string;
+  /** Broker-internal note for telling sources apart — never shown to the person filling in the form. */
   label: string;
+  /** The agency name the person filling in the form sees ("submitting this directly to …"). Null = not set; the form says "your insurance broker". */
+  organizationName: string | null;
   token: string;
   active: boolean;
   createdAt: string;
