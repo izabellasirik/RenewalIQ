@@ -19,6 +19,7 @@ import { AdminAppetiteUpdatesPage } from './pages/AdminAppetiteUpdatesPage';
 import { AdminFeedbackPage } from './pages/AdminFeedbackPage';
 import { IntakeFormPage } from './pages/IntakeFormPage';
 import { IntakeLinksPage } from './pages/IntakeLinksPage';
+import { RequireBrokerAuth } from './components/layout/RequireBrokerAuth';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -27,7 +28,12 @@ export const router = createBrowserRouter([
   // Renewal IQ login at all (see types/intake.ts / supabase/migrations/0004_intake_submissions.sql).
   { path: '/intake/:token', element: <IntakeFormPage /> },
   {
-    element: <AppShell />,
+    // Signed-out visitors are sent to /login (see RequireBrokerAuth).
+    element: (
+      <RequireBrokerAuth>
+        <AppShell />
+      </RequireBrokerAuth>
+    ),
     children: [
       { path: '/', element: <DashboardPage /> },
       { path: '/today', element: <TodaysPlatePage /> },

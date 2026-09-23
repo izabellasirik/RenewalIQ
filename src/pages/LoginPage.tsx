@@ -193,11 +193,6 @@ export function LoginPage() {
           Sign up
         </Link>
       </p>
-      <p className="mt-2 text-center text-xs text-[var(--color-ink-400)]">
-        <Link to="/" className="hover:underline">
-          Continue without an account
-        </Link>
-      </p>
     </AuthShell>
   );
 }
