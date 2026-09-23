@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { MatchResult, RiskProfile, UploadedDocument } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { computeRiskProfileStats } from '../../hooks/useRiskProfileStats';
+import { computeSubmissionCompleteness, isSubmissionComplete } from '../../services/application/completeness';
 import { EMPTY_DOCUMENTS, EMPTY_MATCH_RESULTS } from '../../utils/emptyArrays';
 import { cn } from '../../utils/cn';
 
@@ -32,8 +33,6 @@ export function computeWorkflowSteps(
     : stats.missing.length > 0 || stats.conflicting.length > 0
       ? 'in_progress'
       : 'done';
-  const appetiteStatus: StepStatus = matchResults.length === 0 ? (hasDocs ? 'in_progress' : 'not_started') : 'done';
-
   // Amber while any coverage line is missing its current or requested limit (same as other steps
   // with unfilled data); green only once every line has both.
   const coverage = profile?.coverage ?? [];
@@ -41,11 +40,20 @@ export function computeWorkflowSteps(
   const coverageComplete = coverage.length > 0 && coverage.every((line) => limitFilled(line.currentLimit) && limitFilled(line.requestedLimit));
   const coverageStatus: StepStatus = !hasDocs && coverage.length === 0 ? 'not_started' : coverageComplete ? 'done' : 'in_progress';
 
+  // Submission Assistant: done exactly when that page's own "What's Missing?" (the same
+  // completeness computation) has nothing outstanding — not merely because a document exists.
+  const submissionAssistantStatus: StepStatus = !hasDocs || !profile ? 'not_started' : isSubmissionComplete(computeSubmissionCompleteness(profile, documents)) ? 'done' : 'in_progress';
+
+  // Carrier Appetite: matching re-runs automatically after nearly every edit and always returns a
+  // result per market, so results existing isn't completion on its own — they're only meaningful
+  // to review once the submission itself is complete.
+  const appetiteStatus: StepStatus = matchResults.length === 0 ? (hasDocs ? 'in_progress' : 'not_started') : submissionAssistantStatus === 'done' ? 'done' : 'in_progress';
+
   return [
     { key: 'upload', label: 'Documents', path: `/accounts/${accountId}/upload`, status: documentsStatus },
     { key: 'risk-profile', label: 'Risk Profile', path: `/accounts/${accountId}/risk-profile`, status: profileStatus },
     { key: 'limits-coverage', label: 'Limits & Coverage', path: `/accounts/${accountId}/limits-coverage`, status: coverageStatus },
-    { key: 'submission-assistant', label: 'Submission Assistant', path: `/accounts/${accountId}/submission-assistant`, status: hasDocs ? 'done' : 'not_started' },
+    { key: 'submission-assistant', label: 'Submission Assistant', path: `/accounts/${accountId}/submission-assistant`, status: submissionAssistantStatus },
     { key: 'carrier-appetite', label: 'Carrier Appetite', path: `/accounts/${accountId}/carrier-appetite`, status: appetiteStatus },
   ];
 }

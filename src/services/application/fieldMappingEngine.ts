@@ -53,6 +53,25 @@ function coverageRequestedOverride(profile: RiskProfile, path: string, base: Map
 }
 
 /**
+ * A coverage type nobody has requested or reported for this submission at all — no CoverageLine
+ * exists for it in profile.coverage, which (see types/coverage.ts) only ever contains lines that
+ * were genuinely extracted, imported, or broker-added, never a default/placeholder set. This is the
+ * "nobody mentioned it" case coverageRequestedOverride's own comment calls out as distinct from
+ * "requested but blank" — marked neverFlagMissing so it can never appear in What's Missing, the
+ * Limits & Coverage workflow-nav checkmark, or the exported application's completeness math as an
+ * outstanding gap. Returns null when a line exists (applicable — handled by
+ * coverageRequestedOverride or the generic mapper below) or the path isn't a coverage path at all.
+ */
+function coverageNotApplicableOverride(profile: RiskProfile, path: string, base: MappedFieldBase): MappedField | null {
+  const match = path.match(/^coverage\.([a-z_]+)\.(currentLimit|requestedLimit)$/);
+  if (!match) return null;
+  const line = profile.coverage.find((c) => c.type === (match[1] as CoverageType));
+  if (line) return null;
+
+  return { ...base, value: '', status: 'missing', neverFlagMissing: true, reviewReason: 'Not requested for this submission.' };
+}
+
+/**
  * DOT Number only meaningfully matters for a motor carrier that actually operates power units — an
  * account with no fleet on file yet (e.g. a warehouse/logistics risk requesting only
  * warehouse_legal_liability, or a trucking account whose fleet simply hasn't been entered yet)
@@ -87,7 +106,7 @@ function mapField(profile: RiskProfile, mapping: FieldMapping): MappedField {
     return { ...base, value: '', status: 'missing', reviewReason: 'Not tracked in the Risk Profile yet — enter manually.' };
   }
 
-  const coverageOverride = coverageRequestedOverride(profile, mapping.riskProfilePath, base);
+  const coverageOverride = coverageRequestedOverride(profile, mapping.riskProfilePath, base) ?? coverageNotApplicableOverride(profile, mapping.riskProfilePath, base);
   if (coverageOverride) return coverageOverride;
 
   const field = getFieldValueByPath(profile, mapping.riskProfilePath);
