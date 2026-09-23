@@ -1,6 +1,7 @@
 import { supabase } from './client';
 import type { Account, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
+import { isDuration, toMonths } from '../../utils/duration';
 
 export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
 
@@ -169,6 +170,10 @@ function isMissingWorkflowColumnError(error: { message: string; code?: string })
   return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
 }
 
+function isMissingColumnError(error: { message: string; code?: string }, columns: string[]): boolean {
+  return error.code === 'PGRST204' || error.code === '42703' || columns.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
+}
+
 function asArray<T>(value: unknown): T[] | undefined {
   return Array.isArray(value) ? (value as T[]) : undefined;
 }
@@ -272,7 +277,8 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
           name: d.name ?? undefined,
           dob: d.dob ?? undefined,
           licenseState: d.license_state ?? undefined,
-          yearsExperience: d.years_experience ?? undefined,
+          // 0010's experience_months (exact) when present; otherwise the legacy whole-years int.
+          yearsExperience: d.experience_months != null ? (d.experience_or_more ? { months: d.experience_months, orMore: true } : { months: d.experience_months }) : (d.years_experience ?? undefined),
           violations: d.violations ?? undefined,
           isManual: d.is_manual,
           lastUpdatedAt: d.last_updated_at ?? undefined,
@@ -416,6 +422,7 @@ export async function saveSubmissionSnapshot(
     if (delErr?.error) return fail(delErr.error.message);
 
     const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
+    let driverMonthsNotSaved = false;
     if (values.length) inserts.push(supabase.from('field_values').insert(values));
     if (profile.coverage.length) {
       inserts.push(
@@ -445,24 +452,35 @@ export async function saveSubmissionSnapshot(
       );
     }
     if (profile.drivers.length) {
+      const driverRows = profile.drivers.map((d) => {
+        const months = toMonths(d.yearsExperience);
+        return {
+          id: d.id,
+          submission_id: account.id,
+          user_id: userId,
+          name: d.name ?? null,
+          dob: d.dob ?? null,
+          license_state: d.licenseState ?? null,
+          // int column: whole years for older readers; the exact months go in 0010's columns.
+          years_experience: months === null ? null : Math.floor(months / 12),
+          experience_months: months,
+          experience_or_more: months === null ? null : isDuration(d.yearsExperience) ? !!d.yearsExperience.orMore : false,
+          violations: d.violations ?? null,
+          is_manual: !!d.isManual,
+          source_document_id: d.source?.documentId ?? null,
+          source_page: d.source?.page ?? null,
+          source_excerpt: d.source?.excerpt ?? null,
+          last_updated_at: d.lastUpdatedAt ?? null,
+        };
+      });
       inserts.push(
-        supabase.from('drivers').insert(
-          profile.drivers.map((d) => ({
-            id: d.id,
-            submission_id: account.id,
-            user_id: userId,
-            name: d.name ?? null,
-            dob: d.dob ?? null,
-            license_state: d.licenseState ?? null,
-            years_experience: d.yearsExperience ?? null,
-            violations: d.violations ?? null,
-            is_manual: !!d.isManual,
-            source_document_id: d.source?.documentId ?? null,
-            source_page: d.source?.page ?? null,
-            source_excerpt: d.source?.excerpt ?? null,
-            last_updated_at: d.lastUpdatedAt ?? null,
-          }))
-        )
+        (async () => {
+          const res = await supabase.from('drivers').insert(driverRows);
+          if (!res.error || !isMissingColumnError(res.error, ['experience_months', 'experience_or_more'])) return res;
+          // 0010 not applied: save whole years like before, and say months weren't kept.
+          driverMonthsNotSaved = true;
+          return supabase.from('drivers').insert(driverRows.map(({ experience_months: _m, experience_or_more: _o, ...rest }) => rest));
+        })()
       );
     }
     if (profile.lossHistory.length) {
@@ -494,6 +512,7 @@ export async function saveSubmissionSnapshot(
     if (insErr?.error) return fail(insErr.error.message);
 
     if (notSavedMessage) return fail(notSavedMessage);
+    if (driverMonthsNotSaved) return fail('Driver experience was saved as whole years only — the database needs migration 0010_driver_experience_months.sql to keep months.');
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not save to your account.');

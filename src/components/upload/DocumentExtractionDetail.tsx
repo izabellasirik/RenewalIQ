@@ -6,6 +6,8 @@ import { Drawer, Badge, type BadgeTone } from '../ui';
 import { fieldPathLabel, fieldPathValueType, DRIVER_FIELD_LABELS, VEHICLE_FIELD_LABELS, LOSS_FIELD_LABELS } from '../../utils/fieldLabels';
 import { summarizeDocumentExtraction, scalarFieldValue, type DocumentFieldSummary } from '../../utils/documentExtractionSummary';
 import { displayReadValue, parseDraft, ValueInput } from '../riskProfile/FieldRow';
+import { encodeDurationDraft } from '../../utils/durationDraft';
+import { formatDuration, parseDurationText } from '../../utils/duration';
 import { countExtractedFields } from '../../utils/fieldCount';
 
 /**
@@ -84,7 +86,7 @@ function ScalarFieldRow({ summary, profile, onUpdateField, onUpdateCoverage }: {
   const displayValue = current && !current.isMissing ? current.value : summary.value;
 
   function startEdit() {
-    setDraft(displayReadValue(displayValue));
+    setDraft(valueType === 'duration' ? encodeDurationDraft(displayValue) : displayReadValue(displayValue));
     setIsEditing(true);
   }
 
@@ -141,9 +143,15 @@ function ScalarFieldRow({ summary, profile, onUpdateField, onUpdateCoverage }: {
 }
 
 const NUMERIC_ROW_KEYS: Record<'drivers' | 'vehicles' | 'lossHistory', string[]> = {
-  drivers: ['yearsExperience'],
+  drivers: [],
   vehicles: ['year', 'value'],
   lossHistory: ['paid', 'reserved', 'incurred'],
+};
+/** Edited as free text ("1 year 6 months", "8 months", "16+ years"; a bare number is years) and stored in months. */
+const DURATION_ROW_KEYS: Record<'drivers' | 'vehicles' | 'lossHistory', string[]> = {
+  drivers: ['yearsExperience'],
+  vehicles: [],
+  lossHistory: [],
 };
 const BOOLEAN_ROW_KEYS: Record<'drivers' | 'vehicles' | 'lossHistory', string[]> = {
   drivers: ['isCDL'],
@@ -187,7 +195,7 @@ function RowEntryCard({
 
   function startEdit() {
     const initial: Record<string, string> = {};
-    for (const [key, value] of subFields) initial[key] = typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
+    for (const [key, value] of subFields) initial[key] = typeof value === 'boolean' ? (value ? 'Yes' : 'No') : DURATION_ROW_KEYS[rowKind].includes(key) ? formatDuration(value) : String(value);
     setDraft(initial);
     setIsEditing(true);
   }
@@ -199,6 +207,10 @@ function RowEntryCard({
       if (raw.trim() === '') continue; // never blank out a field the row already had — only changed/filled values are sent
       if (BOOLEAN_ROW_KEYS[rowKind].includes(key)) patch[key] = raw === 'Yes';
       else if (NUMERIC_ROW_KEYS[rowKind].includes(key)) patch[key] = Number(raw.replace(/,/g, ''));
+      else if (DURATION_ROW_KEYS[rowKind].includes(key)) {
+        const d = parseDurationText(raw);
+        if (d) patch[key] = d;
+      }
       else patch[key] = raw.trim();
     }
     onUpdate?.(summary.rowId, patch);

@@ -15,6 +15,7 @@ import {
   detectDriverLicense,
   detectVehicleRegistration,
 } from './idDocumentPatterns';
+import { toMonths, type DurationValue } from '../../../utils/duration';
 
 export interface ExtractionSourceMeta {
   documentId: string;
@@ -285,11 +286,11 @@ function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedF
           source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `${rows.length} driver${rows.length === 1 ? '' : 's'} listed in ${table.sheetName ?? 'the driver schedule'}` },
           extractionMethod: 'deterministic_import',
         });
-        const experienceValues = rows.map((r) => r.entry.yearsExperience).filter((v): v is number => v !== undefined);
+        const experienceValues = rows.map((r) => r.entry.yearsExperience).filter((v): v is DurationValue => v !== undefined && toMonths(v) !== null);
         if (experienceValues.length > 0) {
           results.push({
             fieldPath: 'transportation.minDriverExperienceYears',
-            value: Math.min(...experienceValues),
+            value: experienceValues.reduce((min, v) => (toMonths(v)! < toMonths(min)! ? v : min)),
             confidence: 'high',
             source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `Minimum years of experience across ${table.sheetName ?? 'the driver schedule'}` },
             extractionMethod: 'deterministic_import',

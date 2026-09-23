@@ -1,13 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Building2, Search, Archive, ArrowLeft } from 'lucide-react';
+import { Plus, Sparkles, Building2, Search, Archive, ArrowLeft, CalendarClock } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, EmptyState } from '../components/ui';
 import { AccountCard } from '../components/dashboard/AccountCard';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
 import { useAccountsStore } from '../state/useAccountsStore';
+import { cn } from '../utils/cn';
 import { effectiveAccountStage } from '../services/workflow/accountStage';
+import { daysBetween, normalizeDateKey, todayKey } from '../services/workflow/dates';
+import { RENEWAL_WINDOW_DAYS } from '../services/workflow/nextActions';
 import { ACCOUNT_STAGE_LABELS, ACCOUNT_STAGE_ORDER, type AccountStage } from '../types';
 
 const ALL_BROKERS = '__all__';
@@ -31,9 +34,11 @@ export function DashboardPage() {
 
   const missingItems = useAccountsStore((s) => s.missingItems);
   const quotes = useAccountsStore((s) => s.quotes);
+  const riskProfiles = useAccountsStore((s) => s.riskProfiles);
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState<AccountStage | 'all'>('all');
   const [brokerFilter, setBrokerFilter] = useState<string>(ALL_BROKERS);
+  const [renewalSoon, setRenewalSoon] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [historyAccountId, setHistoryAccountId] = useState<string | null>(null);
 
@@ -52,6 +57,19 @@ export function DashboardPage() {
     return [...names.entries()].sort((x, y) => x[1].localeCompare(y[1]));
   }, [accounts]);
 
+  // Days until each account's renewal/effective date (Risk Profile → Requested Effective Date); absent when unknown.
+  const daysToRenewal = useMemo(() => {
+    const today = todayKey();
+    const map: Record<string, number> = {};
+    for (const a of accounts) {
+      const eff = normalizeDateKey((riskProfiles[a.id]?.business?.effectiveDate?.value as string | null | undefined) ?? null);
+      if (eff) map[a.id] = daysBetween(today, eff);
+    }
+    return map;
+  }, [accounts, riskProfiles]);
+  const renewsSoon = (id: string) => daysToRenewal[id] !== undefined && daysToRenewal[id] >= 0 && daysToRenewal[id] <= RENEWAL_WINDOW_DAYS;
+  const renewalSoonCount = accounts.filter((a) => a.archived === showArchived && renewsSoon(a.id)).length;
+
   const visible = useMemo(() => {
     return accounts
       .filter((a) => a.archived === showArchived)
@@ -60,15 +78,17 @@ export function DashboardPage() {
       .filter((a) =>
         brokerFilter === ALL_BROKERS ? true : brokerFilter === UNASSIGNED ? !a.assignedBroker?.name : a.assignedBroker?.name?.trim().toLowerCase() === brokerFilter
       )
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
-  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf]);
+      .filter((a) => !renewalSoon || (daysToRenewal[a.id] !== undefined && daysToRenewal[a.id] >= 0 && daysToRenewal[a.id] <= RENEWAL_WINDOW_DAYS))
+      // Renewal filter on: soonest renewal first. Otherwise most recently updated first.
+      .sort((a, b) => (renewalSoon ? daysToRenewal[a.id] - daysToRenewal[b.id] : a.updatedAt < b.updatedAt ? 1 : -1));
+  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalSoon, daysToRenewal]);
 
   const stageCounts = useMemo(() => {
     const counts: Partial<Record<AccountStage, number>> = {};
     for (const a of accounts) if (a.archived === showArchived) counts[stageOf[a.id]] = (counts[stageOf[a.id]] ?? 0) + 1;
     return counts;
   }, [accounts, showArchived, stageOf]);
-  const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS;
+  const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS || renewalSoon;
 
   const historyAccount = historyAccountId ? accounts.find((a) => a.id === historyAccountId) : null;
 
@@ -150,11 +170,26 @@ export function DashboardPage() {
               ))}
               <option value={UNASSIGNED}>Unassigned</option>
             </select>
+            <button
+              type="button"
+              onClick={() => setRenewalSoon((v) => !v)}
+              aria-pressed={renewalSoon}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm cursor-pointer',
+                renewalSoon
+                  ? 'border-[var(--color-brand-500)] bg-[var(--color-brand-50)] font-medium text-[var(--color-brand-800)]'
+                  : 'border-[var(--color-ink-200)] bg-white text-[var(--color-ink-700)] hover:bg-[var(--color-ink-50)]'
+              )}
+            >
+              <CalendarClock size={14} />
+              Renewal within {RENEWAL_WINDOW_DAYS} days ({renewalSoonCount})
+            </button>
             {filtersActive && (
               <button
                 onClick={() => {
                   setStageFilter('all');
                   setBrokerFilter(ALL_BROKERS);
+                  setRenewalSoon(false);
                 }}
                 className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"
               >
@@ -167,7 +202,7 @@ export function DashboardPage() {
             <EmptyState
               icon={<Search size={24} strokeWidth={1.5} />}
               title={showArchived ? 'No archived submissions' : 'No matching accounts'}
-              description={showArchived ? undefined : 'Try a different search term or clear the filters.'}
+              description={showArchived ? undefined : renewalSoon ? `No accounts renew in the next ${RENEWAL_WINDOW_DAYS} days. An account shows here once its Risk Profile has a Requested Effective Date.` : 'Try a different search term or clear the filters.'}
             />
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

@@ -1,6 +1,7 @@
 import type { AppetiteFieldKey, AppetiteOverride, AppetiteRecord, VerificationStatus } from '../../types';
 import { formatStates, formatFleetSize } from '../../utils/appetiteFormatters';
 import { getDistributionPartnerNamesByRecordId } from './distribution';
+import { formatDuration, toMonths } from '../../utils/duration';
 
 /** The shared "we have nothing structured to show" sentinel for the request form — never a fallback onto underwritingNotes/research notes/matching rationale, which aren't a "current value" for any specific field. */
 const NOT_DOCUMENTED = 'Not currently documented';
@@ -46,15 +47,15 @@ export function getCurrentValueDisplay(record: AppetiteRecord, fieldKey: Appetit
     case 'fleet_size':
       return record.fleetSize.value === null ? NOT_DOCUMENTED : formatFleetSize(record);
     case 'years_in_business':
-      return displayCriterion(record.yearsInBusinessMin, (v) => `${v}+ years`);
+      return displayCriterion(record.yearsInBusinessMin, (v) => formatDuration({ months: toMonths(v) ?? 0, orMore: true }));
     case 'cdl_experience':
-      return displayCriterion(record.minDriverExperienceYears, (v) => `${v} years`);
+      return displayCriterion(record.minDriverExperienceYears, (v) => formatDuration(v));
     case 'operation':
       return displayCriterion(record.operationTypes, (v) => v.join(', '));
     case 'coverage':
       return displayCriterion(record.linesOffered, (v) => v.join(', '));
     case 'new_ventures':
-      return displayCriterion(record.yearsInBusinessMax, (v) => `under ${v} years`);
+      return displayCriterion(record.yearsInBusinessMax, (v) => `under ${formatDuration(v)}`);
     case 'telematics':
       return displayCriterion(record.telematicsRequired, (v) => (v ? 'Required' : 'Not required'));
     case 'dashcams':

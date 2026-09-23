@@ -87,6 +87,10 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
 - **`supabase/migrations/0009_account_follow_ups.sql`** — adds a `follow_ups` jsonb column to
   `submissions` for follow-ups scheduled by hand on an account (who, date, notes), shown on Today's
   Plate. Additive, no new policies, safe to re-run. Must run after 0003.
+- **`supabase/migrations/0010_driver_experience_months.sql`** — adds `experience_months` and
+  `experience_or_more` to `drivers` so driver experience keeps month precision ("8 months",
+  "1 year 6 months", "16+ years"). Additive, no new policies, safe to re-run. Must run after 0003.
+  Until it's applied, driver experience syncs as whole years only and the app says so.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -116,6 +120,7 @@ from (values
   ('0007_account_workflow',           exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'missing_items')),
   ('0008_account_stage',              exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'stage')),
   ('0009_account_follow_ups',         exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'follow_ups')),
+  ('0010_driver_experience_months',   exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'drivers' and column_name = 'experience_months')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

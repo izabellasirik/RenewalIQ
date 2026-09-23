@@ -14,10 +14,12 @@ import type {
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { getFieldValueByPath } from '../../utils/riskProfilePath';
 import { buildSubmissionWarnings } from '../extraction/reconciliation';
+import { formatDuration, isDuration } from '../../utils/duration';
 
 function defaultFormat(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.join(', ');
+  if (isDuration(value)) return formatDuration(value);
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number' && value >= 1000) return value.toLocaleString('en-US');
   return String(value);

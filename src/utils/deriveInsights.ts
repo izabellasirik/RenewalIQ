@@ -1,4 +1,5 @@
 import type { DriverEntry, DriverScheduleSummary, LossEntry, LossSummary, VehicleEntry, VehicleScheduleSummary } from '../types';
+import { toYears } from './duration';
 
 function average(values: number[]): number | null {
   if (values.length === 0) return null;
@@ -42,7 +43,8 @@ export function deriveVehicleSummary(vehicles: VehicleEntry[]): VehicleScheduleS
 /** Rolls up an itemized driver schedule into fleet-level insurance facts. Pure — recompute whenever profile.drivers changes. */
 export function deriveDriverSummary(drivers: DriverEntry[]): DriverScheduleSummary {
   const ages = drivers.map((d) => (d.dob ? ageFromDob(d.dob) : null)).filter((a): a is number => a !== null);
-  const experience = drivers.map((d) => d.yearsExperience).filter((e): e is number => e !== undefined);
+  // Years (fractional when a driver's experience was entered in months) — the summary reads in years.
+  const experience = drivers.map((d) => toYears(d.yearsExperience)).filter((e): e is number => e !== null);
 
   const withViolations = drivers.filter((d) => d.violations && d.violations.trim().toLowerCase() !== 'none' && d.violations.trim() !== '');
 

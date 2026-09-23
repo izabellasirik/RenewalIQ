@@ -1,4 +1,5 @@
 import type { AppetiteRecord, MatchReason, ReasonGroup, RiskProfile, RuleType, VerificationStatus } from '../../types';
+import { formatDuration, toMonths } from '../../utils/duration';
 
 function groupFor(status: MatchReason['status'], isDataGap?: boolean): ReasonGroup {
   if (status === 'fail') return 'failed';
@@ -142,7 +143,10 @@ export function evaluateFleetSize(record: AppetiteRecord, profile: RiskProfile):
 }
 
 export function evaluateYearsInBusiness(record: AppetiteRecord, profile: RiskProfile): MatchReason {
-  const years = profile.business.yearsInBusiness.value;
+  // Compared in months: the account side may be months-precise ("8 months"); carrier criteria
+  // are stored in years (fractional allowed), so they're converted with toMonths too.
+  const months = toMonths(profile.business.yearsInBusiness.value);
+  const years = months === null ? null : formatDuration(profile.business.yearsInBusiness.value);
   const minCriterion = record.yearsInBusinessMin;
   const maxCriterion = record.yearsInBusinessMax;
   const minUsable = isUsable(minCriterion.verificationStatus) && minCriterion.value !== null;
@@ -155,21 +159,21 @@ export function evaluateYearsInBusiness(record: AppetiteRecord, profile: RiskPro
     return reason('Years in Business', 'warning', 'Years in business not confirmed — verify before submitting.', maxUsable ? maxCriterion.ruleType : minCriterion.ruleType, true);
   }
 
-  if (maxUsable && years > maxCriterion.value!) {
-    const failText = `${years} years in operation exceeds ${record.marketName}'s verified new-venture ceiling of under ${maxCriterion.value} years.`;
+  if (maxUsable && months! > toMonths(maxCriterion.value)!) {
+    const failText = `${years} in operation exceeds ${record.marketName}'s verified new-venture ceiling of under ${formatDuration(maxCriterion.value)}.`;
     if (maxCriterion.ruleType === 'HARD_RULE') return reason('Years in Business', 'fail', failText, maxCriterion.ruleType);
     return reason('Years in Business', 'warning', failText, maxCriterion.ruleType, false);
   }
-  if (minUsable && years < minCriterion.value!) {
-    const failText = `${years} years in operation is below ${record.marketName}'s verified ${minCriterion.value}-year minimum — reads as a new venture to this underwriter.`;
+  if (minUsable && months! < toMonths(minCriterion.value)!) {
+    const failText = `${years} in operation is below ${record.marketName}'s verified ${formatDuration(minCriterion.value)} minimum — reads as a new venture to this underwriter.`;
     if (minCriterion.ruleType === 'HARD_RULE') return reason('Years in Business', 'fail', failText, minCriterion.ruleType);
     return reason('Years in Business', 'warning', failText, minCriterion.ruleType, false);
   }
 
   const parts: string[] = [];
-  if (minUsable) parts.push(`clears the ${minCriterion.value}-year minimum`);
-  if (maxUsable) parts.push(`stays under the ${maxCriterion.value}-year new-venture ceiling`);
-  return reason('Years in Business', 'pass', `${years} years in operation ${parts.join(' and ')}.`, minUsable ? minCriterion.ruleType : maxCriterion.ruleType);
+  if (minUsable) parts.push(`clears the ${formatDuration(minCriterion.value)} minimum`);
+  if (maxUsable) parts.push(`stays under the ${formatDuration(maxCriterion.value)} new-venture ceiling`);
+  return reason('Years in Business', 'pass', `${years} in operation ${parts.join(' and ')}.`, minUsable ? minCriterion.ruleType : maxCriterion.ruleType);
 }
 
 export function evaluateOperationAndRadius(record: AppetiteRecord, profile: RiskProfile): MatchReason {
@@ -245,7 +249,9 @@ export function evaluateCommodities(record: AppetiteRecord, profile: RiskProfile
 
 export function evaluateDriverRequirements(record: AppetiteRecord, profile: RiskProfile): MatchReason {
   const minAge = profile.transportation.minDriverAge.value;
-  const minExp = profile.transportation.minDriverExperienceYears.value;
+  // Months on both sides (carrier minimums are years, possibly fractional — 8 months ≈ 0.67).
+  const minExp = toMonths(profile.transportation.minDriverExperienceYears.value);
+  const expText = formatDuration(profile.transportation.minDriverExperienceYears.value);
   const ageCriterion = record.minDriverAge;
   const expCriterion = record.minDriverExperienceYears;
   const ageUsable = isUsable(ageCriterion.verificationStatus) && ageCriterion.value !== null;
@@ -258,7 +264,7 @@ export function evaluateDriverRequirements(record: AppetiteRecord, profile: Risk
     return reason(
       'Driver Requirements',
       'warning',
-      `Driver CDL / experience has not been confirmed for this account${expUsable ? ` — ${record.marketName} requires ${expCriterion.value} years like-vehicle/OTR experience` : ''}.`,
+      `Driver CDL / experience has not been confirmed for this account${expUsable ? ` — ${record.marketName} requires ${formatDuration(expCriterion.value)} like-vehicle/OTR experience` : ''}.`,
       expUsable ? expCriterion.ruleType : ageCriterion.ruleType,
       true
     );
@@ -268,8 +274,8 @@ export function evaluateDriverRequirements(record: AppetiteRecord, profile: Risk
     if (ageCriterion.ruleType === 'HARD_RULE') return reason('Driver Requirements', 'fail', failText, ageCriterion.ruleType);
     return reason('Driver Requirements', 'warning', failText, ageCriterion.ruleType, false);
   }
-  if (expUsable && minExp !== null && minExp < expCriterion.value!) {
-    const failText = `Minimum CDL/OTR experience on file (${minExp} yr) falls short of ${record.marketName}'s verified ${expCriterion.value}-year requirement.`;
+  if (expUsable && minExp !== null && minExp < toMonths(expCriterion.value)!) {
+    const failText = `Minimum CDL/OTR experience on file (${expText}) falls short of ${record.marketName}'s verified ${formatDuration(expCriterion.value)} requirement.`;
     if (expCriterion.ruleType === 'HARD_RULE') return reason('Driver Requirements', 'fail', failText, expCriterion.ruleType);
     return reason('Driver Requirements', 'warning', failText, expCriterion.ruleType, false);
   }
@@ -283,7 +289,7 @@ export function evaluateDriverRequirements(record: AppetiteRecord, profile: Risk
       true
     );
   }
-  return reason('Driver Requirements', 'pass', `Driver age (${minAge}) and CDL/OTR experience (${minExp} yr) clear ${record.marketName}'s verified requirements.`, expUsable ? expCriterion.ruleType : ageCriterion.ruleType);
+  return reason('Driver Requirements', 'pass', `Driver age (${minAge}) and CDL/OTR experience (${expText}) clear ${record.marketName}'s verified requirements.`, expUsable ? expCriterion.ruleType : ageCriterion.ruleType);
 }
 
 export function evaluateDotNumberRequired(record: AppetiteRecord, profile: RiskProfile): MatchReason {
