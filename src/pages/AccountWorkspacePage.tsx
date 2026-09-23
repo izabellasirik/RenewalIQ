@@ -23,6 +23,7 @@ import { formatShortDate } from '../services/workflow/dates';
 import { carriersFor, forwardedAt } from '../services/workflow/requirementKey';
 import { QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { EMPTY_ACTIVITY_EVENTS } from '../utils/emptyArrays';
+import { agentLabel } from '../services/agency/agentLabel';
 
 const TABS: WorkspaceTab[] = ['overview', 'checklist', 'quotes', 'activity'];
 
@@ -40,6 +41,8 @@ export function AccountWorkspacePage() {
   const focusQuoteId = params.get('quote') ?? undefined;
 
   const { account, profile, documents, items, quotes, effectiveDate, dotNumber, actions } = useAccountWorkflow(accountId);
+  const agencyMembers = useAccountsStore((s) => s.agencyMembers);
+  const currentUserId = useAccountsStore((s) => s.currentUserId);
   const activity = useAccountsStore((s) => s.activityLog[accountId]) ?? EMPTY_ACTIVITY_EVENTS;
   const addFiles = useAccountsStore((s) => s.addFiles);
   const deleteDocument = useAccountsStore((s) => s.deleteDocument);
@@ -81,7 +84,7 @@ export function AccountWorkspacePage() {
               </span>
               <span className="inline-flex items-center gap-1">
                 <UserRound size={13} className="text-[var(--color-ink-400)]" />
-                {account.assignedBroker?.name ?? <span className="italic text-[var(--color-ink-400)]">Unassigned</span>}
+                {agentLabel(account, agencyMembers, currentUserId) ?? <span className="italic text-[var(--color-ink-400)]">Unassigned</span>}
               </span>
             </div>
           </div>

@@ -1,0 +1,48 @@
+L1 roman sees own legacy accounts: acct_r1,acct_r2
+L2 denis (no profile yet) sees: []
+T1 roman: acct_r1,acct_r2
+T2 agentB: acct_b1
+T3 select by id rows=0
+T3 field_values rows=0
+T3 alternates rows=0
+T3 activity rows=0
+T3 storage rows=0
+T3 update affected=0
+T3 delete affected=0
+T3 upsert-over denied: new row violates row-level security policy (USING expression) for table "submissions"
+T3 child insert denied: new row violates row-level security policy for table "field_values"
+T3 activity insert denied: new row violates row-level security policy for table "activity_events"
+T3 agent reassign own account denied: Only an agency admin can reassign an account.
+T3 profiles visible to agentB: agentb@agency.com
+T3 is_agency_admin(agentB)=false
+T3 self-promote denied: new row violates row-level security policy for table "profiles"
+T3 self-promote update affected=0
+T3 spoof creator → row user_id=00000000-0000-0000-0000-00000000000b
+T5 admin: acct_b1,acct_r1,acct_r2
+T5 admin sees roman field_values=1
+T5 admin sees roman file=1
+T5 admin sees agents: agentb@agency.com:agent,denis@agency.com:admin,roman@agency.com:agent
+T5 admin sees acct_n1 (newbie not in agency yet)=0
+T6 assign outside agency denied: The assigned agent is not a member of this agency.
+T6 after admin edit: creator=00000000-0000-0000-0000-00000000000a assigned=00000000-0000-0000-0000-00000000000a name=Roman Trucking LLC
+T7 roman: acct_r1
+T7 roman stale save denied: new row violates row-level security policy (USING expression) for table "submissions"
+T8 agentB: acct_b1,acct_r2
+T9 new: agency=Agency assigned=00000000-0000-0000-0000-00000000000a
+T10 roman children r3 fv=1 act=1 files=2
+T10 upload to acct_r2 denied: new row violates row-level security policy for table "objects"
+T10 upload into someone else's folder denied: new row violates row-level security policy for table "objects"
+T10 agentB sees r3 children fv=0 act=0 files=0
+T10 agentB sees r2 (reassigned) file rows via roman folder: 0
+X outsider admin: acct_o1
+X outsider profiles: outsider@other.com
+N newbie: acct_n1
+N newbie new account agency=null visible=1
+A no-uid sees rows=0
+S admin save ok: fv="OK"
+F agentB reads roman-uploaded file on acct_r1: 1
+F agentB sees admin's field edit + activity: fv=1 act=2
+F roman after losing acct_r1: accounts=acct_r3 files=0 fv=0
+F roman delete own old upload on lost account affected=0
+U unassigned acct_r3 visible to admin=1
+U unassigned acct_r3 visible to roman (creator)=0

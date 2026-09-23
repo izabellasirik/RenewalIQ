@@ -2,6 +2,7 @@ import { supabase } from './client';
 import type { Account, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
 import { isDuration, toMonths } from '../../utils/duration';
+import { createEmptyRiskProfile } from '../extraction/emptyRiskProfile';
 
 export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
 
@@ -194,21 +195,31 @@ function normalizeItems(value: unknown, accountId: string): MissingItem[] | unde
     .map((i) => ({ ...i, accountId, type: i.type ?? 'document', status: i.status ?? 'missing', createdAt: i.createdAt ?? new Date().toISOString(), updatedAt: i.updatedAt ?? new Date().toISOString() }) as MissingItem);
 }
 
-/** Fetches every submission owned by the current user, fully hydrated. Used on sign-in to populate the workspace. */
-export async function fetchUserSubmissions(userId: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
+/**
+ * Reads every row of a table the signed-in user may see, in pages — Supabase caps a single select at
+ * 1000 rows by default, and an agency admin's pull spans every agent's accounts, so a silently
+ * truncated read here would later be saved back as data loss. No user filter: Row Level Security
+ * (0011_agency_roles.sql) decides what comes back — an agent's own accounts, or the whole agency
+ * for an admin.
+ */
+async function selectAllVisible(table: string) {
+  const PAGE = 1000;
+  const rows = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase!.from(table).select('*').order('id').range(from, from + PAGE - 1);
+    if (error) return { data: null, error };
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE) return { data: rows, error: null };
+  }
+}
+
+/** Fetches every submission the current user can access (RLS-scoped), fully hydrated. Used on sign-in to populate the workspace. */
+export async function fetchUserSubmissions(_userId: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await Promise.all([
-      supabase.from('submissions').select('*').eq('user_id', userId),
-      supabase.from('field_values').select('*').eq('user_id', userId),
-      supabase.from('field_alternates').select('*').eq('user_id', userId),
-      supabase.from('coverage_lines').select('*').eq('user_id', userId),
-      supabase.from('vehicles').select('*').eq('user_id', userId),
-      supabase.from('drivers').select('*').eq('user_id', userId),
-      supabase.from('losses').select('*').eq('user_id', userId),
-      supabase.from('documents').select('*').eq('user_id', userId),
-      supabase.from('activity_events').select('*').eq('user_id', userId),
-    ]);
+    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await Promise.all(
+      ['submissions', 'field_values', 'field_alternates', 'coverage_lines', 'vehicles', 'drivers', 'losses', 'documents', 'activity_events'].map(selectAllVisible)
+    );
     const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes].find((r) => r.error);
     if (errored?.error) return fail(errored.error.message);
 
@@ -227,6 +238,9 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         ...(Array.isArray(sub.contacts) ? { contacts: sub.contacts as Contact[] } : {}),
         ...(sub.assigned_broker && typeof sub.assigned_broker === 'object' ? { assignedBroker: sub.assigned_broker as AssignedBroker } : {}),
         ...(sub.stage ? { stage: sub.stage as AccountStage } : {}),
+        // Set by the database (0011) — never sent back on save, so the app can't grant itself access.
+        ...(sub.organization_id ? { agencyId: sub.organization_id as string } : {}),
+        ...(sub.assigned_user_id !== undefined ? { assignedUserId: (sub.assigned_user_id as string | null) ?? null } : {}),
       };
 
       const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
@@ -323,11 +337,14 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         .map((e) => ({ id: e.id, accountId: sub.id, type: e.type, message: e.message, timestamp: e.occurred_at }))
         .sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
 
+      const emptyProfile = createEmptyRiskProfile(sub.id);
       const profile: RiskProfile = {
         id: `risk_${sub.id}`,
         accountId: sub.id,
-        business: business as unknown as RiskProfile['business'],
-        transportation: transportation as unknown as RiskProfile['transportation'],
+        // Start from an empty profile so a field with no row (saved before that field existed) reads
+        // as missing instead of undefined.
+        business: { ...emptyProfile.business, ...business } as unknown as RiskProfile['business'],
+        transportation: { ...emptyProfile.transportation, ...transportation } as unknown as RiskProfile['transportation'],
         coverage,
         vehicles,
         drivers,
@@ -584,6 +601,82 @@ export async function deleteSubmissionCloud(submissionId: string): Promise<RepoR
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not delete this submission.');
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Agency access (0011_agency_roles.sql). Roles live in `profiles`, written only from the SQL
+// editor; these reads just tell the UI what the database will already allow.
+// ---------------------------------------------------------------------------------------------
+
+export interface AgencyAccess {
+  agencyId: string;
+  agencyName: string | null;
+  role: 'agent' | 'admin';
+}
+
+export interface AgencyMember {
+  userId: string;
+  role: 'agent' | 'admin';
+  name: string;
+  email: string | null;
+}
+
+/**
+ * The signed-in user's agency role, plus (admins only — RLS returns just your own row to an agent)
+ * the agency's members. `access: null` = not in an agency (0011 not applied, or no profile yet):
+ * the app behaves exactly as before, owner-only.
+ */
+export async function fetchAgencyAccess(userId: string): Promise<RepoResult<{ access: AgencyAccess | null; members: AgencyMember[] }>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('profiles').select('user_id, agency_id, role, display_name, email');
+    if (error) {
+      // 0011 not applied yet — no agency features, nothing else changes.
+      if (error.code === '42P01' || error.code === 'PGRST205' || /profiles/.test(error.message)) return { ok: true, data: { access: null, members: [] } };
+      return fail(error.message);
+    }
+    const rows = data ?? [];
+    const mine = rows.find((r) => r.user_id === userId);
+    if (!mine) return { ok: true, data: { access: null, members: [] } };
+    const { data: agency } = await supabase.from('agencies').select('name').eq('id', mine.agency_id).maybeSingle();
+    const members: AgencyMember[] = rows
+      .filter((r) => r.agency_id === mine.agency_id)
+      .map((r) => ({ userId: r.user_id, role: r.role, name: (r.display_name as string | null) || (r.email as string | null) || 'Unnamed', email: r.email ?? null }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, data: { access: { agencyId: mine.agency_id, agencyName: agency?.name ?? null, role: mine.role }, members } };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not load agency access.');
+  }
+}
+
+/** Admin: give an account to another agent (or null = unassigned, admins only). The database trigger rejects this for non-admins and for users outside the agency. */
+export async function assignSubmission(submissionId: string, userId: string | null): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('submissions').update({ assigned_user_id: userId }).eq('id', submissionId).select('id');
+    if (error) return fail(error.message);
+    if (!data || data.length === 0) return fail('This account could not be reassigned — it may not be saved to the cloud yet, or you no longer have access to it.');
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not reassign this account.');
+  }
+}
+
+/**
+ * For accounts this device has but the cloud didn't return: true = the account exists but this
+ * user can no longer see it (reassigned away / access removed) → drop the local copy; false = it
+ * never reached the cloud (or was deleted) → keep it, exactly as before. Unknown on any error.
+ */
+export async function submissionsRevoked(ids: string[]): Promise<Record<string, boolean>> {
+  const out: Record<string, boolean> = {};
+  if (!supabase || ids.length === 0) return out;
+  await Promise.all(
+    ids.map(async (id) => {
+      const { data, error } = await supabase!.rpc('submission_exists', { p_submission_id: id });
+      if (!error && data === true) out[id] = true;
+    })
+  );
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------

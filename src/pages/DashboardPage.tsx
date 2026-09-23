@@ -38,6 +38,12 @@ export function DashboardPage() {
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState<AccountStage | 'all'>('all');
   const [brokerFilter, setBrokerFilter] = useState<string>(ALL_BROKERS);
+  const agencyAccess = useAccountsStore((s) => s.agencyAccess);
+  const agencyMembers = useAccountsStore((s) => s.agencyMembers);
+  // In an agency, "who has this account" is the database assignment (a user id), so an admin filters
+  // by agent; an agent only ever has their own accounts, so there's nothing to filter.
+  const byAgent = agencyAccess?.role === 'admin';
+  const showBrokerFilter = !agencyAccess || byAgent;
   const [renewalSoon, setRenewalSoon] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [historyAccountId, setHistoryAccountId] = useState<string | null>(null);
@@ -76,12 +82,20 @@ export function DashboardPage() {
       .filter((a) => a.namedInsured.toLowerCase().includes(search.toLowerCase()))
       .filter((a) => stageFilter === 'all' || stageOf[a.id] === stageFilter)
       .filter((a) =>
-        brokerFilter === ALL_BROKERS ? true : brokerFilter === UNASSIGNED ? !a.assignedBroker?.name : a.assignedBroker?.name?.trim().toLowerCase() === brokerFilter
+        brokerFilter === ALL_BROKERS
+          ? true
+          : byAgent
+            ? brokerFilter === UNASSIGNED
+              ? !a.assignedUserId
+              : a.assignedUserId === brokerFilter
+            : brokerFilter === UNASSIGNED
+              ? !a.assignedBroker?.name
+              : a.assignedBroker?.name?.trim().toLowerCase() === brokerFilter
       )
       .filter((a) => !renewalSoon || (daysToRenewal[a.id] !== undefined && daysToRenewal[a.id] >= 0 && daysToRenewal[a.id] <= RENEWAL_WINDOW_DAYS))
       // Renewal filter on: soonest renewal first. Otherwise most recently updated first.
       .sort((a, b) => (renewalSoon ? daysToRenewal[a.id] - daysToRenewal[b.id] : a.updatedAt < b.updatedAt ? 1 : -1));
-  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalSoon, daysToRenewal]);
+  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalSoon, daysToRenewal, byAgent]);
 
   const stageCounts = useMemo(() => {
     const counts: Partial<Record<AccountStage, number>> = {};
@@ -95,7 +109,13 @@ export function DashboardPage() {
   return (
     <PageContainer
       title={showArchived ? 'Archived Accounts' : 'Accounts'}
-      description={showArchived ? 'Restore an archived submission or remove it for good.' : "Every account and renewal you're working, in one place."}
+      description={
+        showArchived
+          ? 'Restore an archived submission or remove it for good.'
+          : byAgent
+            ? `Every account in ${agencyAccess?.agencyName ?? 'your agency'}, across all agents.`
+            : "Every account and renewal you're working, in one place."
+      }
       actions={
         showArchived ? (
           <Button variant="secondary" icon={<ArrowLeft size={15} />} onClick={() => setShowArchived(false)}>
@@ -161,15 +181,23 @@ export function DashboardPage() {
                 </option>
               ))}
             </select>
-            <select value={brokerFilter} onChange={(e) => setBrokerFilter(e.target.value)} className={filterClass} aria-label="Filter by assigned broker">
-              <option value={ALL_BROKERS}>All brokers</option>
-              {brokerOptions.map(([key, name]) => (
-                <option key={key} value={key}>
-                  {name}
-                </option>
-              ))}
-              <option value={UNASSIGNED}>Unassigned</option>
-            </select>
+            {showBrokerFilter && (
+              <select value={brokerFilter} onChange={(e) => setBrokerFilter(e.target.value)} className={filterClass} aria-label={byAgent ? 'Filter by agent' : 'Filter by assigned broker'}>
+                <option value={ALL_BROKERS}>{byAgent ? 'All agents' : 'All brokers'}</option>
+                {byAgent
+                  ? agencyMembers.map((m) => (
+                      <option key={m.userId} value={m.userId}>
+                        {m.name} ({accounts.filter((a) => a.archived === showArchived && a.assignedUserId === m.userId).length})
+                      </option>
+                    ))
+                  : brokerOptions.map(([key, name]) => (
+                      <option key={key} value={key}>
+                        {name}
+                      </option>
+                    ))}
+                <option value={UNASSIGNED}>Unassigned</option>
+              </select>
+            )}
             <button
               type="button"
               onClick={() => setRenewalSoon((v) => !v)}

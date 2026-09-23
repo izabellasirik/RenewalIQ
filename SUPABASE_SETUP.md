@@ -91,6 +91,13 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   `experience_or_more` to `drivers` so driver experience keeps month precision ("8 months",
   "1 year 6 months", "16+ years"). Additive, no new policies, safe to re-run. Must run after 0003.
   Until it's applied, driver experience syncs as whole years only and the app says so.
+- **`supabase/migrations/0011_agency_roles.sql`** — agency permissions (Agent vs Admin), enforced
+  by RLS. Adds `agencies`, `profiles` (user → agency + role), and `submissions.assigned_user_id`;
+  reuses `submissions.organization_id` as the agency. Replaces 0003's owner-only policies on every
+  broker table and on the `submission-documents` bucket with one rule: an **agent** reaches only
+  accounts assigned to them, an **admin** reaches every account in their agency, nobody reaches
+  another agency. Accounts not yet in an agency keep 0003's owner-only access, so nothing moves or
+  disappears until you run the agency setup below. Safe to re-run. Must run after 0003.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -99,6 +106,30 @@ Reviewing an appetite-update request happens exclusively through `review_appetit
 which re-checks admin status itself server-side; updating a feedback entry's status is a plain
 RLS-gated `UPDATE`, gated the same way (`is_admin()`) but without a dedicated function, since it
 doesn't need the multi-table atomic transaction the appetite-update review does.
+
+### Agency setup (Agent vs Admin) — after 0011
+
+Roles live in the database (`profiles.role`), never in frontend code, and there is no in-app way to
+grant them — only the SQL editor. Open `supabase/setup/agency_setup.sql`, replace the placeholder
+agency name and emails, and run its steps one at a time:
+
+1. **Preview (read-only)** — every login and how many accounts each created, and every account not
+   yet in an agency with its creator.
+2. **Create the agency.**
+3. **Add people** — 3a makes the owner an `admin`; repeat 3b for each broker as an `agent`. A person
+   must have signed up first (exist under Authentication → Users). To also give the owner the
+   existing `/admin/feedback` and appetite-update review, they must be in `admin_users` too (the
+   optional statement in step 3) — that list is separate and unchanged.
+4. **Move existing accounts into the agency** — each account is assigned to the broker who created
+   it, so agents keep seeing exactly what they see today and the admin sees them all.
+5. **Check** — counts of accounts per agent.
+
+Reassigning later: the admin picks the agent in the account's **Assigned agent** dropdown (or step 6
+of the script). Removing someone: reassign their accounts, then delete their `profiles` row. Don't
+delete their auth user — 0003's foreign keys cascade and would delete every account they created.
+
+To re-run the database permission tests locally (needs `psql` + a throwaway Postgres):
+`PGHOST=localhost PGUSER=postgres ./supabase/tests/agency_rls/run.sh`.
 
 ### Checking which migrations are applied
 
@@ -121,6 +152,7 @@ from (values
   ('0008_account_stage',              exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'stage')),
   ('0009_account_follow_ups',         exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'follow_ups')),
   ('0010_driver_experience_months',   exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'drivers' and column_name = 'experience_months')),
+  ('0011_agency_roles',               to_regclass('public.profiles') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

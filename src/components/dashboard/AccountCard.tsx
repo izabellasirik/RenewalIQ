@@ -13,6 +13,7 @@ import { summarizeWaiting } from '../../services/workflow/nextActions';
 import { effectiveAccountStage } from '../../services/workflow/accountStage';
 import { ACCOUNT_STAGE_TONE } from '../workspace/accountStageStyle';
 import { ACCOUNT_STAGE_LABELS } from '../../types';
+import { agentLabel } from '../../services/agency/agentLabel';
 
 export function AccountCard({ account, index, onOpenHistory }: { account: Account; index: number; onOpenHistory: () => void }) {
   const navigate = useNavigate();
@@ -23,6 +24,9 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   const archiveAccount = useAccountsStore((s) => s.archiveAccount);
   const restoreAccount = useAccountsStore((s) => s.restoreAccount);
   const deleteAccountPermanently = useAccountsStore((s) => s.deleteAccountPermanently);
+  const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
+  const agencyMembers = useAccountsStore((s) => s.agencyMembers);
+  const currentUserId = useAccountsStore((s) => s.currentUserId);
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(account.namedInsured);
@@ -124,6 +128,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
               <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">
                 {account.state || '—'} · DOT {dotNumber || '—'} · Commercial Auto
               </p>
+              {isAgencyAdmin && <p className="mt-0.5 truncate text-xs text-[var(--color-ink-500)]">Agent: {agentLabel(account, agencyMembers, currentUserId) ?? 'Unassigned'}</p>}
             </div>
             <div className="flex shrink-0 items-center gap-1">
               {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}

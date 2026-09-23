@@ -20,4 +20,8 @@ export interface Account {
   assignedBroker?: AssignedBroker;
   /** Broker-set pipeline status. Absent = automatic (derived from checklist and quotes). */
   stage?: AccountStage;
+  /** Agency this account belongs to (cloud accounts, 0011). Set by the database, read-only here. */
+  agencyId?: string;
+  /** Supabase Auth user id of the agent the account belongs to — what grants access (RLS). Set by the database; only an agency admin can change it (assignAccountToAgent). */
+  assignedUserId?: string | null;
 }

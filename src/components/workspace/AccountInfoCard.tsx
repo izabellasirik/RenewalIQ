@@ -6,6 +6,7 @@ import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { formatShortDate } from '../../services/workflow/dates';
 import { US_STATES } from '../../utils/usStates';
+import { agentLabel } from '../../services/agency/agentLabel';
 import { inputClass, labelClass } from './formStyles';
 
 /**
@@ -19,6 +20,12 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
   const updateField = useAccountsStore((s) => s.updateField);
   const setAssignedBroker = useAccountsStore((s) => s.setAssignedBroker);
   const session = useBrokerSession();
+  const agencyAccess = useAccountsStore((s) => s.agencyAccess);
+  const agencyMembers = useAccountsStore((s) => s.agencyMembers);
+  const assignAccountToAgent = useAccountsStore((s) => s.assignAccountToAgent);
+  const currentUserId = useAccountsStore((s) => s.currentUserId);
+  const [assigning, setAssigning] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
@@ -47,6 +54,11 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
     updateAccountInfo(accountId, { namedInsured: name, state });
     if (dot.trim() !== (dotNumber ?? '')) updateField(accountId, 'transportation', 'dotNumber', dot.trim() || null);
     if (eff !== (effectiveDate ?? '')) updateField(accountId, 'business', 'effectiveDate', eff || null);
+    // In an agency the assignment is the database's (admin → Agent dropdown), not this free-text label.
+    if (agencyAccess) {
+      setEditing(false);
+      return;
+    }
     const nextBroker = brokerName.trim() ? { name: brokerName.trim(), email: brokerEmail.trim() || undefined, userId: account.assignedBroker?.name === brokerName.trim() ? account.assignedBroker.userId : undefined } : null;
     if ((nextBroker?.name ?? '') !== (account.assignedBroker?.name ?? '') || (nextBroker?.email ?? '') !== (account.assignedBroker?.email ?? '')) setAssignedBroker(accountId, nextBroker);
     setEditing(false);
@@ -57,7 +69,17 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
     setAssignedBroker(accountId, { name: session.email, email: session.email, userId: session.userId ?? undefined });
   }
 
-  const canAssignSelf = session.status === 'signed_in' && !!session.email && account.assignedBroker?.email !== session.email;
+  const canAssignSelf = !agencyAccess && session.status === 'signed_in' && !!session.email && account.assignedBroker?.email !== session.email;
+  const isAdmin = agencyAccess?.role === 'admin';
+  const agent = agentLabel(account, agencyMembers, currentUserId);
+
+  async function reassign(userId: string) {
+    setAssigning(true);
+    setAssignError(null);
+    const res = await assignAccountToAgent(accountId, userId || null);
+    setAssigning(false);
+    if (!res.ok) setAssignError(res.message);
+  }
 
   return (
     <Card>
@@ -100,14 +122,18 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
               <input type="date" value={eff} onChange={(e) => setEff(e.target.value)} className={inputClass} />
             </div>
             <div />
-            <div>
-              <label className={labelClass}>Assigned broker</label>
-              <input value={brokerName} onChange={(e) => setBrokerName(e.target.value)} className={inputClass} placeholder="Name" />
-            </div>
-            <div>
-              <label className={labelClass}>Broker email</label>
-              <input value={brokerEmail} onChange={(e) => setBrokerEmail(e.target.value)} className={inputClass} placeholder="Optional" />
-            </div>
+            {!agencyAccess && (
+              <>
+                <div>
+                  <label className={labelClass}>Assigned broker</label>
+                  <input value={brokerName} onChange={(e) => setBrokerName(e.target.value)} className={inputClass} placeholder="Name" />
+                </div>
+                <div>
+                  <label className={labelClass}>Broker email</label>
+                  <input value={brokerEmail} onChange={(e) => setBrokerEmail(e.target.value)} className={inputClass} placeholder="Optional" />
+                </div>
+              </>
+            )}
             <div className="flex justify-end gap-2 sm:col-span-2">
               <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
                 Cancel
@@ -138,15 +164,32 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
               </dd>
             </div>
             <div>
-              <dt className="text-xs text-[var(--color-ink-500)]">Assigned broker</dt>
+              <dt className="text-xs text-[var(--color-ink-500)]">{agencyAccess ? 'Assigned agent' : 'Assigned broker'}</dt>
               <dd className="flex flex-wrap items-center gap-1.5">
-                {account.assignedBroker ? (
-                  <span className="font-medium text-[var(--color-ink-900)]" title={account.assignedBroker.email}>
-                    {account.assignedBroker.name}
+                {isAdmin ? (
+                  <select
+                    value={account.assignedUserId ?? ''}
+                    onChange={(e) => void reassign(e.target.value)}
+                    disabled={assigning}
+                    className="rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-sm font-medium text-[var(--color-ink-900)] outline-none focus:border-[var(--color-brand-500)] disabled:opacity-60"
+                    aria-label="Assigned agent"
+                  >
+                    <option value="">Unassigned</option>
+                    {agencyMembers.map((m) => (
+                      <option key={m.userId} value={m.userId}>
+                        {m.name}
+                        {m.role === 'admin' ? ' (admin)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : agent ? (
+                  <span className="font-medium text-[var(--color-ink-900)]" title={agencyAccess ? undefined : account.assignedBroker?.email}>
+                    {agent}
                   </span>
                 ) : (
                   <span className="italic text-[var(--color-ink-400)]">Unassigned</span>
                 )}
+                {assignError && <span className="basis-full text-xs text-[var(--color-danger-600)]">{assignError}</span>}
                 {canAssignSelf && (
                   <button onClick={assignToMe} className="inline-flex items-center gap-0.5 text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
                     <UserCheck size={12} /> Assign to me

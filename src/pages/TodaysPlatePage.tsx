@@ -35,6 +35,8 @@ export function TodaysPlatePage() {
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
   const session = useBrokerSession();
   const [mineOnly, setMineOnly] = useState(false);
+  const agencyAccess = useAccountsStore((s) => s.agencyAccess);
+  // An agent only ever has their own accounts (RLS), so the toggle only means something outside an agency or for an admin.
 
   const today = todayKey();
 
@@ -44,8 +46,12 @@ export function TodaysPlatePage() {
     for (const account of accounts) {
       if (account.archived) continue;
       if (mineOnly && session.status === 'signed_in') {
-        const b = account.assignedBroker;
-        if (!b || (b.userId !== session.userId && b.email !== session.email)) continue;
+        if (agencyAccess) {
+          if (account.assignedUserId !== session.userId) continue;
+        } else {
+          const b = account.assignedBroker;
+          if (!b || (b.userId !== session.userId && b.email !== session.email)) continue;
+        }
       }
       const profile = riskProfiles[account.id];
       const derived = deriveAccountActions(
@@ -63,7 +69,7 @@ export function TodaysPlatePage() {
       allUpcoming.push(...derived.upcoming);
     }
     return { now: sortActions(allNow), upcoming: sortActions(allUpcoming) };
-  }, [accounts, riskProfiles, missingItems, quotes, followUps, mineOnly, session.status, session.userId, session.email, today]);
+  }, [accounts, riskProfiles, missingItems, quotes, followUps, mineOnly, session.status, session.userId, session.email, today, agencyAccess]);
 
   const overdue = now.filter((a) => a.overdue).length;
   const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -107,7 +113,7 @@ export function TodaysPlatePage() {
         </Button>
       }
     >
-      {session.status === 'signed_in' && (
+      {session.status === 'signed_in' && agencyAccess?.role !== 'agent' && (
         <label className="flex items-center gap-1.5 self-start text-sm text-[var(--color-ink-600)]">
           <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
           Only accounts assigned to me

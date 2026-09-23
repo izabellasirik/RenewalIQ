@@ -94,6 +94,12 @@ interface AccountsState {
   accountOwners: Record<string, string>;
   /** Cloud-backed accounts hidden because their owner isn't the one signed in. Kept (not deleted) so nothing unsynced is lost; restored when the owner signs back in. Persisted. */
   hiddenAccounts: Account[];
+  /** The signed-in user's agency role (0011_agency_roles.sql), or null when they aren't in an agency (or cloud sync is off) — then everything works owner-only, as before. Ephemeral: re-read from the database on every sign-in, never trusted from storage. The database enforces access either way; this only decides which controls to show. */
+  agencyAccess: cloudRepo.AgencyAccess | null;
+  /** Agency members, for an admin's Agent filter / reassignment (RLS returns only yourself to an agent). Ephemeral. */
+  agencyMembers: cloudRepo.AgencyMember[];
+  /** Admin only: gives an account to another agent in the agency (null = unassigned). The database rejects it for anyone else. */
+  assignAccountToAgent: (accountId: string, userId: string | null) => Promise<{ ok: true } | { ok: false; message: string }>;
   setCurrentUserId: (userId: string | null, email?: string | null) => void;
   /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud. Never touches local-only (not-yet-imported) accounts. */
   hydrateCloudSubmissions: () => Promise<void>;
@@ -249,6 +255,35 @@ function partitionAccounts(all: Account[], cloudAccountIds: Record<string, true>
   return { accounts, hiddenAccounts };
 }
 
+/** Local state with these accounts and everything hanging off them removed (not the cloud copy). */
+function withoutAccounts(st: AccountsState, ids: Set<string>): Partial<AccountsState> {
+  const drop = <T,>(rec: Record<string, T>) => Object.fromEntries(Object.entries(rec).filter(([k]) => !ids.has(k))) as Record<string, T>;
+  return {
+    accounts: st.accounts.filter((a) => !ids.has(a.id)),
+    hiddenAccounts: st.hiddenAccounts.filter((a) => !ids.has(a.id)),
+    documents: drop(st.documents),
+    riskProfiles: drop(st.riskProfiles),
+    matchResults: drop(st.matchResults),
+    activityLog: drop(st.activityLog),
+    missingItems: drop(st.missingItems),
+    quotes: drop(st.quotes),
+    followUps: drop(st.followUps),
+    cloudAccountIds: drop(st.cloudAccountIds),
+    accountOwners: drop(st.accountOwners),
+    syncStatus: drop(st.syncStatus),
+    syncError: drop(st.syncError),
+    activeAccountId: st.activeAccountId && ids.has(st.activeAccountId) ? null : st.activeAccountId,
+  };
+}
+
+/** Local file ids (documents + quote attachments) stored in this browser for an account. */
+function localFileIds(st: AccountsState, accountId: string): string[] {
+  return [
+    ...(st.documents[accountId] ?? []).map((d) => d.id),
+    ...(st.quotes[accountId] ?? []).flatMap((q) => (q.options ?? []).flatMap((o) => (o.attachment ? [o.attachment.id] : []))),
+  ];
+}
+
 /** " by jane@agency.com" — who made the change, when a broker is signed in ("by themselves" reads oddly, so self-assignment says so). */
 function actorSuffix(actorEmail: string | null, subjectEmail?: string): string {
   if (!actorEmail) return '';
@@ -283,6 +318,23 @@ export const useAccountsStore = create<AccountsState>()(
        * immediate source of truth for the current session (see file header in submissionsRepo.ts),
        * this just pushes the resulting state outward and reflects success/failure via syncStatus.
        */
+      /**
+       * In an agency, a new account belongs to whoever creates it — the database's insert trigger
+       * sets the same thing server-side; this just shows it immediately (and keeps the display-only
+       * "Assigned broker" label in step for the existing filters/emails).
+       */
+      function ownedByMe(account: Account): Account {
+        const { agencyAccess, currentUserId, currentUserEmail, agencyMembers } = get();
+        if (!agencyAccess || !currentUserId) return account;
+        const me = agencyMembers.find((m) => m.userId === currentUserId);
+        return {
+          ...account,
+          agencyId: agencyAccess.agencyId,
+          assignedUserId: currentUserId,
+          assignedBroker: { name: me?.name ?? currentUserEmail ?? 'Me', email: currentUserEmail ?? undefined, userId: currentUserId },
+        };
+      }
+
       function recordSync(accountId: string, errorMessage: string | null) {
         set((st) => {
           const { [accountId]: _prev, ...rest } = st.syncError;
@@ -372,6 +424,8 @@ export const useAccountsStore = create<AccountsState>()(
       currentUserEmail: null,
       accountOwners: {},
       hiddenAccounts: [],
+      agencyAccess: null,
+      agencyMembers: [],
       dismissedImportIds: {},
       matchResults: {},
       activityLog: {},
@@ -382,7 +436,7 @@ export const useAccountsStore = create<AccountsState>()(
       effectiveAppetiteRecords: sampleAppetiteRecords,
 
       createAccount: (namedInsured, state) => {
-        const account = newAccount(namedInsured, state);
+        const account = ownedByMe(newAccount(namedInsured, state));
         const cloud = isSupabaseConfigured && !!get().currentUserId;
         set((s) => ({
           accounts: [...s.accounts, account],
@@ -398,7 +452,7 @@ export const useAccountsStore = create<AccountsState>()(
 
       createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact) => {
         const account = {
-          ...newAccount(namedInsured, state),
+          ...ownedByMe(newAccount(namedInsured, state)),
           status: 'documents_uploaded' as const,
           ...(contact?.name ? { contactName: contact.name } : {}),
           ...(contact?.email ? { contactEmail: contact.email } : {}),
@@ -910,7 +964,9 @@ export const useAccountsStore = create<AccountsState>()(
 
         const newId = generateId('acct');
         const now = new Date().toISOString();
-        const clonedAccount: Account = { ...source, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false };
+        // A copy is a new, local-only account — it doesn't inherit the source's cloud agency assignment.
+        const { agencyId: _agencyId, assignedUserId: _assignedUserId, ...sourceFields } = source;
+        const clonedAccount: Account = { ...sourceFields, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false };
         const clonedProfile: RiskProfile = { ...sourceProfile, id: generateId('risk'), accountId: newId, updatedAt: now };
         const clonedDocs = (s.documents[accountId] ?? []).map((d) => ({ ...d, id: generateId('doc'), accountId: newId }));
         (s.documents[accountId] ?? []).forEach((d, i) => void copyLocalFile(d.id, clonedDocs[i].id));
@@ -945,38 +1001,20 @@ export const useAccountsStore = create<AccountsState>()(
         if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId]) {
           const filesResult = await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
           if (!filesResult.ok) return { ok: false, message: `Couldn't remove this submission's files from your account: ${filesResult.message}` };
+          // Files other agency members uploaded to this account live under their own folder
+          // ({uploader}/{account}/…) — remove those by their recorded paths too (RLS allows it for
+          // anyone who can access the account).
+          const otherPaths = [
+            ...(s.documents[accountId] ?? []).map((d) => d.storagePath),
+            ...(s.quotes[accountId] ?? []).flatMap((q) => (q.options ?? []).map((o) => o.attachment?.storagePath)),
+          ].filter((path): path is string => !!path && !path.startsWith(`${s.currentUserId}/`));
+          await Promise.all(otherPaths.map((path) => cloudRepo.deleteDocumentFile(path)));
           const deleteResult = await cloudRepo.deleteSubmissionCloud(accountId);
           if (!deleteResult.ok) return { ok: false, message: `Couldn't delete this submission from your account: ${deleteResult.message}` };
         }
 
-        void deleteLocalFiles([
-          ...(s.documents[accountId] ?? []).map((d) => d.id),
-          ...(s.quotes[accountId] ?? []).flatMap((q) => (q.options ?? []).flatMap((o) => (o.attachment ? [o.attachment.id] : []))),
-        ]);
-        set((st) => {
-          const { [accountId]: _doc, ...documents } = st.documents;
-          const { [accountId]: _profile, ...riskProfiles } = st.riskProfiles;
-          const { [accountId]: _matches, ...matchResults } = st.matchResults;
-          const { [accountId]: _log, ...activityLog } = st.activityLog;
-          const { [accountId]: _items, ...missingItems } = st.missingItems;
-          const { [accountId]: _quotes, ...quotes } = st.quotes;
-          const { [accountId]: _followUps, ...followUps } = st.followUps;
-          const { [accountId]: _cloud, ...cloudAccountIds } = st.cloudAccountIds;
-          const { [accountId]: _sync, ...syncStatus } = st.syncStatus;
-          return {
-            accounts: st.accounts.filter((a) => a.id !== accountId),
-            documents,
-            riskProfiles,
-            matchResults,
-            activityLog,
-            missingItems,
-            quotes,
-            followUps,
-            cloudAccountIds,
-            syncStatus,
-            activeAccountId: st.activeAccountId === accountId ? null : st.activeAccountId,
-          };
-        });
+        void deleteLocalFiles(localFileIds(s, accountId));
+        set((st) => withoutAccounts(st, new Set([accountId])));
         return { ok: true };
       },
 
@@ -1690,17 +1728,55 @@ export const useAccountsStore = create<AccountsState>()(
         return item.id;
       },
 
+      assignAccountToAgent: async (accountId, userId) => {
+        const s = get();
+        if (!isSupabaseConfigured || !s.currentUserId || s.agencyAccess?.role !== 'admin') return { ok: false, message: 'Only an agency admin can reassign accounts.' };
+        if (!s.cloudAccountIds[accountId]) return { ok: false, message: 'This account is only in this browser — it has to be saved to the cloud before it can be assigned.' };
+        const res = await cloudRepo.assignSubmission(accountId, userId);
+        if (!res.ok) return res;
+        const member = userId ? get().agencyMembers.find((m) => m.userId === userId) : undefined;
+        set((st) => ({
+          accounts: touchAccount(
+            st.accounts.map((a) =>
+              a.id === accountId
+                ? { ...a, assignedUserId: userId, assignedBroker: member ? { name: member.name, email: member.email ?? undefined, userId: member.userId } : undefined }
+                : a
+            ),
+            accountId
+          ),
+          activityLog: appendEvent(
+            st.activityLog,
+            accountId,
+            'broker_assigned',
+            `${member ? `Assigned to agent ${member.name}` : 'Removed the assigned agent'}${actorSuffix(st.currentUserEmail, member?.email ?? undefined)}.`
+          ),
+        }));
+        syncNow(accountId);
+        return { ok: true };
+      },
+
       setCurrentUserId: (userId, email) =>
         set((s) => {
           const { accounts, hiddenAccounts } = partitionAccounts([...s.accounts, ...s.hiddenAccounts], s.cloudAccountIds, s.accountOwners, userId);
           const activeVisible = accounts.some((a) => a.id === s.activeAccountId);
-          return { currentUserId: userId, currentUserEmail: userId ? (email ?? s.currentUserEmail) : null, accounts, hiddenAccounts, activeAccountId: activeVisible ? s.activeAccountId : null };
+          const sameUser = userId !== null && userId === s.currentUserId;
+          return {
+            currentUserId: userId,
+            currentUserEmail: userId ? (email ?? s.currentUserEmail) : null,
+            accounts,
+            hiddenAccounts,
+            activeAccountId: activeVisible ? s.activeAccountId : null,
+            // Roles are re-read from the database on every sign-in (hydrateCloudSubmissions).
+            ...(sameUser ? {} : { agencyAccess: null, agencyMembers: [] }),
+          };
         }),
 
       hydrateCloudSubmissions: async () => {
         const userId = get().currentUserId;
         if (!isSupabaseConfigured || !userId) return;
-        const result = await cloudRepo.fetchUserSubmissions(userId);
+        const [result, accessRes] = await Promise.all([cloudRepo.fetchUserSubmissions(userId), cloudRepo.fetchAgencyAccess(userId)]);
+        if (get().currentUserId !== userId) return; // signed out / switched user mid-fetch
+        if (accessRes.ok) set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
         if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
         const needsPush: string[] = [];
         set((s) => {
@@ -1757,6 +1833,22 @@ export const useAccountsStore = create<AccountsState>()(
           }
           return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, followUps, cloudAccountIds };
         });
+        // Accounts this device holds for this user that the cloud no longer returned: if they still
+        // exist, access was removed (e.g. an admin reassigned them to another agent) — drop the local
+        // copy so it can't be opened or re-saved from here. If they don't exist they were never
+        // uploaded (or were deleted) and are left alone, exactly as before.
+        {
+          const s = get();
+          const returned = new Set(result.data.map((b) => b.account.id));
+          const candidates = s.accounts.filter((a) => s.cloudAccountIds[a.id] && !returned.has(a.id)).map((a) => a.id);
+          const revoked = await cloudRepo.submissionsRevoked(candidates);
+          const gone = new Set(Object.keys(revoked).filter((id) => revoked[id]));
+          if (gone.size > 0 && get().currentUserId === userId) {
+            const st = get();
+            void deleteLocalFiles([...gone].flatMap((id) => localFileIds(st, id)));
+            set((cur) => withoutAccounts(cur, gone));
+          }
+        }
         for (const bundle of result.data) get().runMatching(bundle.account.id);
         // Push back anything this device had that the cloud didn't (e.g. events lost to the old sync bug).
         for (const id of needsPush) syncNow(id);
@@ -1797,7 +1889,16 @@ export const useAccountsStore = create<AccountsState>()(
         // currentUserId: re-derived from the live Supabase session on load, never trusted from a
         // stale persisted value (see App.tsx's bootstrap effect).
         // syncStatus: a snapshot of in-flight/last save outcome — meaningless across a reload.
-        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, currentUserId: _currentUserId, currentUserEmail: _currentUserEmail, syncStatus: _syncStatus, syncError: _syncError, ...rest } = state;
+        const {
+          effectiveAppetiteRecords: _effectiveAppetiteRecords,
+          currentUserId: _currentUserId,
+          currentUserEmail: _currentUserEmail,
+          syncStatus: _syncStatus,
+          syncError: _syncError,
+          agencyAccess: _agencyAccess,
+          agencyMembers: _agencyMembers,
+          ...rest
+        } = state;
         return rest;
       },
     }
