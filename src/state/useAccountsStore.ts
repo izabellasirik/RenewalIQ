@@ -116,8 +116,17 @@ interface AccountsState {
     documents: Omit<UploadedDocument, 'accountId'>[],
     profile: RiskProfile,
     files?: File[],
-    contact?: { name?: string; email?: string; phone?: string }
+    contact?: { name?: string; email?: string; phone?: string },
+    /** skipAutoSync: the caller saves it itself with saveAccountNow (e.g. intake import) — avoids two overlapping saves. */
+    options?: { skipAutoSync?: boolean }
   ) => string;
+  /**
+   * Saves one account to the cloud now and waits for the result (the same save syncNow runs in the
+   * background). ok = the account and its Risk Profile data are in the cloud; complete = nothing at
+   * all was left out (false while a workflow migration isn't applied yet). A local-only account
+   * (not signed in / cloud not configured) is ok by definition.
+   */
+  saveAccountNow: (accountId: string) => Promise<{ ok: boolean; complete: boolean; message?: string }>;
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
   /** Returns the new document ids, in the same order as `files`, so a caller can link one to a checklist item. */
@@ -148,7 +157,8 @@ interface AccountsState {
   archiveAccount: (accountId: string) => void;
   restoreAccount: (accountId: string) => void;
   /** Returns { ok: false, message } if this account is cloud-backed and the cloud deletion fails — local state is left untouched in that case (see the STOP-and-report note in the implementation), so the broker never sees "deleted" when the cloud copy is still there. */
-  deleteAccountPermanently: (accountId: string) => Promise<{ ok: boolean; message?: string }>;
+  /** `options.noFiles`: the account never had any stored files (e.g. rolling back a just-created intake import), so Storage cleanup is skipped. */
+  deleteAccountPermanently: (accountId: string, options?: { noFiles?: boolean }) => Promise<{ ok: boolean; message?: string }>;
 
   // --- Account workflow (contacts, checklist, markets & quotes) ------------------------------
   updateAccountInfo: (accountId: string, patch: { namedInsured?: string; state?: string }) => void;
@@ -346,11 +356,16 @@ export const useAccountsStore = create<AccountsState>()(
       }
 
       function syncNow(accountId: string) {
+        void pushAccount(accountId);
+      }
+
+      /** One cloud save of an account; resolves with how it went. null = nothing to save (local-only / signed out). */
+      async function pushAccount(accountId: string): Promise<{ coreSaved: boolean; message: string | null } | null> {
         const s = get();
-        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return null;
         const account = s.accounts.find((a) => a.id === accountId);
         const profile = s.riskProfiles[accountId];
-        if (!account || !profile) return;
+        if (!account || !profile) return null;
         const userId = s.currentUserId;
         set((st) => ({
           syncStatus: { ...st.syncStatus, [accountId]: 'saving' },
@@ -359,12 +374,11 @@ export const useAccountsStore = create<AccountsState>()(
         const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [], followUps: s.followUps[accountId] ?? [] };
         // Account row first, then activity: activity_events has a foreign key onto submissions, so
         // writing both at once on a brand-new account could fail with a confusing secondary error.
-        void (async () => {
-          const snapRes = await cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow);
-          const actRes = snapRes.headerSaved ? await cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []) : null;
-          const message = !snapRes.ok ? snapRes.message : actRes && !actRes.ok ? `Activity history: ${actRes.message}` : null;
-          recordSync(accountId, message);
-        })();
+        const snapRes = await cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow);
+        const actRes = snapRes.headerSaved ? await cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []) : null;
+        const message = !snapRes.ok ? snapRes.message : actRes && !actRes.ok ? `Activity history: ${actRes.message}` : null;
+        recordSync(accountId, message);
+        return { coreSaved: snapRes.coreSaved, message };
       }
 
       /**
@@ -454,7 +468,7 @@ export const useAccountsStore = create<AccountsState>()(
         return account.id;
       },
 
-      createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact) => {
+      createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact, options) => {
         const account = {
           ...ownedByMe(newAccount(namedInsured, state)),
           status: 'documents_uploaded' as const,
@@ -492,7 +506,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(account.id);
-        syncNow(account.id);
+        if (!options?.skipAutoSync) syncNow(account.id);
         // Keep the originals in this browser for in-app preview.
         files?.forEach((file, i) => {
           if (file && finalDocs[i]) void saveLocalFile(finalDocs[i].id, file, file.name);
@@ -996,14 +1010,14 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
-      deleteAccountPermanently: async (accountId) => {
+      deleteAccountPermanently: async (accountId, options) => {
         const s = get();
         // A cloud-backed submission: remove the cloud copy FIRST (Storage objects, then the
         // database row, which cascades to every dependent table) before touching local state. If
         // either cloud step fails, local state is left completely untouched and the broker sees a
         // real error — never a "deleted" submission that quietly still exists in their account.
         if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId]) {
-          const filesResult = await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
+          const filesResult = options?.noFiles ? ({ ok: true } as const) : await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
           if (!filesResult.ok) return { ok: false, message: `Couldn't remove this submission's files from your account: ${filesResult.message}` };
           // Files other agency members uploaded to this account live under their own folder
           // ({uploader}/{account}/…) — remove those by their recorded paths too (RLS allows it for
@@ -1730,6 +1744,12 @@ export const useAccountsStore = create<AccountsState>()(
         }));
         syncNow(accountId);
         return item.id;
+      },
+
+      saveAccountNow: async (accountId) => {
+        const res = await pushAccount(accountId);
+        if (!res) return { ok: true, complete: true };
+        return { ok: res.coreSaved, complete: res.message === null, message: res.message ?? undefined };
       },
 
       assignAccountToAgent: async (accountId, userId) => {

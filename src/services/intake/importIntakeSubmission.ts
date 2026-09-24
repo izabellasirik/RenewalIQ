@@ -65,7 +65,7 @@ export interface ImportResult {
 }
 
 /**
- * The broker's one-click "Import" action — turns a pending intake_submissions row into a real
+ * The broker's "Import" action — turns a pending intake_submissions row into a real
  * account using the exact same primitives any other submission uses: createAccountFromExtraction to
  * commit the applicant-provided profile, then addFiles for each uploaded document so the real
  * OCR/vision extraction pipeline runs on them exactly as if the broker had just uploaded them
@@ -87,12 +87,31 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   const namedInsured = submission.namedInsured?.trim() || 'Untitled Submission';
   const state = deriveDomicileState(submission.operatingStates);
 
-  const { createAccountFromExtraction, addFiles } = useAccountsStore.getState();
-  const accountId = createAccountFromExtraction(namedInsured, state, [], profile, undefined, {
-    name: submission.contactName ?? undefined,
-    email: submission.contactEmail ?? undefined,
-    phone: submission.contactPhone ?? undefined,
-  });
+  const { createAccountFromExtraction, addFiles, saveAccountNow, deleteAccountPermanently } = useAccountsStore.getState();
+  const accountId = createAccountFromExtraction(
+    namedInsured,
+    state,
+    [],
+    profile,
+    undefined,
+    {
+      name: submission.contactName ?? undefined,
+      email: submission.contactEmail ?? undefined,
+      phone: submission.contactPhone ?? undefined,
+    },
+    // Saved (and awaited) just below instead — two overlapping saves would race.
+    { skipAutoSync: true }
+  );
+
+  // The submission is only marked imported once the account and its Risk Profile are actually in
+  // the cloud. If that save fails, the new account is removed again and the submission stays
+  // pending, so the broker can simply retry — never an "Imported" row with nothing behind it.
+  const saved = await saveAccountNow(accountId);
+  if (!saved.ok) {
+    // Files are only added after a successful save, so there's nothing in Storage to clean up.
+    await deleteAccountPermanently(accountId, { noFiles: true });
+    return { ok: false, message: `Couldn't save this submission to your account, so nothing was imported — please try again.${saved.message ? ` (${saved.message})` : ''}` };
+  }
 
   if (files.length > 0) addFiles(accountId, files);
 

@@ -382,12 +382,15 @@ export async function saveSubmissionSnapshot(
   account: Account,
   profile: RiskProfile,
   workflow?: { missingItems: MissingItem[]; quotes: MarketQuote[]; followUps?: FollowUp[] }
-): Promise<RepoResult & { headerSaved: boolean }> {
-  if (!supabase) return { ...NOT_CONFIGURED, headerSaved: false };
+): Promise<RepoResult & { headerSaved: boolean; coreSaved: boolean }> {
+  if (!supabase) return { ...NOT_CONFIGURED, headerSaved: false, coreSaved: false };
   // headerSaved: whether the `submissions` row itself landed — callers only write rows that
   // reference it (activity_events has a foreign key onto it) once it has, even when some other
   // part of the snapshot couldn't be saved (e.g. a migration not applied yet).
   let headerSaved = false;
+  // coreSaved: the row AND the Risk Profile's rows (fields, coverage, vehicles, drivers, losses)
+  // all landed — only workflow columns from a not-yet-applied migration may still be missing.
+  let coreSaved = false;
   try {
     const legacyRow = {
       id: account.id,
@@ -426,7 +429,7 @@ export async function saveSubmissionSnapshot(
       notSavedMessage = attempt.missing || null;
       if (!subErr || !isMissingWorkflowColumnError(subErr)) break;
     }
-    if (subErr) return { ...fail(subErr.message), headerSaved };
+    if (subErr) return { ...fail(subErr.message), headerSaved, coreSaved };
     headerSaved = true;
 
     const { values, alternates } = collectFieldValueRows(userId, account.id, profile);
@@ -441,7 +444,7 @@ export async function saveSubmissionSnapshot(
       supabase.from('losses').delete().eq('submission_id', account.id),
     ]);
     const delErr = del.find((r) => r.error);
-    if (delErr?.error) return { ...fail(delErr.error.message), headerSaved };
+    if (delErr?.error) return { ...fail(delErr.error.message), headerSaved, coreSaved };
 
     const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
     let driverMonthsNotSaved = false;
@@ -531,13 +534,14 @@ export async function saveSubmissionSnapshot(
 
     const insRes = await Promise.all(inserts);
     const insErr = insRes.find((r) => r.error);
-    if (insErr?.error) return { ...fail(insErr.error.message), headerSaved };
+    if (insErr?.error) return { ...fail(insErr.error.message), headerSaved, coreSaved };
+    coreSaved = true;
 
-    if (notSavedMessage) return { ...fail(notSavedMessage), headerSaved };
-    if (driverMonthsNotSaved) return { ...fail('Driver experience was saved as whole years only — the database needs migration 0010_driver_experience_months.sql to keep months.'), headerSaved };
-    return { ok: true, data: undefined, headerSaved };
+    if (notSavedMessage) return { ...fail(notSavedMessage), headerSaved, coreSaved };
+    if (driverMonthsNotSaved) return { ...fail('Driver experience was saved as whole years only — the database needs migration 0010_driver_experience_months.sql to keep months.'), headerSaved, coreSaved };
+    return { ok: true, data: undefined, headerSaved, coreSaved };
   } catch (err) {
-    return { ...fail(err instanceof Error ? err.message : 'Could not save to your account.'), headerSaved };
+    return { ...fail(err instanceof Error ? err.message : 'Could not save to your account.'), headerSaved, coreSaved };
   }
 }
 
