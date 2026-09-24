@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, Copy, FileText, FileWarning, Inbox, Link2, Loader2, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Button, Badge, EmptyState, Skeleton, Tabs } from '../components/ui';
+import { Button, Badge, ConfirmDialog, EmptyState, Skeleton, Tabs } from '../components/ui';
 import { COVERAGE_LABELS } from '../types';
 import type { IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
 import { useBrokerSession } from '../hooks/useBrokerSession';
 import { createIntakeLink, dismissIntakeSubmission, fetchIntakeDocuments, fetchIntakeLinks, fetchIntakeSubmissions, setIntakeLinkActive } from '../services/supabase/intakeRepo';
 import { importIntakeSubmission } from '../services/intake/importIntakeSubmission';
+import { findLikelyDuplicateAccount, type DuplicateMatch } from '../services/intake/duplicateDetection';
+import { useAccountsStore } from '../state/useAccountsStore';
 import { formatDate } from '../utils/dates';
 
 const inputClass =
@@ -177,7 +179,18 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
     };
   }, [submission.id]);
 
+  // Warn before creating a second account for the same business (DOT # or named insured match).
+  const [duplicate, setDuplicate] = useState<DuplicateMatch | null>(null);
+
+  function handleImportClick() {
+    const { accounts, riskProfiles } = useAccountsStore.getState();
+    const match = findLikelyDuplicateAccount(submission, accounts, riskProfiles);
+    if (match) setDuplicate(match);
+    else void handleImport();
+  }
+
   async function handleImport() {
+    setDuplicate(null);
     setBusy('import');
     setError(null);
     const result = await importIntakeSubmission(submission);
@@ -258,7 +271,7 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
 
       {submission.status === 'pending' && (
         <div className="mt-4 flex gap-2 border-t border-[var(--color-ink-100)] pt-3">
-          <Button size="sm" disabled={busy !== null} onClick={handleImport}>
+          <Button size="sm" disabled={busy !== null} onClick={handleImportClick}>
             {busy === 'import' ? 'Importing…' : 'Import'}
           </Button>
           <Button size="sm" variant="ghost" icon={<X size={13} />} disabled={busy !== null} onClick={handleDismiss}>
@@ -266,6 +279,20 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
           </Button>
         </div>
       )}
+      <ConfirmDialog
+        open={!!duplicate}
+        onCancel={() => setDuplicate(null)}
+        onConfirm={() => void handleImport()}
+        title="Possible duplicate account"
+        description={
+          duplicate
+            ? `You already have "${duplicate.account.namedInsured}" (${duplicate.reason}). Import this submission as another account anyway?`
+            : ''
+        }
+        confirmLabel="Import anyway"
+        cancelLabel="Don't import"
+        variant="default"
+      />
       {submission.status === 'imported' && submission.importedAccountId && (
         <div className="mt-4 border-t border-[var(--color-ink-100)] pt-3">
           <Button size="sm" variant="secondary" onClick={() => navigate(`/accounts/${submission.importedAccountId}/risk-profile`)}>
