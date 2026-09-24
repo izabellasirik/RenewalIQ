@@ -14,6 +14,7 @@ import { QUOTE_STATUS_TONE } from './quoteStatus';
 import { QuoteOptionsList } from './QuoteOptionsList';
 import { inputClass, labelClass, smallInputClass } from './formStyles';
 import { cn } from '../../utils/cn';
+import { MarketDetailsDialog } from './MarketDetailsDialog';
 
 
 export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; focusQuoteId?: string }) {
@@ -182,6 +183,7 @@ function QuoteCard({
   const [reqLabel, setReqLabel] = useState('');
   const [reqType, setReqType] = useState<MissingItemType>('document');
   const [note, setNote] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const closed = quote.status === 'declined' || quote.status === 'bound';
   const followUpDue = !closed && quote.followUpDate && quote.followUpDate <= todayKey();
@@ -221,11 +223,16 @@ function QuoteCard({
 
   return (
     <Card className={cn(highlighted && 'ring-2 ring-[var(--color-brand-500)]')}>
+      <MarketDetailsDialog accountId={accountId} quote={quote} requestedItems={requestedItems} open={detailsOpen} onClose={() => setDetailsOpen(false)} />
       <CardBody className="pt-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-base font-semibold text-[var(--color-ink-900)]">{quote.marketName}</h3>
+              <h3 className="text-base font-semibold text-[var(--color-ink-900)]">
+                <button onClick={() => setDetailsOpen(true)} className="text-left hover:text-[var(--color-brand-700)] hover:underline cursor-pointer" title="Show everything about this market">
+                  {quote.marketName}
+                </button>
+              </h3>
               <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{QUOTE_STATUS_LABELS[quote.status]}</Badge>
               {quote.premium && (quote.status === 'quoted' || quote.status === 'bound') && (
                 <span className="text-sm font-semibold text-[var(--color-success-600)]">${quote.premium.toLocaleString('en-US')}</span>
