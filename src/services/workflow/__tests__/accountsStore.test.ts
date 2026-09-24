@@ -125,3 +125,21 @@ describe('manual follow-ups', () => {
     expect(store().activityLog[id].map((e) => e.message)).toEqual(expect.arrayContaining(['Follow-up for Sara scheduled for Sep 24 — Confirm new driver start date.', 'Followed up: Sara.']));
   });
 });
+
+describe('new accounts start with the submission checklist', () => {
+  it('a blank account gets the standard checklist right away', () => {
+    const id = store().createAccount('Checklist Co', 'TX');
+    expect(store().missingItems[id].map((i) => i.label)).toEqual(['Application', 'Loss Runs', 'MVRs — all drivers', 'IFTA — last 4 quarters', 'Unit List', 'Driver List']);
+    expect(store().missingItems[id].every((i) => i.status === 'missing')).toBe(true);
+  });
+
+  it('documents uploaded to create the account mark their items received', async () => {
+    const { createEmptyRiskProfile } = await import('../../extraction/emptyRiskProfile');
+    const lossRun = { id: 'doc_lr', name: 'loss_runs.pdf', category: 'loss_run', status: 'processed', fileType: 'pdf', sizeBytes: 1, uploadedAt: '2026-09-24T00:00:00.000Z' };
+    const id = store().createAccountFromExtraction('Docs Co', 'TX', [lossRun] as never, createEmptyRiskProfile('x'));
+    const lr = store().missingItems[id].find((i) => i.label === 'Loss Runs')!;
+    expect(lr.status).toBe('received');
+    expect(lr.documentId).toBe('doc_lr');
+    expect(store().missingItems[id].find((i) => i.label === 'Application')!.status).toBe('missing');
+  });
+});

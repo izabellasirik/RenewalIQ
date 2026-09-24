@@ -89,7 +89,8 @@ describe('shared checklist requirements', () => {
 
     expect(john).not.toBe(david);
     expect(johnAgain).toBe(john);
-    expect(items(accountId).filter((i) => requirementKey(i).startsWith('mvr|'))).toHaveLength(2);
+    // Two per-driver MVRs for Trinity (the new account's own generic "MVRs — all drivers" checklist row is separate).
+    expect(items(accountId).filter((i) => requirementKey(i).startsWith('mvr|') && carriersFor(i).includes(trinity))).toHaveLength(2);
   });
 
   it('4. existing duplicate data is reconciled without losing carrier relationships', () => {

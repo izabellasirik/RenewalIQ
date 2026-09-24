@@ -28,6 +28,7 @@ import { emptyField, ACCOUNT_STAGE_LABELS, AWAITING_CARRIER_STATUSES, MISSING_IT
 import { getAccountContacts } from '../services/workflow/contacts';
 import { addBusinessDays, formatShortDate, todayKey } from '../services/workflow/dates';
 import { carriersFor, findRequirement, forwardedAt, normalizeMissingItems } from '../services/workflow/requirementKey';
+import { CHECKLIST_TEMPLATES, expandTemplate, findTemplateItem } from '../services/workflow/checklistTemplates';
 import type { FieldResolution } from '../services/extraction';
 import {
   createEmptyRiskProfile,
@@ -286,6 +287,33 @@ function withoutAccounts(st: AccountsState, ids: Set<string>): Partial<AccountsS
   };
 }
 
+/**
+ * The standard submission checklist a new account starts with (the same template as the checklist's
+ * "Start … checklist" button). An item whose document came in with the account — e.g. a loss run
+ * uploaded to create it — starts out received and linked to that document.
+ */
+function defaultChecklist(accountId: string, profile: RiskProfile | undefined, documents: UploadedDocument[], now: string): MissingItem[] {
+  const template = CHECKLIST_TEMPLATES[0];
+  if (!template) return [];
+  const used = new Set<string>();
+  return expandTemplate(template, profile).map((seed) => {
+    const categories = findTemplateItem(seed.templateKey)?.documentCategories ?? [];
+    const doc = categories.length ? documents.find((d) => !used.has(d.id) && d.status !== 'error' && categories.includes(d.category)) : undefined;
+    if (doc) used.add(doc.id);
+    return {
+      id: generateId('item'),
+      accountId,
+      type: seed.type,
+      label: seed.label,
+      status: doc ? 'received' : 'missing',
+      templateKey: seed.templateKey,
+      ...(doc ? { documentId: doc.id, receivedAt: now } : {}),
+      createdAt: now,
+      updatedAt: now,
+    } satisfies MissingItem;
+  });
+}
+
 /** Local file ids (documents + quote attachments) stored in this browser for an account. */
 function localFileIds(st: AccountsState, accountId: string): string[] {
   return [
@@ -460,6 +488,8 @@ export const useAccountsStore = create<AccountsState>()(
           accounts: [...s.accounts, account],
           riskProfiles: { ...s.riskProfiles, [account.id]: createEmptyRiskProfile(account.id) },
           documents: { ...s.documents, [account.id]: [] },
+          // In the same update as the account, so its first cloud save already includes it.
+          missingItems: { ...s.missingItems, [account.id]: defaultChecklist(account.id, undefined, [], account.createdAt) },
           activityLog: appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`),
           activeAccountId: account.id,
           cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
@@ -500,6 +530,7 @@ export const useAccountsStore = create<AccountsState>()(
             accounts: [...s.accounts, account],
             riskProfiles: { ...s.riskProfiles, [account.id]: finalProfile },
             documents: { ...s.documents, [account.id]: finalDocs },
+            missingItems: { ...s.missingItems, [account.id]: defaultChecklist(account.id, finalProfile, finalDocs, account.createdAt) },
             activityLog: log,
             activeAccountId: account.id,
             cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
