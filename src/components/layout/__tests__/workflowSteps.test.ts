@@ -46,3 +46,17 @@ describe("coverage the client never asked for isn't a gap", () => {
     expect(everything.some((l) => /Current Limit/.test(l))).toBe(false);
   });
 });
+
+describe("every What's Missing line knows where it's fixed", () => {
+  it('fields, coverage limits, drivers, vehicles and documents all carry a destination', async () => {
+    const { computeSubmissionCompleteness } = await import('../../../services/application/completeness');
+    const line = { type: 'auto_liability', currentLimit: { value: null, confidence: 'low', isMissing: true, isConflicting: false }, requestedLimit: { value: null, confidence: 'low', isMissing: true, isConflicting: false } } as unknown as CoverageLine;
+    const c = computeSubmissionCompleteness({ ...createEmptyRiskProfile('a'), coverage: [line] }, []);
+    const all = [...c.missingRequiredFields, ...c.missingRecommendedFields, ...c.missingRecommendedDocuments, ...c.needsReview, ...c.conflicts];
+    expect(all.filter((i) => !i.riskProfilePath && !i.goTo).map((i) => i.label)).toEqual([]);
+    expect(c.missingRecommendedDocuments[0].goTo).toBe('documents');
+    expect(c.missingRecommendedFields.find((i) => i.label === 'Driver information')?.goTo).toBe('drivers');
+    expect(c.needsReview.find((i) => i.label === 'Auto Liability (Requested Limit)')?.riskProfilePath).toBe('coverage.auto_liability.requestedLimit');
+    expect(c.missingRecommendedFields.find((i) => i.label === 'New Venture')?.editable).toBe(false);
+  });
+});

@@ -41,6 +41,8 @@ export function SubmissionAssistantPage() {
   const stats = useMemo(() => (application ? computeApplicationStats(application) : null), [application]);
   const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
 
+  const missingCount = completeness ? completeness.missingRequiredFields.length + completeness.missingRecommendedFields.length + completeness.missingRecommendedDocuments.length : 0;
+
   if (!account || !profile || !application || !stats || !completeness) {
     return <AccountNotFound />;
   }
@@ -160,30 +162,34 @@ export function SubmissionAssistantPage() {
       <div className="flex flex-col gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-4 print:hidden">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-base font-semibold text-[var(--color-ink-900)]">{applicationTitleFor(account.namedInsured, application.templateName)}</h2>
-          <span className="text-sm font-semibold text-[var(--color-ink-900)]">{stats.percentComplete}% Complete</span>
+          {/* The same submission-completeness number shown on Risk Profile and in What's Missing. */}
+          <button onClick={() => setWhatsMissingOpen(true)} className="text-sm font-semibold text-[var(--color-ink-900)] hover:underline cursor-pointer print:hidden">
+            {completeness.percent}% Complete
+          </button>
         </div>
-        <ProgressBar value={stats.percentComplete} />
+        <ProgressBar value={completeness.percent} />
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
           <span className="flex items-center gap-1.5 text-[var(--color-success-600)]">
             <CircleCheck size={14} />
             <span className="font-semibold text-[var(--color-ink-900)]">{stats.autoFilled + stats.manuallyEntered}</span> fields filled
           </span>
-          {stats.missing > 0 && (
+          {/* Counts match the What's Missing list item for item. */}
+          {missingCount > 0 && (
             <span className="flex items-center gap-1.5 text-[var(--color-warning-600)]">
               <TriangleAlert size={14} />
-              <span className="font-semibold text-[var(--color-ink-900)]">{stats.missing}</span> fields missing
+              <span className="font-semibold text-[var(--color-ink-900)]">{missingCount}</span> missing
             </span>
           )}
-          {stats.conflict > 0 && (
+          {completeness.conflicts.length > 0 && (
             <span className="flex items-center gap-1.5 text-[var(--color-danger-600)]">
               <TriangleAlert size={14} />
-              <span className="font-semibold text-[var(--color-ink-900)]">{stats.conflict}</span> conflict{stats.conflict === 1 ? '' : 's'}
+              <span className="font-semibold text-[var(--color-ink-900)]">{completeness.conflicts.length}</span> conflict{completeness.conflicts.length === 1 ? '' : 's'}
             </span>
           )}
-          {stats.needsReview > 0 && (
+          {completeness.needsReview.length > 0 && (
             <span className="flex items-center gap-1.5 text-[var(--color-warning-600)]">
               <CircleHelp size={14} />
-              <span className="font-semibold text-[var(--color-ink-900)]">{stats.needsReview}</span> need review
+              <span className="font-semibold text-[var(--color-ink-900)]">{completeness.needsReview.length}</span> need review
             </span>
           )}
           <span className="text-[var(--color-ink-400)]">{stats.itemizedRows} itemized rows mapped</span>
@@ -224,6 +230,7 @@ export function SubmissionAssistantPage() {
       />
 
       <WhatsMissingPanel
+        accountId={accountId}
         open={whatsMissingOpen}
         onClose={() => setWhatsMissingOpen(false)}
         completeness={completeness}

@@ -101,8 +101,12 @@ export function RiskProfilePage() {
   // field that needs resolving, reusing this page's existing scroll-to-and-highlight behavior
   // instead of duplicating a conflict resolver elsewhere.
   useEffect(() => {
-    const target = (location.state as { focusField?: { section: 'business' | 'transportation'; key: string } } | null)?.focusField;
-    if (target) focusField(target.section, target.key);
+    const state = location.state as { focusField?: { section: 'business' | 'transportation'; key: string }; tab?: TabKey } | null;
+    if (state?.focusField) focusField(state.focusField.section, state.focusField.key);
+    else if (state?.tab) {
+      setTab(state.tab);
+      requestAnimationFrame(() => document.getElementById('risk-profile-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
@@ -148,17 +152,19 @@ export function RiskProfilePage() {
     >
       <AccountSummary account={account} profile={profile} />
 
-      <div className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3">
+      {/* The one submission-completeness number (same as Submission Assistant and What's Missing). */}
+      <button
+        onClick={() => setWhatsMissingOpen(true)}
+        className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3 text-left hover:border-[var(--color-brand-300,var(--color-ink-200))] cursor-pointer"
+      >
         <div className="flex-1">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-[var(--color-ink-700)]">Profile Completeness</span>
-            <span className="text-[var(--color-ink-500)]">
-              {stats.filled} of {stats.total} fields
-            </span>
+            <span className="font-medium text-[var(--color-ink-700)]">Submission completeness</span>
+            <span className="font-semibold text-[var(--color-ink-900)]">{completeness.percent}% · What's missing?</span>
           </div>
-          <ProgressBar value={(stats.filled / Math.max(stats.total, 1)) * 100} className="mt-1.5" />
+          <ProgressBar value={completeness.percent} className="mt-1.5" />
         </div>
-      </div>
+      </button>
 
       <ConflictBanner count={stats.conflicting.length} />
       <MissingFieldsPanel
@@ -166,6 +172,7 @@ export function RiskProfilePage() {
         onFieldClick={focusField}
       />
 
+      <div id="risk-profile-tabs" />
       <Tabs
         items={[
           { key: 'details', label: 'Business & Transportation' },
@@ -352,6 +359,7 @@ export function RiskProfilePage() {
       )}
 
       <WhatsMissingPanel
+        accountId={accountId}
         open={whatsMissingOpen}
         onClose={() => setWhatsMissingOpen(false)}
         completeness={completeness}

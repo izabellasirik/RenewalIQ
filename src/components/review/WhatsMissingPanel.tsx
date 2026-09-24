@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
-import { CheckCircle2, CircleAlert, FileWarning, TriangleAlert, CircleHelp, Pencil, Check, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { CheckCircle2, CircleAlert, FileWarning, TriangleAlert, CircleHelp, Pencil, Check, X, ArrowRight } from 'lucide-react';
 import { Drawer, Badge, ProgressBar, type BadgeTone } from '../ui';
 import { isSubmissionComplete, type CompletenessItem, type SubmissionCompleteness } from '../../services/application';
 import { ValueInput, parseDraft, isValidDraft, singleLineEditKeyDown } from '../riskProfile/FieldRow';
@@ -13,6 +14,24 @@ export interface WhatsMissingUpdateHandlers {
   onUpdateCoverage: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
 }
 
+/** Opens the page where this item is fixed, scrolled to it — null when there's nowhere specific. */
+function useGoToItem(accountId: string, onClose: () => void) {
+  const navigate = useNavigate();
+  return (item: CompletenessItem): (() => void) | null => {
+    const target = item.riskProfilePath ? parseRiskProfilePath(item.riskProfilePath) : null;
+    const go = (path: string, state?: unknown) => () => {
+      onClose();
+      navigate(`/accounts/${accountId}/${path}`, { state });
+    };
+    if (target?.kind === 'field') return go('risk-profile', { focusField: { section: target.section, key: target.key } });
+    if (target?.kind === 'coverage') return go('limits-coverage', { focusCoverage: target.coverageType });
+    if (item.goTo === 'documents') return go('upload');
+    if (item.goTo === 'drivers') return go('risk-profile', { tab: 'drivers' });
+    if (item.goTo === 'vehicles') return go('risk-profile', { tab: 'fleet' });
+    return null;
+  };
+}
+
 /**
  * One missing-field item, editable in place when it has a riskProfilePath — same canonical
  * updateField/updateCoverage store actions Risk Profile and Submission Assistant already use, so
@@ -20,13 +39,17 @@ export interface WhatsMissingUpdateHandlers {
  * saved, the parent recomputes completeness from the live profile and this item simply stops being
  * in the list on the next render — nothing here removes it directly.
  */
-function EditableItem({ item, onUpdateField, onUpdateCoverage }: { item: CompletenessItem } & WhatsMissingUpdateHandlers) {
+/**
+ * One What's Missing line: the label opens the page where it's fixed (scrolled to it), and a field
+ * with a Risk Profile path can also be filled in right here.
+ */
+function EditableItem({ item, onGo, onUpdateField, onUpdateCoverage }: { item: CompletenessItem; onGo: (() => void) | null } & WhatsMissingUpdateHandlers) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState('');
 
   const target = item.riskProfilePath ? parseRiskProfilePath(item.riskProfilePath) : null;
   const valueType = item.riskProfilePath ? fieldPathValueType(item.riskProfilePath) : 'text';
-  const canEdit = !!target;
+  const canEdit = !!target && item.editable !== false;
 
   function startEdit() {
     setDraft('');
@@ -53,7 +76,14 @@ function EditableItem({ item, onUpdateField, onUpdateCoverage }: { item: Complet
     <li className="rounded-lg border border-[var(--color-ink-100)] px-3 py-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-[var(--color-ink-800)]">{item.label}</p>
+          {onGo ? (
+            <button onClick={onGo} className="group inline-flex items-center gap-1 text-left text-sm font-medium text-[var(--color-ink-800)] hover:text-[var(--color-brand-700)] hover:underline cursor-pointer" title="Go to where this is updated">
+              {item.label}
+              <ArrowRight size={12} className="shrink-0 text-[var(--color-ink-300)] group-hover:text-[var(--color-brand-700)]" />
+            </button>
+          ) : (
+            <p className="text-sm font-medium text-[var(--color-ink-800)]">{item.label}</p>
+          )}
           {!isEditing && item.detail && <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{item.detail}</p>}
           {isEditing && (
             <div className="mt-1.5">
@@ -85,29 +115,20 @@ function EditableItem({ item, onUpdateField, onUpdateCoverage }: { item: Complet
   );
 }
 
-function ReadOnlyItem({ item }: { item: CompletenessItem }) {
-  return (
-    <li className="rounded-lg border border-[var(--color-ink-100)] px-3 py-2">
-      <p className="text-sm font-medium text-[var(--color-ink-800)]">{item.label}</p>
-      {item.detail && <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{item.detail}</p>}
-    </li>
-  );
-}
-
 function Section({
   title,
   icon,
   tone,
   items,
-  editable,
   update,
+  goTo,
 }: {
   title: string;
   icon: ReactNode;
   tone: BadgeTone;
   items: CompletenessItem[];
-  editable?: boolean;
-  update?: WhatsMissingUpdateHandlers;
+  update: WhatsMissingUpdateHandlers;
+  goTo: (item: CompletenessItem) => (() => void) | null;
 }) {
   if (items.length === 0) return null;
   return (
@@ -118,27 +139,30 @@ function Section({
         <Badge tone={tone}>{items.length}</Badge>
       </h3>
       <ul className="mt-2 flex flex-col gap-1.5">
-        {items.map((item, i) =>
-          editable && update ? <EditableItem key={i} item={item} onUpdateField={update.onUpdateField} onUpdateCoverage={update.onUpdateCoverage} /> : <ReadOnlyItem key={i} item={item} />
-        )}
+        {items.map((item, i) => (
+          <EditableItem key={`${item.label}-${i}`} item={item} onGo={goTo(item)} onUpdateField={update.onUpdateField} onUpdateCoverage={update.onUpdateCoverage} />
+        ))}
       </ul>
     </div>
   );
 }
 
 export function WhatsMissingPanel({
+  accountId,
   open,
   onClose,
   completeness,
   onUpdateField,
   onUpdateCoverage,
 }: {
+  accountId: string;
   open: boolean;
   onClose: () => void;
   completeness: SubmissionCompleteness;
 } & WhatsMissingUpdateHandlers) {
   const complete = isSubmissionComplete(completeness);
   const update = { onUpdateField, onUpdateCoverage };
+  const goTo = useGoToItem(accountId, onClose);
 
   return (
     <Drawer open={open} onClose={onClose} title="What's Missing?" subtitle={`Submission completeness: ${completeness.percent}%`}>
@@ -167,18 +191,18 @@ export function WhatsMissingPanel({
           </div>
         ) : (
           <div className="flex flex-col gap-5">
-            <Section title="Missing Required Fields" icon={<CircleAlert size={15} className="text-[var(--color-danger-600)]" />} tone="danger" items={completeness.missingRequiredFields} editable update={update} />
-            <Section title="Conflicts" icon={<TriangleAlert size={15} className="text-[var(--color-danger-600)]" />} tone="danger" items={completeness.conflicts} />
-            <Section title="Needs Review" icon={<CircleHelp size={15} className="text-[var(--color-warning-600)]" />} tone="warning" items={completeness.needsReview} />
+            <Section title="Missing Required Fields" icon={<CircleAlert size={15} className="text-[var(--color-danger-600)]" />} tone="danger" items={completeness.missingRequiredFields} update={update} goTo={goTo} />
+            <Section title="Conflicts" icon={<TriangleAlert size={15} className="text-[var(--color-danger-600)]" />} tone="danger" items={completeness.conflicts} update={update} goTo={goTo} />
+            <Section title="Needs Review" icon={<CircleHelp size={15} className="text-[var(--color-warning-600)]" />} tone="warning" items={completeness.needsReview} update={update} goTo={goTo} />
             <Section
               title="Missing Recommended Fields"
               icon={<CircleAlert size={15} className="text-[var(--color-warning-600)]" />}
               tone="warning"
               items={completeness.missingRecommendedFields}
-              editable
               update={update}
+              goTo={goTo}
             />
-            <Section title="Missing Recommended Documents" icon={<FileWarning size={15} className="text-[var(--color-warning-600)]" />} tone="warning" items={completeness.missingRecommendedDocuments} />
+            <Section title="Missing Recommended Documents" icon={<FileWarning size={15} className="text-[var(--color-warning-600)]" />} tone="warning" items={completeness.missingRecommendedDocuments} update={update} goTo={goTo} />
           </div>
         )}
       </div>
