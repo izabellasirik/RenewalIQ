@@ -52,8 +52,7 @@ export const router = createBrowserRouter([
     ],
   },
   {
-    // Deliberately separate from AppShell — no broker Sidebar/TopBar. Reachable via a small,
-    // discreet link in the broker Sidebar's footer (see Sidebar.tsx) or by going to /admin
+    // Deliberately separate from AppShell — no broker Sidebar/TopBar. Reached by going to /admin
     // directly. Real Supabase Auth + admin_users/RLS is the actual authorization boundary (see
     // AdminAuthGate and supabase/migrations), not the absence of a prominent nav item.
     element: <AdminShell />,
