@@ -36,10 +36,11 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
       )}
     >
       <div className="flex items-center gap-2.5 px-5 py-6">
-        <div>
+        {/* The logo goes home (Accounts). */}
+        <NavLink to="/" aria-label="RenewalIQ — go to Accounts" className="rounded-md focus-visible:outline-2 focus-visible:outline-[var(--color-brand-500)]">
           <BrandLogo size={30} />
           <p className="mt-0.5 text-[11px] text-[var(--color-ink-400)]">Broker Workspace</p>
-        </div>
+        </NavLink>
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 px-3">
