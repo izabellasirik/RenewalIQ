@@ -6,7 +6,7 @@ import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { formatShortDate } from '../../services/workflow/dates';
 import { US_STATES } from '../../utils/usStates';
-import { agentLabel } from '../../services/agency/agentLabel';
+import { AssignedAgent } from './AssignedAgent';
 import { inputClass, labelClass } from './formStyles';
 
 /**
@@ -21,11 +21,6 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
   const setAssignedBroker = useAccountsStore((s) => s.setAssignedBroker);
   const session = useBrokerSession();
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
-  const agencyMembers = useAccountsStore((s) => s.agencyMembers);
-  const assignAccountToAgent = useAccountsStore((s) => s.assignAccountToAgent);
-  const currentUserId = useAccountsStore((s) => s.currentUserId);
-  const [assigning, setAssigning] = useState(false);
-  const [assignError, setAssignError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
@@ -70,16 +65,6 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
   }
 
   const canAssignSelf = !agencyAccess && session.status === 'signed_in' && !!session.email && account.assignedBroker?.email !== session.email;
-  const isAdmin = agencyAccess?.role === 'admin';
-  const agent = agentLabel(account, agencyMembers, currentUserId);
-
-  async function reassign(userId: string) {
-    setAssigning(true);
-    setAssignError(null);
-    const res = await assignAccountToAgent(accountId, userId || null);
-    setAssigning(false);
-    if (!res.ok) setAssignError(res.message);
-  }
 
   return (
     <Card>
@@ -166,30 +151,7 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
             <div>
               <dt className="text-xs text-[var(--color-ink-500)]">{agencyAccess ? 'Assigned agent' : 'Assigned broker'}</dt>
               <dd className="flex flex-wrap items-center gap-1.5">
-                {isAdmin ? (
-                  <select
-                    value={account.assignedUserId ?? ''}
-                    onChange={(e) => void reassign(e.target.value)}
-                    disabled={assigning}
-                    className="rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-sm font-medium text-[var(--color-ink-900)] outline-none focus:border-[var(--color-brand-500)] disabled:opacity-60"
-                    aria-label="Assigned agent"
-                  >
-                    <option value="">Unassigned</option>
-                    {agencyMembers.map((m) => (
-                      <option key={m.userId} value={m.userId}>
-                        {m.name}
-                        {m.role === 'admin' ? ' (admin)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                ) : agent ? (
-                  <span className="font-medium text-[var(--color-ink-900)]" title={agencyAccess ? undefined : account.assignedBroker?.email}>
-                    {agent}
-                  </span>
-                ) : (
-                  <span className="italic text-[var(--color-ink-400)]">Unassigned</span>
-                )}
-                {assignError && <span className="basis-full text-xs text-[var(--color-danger-600)]">{assignError}</span>}
+                <AssignedAgent account={account} variant="plain" />
                 {canAssignSelf && (
                   <button onClick={assignToMe} className="inline-flex items-center gap-0.5 text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
                     <UserCheck size={12} /> Assign to me

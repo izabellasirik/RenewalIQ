@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Building2, ClipboardList, Clock, FileText, Hash, MapPin, CalendarDays, UserRound, History, ArrowRight } from 'lucide-react';
+import { Building2, ClipboardList, Clock, FileText, Hash, MapPin, CalendarDays, History, ArrowRight } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Badge, Card, CardBody, EmptyState, Tabs } from '../components/ui';
@@ -22,7 +22,7 @@ import { formatShortDate } from '../services/workflow/dates';
 import { carriersFor, forwardedAt } from '../services/workflow/requirementKey';
 import { QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { EMPTY_ACTIVITY_EVENTS } from '../utils/emptyArrays';
-import { agentLabel } from '../services/agency/agentLabel';
+import { AssignedAgent } from '../components/workspace/AssignedAgent';
 
 const TABS: WorkspaceTab[] = ['overview', 'checklist', 'quotes', 'activity'];
 
@@ -40,14 +40,12 @@ export function AccountWorkspacePage() {
   const focusQuoteId = params.get('quote') ?? undefined;
 
   const { account, profile, documents, items, quotes, effectiveDate, dotNumber, actions } = useAccountWorkflow(accountId);
-  const agencyMembers = useAccountsStore((s) => s.agencyMembers);
   const ensureChecklist = useAccountsStore((s) => s.ensureChecklist);
   const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
   // Accounts from before new accounts got a checklist automatically get it the first time they're opened.
   useEffect(() => {
     ensureChecklist(accountId);
   }, [accountId, cloudHydratedFor, ensureChecklist]);
-  const currentUserId = useAccountsStore((s) => s.currentUserId);
   const activity = useAccountsStore((s) => s.activityLog[accountId]) ?? EMPTY_ACTIVITY_EVENTS;
   const addFiles = useAccountsStore((s) => s.addFiles);
   const deleteDocument = useAccountsStore((s) => s.deleteDocument);
@@ -88,10 +86,7 @@ export function AccountWorkspacePage() {
                 <CalendarDays size={13} className="text-[var(--color-ink-400)]" />
                 Effective <span className="font-medium text-[var(--color-ink-900)]">{effectiveDate ? formatShortDate(effectiveDate) : '—'}</span>
               </span>
-              <span className="inline-flex items-center gap-1">
-                <UserRound size={13} className="text-[var(--color-ink-400)]" />
-                {agentLabel(account, agencyMembers, currentUserId) ?? <span className="italic text-[var(--color-ink-400)]">Unassigned</span>}
-              </span>
+              <AssignedAgent account={account} />
             </div>
           </div>
           <AccountStageSelect accountId={accountId} />

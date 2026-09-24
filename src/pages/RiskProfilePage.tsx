@@ -26,6 +26,7 @@ import { getFieldValueByPath } from '../utils/riskProfilePath';
 import { emptyField } from '../types';
 import { cn } from '../utils/cn';
 import { formatDuration } from '../utils/duration';
+import { AssignedAgent } from '../components/workspace/AssignedAgent';
 
 const TREND_ICON = { increasing: TrendingUp, decreasing: TrendingDown, stable: Minus, insufficient_data: Minus };
 const TREND_LABEL = { increasing: 'Increasing', decreasing: 'Decreasing', stable: 'Stable', insufficient_data: 'Not enough data' };
@@ -150,6 +151,10 @@ export function RiskProfilePage() {
         </>
       }
     >
+      {/* Who owns this account — the same control as the Workspace (admins can reassign here). */}
+      <div className="-mb-2 flex">
+        <AssignedAgent account={account} />
+      </div>
       <AccountSummary account={account} profile={profile} />
 
       {/* The one submission-completeness number (same as Submission Assistant and What's Missing). */}
