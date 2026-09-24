@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { MarketQuote, MissingItem } from '../../types';
 import { MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS } from '../../types';
@@ -11,10 +11,10 @@ import { QuoteOptionsList } from './QuoteOptionsList';
 import { QUOTE_STATUS_TONE } from './quoteStatus';
 
 /**
- * Everything about one market on an account, in one small window: status and dates, every quote it
- * returned, what the carrier asked for and where each item stands, the notes history, and — when
- * the market came from the appetite database — a short appetite summary with the full record one
- * click away. Read-only; changes are still made on the market's card.
+ * Everything about one market on an account, in one small window (opened by clicking the market's
+ * name): status and dates, the notes — with a box to add one — every quote it returned, what the
+ * carrier asked for and where each item stands, and, when the market is in the appetite database, a
+ * short appetite summary with the full record one click away. Other changes stay on the card.
  */
 export function MarketDetailsDialog({
   accountId,
@@ -31,6 +31,8 @@ export function MarketDetailsDialog({
 }) {
   const records = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const [appetiteOpen, setAppetiteOpen] = useState(false);
+  const addQuoteNote = useAccountsStore((s) => s.addQuoteNote);
+  const [draft, setDraft] = useState('');
   const record =
     records.find((r) => r.id === quote.appetiteRecordId) ??
     records.find((r) => r.marketName.trim().toLowerCase() === quote.marketName.trim().toLowerCase()) ??
@@ -61,6 +63,43 @@ export function MarketDetailsDialog({
               ))}
           </dl>
 
+          <section>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Notes</p>
+            <form
+              onSubmit={(e: FormEvent) => {
+                e.preventDefault();
+                if (!draft.trim()) return;
+                addQuoteNote(accountId, quote.id, draft);
+                setDraft('');
+              }}
+              className="mb-2 flex items-start gap-2"
+            >
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={2}
+                placeholder={`Add a note about ${quote.marketName}…`}
+                aria-label={`New note for ${quote.marketName}`}
+                className="min-w-0 flex-1 rounded-lg border border-[var(--color-ink-200)] px-3 py-2 text-sm outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15"
+              />
+              <Button type="submit" size="sm" disabled={!draft.trim()}>
+                Add note
+              </Button>
+            </form>
+            {notes.length === 0 ? (
+              <p className="text-sm italic text-[var(--color-ink-400)]">No notes yet.</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {notes.map((n) => (
+                  <li key={n.id} className="text-sm">
+                    <span className="text-xs text-[var(--color-ink-400)]">{formatShortDate(n.createdAt)}</span>
+                    <p className="whitespace-pre-line text-[var(--color-ink-700)]">{n.text}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
           <QuoteOptionsList accountId={accountId} quote={quote} />
 
           <section>
@@ -82,21 +121,6 @@ export function MarketDetailsDialog({
             )}
           </section>
 
-          <section>
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Notes</p>
-            {notes.length === 0 ? (
-              <p className="text-sm italic text-[var(--color-ink-400)]">No notes yet.</p>
-            ) : (
-              <ul className="flex flex-col gap-2">
-                {notes.map((n) => (
-                  <li key={n.id} className="text-sm">
-                    <span className="text-xs text-[var(--color-ink-400)]">{formatShortDate(n.createdAt)}</span>
-                    <p className="whitespace-pre-line text-[var(--color-ink-700)]">{n.text}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
 
           {record && (
             <section className="rounded-lg bg-[var(--color-ink-50)] px-3 py-2.5">
