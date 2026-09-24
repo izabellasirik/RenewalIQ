@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Building2, ClipboardList, Clock, FileText, Hash, MapPin, CalendarDays, UserRound, History, ArrowRight } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -41,6 +41,12 @@ export function AccountWorkspacePage() {
 
   const { account, profile, documents, items, quotes, effectiveDate, dotNumber, actions } = useAccountWorkflow(accountId);
   const agencyMembers = useAccountsStore((s) => s.agencyMembers);
+  const ensureChecklist = useAccountsStore((s) => s.ensureChecklist);
+  const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
+  // Accounts from before new accounts got a checklist automatically get it the first time they're opened.
+  useEffect(() => {
+    ensureChecklist(accountId);
+  }, [accountId, cloudHydratedFor, ensureChecklist]);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
   const activity = useAccountsStore((s) => s.activityLog[accountId]) ?? EMPTY_ACTIVITY_EVENTS;
   const addFiles = useAccountsStore((s) => s.addFiles);

@@ -101,6 +101,15 @@ interface AccountsState {
   agencyMembers: cloudRepo.AgencyMember[];
   /** Admin only: gives an account to another agent in the agency (null = unassigned). The database rejects it for anyone else. */
   assignAccountToAgent: (accountId: string, userId: string | null) => Promise<{ ok: true } | { ok: false; message: string }>;
+  /** The signed-in user whose cloud accounts have finished loading this session (ephemeral) — until then a cloud account's local copy may be stale. */
+  cloudHydratedFor: string | null;
+  /**
+   * Gives an account the standard submission checklist if it has never had one (accounts created
+   * before new accounts got it automatically). Never re-adds a checklist the broker emptied (any
+   * past checklist add/remove in its activity), and waits for a cloud account's data to load so an
+   * empty local copy can't overwrite a checklist saved from another device.
+   */
+  ensureChecklist: (accountId: string) => void;
   setCurrentUserId: (userId: string | null, email?: string | null) => void;
   /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud. Never touches local-only (not-yet-imported) accounts. */
   hydrateCloudSubmissions: () => Promise<void>;
@@ -472,6 +481,7 @@ export const useAccountsStore = create<AccountsState>()(
       hiddenAccounts: [],
       agencyAccess: null,
       agencyMembers: [],
+      cloudHydratedFor: null,
       dismissedImportIds: {},
       matchResults: {},
       activityLog: {},
@@ -1783,6 +1793,22 @@ export const useAccountsStore = create<AccountsState>()(
         return { ok: res.coreSaved, complete: res.message === null, message: res.message ?? undefined };
       },
 
+      ensureChecklist: (accountId) => {
+        const s = get();
+        const account = s.accounts.find((a) => a.id === accountId);
+        if (!account || account.archived) return;
+        if ((s.missingItems[accountId] ?? []).length > 0) return;
+        if ((s.activityLog[accountId] ?? []).some((e) => e.type === 'item_added' || e.type === 'item_removed')) return;
+        if (s.cloudAccountIds[accountId] && (!s.currentUserId || s.cloudHydratedFor !== s.currentUserId)) return;
+        const items = defaultChecklist(accountId, s.riskProfiles[accountId], s.documents[accountId] ?? [], new Date().toISOString());
+        if (items.length === 0) return;
+        set((st) => ({
+          missingItems: { ...st.missingItems, [accountId]: items },
+          activityLog: appendEvent(st.activityLog, accountId, 'item_added', 'Started the submission checklist.'),
+        }));
+        syncNow(accountId);
+      },
+
       assignAccountToAgent: async (accountId, userId) => {
         const s = get();
         if (!isSupabaseConfigured || !s.currentUserId || s.agencyAccess?.role !== 'admin') return { ok: false, message: 'Only an agency admin can reassign accounts.' };
@@ -1822,7 +1848,7 @@ export const useAccountsStore = create<AccountsState>()(
             hiddenAccounts,
             activeAccountId: activeVisible ? s.activeAccountId : null,
             // Roles are re-read from the database on every sign-in (hydrateCloudSubmissions).
-            ...(sameUser ? {} : { agencyAccess: null, agencyMembers: [] }),
+            ...(sameUser ? {} : { agencyAccess: null, agencyMembers: [], cloudHydratedFor: null }),
           };
         }),
 
@@ -1904,6 +1930,7 @@ export const useAccountsStore = create<AccountsState>()(
             set((cur) => withoutAccounts(cur, gone));
           }
         }
+        if (get().currentUserId === userId) set({ cloudHydratedFor: userId });
         for (const bundle of result.data) get().runMatching(bundle.account.id);
         // Push back anything this device had that the cloud didn't (e.g. events lost to the old sync bug).
         for (const id of needsPush) syncNow(id);
@@ -1952,6 +1979,7 @@ export const useAccountsStore = create<AccountsState>()(
           syncError: _syncError,
           agencyAccess: _agencyAccess,
           agencyMembers: _agencyMembers,
+          cloudHydratedFor: _cloudHydratedFor,
           ...rest
         } = state;
         return rest;

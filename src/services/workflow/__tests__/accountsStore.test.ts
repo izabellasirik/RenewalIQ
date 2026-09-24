@@ -143,3 +143,39 @@ describe('new accounts start with the submission checklist', () => {
     expect(store().missingItems[id].find((i) => i.label === 'Application')!.status).toBe('missing');
   });
 });
+
+describe('existing accounts get the checklist when opened', () => {
+  const blankOld = (id: string) => {
+    useAccountsStore.setState((s) => ({
+      accounts: [...s.accounts, { id, namedInsured: 'Old Co', state: 'TX', status: 'new', archived: false, createdAt: '2026-09-01', updatedAt: '2026-09-01' }],
+      missingItems: { ...s.missingItems, [id]: [] },
+    }));
+  };
+
+  it('an old account with no checklist gets one', () => {
+    blankOld('acct_old');
+    store().ensureChecklist('acct_old');
+    expect(store().missingItems.acct_old).toHaveLength(6);
+    store().ensureChecklist('acct_old'); // idempotent
+    expect(store().missingItems.acct_old).toHaveLength(6);
+  });
+
+  it('never re-adds a checklist the broker emptied', () => {
+    blankOld('acct_old');
+    store().ensureChecklist('acct_old');
+    for (const item of [...store().missingItems.acct_old]) store().deleteMissingItem('acct_old', item.id);
+    store().ensureChecklist('acct_old');
+    expect(store().missingItems.acct_old).toHaveLength(0);
+  });
+
+  it("a cloud account waits until the cloud data has loaded", () => {
+    blankOld('acct_cloud');
+    useAccountsStore.setState({ cloudAccountIds: { acct_cloud: true }, currentUserId: 'u1', cloudHydratedFor: null });
+    store().ensureChecklist('acct_cloud');
+    expect(store().missingItems.acct_cloud).toHaveLength(0);
+    useAccountsStore.setState({ cloudHydratedFor: 'u1', currentUserId: null }); // no cloud save in this test
+    useAccountsStore.setState({ currentUserId: 'u1' });
+    store().ensureChecklist('acct_cloud');
+    expect(store().missingItems.acct_cloud).toHaveLength(6);
+  });
+});
