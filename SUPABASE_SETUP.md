@@ -98,6 +98,13 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   accounts assigned to them, an **admin** reaches every account in their agency, nobody reaches
   another agency. Accounts not yet in an agency keep 0003's owner-only access, so nothing moves or
   disappears until you run the agency setup below. Safe to re-run. Must run after 0003.
+- **`supabase/migrations/0012_widen_extraction_method_check.sql`** — lets fields read from a photo
+  (`vision_extraction`) or filled in by a client on a submission link (`applicant_provided`) be
+  saved; without it those saves fail with "Failed to save to your account". Same change as
+  eloquent-planck's `0006_widen_extraction_method_check.sql` — harmless if that was already run.
+- **`supabase/migrations/0013_intake_link_organization_name.sql`** — the agency name clients see on a
+  submission link. Same column as eloquent-planck's `0007_intake_link_organization_name.sql` —
+  does nothing if that was already run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -153,6 +160,8 @@ from (values
   ('0009_account_follow_ups',         exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'follow_ups')),
   ('0010_driver_experience_months',   exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'drivers' and column_name = 'experience_months')),
   ('0011_agency_roles',               to_regclass('public.profiles') is not null),
+  ('0012_widen_extraction_method',    exists (select 1 from pg_constraint where conrelid = to_regclass('public.field_values') and pg_get_constraintdef(oid) like '%applicant_provided%')),
+  ('0013_intake_link_org_name',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'intake_links' and column_name = 'organization_name')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);
