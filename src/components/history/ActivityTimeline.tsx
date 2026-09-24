@@ -32,6 +32,7 @@ import {
 import type { ActivityEvent, ActivityEventType } from '../../types';
 import { formatDate } from '../../utils/dates';
 import { cn } from '../../utils/cn';
+import { useAccountsStore } from '../../state/useAccountsStore';
 
 const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   account_created: PlusCircle,
@@ -93,6 +94,14 @@ function formatTimestamp(iso: string): string {
 /** Newest-first vertical timeline. Unknown event types (e.g. from a newer client via cloud sync) fall back to a clock icon rather than crashing. */
 export function ActivityTimeline({ events }: { events: ActivityEvent[] }) {
   const sorted = [...events].sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+  const currentUserId = useAccountsStore((s) => s.currentUserId);
+  const members = useAccountsStore((s) => s.agencyMembers);
+  // Who did it: "You", the agency member's current name, or the name saved with the event.
+  const actorOf = (e: ActivityEvent): string | null => {
+    if (!e.actorId && !e.actorName) return null;
+    if (e.actorId && e.actorId === currentUserId) return 'You';
+    return members.find((m) => m.userId === e.actorId)?.name ?? e.actorName ?? null;
+  };
   return (
     <ol className="flex flex-col gap-1">
       {sorted.map((event, i) => {
@@ -105,7 +114,15 @@ export function ActivityTimeline({ events }: { events: ActivityEvent[] }) {
             </span>
             <div className="min-w-0 pt-1">
               <p className="break-words text-sm text-[var(--color-ink-800)]">{event.message}</p>
-              <p className="mt-0.5 text-xs text-[var(--color-ink-400)]">{formatTimestamp(event.timestamp)}</p>
+              <p className="mt-0.5 text-xs text-[var(--color-ink-400)]">
+                {formatTimestamp(event.timestamp)}
+                {actorOf(event) && (
+                  <>
+                    {' · '}
+                    <span className="font-medium text-[var(--color-ink-600)]">{actorOf(event)}</span>
+                  </>
+                )}
+              </p>
             </div>
           </li>
         );

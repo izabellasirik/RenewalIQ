@@ -72,4 +72,8 @@ export interface ActivityEvent {
   type: ActivityEventType;
   message: string;
   timestamp: string;
+  /** Supabase user id of whoever did it (cloud: activity_events.user_id, checked by RLS). Absent on events from before this was recorded, or made while signed out. */
+  actorId?: string;
+  /** Their display name when it happened (agency name, else email). */
+  actorName?: string;
 }

@@ -179,3 +179,16 @@ describe('existing accounts get the checklist when opened', () => {
     expect(store().missingItems.acct_cloud).toHaveLength(6);
   });
 });
+
+describe('activity records who did it', () => {
+  it('stamps the signed-in user on new events, and nobody when signed out', () => {
+    store().setCurrentUserId('u-roman', 'roman@dxpserinc.com');
+    const id = store().createAccount('Actor Co', 'TX');
+    const created = store().activityLog[id].at(-1)!;
+    expect(created.actorId).toBe('u-roman');
+    expect(created.actorName).toBe('roman@dxpserinc.com');
+    store().setCurrentUserId(null);
+    const local = store().createAccount('Local Co', 'TX');
+    expect(store().activityLog[local].at(-1)!.actorId).toBeUndefined();
+  });
+});

@@ -233,8 +233,18 @@ function touchAccount(accounts: Account[], accountId: string): Account[] {
   return accounts.map((a) => (a.id === accountId ? { ...a, updatedAt: new Date().toISOString() } : a));
 }
 
+/** Who's signed in, stamped on every activity event as it's created (kept current by setCurrentUserId / hydrate). */
+let currentActor: { id: string; name: string } | null = null;
+
 function appendEvent(log: Record<string, ActivityEvent[]>, accountId: string, type: ActivityEventType, message: string): Record<string, ActivityEvent[]> {
-  const event: ActivityEvent = { id: generateId('evt'), accountId, type, message, timestamp: new Date().toISOString() };
+  const event: ActivityEvent = {
+    id: generateId('evt'),
+    accountId,
+    type,
+    message,
+    timestamp: new Date().toISOString(),
+    ...(currentActor ? { actorId: currentActor.id, actorName: currentActor.name } : {}),
+  };
   const existing = log[accountId] ?? [];
   return { ...log, [accountId]: trimEvents([...existing, event]) };
 }
@@ -1838,6 +1848,8 @@ export const useAccountsStore = create<AccountsState>()(
 
       setCurrentUserId: (userId, email) =>
         set((s) => {
+          const actorEmail = userId ? (email ?? s.currentUserEmail) : null;
+          currentActor = userId ? { id: userId, name: actorEmail ?? 'Unknown' } : null;
           const { accounts, hiddenAccounts } = partitionAccounts([...s.accounts, ...s.hiddenAccounts], s.cloudAccountIds, s.accountOwners, userId);
           const activeVisible = accounts.some((a) => a.id === s.activeAccountId);
           const sameUser = userId !== null && userId === s.currentUserId;
@@ -1857,7 +1869,11 @@ export const useAccountsStore = create<AccountsState>()(
         if (!isSupabaseConfigured || !userId) return;
         const [result, accessRes] = await Promise.all([cloudRepo.fetchUserSubmissions(userId), cloudRepo.fetchAgencyAccess(userId)]);
         if (get().currentUserId !== userId) return; // signed out / switched user mid-fetch
-        if (accessRes.ok) set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
+        if (accessRes.ok) {
+          set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
+          const me = accessRes.data.members.find((m) => m.userId === userId);
+          if (me && currentActor?.id === userId) currentActor = { id: userId, name: me.name };
+        }
         if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
         const needsPush: string[] = [];
         set((s) => {

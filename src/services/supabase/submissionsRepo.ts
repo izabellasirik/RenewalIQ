@@ -334,7 +334,7 @@ export async function fetchUserSubmissions(_userId: string): Promise<RepoResult<
 
       const activity: ActivityEvent[] = (actRes.data ?? [])
         .filter((e) => e.submission_id === sub.id)
-        .map((e) => ({ id: e.id, accountId: sub.id, type: e.type, message: e.message, timestamp: e.occurred_at }))
+        .map((e) => ({ id: e.id, accountId: sub.id, type: e.type, message: e.message, timestamp: e.occurred_at, actorId: e.user_id ?? undefined, ...(e.actor_name ? { actorName: e.actor_name as string } : {}) }))
         .sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
 
       const emptyProfile = createEmptyRiskProfile(sub.id);
@@ -589,10 +589,12 @@ export async function appendActivityEvents(userId: string, accountId: string, ev
     // policy, by design — see 0003), so a plain upsert re-sending already-saved events was rejected
     // by RLS on every save after the first, failing the whole sync ("Failed to save to your account")
     // and silently dropping every new event from the cloud copy.
-    const { error } = await supabase.from('activity_events').upsert(
-      events.map((e) => ({ id: e.id, submission_id: accountId, user_id: userId, type: e.type, message: e.message, occurred_at: e.timestamp })),
-      { onConflict: 'id', ignoreDuplicates: true }
-    );
+    const rows = events.map((e) => ({ id: e.id, submission_id: accountId, user_id: userId, type: e.type, message: e.message, occurred_at: e.timestamp, actor_name: e.actorName ?? null }));
+    let { error } = await supabase.from('activity_events').upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+    // 0014 not applied yet: save without the name (user_id still records who).
+    if (error && isMissingColumnError(error, ['actor_name'])) {
+      ({ error } = await supabase.from('activity_events').upsert(rows.map(({ actor_name: _n, ...rest }) => rest), { onConflict: 'id', ignoreDuplicates: true }));
+    }
     if (error) return fail(error.message);
     return { ok: true, data: undefined };
   } catch (err) {
