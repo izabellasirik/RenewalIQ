@@ -29,6 +29,7 @@ import { getAccountContacts } from '../services/workflow/contacts';
 import { addBusinessDays, formatShortDate, todayKey } from '../services/workflow/dates';
 import { carriersFor, findRequirement, forwardedAt, normalizeMissingItems } from '../services/workflow/requirementKey';
 import { CHECKLIST_TEMPLATES, expandTemplate, findTemplateItem } from '../services/workflow/checklistTemplates';
+import { DocumentLinkError } from '../services/ingestion/documentLinks';
 import type { FieldResolution } from '../services/extraction';
 import {
   createEmptyRiskProfile,
@@ -680,6 +681,11 @@ export const useAccountsStore = create<AccountsState>()(
                         category: contentCategory ?? d.category,
                         extractedFields: results.map((r) => ({ fieldPath: r.fieldPath, value: r.value, confidence: r.confidence, extractionMethod: r.extractionMethod })),
                         candidateNotes,
+                        ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
+                        // Downloaded from a link: name/type/category from the real document, not the shortcut.
+                        ...(raw.linkedFile
+                          ? { name: raw.linkedFile.name, fileType: inferFileType(raw.linkedFile.name), category: contentCategory ?? inferCategory(raw.linkedFile.name), sizeBytes: raw.linkedFile.size }
+                          : {}),
                       }
                     : d
                 );
@@ -695,16 +701,20 @@ export const useAccountsStore = create<AccountsState>()(
                 };
               });
               get().runMatching(accountId);
-              syncDocumentToCloud(accountId, doc.id, file);
+              // A link was downloaded: keep the real document (for preview and the cloud copy), not the shortcut.
+              if (raw.linkedFile) void saveLocalFile(doc.id, raw.linkedFile, raw.linkedFile.name);
+              syncDocumentToCloud(accountId, doc.id, raw.linkedFile ?? file);
             })
             .catch((err) => {
               const message = err instanceof Error ? err.message : 'Could not process this file.';
+              // A link that couldn't be opened: say so plainly and keep the URL — nothing is extracted.
+              const sourceUrl = err instanceof DocumentLinkError ? err.sourceUrl : undefined;
               set((s) => ({
                 documents: {
                   ...s.documents,
-                  [accountId]: (s.documents[accountId] ?? []).map((d) => (d.id === doc.id ? { ...d, status: 'error' as const, warnings: [message] } : d)),
+                  [accountId]: (s.documents[accountId] ?? []).map((d) => (d.id === doc.id ? { ...d, status: 'error' as const, warnings: [message], ...(sourceUrl ? { sourceUrl } : {}) } : d)),
                 },
-                activityLog: appendEvent(s.activityLog, accountId, 'document_processed', `Could not read ${doc.name}.`),
+                activityLog: appendEvent(s.activityLog, accountId, 'document_processed', sourceUrl ? `Could not access the document linked in ${doc.name}.` : `Could not read ${doc.name}.`),
               }));
               syncDocumentToCloud(accountId, doc.id, file);
             });

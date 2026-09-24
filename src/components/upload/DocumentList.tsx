@@ -88,6 +88,14 @@ export function DocumentList({
                     {doc.warnings.join(' ')}
                   </p>
                 )}
+                {doc.sourceUrl && (
+                  <p className="mt-0.5 truncate text-xs text-[var(--color-ink-400)]" title={doc.sourceUrl}>
+                    From link:{' '}
+                    <a href={doc.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--color-brand-700)]">
+                      {doc.sourceUrl}
+                    </a>
+                  </p>
+                )}
               </div>
               {doc.status === 'processing' ? (
                 <Badge tone="info">

@@ -109,6 +109,10 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   activity entry so the Activity tab can show who did it to everyone on the account (agents can't
   look up other members' profiles). The person's user id was already recorded. Additive, safe to
   re-run. Until it's applied, activity still saves; agents just see no name on others' entries.
+- **`supabase/migrations/0015_document_source_url.sql`** — keeps the link a document came from when
+  it arrived as a URL instead of a file (opened and read when possible; otherwise shown as
+  "Document could not be accessed — upload the file directly."). Additive, safe to re-run. Until
+  it's applied, those documents still save, just without the link.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -167,6 +171,7 @@ from (values
   ('0012_widen_extraction_method',    exists (select 1 from pg_constraint where conrelid = to_regclass('public.field_values') and pg_get_constraintdef(oid) like '%applicant_provided%')),
   ('0013_intake_link_org_name',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'intake_links' and column_name = 'organization_name')),
   ('0014_activity_actor_name',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'activity_events' and column_name = 'actor_name')),
+  ('0015_document_source_url',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'source_url')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

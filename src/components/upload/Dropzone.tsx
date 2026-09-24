@@ -1,19 +1,35 @@
-import { useRef, useState, type DragEvent } from 'react';
-import { UploadCloud } from 'lucide-react';
+import { useRef, useState, type DragEvent, type FormEvent } from 'react';
+import { Link2, UploadCloud } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { linkAsFile } from '../../services/ingestion/documentLinks';
+
+const LINK = /^https?:\/\/\S+$/i;
 
 export function Dropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [link, setLink] = useState('');
 
   function handleDrop(e: DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setIsDragging(false);
     const files = Array.from(e.dataTransfer.files);
-    if (files.length) onFiles(files);
+    if (files.length) return onFiles(files);
+    // A link dragged from a browser or email arrives as text, not a file — it used to be ignored.
+    const dropped = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain')).split(/\r?\n/).map((l) => l.trim()).find((l) => LINK.test(l));
+    if (dropped) onFiles([linkAsFile(dropped)]);
+  }
+
+  function addLink(e: FormEvent) {
+    e.preventDefault();
+    const url = link.trim();
+    if (!LINK.test(url)) return;
+    onFiles([linkAsFile(url)]);
+    setLink('');
   }
 
   return (
+    <div className="flex flex-col gap-2">
     <div
       onDragOver={(e) => {
         e.preventDefault();
@@ -42,7 +58,7 @@ export function Dropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
       <input
         ref={inputRef}
         type="file"
-        accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.jpg,.jpeg,.png,.webp"
+        accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.jpg,.jpeg,.png,.webp,.url,.webloc"
         multiple
         className="hidden"
         onChange={(e) => {
@@ -51,6 +67,21 @@ export function Dropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
           e.target.value = '';
         }}
       />
+    </div>
+      {/* The document is only a link? Renewal IQ opens it if it can, or says clearly that it can't. */}
+      <form onSubmit={addLink} className="flex items-center gap-2">
+        <Link2 size={14} className="shrink-0 text-[var(--color-ink-400)]" />
+        <input
+          value={link}
+          onChange={(e) => setLink(e.target.value)}
+          placeholder="Or paste a link to a document (https://…)"
+          aria-label="Document link"
+          className="min-w-0 flex-1 rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-1.5 text-sm outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)]"
+        />
+        <button type="submit" disabled={!LINK.test(link.trim())} className="rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-1.5 text-sm font-medium text-[var(--color-ink-700)] hover:bg-[var(--color-ink-50)] disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed">
+          Add link
+        </button>
+      </form>
     </div>
   );
 }

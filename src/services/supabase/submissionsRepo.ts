@@ -329,6 +329,7 @@ export async function fetchUserSubmissions(_userId: string): Promise<RepoResult<
           previewDataUrl: d.preview_data_url ?? undefined,
           // Needed to fetch the original file for preview — dropping it made every cloud-loaded document unpreviewable.
           storagePath: d.storage_path ?? undefined,
+          ...(d.source_url ? { sourceUrl: d.source_url as string } : {}),
           uploadedAt: d.uploaded_at,
         }));
 
@@ -548,7 +549,7 @@ export async function saveSubmissionSnapshot(
 export async function upsertDocumentMetadata(userId: string, accountId: string, doc: UploadedDocument, storagePath: string | null): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const { error } = await supabase.from('documents').upsert({
+    const row: Record<string, unknown> = {
       id: doc.id,
       submission_id: accountId,
       user_id: userId,
@@ -562,7 +563,10 @@ export async function upsertDocumentMetadata(userId: string, accountId: string, 
       storage_path: storagePath,
       preview_data_url: doc.previewDataUrl ?? null,
       uploaded_at: doc.uploadedAt,
-    });
+    };
+    let { error } = await supabase.from('documents').upsert(doc.sourceUrl ? { ...row, source_url: doc.sourceUrl } : row);
+    // 0015 not applied yet: save the document without its link.
+    if (error && doc.sourceUrl && isMissingColumnError(error, ['source_url'])) ({ error } = await supabase.from('documents').upsert(row));
     if (error) return fail(error.message);
     return { ok: true, data: undefined };
   } catch (err) {
