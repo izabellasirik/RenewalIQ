@@ -215,14 +215,10 @@ export function IntakeFormPage() {
         <Field label="Commodities hauled">
           <input className={inputClass} placeholder="e.g. general freight, produce, machinery" value={answers.commoditiesHauled} onChange={(e) => set('commoditiesHauled', e.target.value)} />
         </Field>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Operating radius">
-            <input className={inputClass} placeholder="e.g. 500 miles, nationwide" value={answers.operatingRadius} onChange={(e) => set('operatingRadius', e.target.value)} />
-          </Field>
-          <Field label="States operated in">
-            <input className={inputClass} placeholder="e.g. TX, OK, LA, AR" value={answers.operatingStates} onChange={(e) => set('operatingStates', e.target.value)} />
-          </Field>
-        </div>
+        {/* States operated in isn't asked here (broker feedback) — the broker fills it on the Risk Profile. */}
+        <Field label="Operating radius">
+          <input className={inputClass} placeholder="e.g. 500 miles, nationwide" value={answers.operatingRadius} onChange={(e) => set('operatingRadius', e.target.value)} />
+        </Field>
 
         <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Contact</p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
