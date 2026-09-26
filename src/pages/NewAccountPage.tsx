@@ -39,7 +39,8 @@ export function NewAccountPage() {
 
   function finalizeAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
     const id = createAccountFromExtraction(namedInsured, state, docs, profile, files);
-    navigate(`/accounts/${id}`);
+    // Straight to the Risk Profile to review what was extracted.
+    navigate(`/accounts/${id}/risk-profile`);
   }
 
   async function handleFiles(files: File[]) {

@@ -190,7 +190,7 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
             </p>
             {steps.map((step) => {
               const Icon = NAV_ICONS[step.key as keyof typeof NAV_ICONS];
-              return (
+              const link = (
                 <NavLink
                   key={step.key}
                   to={step.path}
@@ -208,6 +208,15 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
                   <span className="flex-1">{step.label}</span>
                   {!step.hub && <StepStatusDot status={step.status} />}
                 </NavLink>
+              );
+              // The account home, then a divider, then the workflow steps.
+              return step.hub ? (
+                <div key={step.key}>
+                  {link}
+                  <div className="mx-3 my-1.5 border-t border-[var(--color-ink-100)]" aria-hidden />
+                </div>
+              ) : (
+                link
               );
             })}
           </>

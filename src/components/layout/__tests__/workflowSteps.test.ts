@@ -61,10 +61,10 @@ describe("every What's Missing line knows where it's fixed", () => {
   });
 });
 
-describe('Workspace in the chain', () => {
-  it('sits between Documents and Risk Profile and is never something to complete', () => {
+describe('Workspace', () => {
+  it('comes first as the account home, apart from the steps, and is never something to complete', () => {
     const steps = computeWorkflowSteps('a', [doc], createEmptyRiskProfile('a'), matches);
-    expect(steps.map((s) => s.label)).toEqual(['Documents', 'Workspace', 'Risk Profile', 'Limits & Coverage', 'Submission Assistant', 'Carrier Appetite']);
+    expect(steps.map((s) => s.label)).toEqual(['Workspace', 'Documents', 'Risk Profile', 'Limits & Coverage', 'Submission Assistant', 'Carrier Appetite']);
     const ws = steps.find((s) => s.key === 'workspace')!;
     expect(ws.hub).toBe(true);
     expect(ws.path).toBe('/accounts/a');

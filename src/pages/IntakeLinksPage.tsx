@@ -249,7 +249,7 @@ function SubmissionCard({
       onChanged();
     } else {
       onChanged();
-      if (result.accountId) navigate(`/accounts/${result.accountId}`);
+      if (result.accountId) navigate(`/accounts/${result.accountId}/risk-profile`);
     }
   }
 

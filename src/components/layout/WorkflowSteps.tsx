@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react';
+import { Check, Home } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { MatchResult, RiskProfile, UploadedDocument } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -14,7 +14,7 @@ export interface WorkflowStep {
   label: string;
   path: string;
   status: StepStatus;
-  /** The account's home (Workspace): part of the chain, but never something to "complete" — no status dot, no completion rule. */
+  /** The account's home (Workspace): shown first, set apart from the steps — never something to "complete" (no status dot, no completion rule). */
   hub?: boolean;
 }
 
@@ -52,8 +52,8 @@ export function computeWorkflowSteps(
   const appetiteStatus: StepStatus = matchResults.length === 0 ? (hasDocs ? 'in_progress' : 'not_started') : submissionAssistantStatus === 'done' ? 'done' : 'in_progress';
 
   return [
-    { key: 'upload', label: 'Documents', path: `/accounts/${accountId}/upload`, status: documentsStatus },
     { key: 'workspace', label: 'Workspace', path: `/accounts/${accountId}`, status: 'not_started', hub: true },
+    { key: 'upload', label: 'Documents', path: `/accounts/${accountId}/upload`, status: documentsStatus },
     { key: 'risk-profile', label: 'Risk Profile', path: `/accounts/${accountId}/risk-profile`, status: profileStatus },
     { key: 'limits-coverage', label: 'Limits & Coverage', path: `/accounts/${accountId}/limits-coverage`, status: coverageStatus },
     { key: 'submission-assistant', label: 'Submission Assistant', path: `/accounts/${accountId}/submission-assistant`, status: submissionAssistantStatus },
@@ -104,7 +104,8 @@ export function WorkflowStepsBar({ steps, activeKey }: { steps: WorkflowStep[]; 
         const isActive = step.key === activeKey;
         return (
           <div key={step.key} className="flex items-center gap-1.5">
-            {i > 0 && <span className="text-[var(--color-ink-200)]">/</span>}
+            {/* The account home is set apart from the workflow steps by a divider; the steps are joined by "/". */}
+            {i > 0 && (steps[i - 1].hub ? <span className="mx-1 h-4 w-px bg-[var(--color-ink-200)]" aria-hidden /> : <span className="text-[var(--color-ink-200)]">/</span>)}
             <Link
               to={step.path}
               className={cn(
@@ -112,7 +113,7 @@ export function WorkflowStepsBar({ steps, activeKey }: { steps: WorkflowStep[]; 
                 isActive ? 'bg-[var(--color-ink-100)] text-[var(--color-ink-900)]' : 'text-[var(--color-ink-500)] hover:text-[var(--color-ink-800)]'
               )}
             >
-              {!step.hub && <StepStatusDot status={step.status} />}
+              {step.hub ? <Home size={13} /> : <StepStatusDot status={step.status} />}
               {step.label}
             </Link>
           </div>
