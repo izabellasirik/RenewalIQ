@@ -56,6 +56,7 @@ import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
 import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { isSupabaseConfigured } from '../services/supabase/client';
+import type { MyProfile } from '../services/supabase/profileRepo';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
 import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
 import { inferFileType as inferQuoteFileType } from '../utils/documents';
@@ -93,6 +94,9 @@ interface AccountsState {
 
   /** The signed-in broker's email, for "by …" in activity. Ephemeral, like currentUserId. */
   currentUserEmail: string | null;
+  /** The signed-in user's professional profile (full name, work phone, job title) — the name shown for them in Activity and as assigned broker. Ephemeral; loaded after sign-in (see ProfileGate). */
+  myProfile: MyProfile | null;
+  setMyProfile: (profile: MyProfile | null) => void;
   /** Which broker's cloud account each cloud-backed account belongs to — so signing out (or in as someone else) hides it. Persisted. */
   accountOwners: Record<string, string>;
   /** Cloud-backed accounts hidden because their owner isn't the one signed in. Kept (not deleted) so nothing unsynced is lost; restored when the owner signs back in. Persisted. */
@@ -353,11 +357,11 @@ function localFileIds(st: AccountsState, accountId: string): string[] {
   ];
 }
 
-/** " by jane@agency.com" — who made the change, when a broker is signed in ("by themselves" reads oddly, so self-assignment says so). */
+/** " by Jane Smith" (or their email before they've set a name) — who made the change, when a broker is signed in ("by themselves" reads oddly, so self-assignment says so). */
 function actorSuffix(actorEmail: string | null, subjectEmail?: string): string {
   if (!actorEmail) return '';
   if (subjectEmail && subjectEmail.toLowerCase() === actorEmail.toLowerCase()) return ' (self-assigned)';
-  return ` by ${actorEmail}`;
+  return ` by ${currentActor?.name ?? actorEmail}`;
 }
 
 /** Selected quote's premium, else the newest quote's, else a premium recorded before multiple quotes existed. */
@@ -400,7 +404,7 @@ export const useAccountsStore = create<AccountsState>()(
           ...account,
           agencyId: agencyAccess.agencyId,
           assignedUserId: currentUserId,
-          assignedBroker: { name: me?.name ?? currentUserEmail ?? 'Me', email: currentUserEmail ?? undefined, userId: currentUserId },
+          assignedBroker: { name: get().myProfile?.fullName || me?.name || currentUserEmail || 'Me', email: currentUserEmail ?? undefined, userId: currentUserId },
         };
       }
 
@@ -499,6 +503,7 @@ export const useAccountsStore = create<AccountsState>()(
       syncStatus: {},
       syncError: {},
       currentUserEmail: null,
+      myProfile: null,
       accountOwners: {},
       hiddenAccounts: [],
       agencyAccess: null,
@@ -1912,7 +1917,8 @@ export const useAccountsStore = create<AccountsState>()(
       setCurrentUserId: (userId, email) =>
         set((s) => {
           const actorEmail = userId ? (email ?? s.currentUserEmail) : null;
-          currentActor = userId ? { id: userId, name: actorEmail ?? 'Unknown' } : null;
+          const sameUserName = userId !== null && userId === s.currentUserId ? s.myProfile?.fullName : undefined;
+          currentActor = userId ? { id: userId, name: sameUserName || actorEmail || 'Unknown' } : null;
           const { accounts, hiddenAccounts } = partitionAccounts([...s.accounts, ...s.hiddenAccounts], s.cloudAccountIds, s.accountOwners, userId);
           const activeVisible = accounts.some((a) => a.id === s.activeAccountId);
           const sameUser = userId !== null && userId === s.currentUserId;
@@ -1923,7 +1929,17 @@ export const useAccountsStore = create<AccountsState>()(
             hiddenAccounts,
             activeAccountId: activeVisible ? s.activeAccountId : null,
             // Roles are re-read from the database on every sign-in (hydrateCloudSubmissions).
-            ...(sameUser ? {} : { agencyAccess: null, agencyMembers: [], cloudHydratedFor: null }),
+            ...(sameUser ? {} : { agencyAccess: null, agencyMembers: [], cloudHydratedFor: null, myProfile: null }),
+          };
+        }),
+
+      setMyProfile: (profile) =>
+        set((s) => {
+          if (profile?.fullName && s.currentUserId && currentActor?.id === s.currentUserId) currentActor = { id: s.currentUserId, name: profile.fullName };
+          return {
+            myProfile: profile,
+            // The agency list shows the new name right away (the database has it via save_my_profile).
+            agencyMembers: profile?.fullName ? s.agencyMembers.map((m) => (m.userId === s.currentUserId ? { ...m, name: profile.fullName } : m)) : s.agencyMembers,
           };
         }),
 
@@ -1935,7 +1951,7 @@ export const useAccountsStore = create<AccountsState>()(
         if (accessRes.ok) {
           set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
           const me = accessRes.data.members.find((m) => m.userId === userId);
-          if (me && currentActor?.id === userId) currentActor = { id: userId, name: me.name };
+          if (me && currentActor?.id === userId) currentActor = { id: userId, name: get().myProfile?.fullName || me.name };
         }
         if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
         const needsPush: string[] = [];
@@ -2055,6 +2071,7 @@ export const useAccountsStore = create<AccountsState>()(
           effectiveAppetiteRecords: _effectiveAppetiteRecords,
           currentUserId: _currentUserId,
           currentUserEmail: _currentUserEmail,
+          myProfile: _myProfile,
           syncStatus: _syncStatus,
           syncError: _syncError,
           agencyAccess: _agencyAccess,

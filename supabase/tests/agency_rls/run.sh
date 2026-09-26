@@ -16,6 +16,11 @@ psql -q -v ON_ERROR_STOP=1 -d "$DB" \
 # 0011 twice: it must be re-runnable.
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0011_agency_roles.sql" >/dev/null 2>&1
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0011_agency_roles.sql" >/dev/null 2>&1
-ACTUAL="$(psql -q -d "$DB" -f "$DIR/tests.sql" 2>&1 | sed 's/psql:[^ ]* NOTICE:  //' | grep -E '^(L|T|N|X|A|S|F|U|backfill)[0-9 ]')"
+# Later migrations that touch profiles/agencies — also re-run once each.
+for m in 0017_profile_contact_fields; do
+  psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/$m.sql" >/dev/null 2>&1
+  psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/$m.sql" >/dev/null 2>&1
+done
+ACTUAL="$(psql -q -d "$DB" -f "$DIR/tests.sql" 2>&1 | sed 's/psql:[^ ]* NOTICE:  //' | grep -E '^(L|T|N|X|A|S|F|U|P|I|backfill)[0-9 ]')"
 psql -q -d postgres -c "drop database $DB" >/dev/null
 if diff <(cat "$DIR/expected.txt") <(echo "$ACTUAL"); then echo "agency RLS: all $(wc -l < "$DIR/expected.txt") checks passed"; else echo "agency RLS: MISMATCH (see diff above)"; exit 1; fi

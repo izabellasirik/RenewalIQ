@@ -117,6 +117,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   on the Overview / Today's Plate (tasks are derived, so "done" is stored on the account). Additive,
   safe to re-run. Until it's applied, a task marked done stays done only in that browser and the app
   says it couldn't be saved.
+- **`supabase/migrations/0017_profile_contact_fields.sql`** — work phone and job title on the agency
+  member profile, and `save_my_profile()`, the only way a user can edit their own name / phone /
+  title (never their role or agency). Additive, safe to re-run, RLS unchanged. Until it's applied,
+  the "Set up your profile" screen still works (saved on the login), but agency admins keep seeing
+  the name from the setup script.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -177,6 +182,7 @@ from (values
   ('0014_activity_actor_name',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'activity_events' and column_name = 'actor_name')),
   ('0015_document_source_url',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'source_url')),
   ('0016_account_done_actions',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'done_actions')),
+  ('0017_profile_contact_fields',     to_regprocedure('public.save_my_profile(text,text,text)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

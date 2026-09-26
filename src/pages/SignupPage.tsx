@@ -74,7 +74,7 @@ export function SignupPage() {
       <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-ink-100)] bg-white p-6">
         <p className="text-sm font-semibold text-[var(--color-ink-900)]">Create your account</p>
         <div>
-          <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Email</label>
+          <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Work email</label>
           <input autoFocus type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
         </div>
         <div>

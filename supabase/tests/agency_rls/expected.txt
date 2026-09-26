@@ -46,3 +46,11 @@ F roman after losing acct_r1: accounts=acct_r3 files=0 fv=0
 F roman delete own old upload on lost account affected=0
 U unassigned acct_r3 visible to admin=1
 U unassigned acct_r3 visible to roman (creator)=0
+P1 roman saves own profile, in agency=true
+P1 row: Roman Smith|555-0111|Broker|agent
+P2 blank name denied: Full name is required
+P3 roman edits agentB directly affected=0
+P3 direct update of own row affected=0
+P4 newbie (no agency) save → in agency=false rows=0
+P5 admin reads agency profiles: Agent B:-,Denis:-,Roman Smith:Broker
+P6 no user denied: Not signed in

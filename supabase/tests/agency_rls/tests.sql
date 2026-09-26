@@ -118,3 +118,20 @@ select 'U unassigned acct_r3 visible to admin=' || count(*) from submissions whe
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 select 'U unassigned acct_r3 visible to roman (creator)=' || count(*) from submissions where id='acct_r3';
 reset role;
+
+\echo '== 0017: each user saves only their own name / phone / title'
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'P1 roman saves own profile, in agency=' || save_my_profile('  Roman Smith ', '555-0111', 'Broker');
+select 'P1 row: ' || display_name || '|' || phone || '|' || job_title || '|' || role from profiles where user_id = auth.uid();
+do $$ begin perform save_my_profile('   ', null, null); raise notice 'P2 blank name: ALLOWED (BAD)'; exception when others then raise notice 'P2 blank name denied: %', sqlerrm; end $$;
+with u as (update profiles set phone = 'x' where user_id = '00000000-0000-0000-0000-00000000000b' returning 1) select 'P3 roman edits agentB directly affected=' || count(*) from u;
+with u as (update profiles set job_title = 'x' where user_id = auth.uid() returning 1) select 'P3 direct update of own row affected=' || count(*) from u;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select 'P4 newbie (no agency) save → in agency=' || save_my_profile('Nina', null, null) || ' rows=' || (select count(*) from profiles where user_id = auth.uid());
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'P5 admin reads agency profiles: ' || string_agg(display_name || ':' || coalesce(job_title, '-'), ',' order by display_name) from profiles;
+select pg_temp.as_user('');
+do $$ begin perform save_my_profile('Anon', null, null); raise notice 'P6 no user: ALLOWED (BAD)'; exception when others then raise notice 'P6 no user denied: %', sqlerrm; end $$;
+reset role;
+

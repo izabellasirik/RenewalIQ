@@ -20,6 +20,7 @@ import { AdminFeedbackPage } from './pages/AdminFeedbackPage';
 import { IntakeFormPage } from './pages/IntakeFormPage';
 import { IntakeLinksPage } from './pages/IntakeLinksPage';
 import { RequireBrokerAuth } from './components/layout/RequireBrokerAuth';
+import { ProfileGate } from './components/profile/ProfileGate';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -31,7 +32,9 @@ export const router = createBrowserRouter([
     // Signed-out visitors are sent to /login (see RequireBrokerAuth).
     element: (
       <RequireBrokerAuth>
-        <AppShell />
+        <ProfileGate>
+          <AppShell />
+        </ProfileGate>
       </RequireBrokerAuth>
     ),
     children: [
