@@ -21,6 +21,8 @@ import { IntakeFormPage } from './pages/IntakeFormPage';
 import { IntakeLinksPage } from './pages/IntakeLinksPage';
 import { RequireBrokerAuth } from './components/layout/RequireBrokerAuth';
 import { ProfileGate } from './components/profile/ProfileGate';
+import { InvitePage } from './pages/InvitePage';
+import { TeamPage } from './pages/TeamPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -28,6 +30,8 @@ export const router = createBrowserRouter([
   // Deliberately outside AppShell and unauthenticated — an applicant opening this link has no
   // Renewal IQ login at all (see types/intake.ts / supabase/migrations/0004_intake_submissions.sql).
   { path: '/intake/:token', element: <IntakeFormPage /> },
+  // An agency invitation link — works signed out (sign up / sign in from here) and signed in (join).
+  { path: '/invite/:token', element: <InvitePage /> },
   {
     // Signed-out visitors are sent to /login (see RequireBrokerAuth).
     element: (
@@ -45,6 +49,7 @@ export const router = createBrowserRouter([
       { path: '/market-finder', element: <MarketFinderPage /> },
       { path: '/analytics', element: <AnalyticsPage /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },
+      { path: '/team', element: <TeamPage /> },
       { path: '/accounts/new', element: <NewAccountPage /> },
       { path: '/accounts/:accountId', element: <AccountWorkspacePage /> },
       { path: '/accounts/:accountId/upload', element: <UploadPage /> },

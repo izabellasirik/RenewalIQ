@@ -54,3 +54,32 @@ P3 direct update of own row affected=0
 P4 newbie (no agency) save → in agency=false rows=0
 P5 admin reads agency profiles: Agent B:-,Denis:-,Roman Smith:Broker
 P6 no user denied: Not signed in
+I1 agent invites denied: Only an agency admin can invite team members
+I1 agent self-admin invite denied: Only an agency admin can invite team members
+I1 agent sees invitations=0
+I2 admin invites: newbie@agency.com agent token_len=64
+I3 invite existing member denied: This person is already on your team
+I3 bad role denied: Role must be agent or admin
+I3 direct insert denied: new row violates row-level security policy for table "agency_invitations"
+I2 admin sees own agency invitations=4
+I4 other agency admin sees Agency invitations=0
+I4 other agency admin revokes Agency invitation=false
+I5 link lookup (signed out): Agency|newbie@agency.com|agent|open
+I5 lookup with a made-up token rows=0
+I6 other user accepts denied: This invitation was sent to a different email address — sign in as newbie@agency.com
+I7 newbie before: in agency=0
+I7 newbie accepts → Agency
+I7 newbie profile: agent agency=Agency
+I7 newbie is admin=false sees: acct_n1,acct_n2
+I7 accept again (same person)=Agency
+I7 admin sees newbie's pre-agency accounts=0
+I7 admin sees members: agentb@agency.com:agent,denis@agency.com:admin,newbie@agency.com:agent,roman@agency.com:agent
+I8 unconfirmed email denied: Confirm your email address first, then open the invitation again
+I8 confirmed invitee accepts → Agency
+I8 invitee profile: admin|Ivy Invitee|Account Manager
+I9 member of another agency denied: You are already a member of another agency. Contact support to move to Agency
+I9 outsider still in: Other Agency as admin
+I10 admin revokes=true
+I10 status after revoke: revoked
+I11 expired status: expired
+I12 agent direct update affected=0

@@ -1,5 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
@@ -24,6 +24,7 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
   const accountId = routeAccountId ?? activeAccountId ?? undefined;
   const account = accounts.find((a) => a.id === accountId);
   const steps = useWorkflowStatus(account?.id);
+  const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
 
   return (
     <aside
@@ -121,6 +122,24 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
           <BarChart3 size={17} />
           Analytics
         </NavLink>
+
+        {/* Agency admins only — the database also only returns the whole team to an admin. */}
+        {isAgencyAdmin && (
+          <NavLink
+            to="/team"
+            className={({ isActive }) =>
+              cn(
+                navItemClass,
+                isActive
+                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+              )
+            }
+          >
+            <Users size={17} />
+            Team
+          </NavLink>
+        )}
 
         {account && (
           <>

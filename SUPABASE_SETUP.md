@@ -122,6 +122,16 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   title (never their role or agency). Additive, safe to re-run, RLS unchanged. Until it's applied,
   the "Set up your profile" screen still works (saved on the login), but agency admins keep seeing
   the name from the setup script.
+- **`supabase/migrations/0018_agency_invitations.sql`** — Team invitations. An agency admin invites a
+  work email with a role (Agent / Admin) from the **Team** page; the person opens the link, signs up
+  or signs in with that email, and joins that agency with that role. Only admins can invite; the
+  agency is always the admin's own; accepting requires the signed-in, confirmed login email to match
+  the invitation; someone already in another agency is refused. Existing tables, policies and
+  account permissions are unchanged. Additive, safe to re-run; run after 0017. **Also add
+  `https://<your-domain>/invite/**` (and your preview domain) to Authentication → URL Configuration
+  → Redirect URLs**, so the sign-up confirmation email brings the person back to their invitation.
+  (Without it, Supabase sends them to the Site URL and the app still takes them to the invitation in
+  the same browser.)
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -183,6 +193,7 @@ from (values
   ('0015_document_source_url',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'source_url')),
   ('0016_account_done_actions',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'done_actions')),
   ('0017_profile_contact_fields',     to_regprocedure('public.save_my_profile(text,text,text)') is not null),
+  ('0018_agency_invitations',         to_regclass('public.agency_invitations') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

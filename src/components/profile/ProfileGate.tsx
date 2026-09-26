@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { loadMyProfile } from '../../services/supabase/profileRepo';
+import { pendingInvite } from '../../services/supabase/teamRepo';
+import { Navigate } from 'react-router-dom';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { AuthShell } from '../auth/AuthShell';
 import { Skeleton } from '../ui';
@@ -34,6 +36,9 @@ export function ProfileGate({ children }: { children: ReactNode }) {
   }, [userId, setMyProfile]);
 
   if (session.status !== 'signed_in' || !userId) return <>{children}</>;
+  // An invitation opened before signing up / in (e.g. the confirmation email landed on the home page): finish joining first.
+  const invite = pendingInvite();
+  if (invite) return <Navigate to={`/invite/${invite}`} replace />;
   if (state === 'loading' && !myProfile?.fullName) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-[var(--color-ink-50)] p-8">

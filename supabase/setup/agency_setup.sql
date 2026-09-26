@@ -5,6 +5,9 @@
 --
 -- Until step 4 runs, every existing account stays exactly as private as before (visible only to
 -- the broker who created it) — so it's safe to stop after any step.
+--
+-- After 0018_agency_invitations.sql: only a NEW agency's first admin needs steps 2–3 here. Everyone
+-- else is added from the app — Team → Invite Team Member.
 
 -- ------------------------------------------------------------------------------------------------
 -- STEP 1 (read-only): who exists, and which accounts need ownership assigned.

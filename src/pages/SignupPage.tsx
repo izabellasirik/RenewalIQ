@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Link as LinkIcon } from 'lucide-react';
 import { Button } from '../components/ui';
 import { AuthShell, authInputClass as inputClass } from '../components/auth/AuthShell';
@@ -9,7 +9,12 @@ import { useBrokerSession } from '../hooks/useBrokerSession';
 export function SignupPage() {
   const navigate = useNavigate();
   const session = useBrokerSession();
-  const [email, setEmail] = useState('');
+  // Coming from an invitation link: the account must use the invited email (read-only here), and
+  // the confirmation email brings them back to the invitation.
+  const [params] = useSearchParams();
+  const invite = params.get('invite');
+  const invitedEmail = invite ? params.get('email') : null;
+  const [email, setEmail] = useState(invitedEmail ?? '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -17,8 +22,8 @@ export function SignupPage() {
   const [needsEmailConfirmation, setNeedsEmailConfirmation] = useState(false);
 
   useEffect(() => {
-    if (session.status === 'signed_in') navigate('/', { replace: true });
-  }, [session.status, navigate]);
+    if (session.status === 'signed_in') navigate(invite ? `/invite/${invite}` : '/', { replace: true });
+  }, [session.status, navigate, invite]);
 
   async function handleSubmit() {
     if (!email.trim() || password.length < 6) return;
@@ -28,7 +33,7 @@ export function SignupPage() {
     }
     setSubmitting(true);
     setError(null);
-    const result = await signUpBroker(email.trim(), password);
+    const result = await signUpBroker(email.trim(), password, invite ? `${window.location.origin}/invite/${invite}` : undefined);
     setSubmitting(false);
     if (!result.ok) {
       setError(result.message);
@@ -75,7 +80,14 @@ export function SignupPage() {
         <p className="text-sm font-semibold text-[var(--color-ink-900)]">Create your account</p>
         <div>
           <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Work email</label>
-          <input autoFocus type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} />
+          <input
+            autoFocus={!invitedEmail}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            readOnly={!!invitedEmail}
+            className={invitedEmail ? `${inputClass} bg-[var(--color-ink-50)] text-[var(--color-ink-500)]` : inputClass}
+          />
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Password</label>
@@ -93,7 +105,7 @@ export function SignupPage() {
       </div>
       <p className="mt-4 text-center text-sm text-[var(--color-ink-500)]">
         Already have an account?{' '}
-        <Link to="/login" className="font-medium text-[var(--color-brand-700)] hover:underline">
+        <Link to={invite ? `/login?invite=${encodeURIComponent(invite)}&email=${encodeURIComponent(invitedEmail ?? '')}` : '/login'} className="font-medium text-[var(--color-brand-700)] hover:underline">
           Sign in
         </Link>
       </p>

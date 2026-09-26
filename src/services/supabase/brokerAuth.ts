@@ -9,9 +9,10 @@ export type AuthResult = { ok: true } | { ok: false; message: string };
  * supabase/migrations/0003_broker_workspaces.sql's security-model comment).
  */
 
-export async function signUpBroker(email: string, password: string): Promise<AuthResult> {
+/** `redirectTo`: where the confirmation email's link lands (e.g. back on an invitation) — must be allow-listed in Supabase (Authentication → URL Configuration); otherwise Supabase uses the Site URL. */
+export async function signUpBroker(email: string, password: string, redirectTo?: string): Promise<AuthResult> {
   if (!supabase) return { ok: false, message: 'Cloud sync is not configured in this environment. See SUPABASE_SETUP.md.' };
-  const { error } = await supabase.auth.signUp({ email, password });
+  const { error } = await supabase.auth.signUp({ email, password, ...(redirectTo ? { options: { emailRedirectTo: redirectTo } } : {}) });
   if (error) return { ok: false, message: error.message };
   return { ok: true };
 }

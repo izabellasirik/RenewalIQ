@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { KeyRound } from 'lucide-react';
 import { Button } from '../components/ui';
 import { AuthShell, authInputClass as inputClass } from '../components/auth/AuthShell';
@@ -119,15 +119,18 @@ function ResetPasswordForm() {
 export function LoginPage() {
   const navigate = useNavigate();
   const session = useBrokerSession();
-  const [email, setEmail] = useState('');
+  // Coming from an invitation link: the invited email is filled in, and signing in goes back to it.
+  const [params] = useSearchParams();
+  const invite = params.get('invite');
+  const [email, setEmail] = useState(params.get('email') ?? '');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
 
   useEffect(() => {
-    if (session.status === 'signed_in') navigate('/', { replace: true });
-  }, [session.status, navigate]);
+    if (session.status === 'signed_in') navigate(invite ? `/invite/${invite}` : '/', { replace: true });
+  }, [session.status, navigate, invite]);
 
   async function handleSubmit() {
     if (!email.trim() || !password) return;

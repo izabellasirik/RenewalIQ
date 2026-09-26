@@ -17,7 +17,7 @@ psql -q -v ON_ERROR_STOP=1 -d "$DB" \
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0011_agency_roles.sql" >/dev/null 2>&1
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0011_agency_roles.sql" >/dev/null 2>&1
 # Later migrations that touch profiles/agencies — also re-run once each.
-for m in 0017_profile_contact_fields; do
+for m in 0017_profile_contact_fields 0018_agency_invitations; do
   psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/$m.sql" >/dev/null 2>&1
   psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/$m.sql" >/dev/null 2>&1
 done
