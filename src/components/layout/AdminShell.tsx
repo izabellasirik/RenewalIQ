@@ -1,11 +1,11 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { cn } from '../../utils/cn';
+import { BrandLogo } from '../branding/Logo';
 
 /**
  * Deliberately separate from AppShell (no broker Sidebar/TopBar/FeedbackWidget) — the admin area
- * is a distinct internal tool, not a broker-facing product surface. Reachable only via the
- * discreet footer link in the broker Sidebar and by knowing the /admin URL directly; see
- * router.tsx and Sidebar.tsx.
+ * is a distinct internal tool, not a broker-facing product surface. Reachable from the broker
+ * Sidebar's "Feedback & Updates" item, shown only to users is_admin() confirms, or /admin directly.
  */
 export function AdminShell() {
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -15,9 +15,9 @@ export function AdminShell() {
     <div className="min-h-screen bg-[var(--color-ink-50)]">
       <header className="border-b border-[var(--color-ink-100)] bg-white px-6 py-3.5">
         <div className="mx-auto flex max-w-6xl items-center gap-3">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--color-brand-800)] text-sm font-bold text-white">R</div>
+          <BrandLogo size={32} wordmark={false} />
           <div className="min-w-0">
-            <p className="text-sm font-semibold leading-tight tracking-tight text-[var(--color-ink-900)]">Renewal IQ — Admin</p>
+            <p className="text-sm font-semibold leading-tight tracking-tight text-[var(--color-ink-900)]">RenewalIQ — Admin</p>
             <p className="text-[11px] leading-tight text-[var(--color-ink-400)]">Internal tool — not part of the broker product</p>
           </div>
           <nav className="ml-auto flex items-center gap-1">
@@ -29,6 +29,9 @@ export function AdminShell() {
             </NavLink>
             <NavLink to="/admin/feedback" className={navLinkClass}>
               Product Feedback
+            </NavLink>
+            <NavLink to="/" className={navLinkClass}>
+              ← Back to Renewal IQ
             </NavLink>
           </nav>
         </div>

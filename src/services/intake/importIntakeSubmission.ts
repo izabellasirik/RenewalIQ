@@ -62,10 +62,12 @@ export interface ImportResult {
   ok: boolean;
   accountId?: string;
   message?: string;
+  /** Imported, but something needs the broker's attention (e.g. a file that couldn't be downloaded). */
+  warning?: string;
 }
 
 /**
- * The broker's one-click "Import" action — turns a pending intake_submissions row into a real
+ * The broker's "Import" action — turns a pending intake_submissions row into a real
  * account using the exact same primitives any other submission uses: createAccountFromExtraction to
  * commit the applicant-provided profile, then addFiles for each uploaded document so the real
  * OCR/vision extraction pipeline runs on them exactly as if the broker had just uploaded them
@@ -76,28 +78,53 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   if (!docsResult.ok) return { ok: false, message: docsResult.message };
 
   const files: File[] = [];
+  const missing: string[] = [];
   for (const doc of docsResult.data) {
-    const fileResult = await downloadIntakeDocumentFile(doc);
+    // One retry — a dropped connection shouldn't lose a document.
+    let fileResult = await downloadIntakeDocumentFile(doc);
+    if (!fileResult.ok) fileResult = await downloadIntakeDocumentFile(doc);
     if (fileResult.ok) files.push(fileResult.data);
+    else missing.push(doc.fileName);
     // A single file that fails to download doesn't block the rest — the account is still created
-    // from the applicant's typed answers and whatever documents did come through.
+    // from the applicant's typed answers and whatever documents did come through — but it's reported.
   }
 
   const profile = mergeIntoRiskProfile(createEmptyRiskProfile('pending'), buildApplicantFieldResults(submission));
   const namedInsured = submission.namedInsured?.trim() || 'Untitled Submission';
   const state = deriveDomicileState(submission.operatingStates);
 
-  const { createAccountFromExtraction, addFiles } = useAccountsStore.getState();
-  const accountId = createAccountFromExtraction(namedInsured, state, [], profile, undefined, {
-    name: submission.contactName ?? undefined,
-    email: submission.contactEmail ?? undefined,
-    phone: submission.contactPhone ?? undefined,
-  });
+  const { createAccountFromExtraction, addFiles, saveAccountNow, deleteAccountPermanently } = useAccountsStore.getState();
+  const accountId = createAccountFromExtraction(
+    namedInsured,
+    state,
+    [],
+    profile,
+    undefined,
+    {
+      name: submission.contactName ?? undefined,
+      email: submission.contactEmail ?? undefined,
+      phone: submission.contactPhone ?? undefined,
+    },
+    // Saved (and awaited) just below instead — two overlapping saves would race.
+    { skipAutoSync: true }
+  );
+
+  // The submission is only marked imported once the account and its Risk Profile are actually in
+  // the cloud. If that save fails, the new account is removed again and the submission stays
+  // pending, so the broker can simply retry — never an "Imported" row with nothing behind it.
+  const saved = await saveAccountNow(accountId);
+  if (!saved.ok) {
+    // Files are only added after a successful save, so there's nothing in Storage to clean up.
+    await deleteAccountPermanently(accountId, { noFiles: true });
+    return { ok: false, message: `Couldn't save this submission to your account, so nothing was imported — please try again.${saved.message ? ` (${saved.message})` : ''}` };
+  }
 
   if (files.length > 0) addFiles(accountId, files);
 
   const markResult = await markIntakeSubmissionImported(submission.id, accountId);
-  if (!markResult.ok) return { ok: true, accountId, message: `Account created, but couldn't mark the intake submission as imported: ${markResult.message}` };
-
-  return { ok: true, accountId };
+  const warnings = [
+    missing.length > 0 ? `${missing.length} document${missing.length === 1 ? '' : 's'} couldn't be downloaded (${missing.join(', ')}) — use Reimport, or download ${missing.length === 1 ? 'it' : 'them'} here and upload to the account.` : null,
+    markResult.ok ? null : `The account was created, but the submission couldn't be marked imported: ${markResult.message}`,
+  ].filter(Boolean);
+  return { ok: true, accountId, ...(warnings.length ? { warning: warnings.join(' ') } : {}) };
 }

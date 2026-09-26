@@ -12,6 +12,7 @@ import { generateId } from '../utils/id';
 import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { US_STATES } from '../utils/usStates';
 import type { RiskProfile, UploadedDocument } from '../types';
+import { DocumentLinkError } from '../services/ingestion/documentLinks';
 
 type Mode = 'choice' | 'manual' | 'processing' | 'confirm';
 type DraftDoc = Omit<UploadedDocument, 'accountId'>;
@@ -38,6 +39,7 @@ export function NewAccountPage() {
 
   function finalizeAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
     const id = createAccountFromExtraction(namedInsured, state, docs, profile, files);
+    // Straight to the Risk Profile to review what was extracted.
     navigate(`/accounts/${id}/risk-profile`);
   }
 
@@ -54,6 +56,7 @@ export function NewAccountPage() {
     const docs: DraftDoc[] = [];
     const newFailures: { name: string; message: string }[] = [];
 
+    const keptFiles = [...files];
     for (const file of files) {
       const docId = generateId('doc');
       const fileType = inferFileType(file.name);
@@ -79,6 +82,8 @@ export function NewAccountPage() {
           continue;
         }
         profile = mergeIntoRiskProfile(profile, results);
+        // A link was downloaded: keep the real document for preview/upload, not the shortcut.
+        if (raw.linkedFile) keptFiles[files.indexOf(file)] = raw.linkedFile;
         const contentCategory = isImageSource && raw.text ? inferCategoryFromText(raw.text) : null;
         docs.push({
           ...base,
@@ -87,11 +92,16 @@ export function NewAccountPage() {
           fieldsExtracted: results.length,
           warnings: raw.warnings.length > 0 ? raw.warnings : undefined,
           previewDataUrl: raw.imagePreviewDataUrl,
+          ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
+          ...(raw.linkedFile
+            ? { name: raw.linkedFile.name, fileType: inferFileType(raw.linkedFile.name), category: contentCategory ?? inferCategory(raw.linkedFile.name), sizeBytes: raw.linkedFile.size }
+            : {}),
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not process this file.';
         newFailures.push({ name: file.name, message });
-        docs.push({ ...base, status: 'error', warnings: [message] });
+        const sourceUrl = err instanceof DocumentLinkError ? err.sourceUrl : undefined;
+        docs.push({ ...base, status: 'error', warnings: [message], ...(sourceUrl ? { sourceUrl } : {}) });
       }
     }
 
@@ -100,7 +110,7 @@ export function NewAccountPage() {
 
     setDraftDocs(docs);
     setDraftProfile(profile);
-    setDraftFiles(files);
+    setDraftFiles(keptFiles);
     setFailures(newFailures);
 
     const ni = profile.business.namedInsured;
@@ -108,7 +118,7 @@ export function NewAccountPage() {
     const identityResolved = !ni.isMissing && !ni.isConflicting && !st.isMissing && !st.isConflicting;
 
     if (identityResolved && newFailures.length === 0) {
-      finalizeAccount(ni.value as string, st.value as string, docs, profile, files);
+      finalizeAccount(ni.value as string, st.value as string, docs, profile, keptFiles);
     } else {
       setMode('confirm');
     }
@@ -150,12 +160,12 @@ export function NewAccountPage() {
   return (
     <PageContainer
       title="New Submission"
-      description="Give Renewal IQ the documents you already have. We'll organize the account for you."
+      description="Give RenewalIQ the documents you already have. We'll organize the account for you."
     >
       <div className="mx-auto w-full max-w-xl">
         {mode === 'choice' && (
           <div className="flex flex-col gap-4">
-            <Dropzone onFiles={handleFiles} />
+            <Dropzone onFiles={handleFiles} allowLinkPaste={false} />
             <div className="text-center">
               <button
                 onClick={() => setMode('manual')}

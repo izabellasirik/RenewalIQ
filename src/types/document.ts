@@ -60,4 +60,6 @@ export interface UploadedDocument {
   previewDataUrl?: string;
   /** Path within the private `submission-documents` Storage bucket, set once the file finishes uploading to a signed-in broker's cloud account. Absent for a local-only (not signed in, or not yet synced) document — see services/supabase/submissionsRepo.ts. */
   storagePath?: string;
+  /** The link this document came from, when it arrived as a URL rather than a file — kept even when the link couldn't be opened. */
+  sourceUrl?: string;
 }

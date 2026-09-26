@@ -1,3 +1,4 @@
+import type { DurationValue } from '../utils/duration';
 import type { FieldValue } from './common';
 
 export interface TransportationInfo {
@@ -10,7 +11,8 @@ export interface TransportationInfo {
   commoditiesHauled: FieldValue<string[]>;
   driverCount: FieldValue<number>;
   minDriverAge: FieldValue<number>;
-  minDriverExperienceYears: FieldValue<number>;
+  /** Key name kept for compatibility; value is a legacy number of years or a Duration in months (utils/duration.ts). */
+  minDriverExperienceYears: FieldValue<DurationValue>;
   telematics: FieldValue<boolean>;
   dashcams: FieldValue<boolean>;
 }

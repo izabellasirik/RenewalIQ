@@ -1,0 +1,85 @@
+L1 roman sees own legacy accounts: acct_r1,acct_r2
+L2 denis (no profile yet) sees: []
+T1 roman: acct_r1,acct_r2
+T2 agentB: acct_b1
+T3 select by id rows=0
+T3 field_values rows=0
+T3 alternates rows=0
+T3 activity rows=0
+T3 storage rows=0
+T3 update affected=0
+T3 delete affected=0
+T3 upsert-over denied: new row violates row-level security policy (USING expression) for table "submissions"
+T3 child insert denied: new row violates row-level security policy for table "field_values"
+T3 activity insert denied: new row violates row-level security policy for table "activity_events"
+T3 agent reassign own account denied: Only an agency admin can reassign an account.
+T3 profiles visible to agentB: agentb@agency.com
+T3 is_agency_admin(agentB)=false
+T3 self-promote denied: new row violates row-level security policy for table "profiles"
+T3 self-promote update affected=0
+T3 spoof creator → row user_id=00000000-0000-0000-0000-00000000000b
+T5 admin: acct_b1,acct_r1,acct_r2
+T5 admin sees roman field_values=1
+T5 admin sees roman file=1
+T5 admin sees agents: agentb@agency.com:agent,denis@agency.com:admin,roman@agency.com:agent
+T5 admin sees acct_n1 (newbie not in agency yet)=0
+T6 assign outside agency denied: The assigned agent is not a member of this agency.
+T6 after admin edit: creator=00000000-0000-0000-0000-00000000000a assigned=00000000-0000-0000-0000-00000000000a name=Roman Trucking LLC
+T7 roman: acct_r1
+T7 roman stale save denied: new row violates row-level security policy (USING expression) for table "submissions"
+T8 agentB: acct_b1,acct_r2
+T9 new: agency=Agency assigned=00000000-0000-0000-0000-00000000000a
+T10 roman children r3 fv=1 act=1 files=2
+T10 upload to acct_r2 denied: new row violates row-level security policy for table "objects"
+T10 upload into someone else's folder denied: new row violates row-level security policy for table "objects"
+T10 agentB sees r3 children fv=0 act=0 files=0
+T10 agentB sees r2 (reassigned) file rows via roman folder: 0
+X outsider admin: acct_o1
+X outsider profiles: outsider@other.com
+N newbie: acct_n1
+N newbie new account agency=null visible=1
+A no-uid sees rows=0
+S admin save ok: fv="OK"
+F agentB reads roman-uploaded file on acct_r1: 1
+F agentB sees admin's field edit + activity: fv=1 act=2
+F roman after losing acct_r1: accounts=acct_r3 files=0 fv=0
+F roman delete own old upload on lost account affected=0
+U unassigned acct_r3 visible to admin=1
+U unassigned acct_r3 visible to roman (creator)=0
+P1 roman saves own profile, in agency=true
+P1 row: Roman Smith|555-0111|Broker|agent
+P2 blank name denied: Full name is required
+P3 roman edits agentB directly affected=0
+P3 direct update of own row affected=0
+P4 newbie (no agency) save → in agency=false rows=0
+P5 admin reads agency profiles: Agent B:-,Denis:-,Roman Smith:Broker
+P6 no user denied: Not signed in
+I1 agent invites denied: Only an agency admin can invite team members
+I1 agent self-admin invite denied: Only an agency admin can invite team members
+I1 agent sees invitations=0
+I2 admin invites: newbie@agency.com agent token_len=64
+I3 invite existing member denied: This person is already on your team
+I3 bad role denied: Role must be agent or admin
+I3 direct insert denied: new row violates row-level security policy for table "agency_invitations"
+I2 admin sees own agency invitations=4
+I4 other agency admin sees Agency invitations=0
+I4 other agency admin revokes Agency invitation=false
+I5 link lookup (signed out): Agency|newbie@agency.com|agent|open
+I5 lookup with a made-up token rows=0
+I6 other user accepts denied: This invitation was sent to a different email address — sign in as newbie@agency.com
+I7 newbie before: in agency=0
+I7 newbie accepts → Agency
+I7 newbie profile: agent agency=Agency
+I7 newbie is admin=false sees: acct_n1,acct_n2
+I7 accept again (same person)=Agency
+I7 admin sees newbie's pre-agency accounts=0
+I7 admin sees members: agentb@agency.com:agent,denis@agency.com:admin,newbie@agency.com:agent,roman@agency.com:agent
+I8 unconfirmed email denied: Confirm your email address first, then open the invitation again
+I8 confirmed invitee accepts → Agency
+I8 invitee profile: admin|Ivy Invitee|Account Manager
+I9 member of another agency denied: You are already a member of another agency. Contact support to move to Agency
+I9 outsider still in: Other Agency as admin
+I10 admin revokes=true
+I10 status after revoke: revoked
+I11 expired status: expired
+I12 agent direct update affected=0

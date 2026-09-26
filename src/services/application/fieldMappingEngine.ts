@@ -14,10 +14,12 @@ import type {
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { getFieldValueByPath } from '../../utils/riskProfilePath';
 import { buildSubmissionWarnings } from '../extraction/reconciliation';
+import { formatDuration, isDuration } from '../../utils/duration';
 
 function defaultFormat(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.join(', ');
+  if (isDuration(value)) return formatDuration(value);
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number' && value >= 1000) return value.toLocaleString('en-US');
   return String(value);
@@ -43,11 +45,31 @@ function coverageRequestedOverride(profile: RiskProfile, path: string, base: Map
   return {
     ...base,
     value: 'Requested — limit not specified',
+    isPlaceholder: true,
     status: 'needs_review',
     reviewReason: isNewCoverage
       ? 'Requested this renewal; not on the current policy — confirm the desired limit with the client.'
       : 'Requested by the client, but no limit was specified — confirm the desired limit.',
   };
+}
+
+/**
+ * A coverage type nobody has requested or reported for this submission at all — no CoverageLine
+ * exists for it in profile.coverage, which (see types/coverage.ts) only ever contains lines that
+ * were genuinely extracted, imported, or broker-added, never a default/placeholder set. This is the
+ * "nobody mentioned it" case coverageRequestedOverride's own comment calls out as distinct from
+ * "requested but blank" — marked neverFlagMissing so it can never appear in What's Missing, the
+ * Limits & Coverage workflow-nav checkmark, or the exported application's completeness math as an
+ * outstanding gap. Returns null when a line exists (applicable — handled by
+ * coverageRequestedOverride or the generic mapper below) or the path isn't a coverage path at all.
+ */
+function coverageNotApplicableOverride(profile: RiskProfile, path: string, base: MappedFieldBase): MappedField | null {
+  const match = path.match(/^coverage\.([a-z_]+)\.(currentLimit|requestedLimit)$/);
+  if (!match) return null;
+  const line = profile.coverage.find((c) => c.type === (match[1] as CoverageType));
+  if (line) return null;
+
+  return { ...base, value: '', status: 'missing', neverFlagMissing: true, reviewReason: 'Not requested for this submission.' };
 }
 
 /**
@@ -85,7 +107,7 @@ function mapField(profile: RiskProfile, mapping: FieldMapping): MappedField {
     return { ...base, value: '', status: 'missing', reviewReason: 'Not tracked in the Risk Profile yet — enter manually.' };
   }
 
-  const coverageOverride = coverageRequestedOverride(profile, mapping.riskProfilePath, base);
+  const coverageOverride = coverageRequestedOverride(profile, mapping.riskProfilePath, base) ?? coverageNotApplicableOverride(profile, mapping.riskProfilePath, base);
   if (coverageOverride) return coverageOverride;
 
   const field = getFieldValueByPath(profile, mapping.riskProfilePath);

@@ -27,13 +27,15 @@ interface IntakeLinkRow {
   id: string;
   user_id: string;
   label: string;
+  /** Absent until 0013 is applied. */
+  organization_name?: string | null;
   token: string;
   active: boolean;
   created_at: string;
 }
 
 function rowToLink(row: IntakeLinkRow): IntakeLink {
-  return { id: row.id, userId: row.user_id, label: row.label, token: row.token, active: row.active, createdAt: row.created_at };
+  return { id: row.id, userId: row.user_id, label: row.label, organizationName: row.organization_name ?? null, token: row.token, active: row.active, createdAt: row.created_at };
 }
 
 interface IntakeSubmissionRow {
@@ -150,6 +152,12 @@ export interface IntakeAnswers {
   additionalNotes: string;
 }
 
+/** Storage rejects some characters in object names (accents, emoji, #, ?, …) — the stored path uses a safe version; the original name is kept in file_name. */
+export function storageSafeName(name: string): string {
+  const safe = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9._ ()-]+/g, '_').replace(/\s+/g, ' ').trim();
+  return safe || 'file';
+}
+
 /**
  * Inserts one submission and uploads its files, in that order — the submission row must exist
  * first, since intake_documents' RLS insert policy requires a matching pending intake_submissions
@@ -157,7 +165,8 @@ export interface IntakeAnswers {
  * `userId` is what the anti-spoofing WITH CHECK cross-references, so it's forced onto the insert
  * here rather than left to whatever a tampered client might send.
  */
-export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, files: File[]): Promise<RepoResult<{ submissionId: string }>> {
+/** `onProgress(done, total)` is called as each file finishes (uploaded or given up on). */
+export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, files: File[], onProgress?: (done: number, total: number) => void): Promise<RepoResult<{ submissionId: string; failedFiles: string[] }>> {
   if (!supabase) return NOT_CONFIGURED;
   const submissionId = generateId('isub');
   try {
@@ -186,22 +195,33 @@ export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, fil
     });
     if (insertErr) return fail(insertErr.message);
 
+    // Each file: upload, then record it — retried once. One bad file doesn't fail the submission the
+    // applicant already sent, but it's reported back so they know to send it another way.
+    const failedFiles: string[] = [];
+    let done = 0;
+    onProgress?.(0, files.length);
     for (const file of files) {
-      const documentId = generateId('idoc');
-      const path = `${submissionId}/${documentId}/${file.name}`;
-      const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, file);
-      if (uploadErr) continue; // best-effort: one bad file shouldn't fail the whole submission the applicant already committed to
-      await supabase.from('intake_documents').insert({
-        id: documentId,
-        intake_submission_id: submissionId,
-        user_id: link.userId,
-        file_name: file.name,
-        storage_path: path,
-        size_bytes: file.size,
-      });
+      let attached = false;
+      for (let attempt = 0; attempt < 2 && !attached; attempt++) {
+        const documentId = generateId('idoc');
+        const path = `${submissionId}/${documentId}/${storageSafeName(file.name)}`;
+        const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, file);
+        if (uploadErr) continue;
+        const { error: rowErr } = await supabase.from('intake_documents').insert({
+          id: documentId,
+          intake_submission_id: submissionId,
+          user_id: link.userId,
+          file_name: file.name,
+          storage_path: path,
+          size_bytes: file.size,
+        });
+        attached = !rowErr;
+      }
+      if (!attached) failedFiles.push(file.name);
+      onProgress?.(++done, files.length);
     }
 
-    return { ok: true, data: { submissionId } };
+    return { ok: true, data: { submissionId, failedFiles } };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not submit this form.');
   }
@@ -222,11 +242,18 @@ function generateIntakeToken(): string {
   return crypto.randomUUID();
 }
 
-export async function createIntakeLink(userId: string, label: string): Promise<RepoResult<IntakeLink>> {
+/** `organizationName` is what the person filling in the form sees; null falls back to "your insurance broker". */
+export async function createIntakeLink(userId: string, label: string, organizationName: string | null): Promise<RepoResult<IntakeLink>> {
   if (!supabase) return NOT_CONFIGURED;
-  const link: IntakeLink = { id: generateId('ilink'), userId, label, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
+  const link: IntakeLink = { id: generateId('ilink'), userId, label, organizationName, token: generateIntakeToken(), active: true, createdAt: new Date().toISOString() };
   try {
-    const { error } = await supabase.from('intake_links').insert({ id: link.id, user_id: userId, label, token: link.token, active: true, created_at: link.createdAt });
+    const row: Record<string, unknown> = { id: link.id, user_id: userId, label, token: link.token, active: true, created_at: link.createdAt };
+    let { error } = await supabase.from('intake_links').insert(organizationName ? { ...row, organization_name: organizationName } : row);
+    // Migration 0013 not applied yet: still create the link, just without the agency name.
+    if (error && organizationName && (error.code === 'PGRST204' || error.code === '42703' || error.message.includes('organization_name'))) {
+      ({ error } = await supabase.from('intake_links').insert(row));
+      if (!error) link.organizationName = null;
+    }
     if (error) return fail(error.message);
     return { ok: true, data: link };
   } catch (err) {

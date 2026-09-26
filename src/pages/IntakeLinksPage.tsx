@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Copy, FileText, FileWarning, Inbox, Link2, Loader2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWarning, Inbox, Link2, Loader2, RotateCcw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Button, Badge, EmptyState, Skeleton, Tabs } from '../components/ui';
+import { Button, Badge, ConfirmDialog, EmptyState, Skeleton, Tabs } from '../components/ui';
 import { COVERAGE_LABELS } from '../types';
-import type { IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
+import type { IntakeDocument, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
 import { useBrokerSession } from '../hooks/useBrokerSession';
-import { createIntakeLink, dismissIntakeSubmission, fetchIntakeDocuments, fetchIntakeLinks, fetchIntakeSubmissions, setIntakeLinkActive } from '../services/supabase/intakeRepo';
+import { createIntakeLink, dismissIntakeSubmission, downloadIntakeDocumentFile, fetchIntakeDocuments, fetchIntakeLinks, fetchIntakeSubmissions, setIntakeLinkActive } from '../services/supabase/intakeRepo';
+import { DocumentPreviewModal, type PreviewableFile } from '../components/upload/DocumentPreviewModal';
+import { saveBlobAs } from '../services/documents/fileAccess';
+import { inferFileType } from '../utils/documents';
 import { importIntakeSubmission } from '../services/intake/importIntakeSubmission';
+import { findLikelyDuplicateAccount, type DuplicateMatch } from '../services/intake/duplicateDetection';
+import { useAccountsStore } from '../state/useAccountsStore';
 import { formatDate } from '../utils/dates';
 
 const inputClass =
@@ -42,6 +47,9 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{link.label}</p>
+          <p className="truncate text-xs text-[var(--color-ink-500)]">
+            Shown to the client as: <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName || 'your insurance broker (no agency name set)'}</span>
+          </p>
           <p className="truncate text-xs text-[var(--color-ink-400)]">{url}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -64,6 +72,9 @@ function LinksSection({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState('');
+  // The agency name clients see on the form — pre-filled from the most recent link that has one.
+  const [orgName, setOrgName] = useState('');
+  const [orgNameTouched, setOrgNameTouched] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -77,6 +88,8 @@ function LinksSection({ userId }: { userId: string }) {
     }
     setLoadError(null);
     setLinks(result.data);
+    const lastName = result.data.find((l) => l.organizationName)?.organizationName;
+    if (lastName) setOrgName((cur) => cur || lastName);
   }, [userId]);
 
   useEffect(() => {
@@ -87,7 +100,7 @@ function LinksSection({ userId }: { userId: string }) {
     if (!label.trim()) return;
     setCreating(true);
     setCreateError(null);
-    const result = await createIntakeLink(userId, label.trim());
+    const result = await createIntakeLink(userId, label.trim(), orgName.trim() || null);
     setCreating(false);
     if (!result.ok) {
       // Never fail silently — a broker clicking "New Link" and seeing nothing happen (no new row,
@@ -97,6 +110,7 @@ function LinksSection({ userId }: { userId: string }) {
       return;
     }
     setLabel('');
+    setOrgNameTouched(false);
     load();
   }
 
@@ -104,14 +118,31 @@ function LinksSection({ userId }: { userId: string }) {
     <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-5">
       <div>
         <h2 className="text-sm font-semibold text-[var(--color-ink-900)]">Submission Links</h2>
-        <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a Renewal IQ login.</p>
+        <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a RenewalIQ login.</p>
       </div>
-      <div className="flex gap-2">
-        <input className={inputClass} placeholder="Label, e.g. Acme Safety Group" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <label className="flex-1 text-xs font-medium text-[var(--color-ink-600)]">
+          Label (only you see this)
+          <input className={`${inputClass} mt-1`} placeholder="e.g. ABC Client" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+        </label>
+        <label className="flex-1 text-xs font-medium text-[var(--color-ink-600)]">
+          Agency name (shown to the client)
+          <input
+            className={`${inputClass} mt-1`}
+            placeholder="e.g. DXP Services Inc."
+            value={orgName}
+            onChange={(e) => {
+              setOrgName(e.target.value);
+              setOrgNameTouched(true);
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+          />
+        </label>
         <Button disabled={!label.trim() || creating} onClick={handleCreate}>
           {creating ? 'Creating…' : 'New Link'}
         </Button>
       </div>
+      {!orgName.trim() && !orgNameTouched && <p className="-mt-2 text-xs text-[var(--color-ink-400)]">Without an agency name, the form says “your insurance broker”.</p>}
       {createError && <p className="text-xs text-[var(--color-danger-600)]">{createError}</p>}
       {loading ? (
         <Skeleton variant="block" className="h-16 w-full" />
@@ -133,25 +164,77 @@ function LinksSection({ userId }: { userId: string }) {
 const FILTER_ORDER: IntakeSubmissionStatus[] = ['pending', 'imported', 'dismissed'];
 const FILTER_LABELS: Record<IntakeSubmissionStatus, string> = { pending: 'Pending', imported: 'Imported', dismissed: 'Dismissed' };
 
-function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmission; onChanged: () => void }) {
+/** Which submission cards are collapsed — remembered in this browser only (a view preference). */
+function useCollapsedSubmissions(): [Set<string>, (id: string) => void] {
+  const key = 'renewaliq.collapsedIntake';
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(key) ?? '[]') as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  function toggle(id: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(key, JSON.stringify([...next]));
+      } catch {
+        // per-browser convenience only
+      }
+      return next;
+    });
+  }
+  return [collapsed, toggle];
+}
+
+function SubmissionCard({
+  submission,
+  onChanged,
+  onNotice,
+  collapsed,
+  onToggle,
+}: {
+  submission: IntakeSubmission;
+  onChanged: () => void;
+  /** A message that should outlive this card (it moves to another tab after importing). */
+  onNotice: (text: string) => void;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState<'import' | 'dismiss' | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Fetched once per card so a broker can see what was attached before deciding to import — the
   // "review it" step in the intake flow otherwise had no visibility into documents at all.
-  const [documentNames, setDocumentNames] = useState<string[] | null>(null);
+  const [documents, setDocuments] = useState<IntakeDocument[] | null>(null);
+  const [preview, setPreview] = useState<PreviewableFile | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetchIntakeDocuments(submission.id).then((result) => {
-      if (!cancelled && result.ok) setDocumentNames(result.data.map((d) => d.fileName));
+      if (!cancelled && result.ok) setDocuments(result.data);
     });
     return () => {
       cancelled = true;
     };
   }, [submission.id]);
 
+  // Warn before creating a second account for the same business (DOT # or named insured match).
+  const [duplicate, setDuplicate] = useState<DuplicateMatch | null>(null);
+
+  function handleImportClick() {
+    const { accounts, riskProfiles } = useAccountsStore.getState();
+    const match = findLikelyDuplicateAccount(submission, accounts, riskProfiles);
+    if (match) setDuplicate(match);
+    else void handleImport();
+  }
+
   async function handleImport() {
+    setDuplicate(null);
     setBusy('import');
     setError(null);
     const result = await importIntakeSubmission(submission);
@@ -160,8 +243,35 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
       setError(result.message ?? 'Could not import this submission.');
       return;
     }
-    onChanged();
-    if (result.accountId) navigate(`/accounts/${result.accountId}/risk-profile`);
+    // Something needs attention (a file didn't come through): stay here and say so.
+    if (result.warning) {
+      onNotice(`${submission.namedInsured || 'Submission'}: ${result.warning}`);
+      onChanged();
+    } else {
+      onChanged();
+      if (result.accountId) navigate(`/accounts/${result.accountId}/risk-profile`);
+    }
+  }
+
+  function openPreview(d: IntakeDocument) {
+    setPreview({
+      id: d.id,
+      name: d.fileName,
+      fileType: inferFileType(d.fileName),
+      loadBlob: async () => {
+        const res = await downloadIntakeDocumentFile(d);
+        return res.ok ? res.data : null;
+      },
+    });
+  }
+
+  async function download(d: IntakeDocument) {
+    setDownloading(d.id);
+    setError(null);
+    const res = await downloadIntakeDocumentFile(d);
+    setDownloading(null);
+    if (res.ok) saveBlobAs(res.data, d.fileName);
+    else setError(res.message);
   }
 
   async function handleDismiss() {
@@ -173,15 +283,28 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
 
   return (
     <div className="rounded-xl border border-[var(--color-ink-100)] bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <p className="text-sm font-semibold text-[var(--color-ink-900)]">{submission.namedInsured || 'Unnamed submission'}</p>
-          <p className="text-xs text-[var(--color-ink-400)]">
-            {[submission.contactName, submission.contactEmail, submission.contactPhone].filter(Boolean).join(' · ')}
-          </p>
+      {/* Click the header to collapse / expand this client. */}
+      <div
+        onClick={onToggle}
+        className="-m-2 flex cursor-pointer flex-wrap items-start justify-between gap-2 rounded-lg p-2 hover:bg-[var(--color-ink-50)]"
+        title={collapsed ? 'Click to show details' : 'Click to collapse'}
+        aria-expanded={!collapsed}
+      >
+        <div className="flex min-w-0 items-start gap-1.5">
+          {collapsed ? <ChevronRight size={16} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" /> : <ChevronDown size={16} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-[var(--color-ink-900)]">{submission.namedInsured || 'Unnamed submission'}</p>
+            <p className="text-xs text-[var(--color-ink-400)]">
+              {[submission.contactName, submission.contactEmail, submission.contactPhone].filter(Boolean).join(' · ')}
+              {collapsed && documents && documents.length > 0 && ` · ${documents.length} document${documents.length === 1 ? '' : 's'}`}
+            </p>
+          </div>
         </div>
         <p className="text-xs text-[var(--color-ink-400)]">Submitted {formatDate(submission.createdAt)}</p>
       </div>
+
+      {!collapsed && (
+        <>
 
       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
         {submission.dotNumber && <p><span className="text-[var(--color-ink-400)]">DOT:</span> {submission.dotNumber}</p>}
@@ -211,28 +334,36 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
         <p className="mt-3 whitespace-pre-line rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-xs text-[var(--color-ink-600)]">{submission.additionalNotes}</p>
       )}
 
-      {documentNames && documentNames.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-ink-500)]">
-            <FileText size={12} />
-            {documentNames.length} document{documentNames.length === 1 ? '' : 's'} attached:
-          </span>
-          {documentNames.map((name, i) => (
-            <Badge key={i} tone="neutral">
-              {name}
-            </Badge>
-          ))}
+      {documents && documents.length > 0 && (
+        <div className="mt-3">
+          <p className="mb-1.5 text-xs font-medium text-[var(--color-ink-500)]">
+            {documents.length} document{documents.length === 1 ? '' : 's'} attached
+          </p>
+          <ul className="flex flex-col gap-1.5">
+            {documents.map((d) => (
+              <li key={d.id} className="flex items-center gap-2 rounded-lg border border-[var(--color-ink-100)] px-3 py-1.5 text-sm">
+                <FileText size={14} className="shrink-0 text-[var(--color-ink-400)]" />
+                <button onClick={() => openPreview(d)} className="min-w-0 flex-1 truncate text-left text-[var(--color-ink-800)] hover:text-[var(--color-brand-700)] hover:underline cursor-pointer" title="Preview">
+                  {d.fileName}
+                </button>
+                <Button size="sm" variant="ghost" icon={<Eye size={13} />} onClick={() => openPreview(d)}>
+                  Preview
+                </Button>
+                <Button size="sm" variant="ghost" icon={downloading === d.id ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} disabled={downloading === d.id} onClick={() => download(d)}>
+                  Download
+                </Button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
-      {documentNames && documentNames.length === 0 && (
-        <p className="mt-3 text-xs italic text-[var(--color-ink-400)]">No documents attached.</p>
-      )}
+      {documents && documents.length === 0 && <p className="mt-3 text-xs italic text-[var(--color-ink-400)]">No documents attached.</p>}
 
       {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]">{error}</p>}
 
       {submission.status === 'pending' && (
         <div className="mt-4 flex gap-2 border-t border-[var(--color-ink-100)] pt-3">
-          <Button size="sm" disabled={busy !== null} onClick={handleImport}>
+          <Button size="sm" disabled={busy !== null} onClick={handleImportClick}>
             {busy === 'import' ? 'Importing…' : 'Import'}
           </Button>
           <Button size="sm" variant="ghost" icon={<X size={13} />} disabled={busy !== null} onClick={handleDismiss}>
@@ -240,13 +371,36 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
           </Button>
         </div>
       )}
-      {submission.status === 'imported' && submission.importedAccountId && (
-        <div className="mt-4 border-t border-[var(--color-ink-100)] pt-3">
-          <Button size="sm" variant="secondary" onClick={() => navigate(`/accounts/${submission.importedAccountId}/risk-profile`)}>
-            View Submission
+      <ConfirmDialog
+        open={!!duplicate}
+        onCancel={() => setDuplicate(null)}
+        onConfirm={() => void handleImport()}
+        title="Possible duplicate account"
+        description={
+          duplicate
+            ? `You already have "${duplicate.account.namedInsured}" (${duplicate.reason}). Import this submission as another account anyway?`
+            : ''
+        }
+        confirmLabel="Import anyway"
+        cancelLabel="Don't import"
+        variant="default"
+      />
+      {submission.status !== 'pending' && (
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-ink-100)] pt-3">
+          {submission.status === 'imported' && submission.importedAccountId && (
+            <Button size="sm" variant="secondary" onClick={() => navigate(`/accounts/${submission.importedAccountId}/risk-profile`)}>
+              View Submission
+            </Button>
+          )}
+          {/* Import again — e.g. the files didn't come through, or the account was removed. Warns first if an account for this business already exists. */}
+          <Button size="sm" variant="secondary" icon={busy === 'import' ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} disabled={busy !== null} onClick={handleImportClick}>
+            {busy === 'import' ? 'Importing…' : 'Reimport'}
           </Button>
         </div>
       )}
+        </>
+      )}
+      <DocumentPreviewModal doc={preview} onClose={() => setPreview(null)} />
     </div>
   );
 }
@@ -256,6 +410,8 @@ function SubmissionsSection({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<IntakeSubmissionStatus>('pending');
+  const [collapsed, toggleCollapsed] = useCollapsedSubmissions();
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -267,6 +423,8 @@ function SubmissionsSection({ userId }: { userId: string }) {
     }
     setLoadError(null);
     setSubmissions(result.data);
+    // Keeps the sidebar's pending dot in step right after an import / dismiss.
+    useAccountsStore.getState().setPendingIntakeCount(result.data.filter((x) => x.status === 'pending').length);
   }, [userId]);
 
   useEffect(() => {
@@ -283,6 +441,15 @@ function SubmissionsSection({ userId }: { userId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {notice && (
+        <div className="flex items-start gap-2 rounded-lg border border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/40 px-3 py-2 text-sm text-[var(--color-ink-800)]">
+          <FileWarning size={16} className="mt-0.5 shrink-0 text-[var(--color-warning-600)]" />
+          <p className="flex-1">{notice}</p>
+          <button onClick={() => setNotice(null)} className="rounded p-0.5 text-[var(--color-ink-400)] hover:text-[var(--color-ink-700)] cursor-pointer" aria-label="Dismiss message">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <Tabs items={FILTER_ORDER.map((key) => ({ key, label: FILTER_LABELS[key], count: counts[key] }))} active={filter} onChange={(k) => setFilter(k as IntakeSubmissionStatus)} />
       {loading ? (
         <Skeleton variant="block" className="h-32 w-full" />
@@ -293,7 +460,7 @@ function SubmissionsSection({ userId }: { userId: string }) {
       ) : (
         <div className="flex flex-col gap-3">
           {filtered.map((s) => (
-            <SubmissionCard key={s.id} submission={s} onChanged={load} />
+            <SubmissionCard key={s.id} submission={s} onChanged={load} onNotice={setNotice} collapsed={collapsed.has(s.id)} onToggle={() => toggleCollapsed(s.id)} />
           ))}
         </div>
       )}
@@ -305,7 +472,7 @@ export function IntakeLinksPage() {
   const session = useBrokerSession();
 
   return (
-    <PageContainer title="Submission Intake" description="Let an agency, safety company, or client submit a new account directly — no Renewal IQ login required.">
+    <PageContainer title="Submission Intake">
       {session.status === 'loading' && (
         <div className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
           <Loader2 size={16} className="animate-spin" />

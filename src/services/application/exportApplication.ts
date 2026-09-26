@@ -1,7 +1,12 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
-import type { MappedApplication } from '../../types';
+import type { MappedApplication, MappedField } from '../../types';
 import { applicationTitleFor } from './applicationTitle';
 import { DEFAULT_APPLICATION_BRANDING, type ApplicationBranding } from './branding';
+
+/** Only fields with real data go on an exported application — never a blank or a broker-only placeholder. */
+function hasData(f: MappedField): boolean {
+  return f.status !== 'missing' && !f.isPlaceholder && !!f.value?.trim();
+}
 
 const PAGE_WIDTH = 612; // US Letter, points
 const PAGE_HEIGHT = 792;
@@ -160,11 +165,10 @@ export async function generateApplicationPdf(
 
   // --- Scalar sections, two columns ---
   for (const section of application.sections) {
-    // An optional field with nothing in it doesn't get a row at all — no blank label, no "Not
-    // provided" placeholder, nothing. A required field still renders (blank) even when empty, since
-    // silently hiding an incomplete required field would misrepresent the application as more
-    // complete than it is; that gap belongs in the broker's "What's Missing?" panel, not erased here.
-    const fieldsToRender = section.fields.filter((f) => f.required || f.value);
+    // Only fields that have data are printed — an empty field (required or not) gets no row at all,
+    // and a section with nothing filled is left out. What's still missing is shown to the broker in
+    // the "What's Missing?" panel, not on the application.
+    const fieldsToRender = section.fields.filter(hasData);
     if (fieldsToRender.length === 0) continue;
 
     const colWidth = CONTENT_WIDTH / 2;
@@ -229,7 +233,12 @@ export async function generateApplicationPdf(
   }
 
   // --- Table sections ---
-  for (const table of application.tableSections) {
+  for (const fullTable of application.tableSections) {
+    // Same rule for itemized sections: drop columns that are empty on every row, and empty rows.
+    const filled = (row: (typeof fullTable.rows)[number], key: string) => row.cells[key]?.status !== 'missing' && !!row.cells[key]?.value?.trim();
+    const columns = fullTable.columns.filter((col) => fullTable.rows.some((row) => filled(row, col.key)));
+    const table = { ...fullTable, columns, rows: fullTable.rows.filter((row) => columns.some((col) => filled(row, col.key))) };
+    if (table.columns.length === 0) continue;
     const colWidth = CONTENT_WIDTH / table.columns.length;
     const usableWidth = colWidth - TABLE_COLUMN_GUTTER;
 
@@ -307,32 +316,34 @@ export async function generateApplicationPdf(
   return doc.save();
 }
 
-export function generateApplicationJson(application: MappedApplication): string {
-  return JSON.stringify(application, null, 2);
-}
-
 function csvEscape(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
-/** Flat CSV — one row per scalar field, plus one row per itemized cell — for debugging/testing, not intended as the primary deliverable. */
-export function generateApplicationCsv(application: MappedApplication): string {
-  const rows: string[][] = [['Section', 'Field', 'Value', 'Status']];
+/**
+ * The application as a spreadsheet a broker can send to a carrier or client: a title, then each
+ * section as a heading followed by "Field, Value" rows, then each itemized list (drivers, vehicles,
+ * losses) as its own small table with real column headers. Same rule as the PDF — only filled-in
+ * data, no internal statuses. Starts with a UTF-8 BOM so Excel shows characters like "—" correctly.
+ */
+export function generateApplicationCsv(application: MappedApplication, accountName: string): string {
+  const rows: string[][] = [[applicationTitleFor(accountName, application.templateName)], [`Generated ${new Date(application.generatedAt).toLocaleDateString('en-US')}`]];
 
   for (const section of application.sections) {
-    for (const field of section.fields) {
-      rows.push([section.title, field.targetLabel, field.value, field.status]);
-    }
+    const fields = section.fields.filter(hasData);
+    if (fields.length === 0) continue;
+    rows.push([], [section.title], ['Field', 'Value']);
+    for (const field of fields) rows.push([field.targetLabel, field.value]);
   }
 
   for (const table of application.tableSections) {
-    table.rows.forEach((row, i) => {
-      for (const col of table.columns) {
-        const cell = row.cells[col.key];
-        rows.push([table.title, `Row ${i + 1} — ${col.label}`, cell?.value ?? '', cell?.status ?? 'missing']);
-      }
-    });
+    const filled = (row: (typeof table.rows)[number], key: string) => row.cells[key]?.status !== 'missing' && !!row.cells[key]?.value?.trim();
+    const columns = table.columns.filter((col) => table.rows.some((row) => filled(row, col.key)));
+    const dataRows = table.rows.filter((row) => columns.some((col) => filled(row, col.key)));
+    if (columns.length === 0 || dataRows.length === 0) continue;
+    rows.push([], [table.title], columns.map((c) => c.label));
+    for (const row of dataRows) rows.push(columns.map((c) => (filled(row, c.key) ? row.cells[c.key]!.value : '')));
   }
 
-  return rows.map((r) => r.map(csvEscape).join(',')).join('\n');
+  return '\uFEFF' + rows.map((r) => r.map(csvEscape).join(',')).join('\r\n');
 }

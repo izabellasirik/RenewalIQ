@@ -2,19 +2,35 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
   Account,
+  AccountNote,
   ActivityEvent,
   ActivityEventType,
   AppetiteRecord,
+  AccountStage,
+  AssignedBroker,
+  Contact,
   CoverageLine,
   CoverageType,
   DriverEntry,
   LossEntry,
+  MarketQuote,
+  QuoteOption,
+  FollowUp,
   MatchResult,
+  MissingItem,
+  MissingItemStatus,
+  MissingItemType,
+  QuoteStatus,
   RiskProfile,
   UploadedDocument,
   VehicleEntry,
 } from '../types';
-import { emptyField } from '../types';
+import { emptyField, ACCOUNT_STAGE_LABELS, AWAITING_CARRIER_STATUSES, MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
+import { getAccountContacts } from '../services/workflow/contacts';
+import { addBusinessDays, formatShortDate, todayKey } from '../services/workflow/dates';
+import { carriersFor, findRequirement, forwardedAt, normalizeMissingItems } from '../services/workflow/requirementKey';
+import { CHECKLIST_TEMPLATES, expandTemplate, findTemplateItem } from '../services/workflow/checklistTemplates';
+import { DocumentLinkError } from '../services/ingestion/documentLinks';
 import type { FieldResolution } from '../services/extraction';
 import {
   createEmptyRiskProfile,
@@ -41,7 +57,11 @@ import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
 import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { isSupabaseConfigured } from '../services/supabase/client';
+import type { MyProfile } from '../services/supabase/profileRepo';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
+import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
+import { inferFileType as inferQuoteFileType } from '../utils/documents';
+import { actionDoneKey, type ActionItem } from '../services/workflow/nextActions';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
 
@@ -51,6 +71,12 @@ interface AccountsState {
   riskProfiles: Record<string, RiskProfile>;
   matchResults: Record<string, MatchResult[]>;
   activityLog: Record<string, ActivityEvent[]>;
+  /** Account workflow (see types/workflow.ts): the submission checklist / missing items per account, including items a carrier asked for. Persisted and cloud-synced with the submission. */
+  missingItems: Record<string, MissingItem[]>;
+  /** Markets the account has been (or will be) submitted to, and where each one stands. Persisted and cloud-synced with the submission. */
+  quotes: Record<string, MarketQuote[]>;
+  /** Manually scheduled follow-ups per account (see types/workflow.ts FollowUp). Persisted and cloud-synced. */
+  followUps: Record<string, FollowUp[]>;
   activeAccountId: string | null;
   /** Base appetite records with any admin-approved Supabase overrides merged on top. Starts as the static base data; `loadEffectiveAppetiteRecords` refreshes it. Never persisted to localStorage — always re-fetched, so a stale override can't get stuck client-side. */
   effectiveAppetiteRecords: AppetiteRecord[];
@@ -61,11 +87,54 @@ interface AccountsState {
   /** Which local account ids are mirrored to the signed-in broker's Supabase account. An id absent here is local-only (this browser only), regardless of whether anyone is currently signed in. Persisted, so the distinction survives a reload. */
   cloudAccountIds: Record<string, true>;
   /** Per-account cloud save status, for the "Saving… / Saved / Failed to save" indicator. Ephemeral — never persisted, since a stale "saving" from a previous session would be meaningless. */
-  syncStatus: Record<string, 'saving' | 'saved' | 'error'>;
+  /** 'retrying': a save failed and is being retried quietly; 'error' only once the quick retries are used up (it keeps retrying slowly). */
+  syncStatus: Record<string, 'saving' | 'retrying' | 'saved' | 'error'>;
+  /** Why the last cloud save for an account failed (e.g. a missing migration), shown behind "Failed to save". Ephemeral. */
+  syncError: Record<string, string>;
   /** Local accounts the signed-in broker explicitly dismissed ("Not now") from the "import to your account" prompt, or already imported — either way, never prompt again for these ids. Persisted. */
   dismissedImportIds: Record<string, true>;
 
-  setCurrentUserId: (userId: string | null) => void;
+  /** The signed-in broker's email, for "by …" in activity. Ephemeral, like currentUserId. */
+  currentUserEmail: string | null;
+  /** The signed-in user's professional profile (full name, work phone, job title) — the name shown for them in Activity and as assigned broker. Ephemeral; loaded after sign-in (see ProfileGate). */
+  myProfile: MyProfile | null;
+  setMyProfile: (profile: MyProfile | null) => void;
+  /** Intake submissions waiting in Pending (kept current by the notification bell). Ephemeral. */
+  pendingIntakeCount: number;
+  setPendingIntakeCount: (n: number) => void;
+  /** Which broker's cloud account each cloud-backed account belongs to — so signing out (or in as someone else) hides it. Persisted. */
+  accountOwners: Record<string, string>;
+  /** Cloud-backed accounts hidden because their owner isn't the one signed in. Kept (not deleted) so nothing unsynced is lost; restored when the owner signs back in. Persisted. */
+  hiddenAccounts: Account[];
+  /** The signed-in user's agency role (0011_agency_roles.sql), or null when they aren't in an agency (or cloud sync is off) — then everything works owner-only, as before. Ephemeral: re-read from the database on every sign-in, never trusted from storage. The database enforces access either way; this only decides which controls to show. */
+  agencyAccess: cloudRepo.AgencyAccess | null;
+  /** Agency members, for an admin's Agent filter / reassignment (RLS returns only yourself to an agent). Ephemeral. */
+  agencyMembers: cloudRepo.AgencyMember[];
+  /** Admin only: gives an account to another agent in the agency (null = unassigned). The database rejects it for anyone else. */
+  assignAccountToAgent: (accountId: string, userId: string | null) => Promise<{ ok: true } | { ok: false; message: string }>;
+  /** The signed-in user whose cloud accounts have finished loading this session (ephemeral) — until then a cloud account's local copy may be stale. */
+  cloudHydratedFor: string | null;
+  /**
+   * Gives an account the standard submission checklist if it has never had one (accounts created
+   * before new accounts got it automatically). Never re-adds a checklist the broker emptied (any
+   * past checklist add/remove in its activity), and waits for a cloud account's data to load so an
+   * empty local copy can't overwrite a checklist saved from another device.
+   */
+  ensureChecklist: (accountId: string) => void;
+  /**
+   * The broker marks a task done. A task with a real finishing action does it (a scheduled
+   * follow-up is completed; "Send X to carrier" is marked sent); any other task is recorded as done
+   * on the account (it returns if its date or wording changes). Logged to Activity either way.
+   */
+  markActionDone: (action: ActionItem) => void;
+  /** Account notes (Workspace → Notes) — written by people, kept apart from Activity. */
+  addAccountNote: (accountId: string, text: string) => void;
+  updateAccountNote: (accountId: string, noteId: string, text: string) => void;
+  /** Undo "mark done" on a task (by its actionDoneKey) — it shows up again under Action required. */
+  undoActionDone: (accountId: string, key: string, title: string) => void;
+  /** Undo a completed follow-up. */
+  reopenFollowUp: (accountId: string, followUpId: string) => void;
+  setCurrentUserId: (userId: string | null, email?: string | null) => void;
   /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud. Never touches local-only (not-yet-imported) accounts. */
   hydrateCloudSubmissions: () => Promise<void>;
   /** The broker's explicit "Import to account" action from the local-submissions-found prompt — marks each given local account as cloud and pushes its current state up, without waiting to be asked again. */
@@ -81,11 +150,21 @@ interface AccountsState {
     documents: Omit<UploadedDocument, 'accountId'>[],
     profile: RiskProfile,
     files?: File[],
-    contact?: { name?: string; email?: string; phone?: string }
+    contact?: { name?: string; email?: string; phone?: string },
+    /** skipAutoSync: the caller saves it itself with saveAccountNow (e.g. intake import) — avoids two overlapping saves. */
+    options?: { skipAutoSync?: boolean }
   ) => string;
+  /**
+   * Saves one account to the cloud now and waits for the result (the same save syncNow runs in the
+   * background). ok = the account and its Risk Profile data are in the cloud; complete = nothing at
+   * all was left out (false while a workflow migration isn't applied yet). A local-only account
+   * (not signed in / cloud not configured) is ok by definition.
+   */
+  saveAccountNow: (accountId: string) => Promise<{ ok: boolean; complete: boolean; message?: string }>;
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
-  addFiles: (accountId: string, files: File[]) => void;
+  /** Returns the new document ids, in the same order as `files`, so a caller can link one to a checklist item. */
+  addFiles: (accountId: string, files: File[]) => string[];
   loadSampleDocuments: (accountId: string) => Promise<void>;
   /** Removes an uploaded file and safely retracts any extracted data that depended only on it (see removeDocumentFromRiskProfile) — never leaves stale facts pointing at a source that no longer exists. */
   deleteDocument: (accountId: string, documentId: string) => void;
@@ -112,7 +191,53 @@ interface AccountsState {
   archiveAccount: (accountId: string) => void;
   restoreAccount: (accountId: string) => void;
   /** Returns { ok: false, message } if this account is cloud-backed and the cloud deletion fails — local state is left untouched in that case (see the STOP-and-report note in the implementation), so the broker never sees "deleted" when the cloud copy is still there. */
-  deleteAccountPermanently: (accountId: string) => Promise<{ ok: boolean; message?: string }>;
+  /** `options.noFiles`: the account never had any stored files (e.g. rolling back a just-created intake import), so Storage cleanup is skipped. */
+  deleteAccountPermanently: (accountId: string, options?: { noFiles?: boolean }) => Promise<{ ok: boolean; message?: string }>;
+
+  // --- Account workflow (contacts, checklist, markets & quotes) ------------------------------
+  updateAccountInfo: (accountId: string, patch: { namedInsured?: string; state?: string }) => void;
+  setAssignedBroker: (accountId: string, broker: AssignedBroker | null) => void;
+  addContact: (accountId: string, contact: Omit<Contact, 'id'>) => string;
+  updateContact: (accountId: string, contactId: string, patch: Partial<Omit<Contact, 'id'>>) => void;
+  deleteContact: (accountId: string, contactId: string) => void;
+  addMissingItems: (accountId: string, seeds: MissingItemSeed[]) => string[];
+  updateMissingItem: (accountId: string, itemId: string, patch: Partial<Pick<MissingItem, 'label' | 'type' | 'notes' | 'followUpDate' | 'documentId'>>) => void;
+  /** The broker sent the client a request (the email itself is sent outside Renewal IQ). */
+  markItemsRequested: (accountId: string, itemIds: string[], opts: { contactId?: string; followUpDate?: string }) => void;
+  markItemReceived: (accountId: string, itemId: string, opts?: { documentId?: string }) => void;
+  /** Set a checklist item's status directly (the broker's manual override of the request/receive flow). */
+  setItemStatus: (accountId: string, itemId: string, status: MissingItemStatus) => void;
+  /** Set the account's pipeline status by hand; null returns it to automatic. */
+  setAccountStage: (accountId: string, stage: AccountStage | null) => void;
+  deleteMissingItem: (accountId: string, itemId: string) => void;
+  /** A received carrier-requested item was passed on to one carrier that asked for it. `quoteId` may be omitted when exactly one carrier is still waiting on it. */
+  markItemSentToCarrier: (accountId: string, itemId: string, quoteId?: string) => void;
+  addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
+  updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason'>>) => void;
+  addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
+  addFollowUp: (accountId: string, input: { subject: string; dueDate: string; notes?: string }) => string;
+  updateFollowUp: (accountId: string, followUpId: string, patch: Partial<Pick<FollowUp, 'subject' | 'dueDate' | 'notes'>>) => void;
+  completeFollowUp: (accountId: string, followUpId: string) => void;
+  deleteFollowUp: (accountId: string, followUpId: string) => void;
+  /** Reschedule the client follow-up for several requested items at once (one request email = one follow-up). */
+  setItemsFollowUp: (accountId: string, itemIds: string[], followUpDate: string) => void;
+  /** Record one quote from a market (a market can return several), optionally with the quote file. Marks the market Quoted. */
+  addQuoteOption: (accountId: string, quoteId: string, input: { label?: string; premium?: number; notes?: string; file?: File }) => string;
+  attachQuoteFile: (accountId: string, quoteId: string, optionId: string, file: File) => void;
+  selectQuoteOption: (accountId: string, quoteId: string, optionId: string) => void;
+  deleteQuoteOption: (accountId: string, quoteId: string, optionId: string) => void;
+  deleteQuote: (accountId: string, quoteId: string) => void;
+  /** A carrier/MGA asked for more — links the carrier to the account's existing requirement for that document (same logical requirement, see requirementKey), or creates it; flags the quote. Returns the item id. */
+  recordCarrierRequest: (accountId: string, quoteId: string, input: { label: string; type: MissingItemType; notes?: string }) => string;
+}
+
+export interface MissingItemSeed {
+  label: string;
+  type: MissingItemType;
+  templateKey?: string;
+  neededByQuoteId?: string;
+  notes?: string;
+  status?: MissingItemStatus;
 }
 
 function newAccount(namedInsured: string, state: string): Account {
@@ -132,11 +257,140 @@ function touchAccount(accounts: Account[], accountId: string): Account[] {
   return accounts.map((a) => (a.id === accountId ? { ...a, updatedAt: new Date().toISOString() } : a));
 }
 
+/** Who's signed in, stamped on every activity event as it's created (kept current by setCurrentUserId / hydrate). */
+let currentActor: { id: string; name: string } | null = null;
+
 function appendEvent(log: Record<string, ActivityEvent[]>, accountId: string, type: ActivityEventType, message: string): Record<string, ActivityEvent[]> {
-  const event: ActivityEvent = { id: generateId('evt'), accountId, type, message, timestamp: new Date().toISOString() };
+  const event: ActivityEvent = {
+    id: generateId('evt'),
+    accountId,
+    type,
+    message,
+    timestamp: new Date().toISOString(),
+    ...(currentActor ? { actorId: currentActor.id, actorName: currentActor.name } : {}),
+  };
   const existing = log[accountId] ?? [];
-  return { ...log, [accountId]: [...existing, event].slice(-MAX_EVENTS_PER_ACCOUNT) };
+  return { ...log, [accountId]: trimEvents([...existing, event]) };
 }
+
+/**
+ * Keeps the local log bounded. Technical events (matching_run fires on every edit) are dropped
+ * first, oldest first, so broker-meaningful workflow history isn't pushed out by noise. The cloud
+ * copy is append-only and unaffected.
+ */
+function trimEvents(events: ActivityEvent[]): ActivityEvent[] {
+  if (events.length <= MAX_EVENTS_PER_ACCOUNT) return events;
+  let excess = events.length - MAX_EVENTS_PER_ACCOUNT;
+  const kept = events.filter((e) => {
+    if (excess > 0 && !WORKFLOW_EVENT_TYPES.has(e.type)) {
+      excess--;
+      return false;
+    }
+    return true;
+  });
+  return kept.slice(-MAX_EVENTS_PER_ACCOUNT);
+}
+
+/**
+ * Which accounts this browser should show: every local-only account, plus cloud accounts that
+ * belong to whoever is signed in (or whose owner isn't recorded yet — accounts synced before
+ * owners were tracked, claimed on their next save). Everything else is set aside, not deleted.
+ */
+function partitionAccounts(all: Account[], cloudAccountIds: Record<string, true>, owners: Record<string, string>, userId: string | null): { accounts: Account[]; hiddenAccounts: Account[] } {
+  const seen = new Set<string>();
+  const accounts: Account[] = [];
+  const hiddenAccounts: Account[] = [];
+  for (const a of all) {
+    if (seen.has(a.id)) continue;
+    seen.add(a.id);
+    const visible = !cloudAccountIds[a.id] || (!!userId && (owners[a.id] === undefined || owners[a.id] === userId));
+    (visible ? accounts : hiddenAccounts).push(a);
+  }
+  return { accounts, hiddenAccounts };
+}
+
+/** Local state with these accounts and everything hanging off them removed (not the cloud copy). */
+function withoutAccounts(st: AccountsState, ids: Set<string>): Partial<AccountsState> {
+  const drop = <T,>(rec: Record<string, T>) => Object.fromEntries(Object.entries(rec).filter(([k]) => !ids.has(k))) as Record<string, T>;
+  return {
+    accounts: st.accounts.filter((a) => !ids.has(a.id)),
+    hiddenAccounts: st.hiddenAccounts.filter((a) => !ids.has(a.id)),
+    documents: drop(st.documents),
+    riskProfiles: drop(st.riskProfiles),
+    matchResults: drop(st.matchResults),
+    activityLog: drop(st.activityLog),
+    missingItems: drop(st.missingItems),
+    quotes: drop(st.quotes),
+    followUps: drop(st.followUps),
+    cloudAccountIds: drop(st.cloudAccountIds),
+    accountOwners: drop(st.accountOwners),
+    syncStatus: drop(st.syncStatus),
+    syncError: drop(st.syncError),
+    activeAccountId: st.activeAccountId && ids.has(st.activeAccountId) ? null : st.activeAccountId,
+  };
+}
+
+/**
+ * The standard submission checklist a new account starts with (the same template as the checklist's
+ * "Start … checklist" button). An item whose document came in with the account — e.g. a loss run
+ * uploaded to create it — starts out received and linked to that document.
+ */
+function defaultChecklist(accountId: string, profile: RiskProfile | undefined, documents: UploadedDocument[], now: string): MissingItem[] {
+  const template = CHECKLIST_TEMPLATES[0];
+  if (!template) return [];
+  const used = new Set<string>();
+  return expandTemplate(template, profile).map((seed) => {
+    const categories = findTemplateItem(seed.templateKey)?.documentCategories ?? [];
+    const doc = categories.length ? documents.find((d) => !used.has(d.id) && d.status !== 'error' && categories.includes(d.category)) : undefined;
+    if (doc) used.add(doc.id);
+    return {
+      id: generateId('item'),
+      accountId,
+      type: seed.type,
+      label: seed.label,
+      status: doc ? 'received' : 'missing',
+      templateKey: seed.templateKey,
+      ...(doc ? { documentId: doc.id, receivedAt: now } : {}),
+      createdAt: now,
+      updatedAt: now,
+    } satisfies MissingItem;
+  });
+}
+
+/** Local file ids (documents + quote attachments) stored in this browser for an account. */
+function localFileIds(st: AccountsState, accountId: string): string[] {
+  return [
+    ...(st.documents[accountId] ?? []).map((d) => d.id),
+    ...(st.quotes[accountId] ?? []).flatMap((q) => (q.options ?? []).flatMap((o) => (o.attachment ? [o.attachment.id] : []))),
+  ];
+}
+
+/** " by Jane Smith" (or their email before they've set a name) — who made the change, when a broker is signed in ("by themselves" reads oddly, so self-assignment says so). */
+function actorSuffix(actorEmail: string | null, subjectEmail?: string): string {
+  if (!actorEmail) return '';
+  if (subjectEmail && subjectEmail.toLowerCase() === actorEmail.toLowerCase()) return ' (self-assigned)';
+  return ` by ${currentActor?.name ?? actorEmail}`;
+}
+
+/** Selected quote's premium, else the newest quote's, else a premium recorded before multiple quotes existed. */
+function headlinePremium(q: MarketQuote): number | undefined {
+  const opts = q.options ?? [];
+  const selected = opts.find((o) => o.id === q.selectedOptionId);
+  if (selected) return selected.premium;
+  const latest = [...opts].reverse().find((o) => o.premium !== undefined);
+  return latest?.premium ?? (opts.length ? undefined : q.premium);
+}
+
+function updateInList<T extends { id: string }>(list: T[] | undefined, id: string, fn: (item: T) => T): T[] {
+  return (list ?? []).map((x) => (x.id === id ? fn(x) : x));
+}
+
+function money(n: number): string {
+  return `$${n.toLocaleString('en-US')}`;
+}
+
+/** Quiet retries after a failed cloud save, then a slow retry for as long as it keeps failing. Tests shorten these. */
+export const SYNC_RETRY = { delaysMs: [2000, 5000, 15000], slowMs: 60000 };
 
 export const useAccountsStore = create<AccountsState>()(
   persist(
@@ -148,18 +402,115 @@ export const useAccountsStore = create<AccountsState>()(
        * immediate source of truth for the current session (see file header in submissionsRepo.ts),
        * this just pushes the resulting state outward and reflects success/failure via syncStatus.
        */
+      /**
+       * In an agency, a new account belongs to whoever creates it — the database's insert trigger
+       * sets the same thing server-side; this just shows it immediately (and keeps the display-only
+       * "Assigned broker" label in step for the existing filters/emails).
+       */
+      function ownedByMe(account: Account): Account {
+        const { agencyAccess, currentUserId, currentUserEmail, agencyMembers } = get();
+        if (!agencyAccess || !currentUserId) return account;
+        const me = agencyMembers.find((m) => m.userId === currentUserId);
+        return {
+          ...account,
+          agencyId: agencyAccess.agencyId,
+          assignedUserId: currentUserId,
+          assignedBroker: { name: get().myProfile?.fullName || me?.name || currentUserEmail || 'Me', email: currentUserEmail ?? undefined, userId: currentUserId },
+        };
+      }
+
+      function recordSync(accountId: string, errorMessage: string | null) {
+        set((st) => {
+          const { [accountId]: _prev, ...rest } = st.syncError;
+          return {
+            syncStatus: { ...st.syncStatus, [accountId]: errorMessage ? 'error' : 'saved' },
+            syncError: errorMessage ? { ...rest, [accountId]: errorMessage } : rest,
+          };
+        });
+      }
+
       function syncNow(accountId: string) {
+        void pushAccount(accountId);
+      }
+
+      /**
+       * Saves are serialized per account (a save waits for the one in flight; bursts of edits
+       * collapse into one follow-up save) — two overlapping full-snapshot saves used to race each
+       * other's delete-and-reinsert. A failed save is retried quietly ('retrying'); only after the
+       * quick retries are used up does the top bar show an error, and it keeps retrying slowly —
+       * any later success clears it. Every failure is still logged to the console for diagnostics.
+       */
+      type PushResult = { coreSaved: boolean; message: string | null } | null;
+      const running: Record<string, Promise<PushResult> | undefined> = {};
+      const queued: Record<string, Promise<PushResult> | undefined> = {};
+      const failStreak: Record<string, number> = {};
+      const retryTimer: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
+
+      function pushAccount(accountId: string): Promise<PushResult> {
+        if (queued[accountId]) return queued[accountId]!;
+        const prev = running[accountId];
+        const p: Promise<PushResult> = (prev ? prev.catch(() => null) : Promise.resolve(null)).then(() => {
+          if (queued[accountId] === p) queued[accountId] = undefined;
+          running[accountId] = p;
+          return pushAccountOnce(accountId);
+        });
+        // Registered right away, so a save requested in the same tick waits for this one.
+        if (prev) queued[accountId] = p;
+        else running[accountId] = p;
+        void p.finally(() => {
+          if (running[accountId] === p) running[accountId] = undefined;
+        });
+        return p;
+      }
+
+      function scheduleRetry(accountId: string) {
+        if (retryTimer[accountId]) clearTimeout(retryTimer[accountId]);
+        const n = failStreak[accountId] ?? 1;
+        const delay = SYNC_RETRY.delaysMs[n - 1] ?? SYNC_RETRY.slowMs;
+        retryTimer[accountId] = setTimeout(() => {
+          retryTimer[accountId] = undefined;
+          void pushAccount(accountId);
+        }, delay);
+      }
+
+      /** One cloud save of an account; resolves with how it went. null = nothing to save (local-only / signed out). */
+      async function pushAccountOnce(accountId: string): Promise<PushResult> {
         const s = get();
-        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return null;
         const account = s.accounts.find((a) => a.id === accountId);
         const profile = s.riskProfiles[accountId];
-        if (!account || !profile) return;
+        if (!account || !profile) return null;
         const userId = s.currentUserId;
-        set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: 'saving' } }));
-        Promise.all([cloudRepo.saveSubmissionSnapshot(userId, account, profile), cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? [])]).then(([snapRes, actRes]) => {
-          const ok = snapRes.ok && actRes.ok;
-          set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
-        });
+        if (retryTimer[accountId]) {
+          clearTimeout(retryTimer[accountId]);
+          retryTimer[accountId] = undefined;
+        }
+        set((st) => ({
+          // While retrying (or after the retries ran out) keep saying so until a save succeeds.
+          syncStatus: st.syncStatus[accountId] === 'retrying' || st.syncStatus[accountId] === 'error' ? st.syncStatus : { ...st.syncStatus, [accountId]: 'saving' },
+          accountOwners: st.accountOwners[accountId] === userId ? st.accountOwners : { ...st.accountOwners, [accountId]: userId },
+        }));
+        const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [], followUps: s.followUps[accountId] ?? [] };
+        // Account row first, then activity: activity_events has a foreign key onto submissions, so
+        // writing both at once on a brand-new account could fail with a confusing secondary error.
+        const snapRes = await cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow);
+        const actRes = snapRes.headerSaved ? await cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []) : null;
+        const message = !snapRes.ok ? snapRes.message : actRes && !actRes.ok ? `Activity history: ${actRes.message}` : null;
+        if (!message) {
+          failStreak[accountId] = 0;
+          recordSync(accountId, null);
+        } else {
+          const n = (failStreak[accountId] ?? 0) + 1;
+          failStreak[accountId] = n;
+          // Never hidden from diagnostics, even while the UI only says "retrying".
+          console.warn(`[RenewalIQ] Cloud save of ${accountId} failed (attempt ${n}):`, message);
+          set((st) => ({
+            syncStatus: { ...st.syncStatus, [accountId]: n > SYNC_RETRY.delaysMs.length ? 'error' : 'retrying' },
+            syncError: { ...st.syncError, [accountId]: message },
+          }));
+          scheduleRetry(accountId);
+        }
+        return { coreSaved: snapRes.coreSaved, message };
       }
 
       /**
@@ -169,11 +520,36 @@ export const useAccountsStore = create<AccountsState>()(
        * Runs after local processing finishes (success or failure) so even a document that failed
        * to read still has its original bytes preserved in the broker's account, not just discarded.
        */
+      /** Keeps a quote file for preview/download: always in this browser, and in the cloud bucket for cloud accounts (path recorded on the attachment). */
+      async function storeQuoteFile(accountId: string, quoteId: string, optionId: string, attachmentId: string, file: File) {
+        await saveLocalFile(attachmentId, file, file.name);
+        const s = get();
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        const res = await cloudRepo.uploadDocumentFile(s.currentUserId, accountId, attachmentId, file);
+        if (!res.ok) return recordSync(accountId, `Uploading ${file.name} failed: ${res.message}`);
+        set((st) => ({
+          quotes: {
+            ...st.quotes,
+            [accountId]: updateInList(st.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              options: (q.options ?? []).map((o) => (o.id === optionId && o.attachment?.id === attachmentId ? { ...o, attachment: { ...o.attachment, storagePath: res.data } } : o)),
+            })),
+          },
+        }));
+        syncNow(accountId);
+      }
+
+      function removeQuoteFile(attachment: { id: string; storagePath?: string }) {
+        void deleteLocalFiles([attachment.id]);
+        if (attachment.storagePath && isSupabaseConfigured && get().currentUserId) void cloudRepo.deleteDocumentFile(attachment.storagePath);
+      }
+
       async function syncDocumentToCloud(accountId: string, documentId: string, file: File) {
         const s = get();
         if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
         const userId = s.currentUserId;
         const uploadResult = await cloudRepo.uploadDocumentFile(userId, accountId, documentId, file);
+        if (!uploadResult.ok) recordSync(accountId, `Uploading ${file.name} failed: ${uploadResult.message}`);
         if (uploadResult.ok) {
           set((st) => ({
             documents: {
@@ -194,19 +570,34 @@ export const useAccountsStore = create<AccountsState>()(
       currentUserId: null,
       cloudAccountIds: {},
       syncStatus: {},
+      syncError: {},
+      currentUserEmail: null,
+      myProfile: null,
+      pendingIntakeCount: 0,
+      setPendingIntakeCount: (n) => set({ pendingIntakeCount: n }),
+      accountOwners: {},
+      hiddenAccounts: [],
+      agencyAccess: null,
+      agencyMembers: [],
+      cloudHydratedFor: null,
       dismissedImportIds: {},
       matchResults: {},
       activityLog: {},
+      missingItems: {},
+      quotes: {},
+      followUps: {},
       activeAccountId: null,
       effectiveAppetiteRecords: sampleAppetiteRecords,
 
       createAccount: (namedInsured, state) => {
-        const account = newAccount(namedInsured, state);
+        const account = ownedByMe(newAccount(namedInsured, state));
         const cloud = isSupabaseConfigured && !!get().currentUserId;
         set((s) => ({
           accounts: [...s.accounts, account],
           riskProfiles: { ...s.riskProfiles, [account.id]: createEmptyRiskProfile(account.id) },
           documents: { ...s.documents, [account.id]: [] },
+          // In the same update as the account, so its first cloud save already includes it.
+          missingItems: { ...s.missingItems, [account.id]: defaultChecklist(account.id, undefined, [], account.createdAt) },
           activityLog: appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`),
           activeAccountId: account.id,
           cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
@@ -215,13 +606,16 @@ export const useAccountsStore = create<AccountsState>()(
         return account.id;
       },
 
-      createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact) => {
+      createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact, options) => {
         const account = {
-          ...newAccount(namedInsured, state),
+          ...ownedByMe(newAccount(namedInsured, state)),
           status: 'documents_uploaded' as const,
           ...(contact?.name ? { contactName: contact.name } : {}),
           ...(contact?.email ? { contactEmail: contact.email } : {}),
           ...(contact?.phone ? { contactPhone: contact.phone } : {}),
+          ...(contact?.name || contact?.email || contact?.phone
+            ? { contacts: [{ id: generateId('contact'), name: contact.name || contact.email || 'Primary contact', email: contact.email, phone: contact.phone, primary: true }] }
+            : {}),
         };
         const finalDocs: UploadedDocument[] = documents.map((d) => ({ ...d, accountId: account.id }));
         const finalProfile: RiskProfile = { ...profile, accountId: account.id };
@@ -244,13 +638,18 @@ export const useAccountsStore = create<AccountsState>()(
             accounts: [...s.accounts, account],
             riskProfiles: { ...s.riskProfiles, [account.id]: finalProfile },
             documents: { ...s.documents, [account.id]: finalDocs },
+            missingItems: { ...s.missingItems, [account.id]: defaultChecklist(account.id, finalProfile, finalDocs, account.createdAt) },
             activityLog: log,
             activeAccountId: account.id,
             cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
           };
         });
         get().runMatching(account.id);
-        syncNow(account.id);
+        if (!options?.skipAutoSync) syncNow(account.id);
+        // Keep the originals in this browser for in-app preview.
+        files?.forEach((file, i) => {
+          if (file && finalDocs[i]) void saveLocalFile(finalDocs[i].id, file, file.name);
+        });
         if (isSupabaseConfigured && get().currentUserId && files) {
           finalDocs.forEach((doc, i) => {
             const file = files[i];
@@ -302,6 +701,9 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog: log,
           };
         });
+
+        // Keep the originals in this browser for in-app preview (fire-and-forget, never blocks extraction).
+        newDocs.forEach((doc, i) => void saveLocalFile(doc.id, files[i], files[i].name));
 
         newDocs.forEach((doc, i) => {
           const file = files[i];
@@ -366,6 +768,11 @@ export const useAccountsStore = create<AccountsState>()(
                         category: contentCategory ?? d.category,
                         extractedFields: results.map((r) => ({ fieldPath: r.fieldPath, value: r.value, confidence: r.confidence, extractionMethod: r.extractionMethod })),
                         candidateNotes,
+                        ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
+                        // Downloaded from a link: name/type/category from the real document, not the shortcut.
+                        ...(raw.linkedFile
+                          ? { name: raw.linkedFile.name, fileType: inferFileType(raw.linkedFile.name), category: contentCategory ?? inferCategory(raw.linkedFile.name), sizeBytes: raw.linkedFile.size }
+                          : {}),
                       }
                     : d
                 );
@@ -381,20 +788,25 @@ export const useAccountsStore = create<AccountsState>()(
                 };
               });
               get().runMatching(accountId);
-              syncDocumentToCloud(accountId, doc.id, file);
+              // A link was downloaded: keep the real document (for preview and the cloud copy), not the shortcut.
+              if (raw.linkedFile) void saveLocalFile(doc.id, raw.linkedFile, raw.linkedFile.name);
+              syncDocumentToCloud(accountId, doc.id, raw.linkedFile ?? file);
             })
             .catch((err) => {
               const message = err instanceof Error ? err.message : 'Could not process this file.';
+              // A link that couldn't be opened: say so plainly and keep the URL — nothing is extracted.
+              const sourceUrl = err instanceof DocumentLinkError ? err.sourceUrl : undefined;
               set((s) => ({
                 documents: {
                   ...s.documents,
-                  [accountId]: (s.documents[accountId] ?? []).map((d) => (d.id === doc.id ? { ...d, status: 'error' as const, warnings: [message] } : d)),
+                  [accountId]: (s.documents[accountId] ?? []).map((d) => (d.id === doc.id ? { ...d, status: 'error' as const, warnings: [message], ...(sourceUrl ? { sourceUrl } : {}) } : d)),
                 },
-                activityLog: appendEvent(s.activityLog, accountId, 'document_processed', `Could not read ${doc.name}.`),
+                activityLog: appendEvent(s.activityLog, accountId, 'document_processed', sourceUrl ? `Could not access the document linked in ${doc.name}.` : `Could not read ${doc.name}.`),
               }));
               syncDocumentToCloud(accountId, doc.id, file);
             });
         });
+        return newDocs.map((d) => d.id);
       },
 
       loadSampleDocuments: async (accountId) => {
@@ -409,6 +821,7 @@ export const useAccountsStore = create<AccountsState>()(
       },
 
       deleteDocument: (accountId, documentId) => {
+        void deleteLocalFiles([documentId]);
         const before = get().documents[accountId] ?? [];
         const doc = before.find((d) => d.id === documentId);
         set((s) => {
@@ -418,6 +831,9 @@ export const useAccountsStore = create<AccountsState>()(
           const updatedProfile = profile ? removeDocumentFromRiskProfile({ ...profile }, documentId) : profile;
           return {
             documents: { ...s.documents, [accountId]: docs.filter((d) => d.id !== documentId) },
+            missingItems: s.missingItems[accountId]
+              ? { ...s.missingItems, [accountId]: s.missingItems[accountId].map((i) => (i.documentId === documentId ? { ...i, documentId: undefined } : i)) }
+              : s.missingItems,
             riskProfiles: updatedProfile ? { ...s.riskProfiles, [accountId]: updatedProfile } : s.riskProfiles,
             accounts: touchAccount(s.accounts, accountId),
             activityLog: appendEvent(s.activityLog, accountId, 'document_deleted', `Deleted ${doc.name}. Data that depended only on this file was removed or updated; broker-confirmed values were kept.`),
@@ -429,8 +845,7 @@ export const useAccountsStore = create<AccountsState>()(
         if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId] && doc) {
           Promise.all([doc.storagePath ? cloudRepo.deleteDocumentFile(doc.storagePath) : Promise.resolve({ ok: true as const, data: undefined }), cloudRepo.deleteDocumentRow(documentId)]).then(
             ([fileRes, rowRes]) => {
-              const ok = fileRes.ok && rowRes.ok;
-              set((st) => ({ syncStatus: { ...st.syncStatus, [accountId]: ok ? 'saved' : 'error' } }));
+              recordSync(accountId, !fileRes.ok ? fileRes.message : !rowRes.ok ? rowRes.message : null);
             }
           );
         }
@@ -715,9 +1130,12 @@ export const useAccountsStore = create<AccountsState>()(
 
         const newId = generateId('acct');
         const now = new Date().toISOString();
-        const clonedAccount: Account = { ...source, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false };
+        // A copy is a new, local-only account — it doesn't inherit the source's cloud agency assignment.
+        const { agencyId: _agencyId, assignedUserId: _assignedUserId, ...sourceFields } = source;
+        const clonedAccount: Account = { ...sourceFields, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false };
         const clonedProfile: RiskProfile = { ...sourceProfile, id: generateId('risk'), accountId: newId, updatedAt: now };
         const clonedDocs = (s.documents[accountId] ?? []).map((d) => ({ ...d, id: generateId('doc'), accountId: newId }));
+        (s.documents[accountId] ?? []).forEach((d, i) => void copyLocalFile(d.id, clonedDocs[i].id));
 
         set((state) => ({
           accounts: [...state.accounts, clonedAccount],
@@ -740,65 +1158,982 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
-      deleteAccountPermanently: async (accountId) => {
+      deleteAccountPermanently: async (accountId, options) => {
         const s = get();
         // A cloud-backed submission: remove the cloud copy FIRST (Storage objects, then the
         // database row, which cascades to every dependent table) before touching local state. If
         // either cloud step fails, local state is left completely untouched and the broker sees a
         // real error — never a "deleted" submission that quietly still exists in their account.
         if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId]) {
-          const filesResult = await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
+          const filesResult = options?.noFiles ? ({ ok: true } as const) : await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
           if (!filesResult.ok) return { ok: false, message: `Couldn't remove this submission's files from your account: ${filesResult.message}` };
+          // Files other agency members uploaded to this account live under their own folder
+          // ({uploader}/{account}/…) — remove those by their recorded paths too (RLS allows it for
+          // anyone who can access the account).
+          const otherPaths = [
+            ...(s.documents[accountId] ?? []).map((d) => d.storagePath),
+            ...(s.quotes[accountId] ?? []).flatMap((q) => (q.options ?? []).map((o) => o.attachment?.storagePath)),
+          ].filter((path): path is string => !!path && !path.startsWith(`${s.currentUserId}/`));
+          await Promise.all(otherPaths.map((path) => cloudRepo.deleteDocumentFile(path)));
           const deleteResult = await cloudRepo.deleteSubmissionCloud(accountId);
           if (!deleteResult.ok) return { ok: false, message: `Couldn't delete this submission from your account: ${deleteResult.message}` };
         }
 
-        set((st) => {
-          const { [accountId]: _doc, ...documents } = st.documents;
-          const { [accountId]: _profile, ...riskProfiles } = st.riskProfiles;
-          const { [accountId]: _matches, ...matchResults } = st.matchResults;
-          const { [accountId]: _log, ...activityLog } = st.activityLog;
-          const { [accountId]: _cloud, ...cloudAccountIds } = st.cloudAccountIds;
-          const { [accountId]: _sync, ...syncStatus } = st.syncStatus;
-          return {
-            accounts: st.accounts.filter((a) => a.id !== accountId),
-            documents,
-            riskProfiles,
-            matchResults,
-            activityLog,
-            cloudAccountIds,
-            syncStatus,
-            activeAccountId: st.activeAccountId === accountId ? null : st.activeAccountId,
-          };
-        });
+        void deleteLocalFiles(localFileIds(s, accountId));
+        set((st) => withoutAccounts(st, new Set([accountId])));
         return { ok: true };
       },
 
-      setCurrentUserId: (userId) => set({ currentUserId: userId }),
+      // --- Account workflow -------------------------------------------------------------------
+      // Every action below updates the record, appends a broker-meaningful activity event, and
+      // pushes the submission to the cloud (a no-op for local-only accounts) — same pattern as the
+      // Risk Profile edits above.
+
+      updateAccountInfo: (accountId, patch) => {
+        const before = get().accounts.find((a) => a.id === accountId);
+        if (!before) return;
+        const changes: string[] = [];
+        if (patch.namedInsured !== undefined && patch.namedInsured.trim() && patch.namedInsured.trim() !== before.namedInsured) changes.push(`named insured to "${patch.namedInsured.trim()}"`);
+        if (patch.state !== undefined && patch.state !== before.state) changes.push(`state to ${patch.state || '—'}`);
+        if (changes.length === 0) return;
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) =>
+              a.id === accountId
+                ? { ...a, ...(patch.namedInsured?.trim() ? { namedInsured: patch.namedInsured.trim() } : {}), ...(patch.state !== undefined ? { state: patch.state } : {}) }
+                : a
+            ),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'account_updated', `Changed ${changes.join(' and ')}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      setAssignedBroker: (accountId, broker) => {
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, assignedBroker: broker ?? undefined } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'broker_assigned',
+            `${broker ? `Assigned to ${broker.name}` : 'Removed the assigned broker'}${actorSuffix(s.currentUserEmail, broker?.email)}.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      addContact: (accountId, contact) => {
+        const id = generateId('contact');
+        set((s) => {
+          const account = s.accounts.find((a) => a.id === accountId);
+          if (!account) return {};
+          let contacts = [...getAccountContacts(account)];
+          const makePrimary = contact.primary || contacts.length === 0;
+          if (makePrimary) contacts = contacts.map((c) => ({ ...c, primary: false }));
+          contacts.push({ ...contact, id, primary: makePrimary });
+          return {
+            accounts: touchAccount(s.accounts.map((a) => (a.id === accountId ? { ...a, contacts } : a)), accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'contact_added', `Added contact ${contact.name}${contact.role ? ` (${contact.role})` : ''}.`),
+          };
+        });
+        syncNow(accountId);
+        return id;
+      },
+
+      updateContact: (accountId, contactId, patch) => {
+        set((s) => {
+          const account = s.accounts.find((a) => a.id === accountId);
+          if (!account) return {};
+          let contacts = getAccountContacts(account).map((c) => (c.id === contactId ? { ...c, ...patch } : c));
+          if (patch.primary) contacts = contacts.map((c) => ({ ...c, primary: c.id === contactId }));
+          const name = contacts.find((c) => c.id === contactId)?.name ?? 'contact';
+          return {
+            accounts: touchAccount(s.accounts.map((a) => (a.id === accountId ? { ...a, contacts } : a)), accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'contact_updated', patch.primary && Object.keys(patch).length === 1 ? `Made ${name} the primary contact.` : `Updated contact ${name}.`),
+          };
+        });
+        syncNow(accountId);
+      },
+
+      deleteContact: (accountId, contactId) => {
+        set((s) => {
+          const account = s.accounts.find((a) => a.id === accountId);
+          if (!account) return {};
+          const existing = getAccountContacts(account);
+          const removed = existing.find((c) => c.id === contactId);
+          let contacts = existing.filter((c) => c.id !== contactId);
+          if (removed?.primary && contacts.length > 0 && !contacts.some((c) => c.primary)) contacts = contacts.map((c, i) => ({ ...c, primary: i === 0 }));
+          return {
+            // Legacy single-contact fields are cleared too, so a removed legacy contact doesn't reappear via the fallback.
+            accounts: touchAccount(
+              s.accounts.map((a) => (a.id === accountId ? { ...a, contacts, contactName: undefined, contactEmail: undefined, contactPhone: undefined } : a)),
+              accountId
+            ),
+            activityLog: appendEvent(s.activityLog, accountId, 'contact_removed', `Removed contact ${removed?.name ?? ''}.`.replace(' .', '.')),
+          };
+        });
+        syncNow(accountId);
+      },
+
+      addMissingItems: (accountId, seeds) => {
+        if (seeds.length === 0) return [];
+        const now = new Date().toISOString();
+        // One row per logical requirement: a seed matching an existing item (or an earlier seed in
+        // this batch) reuses it — only linking its carrier, if it names one — instead of adding a row.
+        let list = [...(get().missingItems[accountId] ?? [])];
+        const created: MissingItem[] = [];
+        const ids: string[] = [];
+        for (const seed of seeds) {
+          const existing = findRequirement(list, seed);
+          if (existing) {
+            ids.push(existing.id);
+            const linkCarrier = !!seed.neededByQuoteId && !carriersFor(existing).includes(seed.neededByQuoteId);
+            // A template seed adopts the matching manual/carrier row, so it gets the template's document suggestions.
+            const adoptTemplate = !!seed.templateKey && !existing.templateKey;
+            if (linkCarrier || adoptTemplate) {
+              list = list.map((i) =>
+                i.id === existing.id
+                  ? {
+                      ...i,
+                      ...(linkCarrier ? { neededByQuoteIds: [...carriersFor(i), seed.neededByQuoteId!] } : {}),
+                      ...(adoptTemplate ? { templateKey: seed.templateKey } : {}),
+                      updatedAt: now,
+                    }
+                  : i
+              );
+            }
+            continue;
+          }
+          const item: MissingItem = {
+            id: generateId('item'),
+            accountId,
+            type: seed.type,
+            label: seed.label,
+            status: seed.status ?? 'missing',
+            templateKey: seed.templateKey,
+            neededByQuoteIds: seed.neededByQuoteId ? [seed.neededByQuoteId] : undefined,
+            notes: seed.notes,
+            ...(seed.status === 'received' ? { receivedAt: now } : {}),
+            createdAt: now,
+            updatedAt: now,
+          };
+          created.push(item);
+          list.push(item);
+          ids.push(item.id);
+        }
+        if (created.length === 0) {
+          set((s) => ({ missingItems: { ...s.missingItems, [accountId]: list } }));
+          syncNow(accountId);
+          return ids;
+        }
+        set((s) => ({
+          missingItems: { ...s.missingItems, [accountId]: list },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'item_added',
+            created.length === 1 ? `Added "${created[0].label}" to the checklist.` : `Added ${created.length} items to the checklist: ${created.map((i) => i.label).join(', ')}.`
+          ),
+        }));
+        syncNow(accountId);
+        return ids;
+      },
+
+      updateMissingItem: (accountId, itemId, patch) => {
+        const before = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!before) return;
+        set((s) => {
+          let log = s.activityLog;
+          if (patch.followUpDate !== undefined && patch.followUpDate !== before.followUpDate) {
+            log = appendEvent(
+              log,
+              accountId,
+              'follow_up_scheduled',
+              patch.followUpDate ? `Client follow-up for "${before.label}" set for ${formatShortDate(patch.followUpDate)}.` : `Cleared the follow-up date for "${before.label}".`
+            );
+          }
+          if (patch.label !== undefined && patch.label !== before.label) log = appendEvent(log, accountId, 'item_added', `Renamed checklist item "${before.label}" to "${patch.label}".`);
+          return {
+            // Renaming can make two rows the same requirement ("App" → "Application") — merge them.
+            missingItems: { ...s.missingItems, [accountId]: normalizeMissingItems(updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, ...patch, updatedAt: new Date().toISOString() }))) },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+      },
+
+      markItemsRequested: (accountId, itemIds, { contactId, followUpDate }) => {
+        const s0 = get();
+        const account = s0.accounts.find((a) => a.id === accountId);
+        const items = (s0.missingItems[accountId] ?? []).filter((i) => itemIds.includes(i.id));
+        if (!account || items.length === 0) return;
+        const contact = getAccountContacts(account).find((c) => c.id === contactId);
+        const now = new Date().toISOString();
+        set((s) => {
+          let log = appendEvent(
+            s.activityLog,
+            accountId,
+            'item_requested',
+            `Requested ${items.map((i) => i.label).join(', ')} from ${contact ? contact.name : 'the client'}.`
+          );
+          if (followUpDate) log = appendEvent(log, accountId, 'follow_up_scheduled', `Client follow-up scheduled for ${formatShortDate(followUpDate)}.`);
+          return {
+            missingItems: {
+              ...s.missingItems,
+              [accountId]: (s.missingItems[accountId] ?? []).map((i) =>
+                itemIds.includes(i.id) ? { ...i, status: 'requested' as const, requestedAt: now, requestedFromContactId: contactId, followUpDate: followUpDate || undefined, updatedAt: now } : i
+              ),
+            },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+      },
+
+      markItemReceived: (accountId, itemId, opts) => {
+        const s0 = get();
+        const item = (s0.missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!item) return;
+        const doc = opts?.documentId ? (s0.documents[accountId] ?? []).find((d) => d.id === opts.documentId) : undefined;
+        const waiting = (s0.quotes[accountId] ?? []).filter((q) => carriersFor(item).includes(q.id) && q.status !== 'declined' && q.status !== 'bound' && !forwardedAt(item, q.id));
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({
+              ...i,
+              status: 'received' as const,
+              receivedAt: now,
+              documentId: opts?.documentId ?? i.documentId,
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'item_received',
+            `Received ${item.label}${doc ? ` (${doc.name})` : ''}.${waiting.length ? ` Ready to send to ${waiting.map((q) => q.marketName).join(', ')}.` : ''}`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      setItemStatus: (accountId, itemId, status) => {
+        const item = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!item || item.status === status) return;
+        if (status === 'received') return get().markItemReceived(accountId, itemId);
+        const now = new Date().toISOString();
+        if (status === 'requested') {
+          // Marked by hand (e.g. asked on the phone) — stamp it and arm a follow-up so it still lands on Today's Plate.
+          const followUpDate = item.followUpDate ?? addBusinessDays(new Date(), 3);
+          set((s) => ({
+            missingItems: {
+              ...s.missingItems,
+              [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({
+                ...i,
+                status,
+                requestedAt: i.requestedAt ?? now,
+                followUpDate,
+                receivedAt: undefined,
+                forwardedTo: undefined,
+                forwardedToCarrierAt: undefined,
+                updatedAt: now,
+              })),
+            },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'item_requested', `Marked "${item.label}" as ${MISSING_ITEM_STATUS_LABELS.requested.toLowerCase()} — follow up ${formatShortDate(followUpDate)}.`),
+          }));
+          syncNow(accountId);
+          return;
+        }
+        set((s) => ({
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: updateInList(s.missingItems[accountId], itemId, (i) =>
+              status === 'missing'
+                ? { ...i, status, receivedAt: undefined, requestedAt: undefined, followUpDate: undefined, forwardedTo: undefined, forwardedToCarrierAt: undefined, updatedAt: now }
+                : { ...i, status, updatedAt: now }
+            ),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            status === 'waived' ? 'item_waived' : 'item_added',
+            status === 'waived' ? `Waived "${item.label}" — not needed.` : `Moved "${item.label}" back to missing.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      setAccountStage: (accountId, stage) => {
+        const account = get().accounts.find((a) => a.id === accountId);
+        if (!account || (account.stage ?? null) === stage) return;
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, stage: stage ?? undefined } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'stage_changed',
+            `${stage ? `Status set to ${ACCOUNT_STAGE_LABELS[stage]}` : 'Status set back to automatic'}${actorSuffix(s.currentUserEmail)}.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      deleteMissingItem: (accountId, itemId) => {
+        const item = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!item) return;
+        set((s) => ({
+          missingItems: { ...s.missingItems, [accountId]: (s.missingItems[accountId] ?? []).filter((i) => i.id !== itemId) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'item_removed', `Removed "${item.label}" from the checklist.`),
+        }));
+        syncNow(accountId);
+      },
+
+      markItemSentToCarrier: (accountId, itemId, quoteId) => {
+        const s0 = get();
+        const items = s0.missingItems[accountId] ?? [];
+        const item = items.find((i) => i.id === itemId);
+        if (!item) return;
+        const pending = carriersFor(item).filter((q) => !forwardedAt(item, q));
+        const targetId = quoteId ?? (pending.length === 1 ? pending[0] : undefined);
+        const quote = targetId && carriersFor(item).includes(targetId) ? (s0.quotes[accountId] ?? []).find((q) => q.id === targetId) : undefined;
+        if (!quote) return;
+        const nowIso = new Date().toISOString();
+        // Once nothing else this carrier asked for is still outstanding, the ball is back in the
+        // carrier's court — flip the quote back to waiting and (re)arm a follow-up.
+        const stillOutstanding = items.some((i) => i.id !== itemId && carriersFor(i).includes(quote.id) && i.status !== 'waived' && !forwardedAt(i, quote.id));
+        const reopen = quote.status === 'additional_info_requested' && !stillOutstanding;
+        const followUp = reopen && (!quote.followUpDate || quote.followUpDate <= todayKey()) ? addBusinessDays(new Date(), 3) : quote.followUpDate;
+        set((s) => {
+          let log = appendEvent(s.activityLog, accountId, 'item_sent_to_carrier', `Sent ${item.label} to ${quote.marketName}.`);
+          if (reopen) log = appendEvent(log, accountId, 'quote_status_changed', `${quote.marketName}: all requested items sent — waiting on carrier${followUp ? `, follow up ${formatShortDate(followUp)}` : ''}.`);
+          return {
+            missingItems: {
+              ...s.missingItems,
+              [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, forwardedTo: { ...(i.forwardedTo ?? {}), [quote.id]: nowIso }, updatedAt: nowIso })),
+            },
+            quotes: {
+              ...s.quotes,
+              [accountId]: updateInList(s.quotes[accountId], quote.id, (q) => ({
+                ...q,
+                ...(reopen ? { status: 'waiting_on_carrier' as const, followUpDate: followUp } : {}),
+                notes: [...q.notes, { id: generateId('note'), text: `Sent ${item.label}.`, createdAt: nowIso }],
+                updatedAt: nowIso,
+              })),
+            },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+      },
+
+      addQuote: (accountId, input) => {
+        const now = new Date().toISOString();
+        const status = input.status ?? 'preparing';
+        const awaiting = AWAITING_CARRIER_STATUSES.includes(status);
+        const quote: MarketQuote = {
+          id: generateId('quote'),
+          accountId,
+          marketName: input.marketName.trim(),
+          appetiteRecordId: input.appetiteRecordId,
+          status,
+          submittedAt: input.submittedAt ?? (awaiting ? todayKey() : undefined),
+          followUpDate: input.followUpDate ?? (awaiting ? addBusinessDays(new Date(), 3) : undefined),
+          notes: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        set((s) => {
+          let log = appendEvent(s.activityLog, accountId, 'market_added', `Added ${quote.marketName} to Markets & Quotes.`);
+          if (awaiting) log = appendEvent(log, accountId, 'submission_sent', `Submission sent to ${quote.marketName}${quote.submittedAt ? ` on ${formatShortDate(quote.submittedAt)}` : ''}.`);
+          if (quote.followUpDate) log = appendEvent(log, accountId, 'follow_up_scheduled', `Carrier follow-up with ${quote.marketName} set for ${formatShortDate(quote.followUpDate)}.`);
+          return {
+            quotes: { ...s.quotes, [accountId]: [...(s.quotes[accountId] ?? []), quote] },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+        return quote.id;
+      },
+
+      updateQuote: (accountId, quoteId, patch) => {
+        const before = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!before) return;
+        const next: MarketQuote = { ...before, ...patch, updatedAt: new Date().toISOString() };
+        const name = next.marketName;
+        const statusChanged = patch.status !== undefined && patch.status !== before.status;
+
+        // Moving into a "waiting on the carrier" state: default the sent date to today and arm a
+        // follow-up, unless the broker already gave one.
+        if (statusChanged && AWAITING_CARRIER_STATUSES.includes(next.status)) {
+          if (!next.submittedAt) next.submittedAt = todayKey();
+          if (patch.followUpDate === undefined && (!next.followUpDate || next.followUpDate < todayKey())) next.followUpDate = addBusinessDays(new Date(), 3);
+        }
+        if (patch.premium !== undefined && (patch.premium === null || Number.isNaN(patch.premium))) next.premium = undefined;
+
+        const events: [ActivityEventType, string][] = [];
+        if (statusChanged) {
+          switch (next.status) {
+            case 'submitted':
+              events.push(['submission_sent', `Submission sent to ${name}${next.submittedAt ? ` on ${formatShortDate(next.submittedAt)}` : ''}.`]);
+              break;
+            case 'quoted':
+              events.push(['quote_received', `${name} quoted${next.premium ? ` ${money(next.premium)}` : ''}.`]);
+              break;
+            case 'declined':
+              events.push(['carrier_declined', `${name} declined${next.declineReason ? `: ${next.declineReason}` : '.'}`]);
+              break;
+            case 'bound':
+              events.push(['policy_bound', `Bound with ${name}${next.premium ? ` at ${money(next.premium)}` : ''}.`]);
+              break;
+            default:
+              events.push(['quote_status_changed', `${name}: ${QUOTE_STATUS_LABELS[before.status]} → ${QUOTE_STATUS_LABELS[next.status]}.`]);
+          }
+        } else {
+          if (patch.premium !== undefined && next.premium !== before.premium && next.premium) events.push(['quote_received', `Recorded ${name} premium of ${money(next.premium)}.`]);
+          if (patch.declineReason !== undefined && patch.declineReason !== before.declineReason && next.declineReason) events.push(['carrier_declined', `${name} decline reason: ${next.declineReason}`]);
+          if (patch.submittedAt !== undefined && patch.submittedAt !== before.submittedAt && next.submittedAt) events.push(['submission_sent', `Recorded submission to ${name} as sent ${formatShortDate(next.submittedAt)}.`]);
+          if (patch.marketName !== undefined && patch.marketName !== before.marketName) events.push(['quote_status_changed', `Renamed market ${before.marketName} to ${name}.`]);
+        }
+        if (next.followUpDate !== before.followUpDate && next.status !== 'declined' && next.status !== 'bound') {
+          events.push(['follow_up_scheduled', next.followUpDate ? `Carrier follow-up with ${name} set for ${formatShortDate(next.followUpDate)}.` : `Cleared the follow-up date for ${name}.`]);
+        }
+
+        set((s) => {
+          let log = s.activityLog;
+          for (const [type, message] of events) log = appendEvent(log, accountId, type, message);
+          return {
+            quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], quoteId, () => next) },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+      },
+
+      addQuoteNote: (accountId, quoteId, text) => {
+        const trimmed = text.trim();
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!trimmed || !quote) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, notes: [...q.notes, { id: generateId('note'), text: trimmed, createdAt: now }], updatedAt: now })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'carrier_note_added', `Note on ${quote.marketName}: ${trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed}`),
+        }));
+        syncNow(accountId);
+      },
+
+      addFollowUp: (accountId, input) => {
+        const subject = input.subject.trim();
+        if (!subject || !input.dueDate) return '';
+        const now = new Date().toISOString();
+        const followUp: FollowUp = { id: generateId('fu'), accountId, subject, dueDate: input.dueDate, notes: input.notes?.trim() || undefined, createdAt: now, updatedAt: now };
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: [...(s.followUps[accountId] ?? []), followUp] },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'follow_up_scheduled',
+            `Follow-up for ${subject} scheduled for ${formatShortDate(followUp.dueDate)}${followUp.notes ? ` — ${followUp.notes}` : ''}${actorSuffix(s.currentUserEmail)}.`
+          ),
+        }));
+        syncNow(accountId);
+        return followUp.id;
+      },
+
+      updateFollowUp: (accountId, followUpId, patch) => {
+        const before = (get().followUps[accountId] ?? []).find((f) => f.id === followUpId);
+        if (!before) return;
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: updateInList(s.followUps[accountId], followUpId, (f) => ({ ...f, ...patch, updatedAt: new Date().toISOString() })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog:
+            patch.dueDate && patch.dueDate !== before.dueDate
+              ? appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Follow-up for ${patch.subject ?? before.subject} moved to ${formatShortDate(patch.dueDate)}.`)
+              : s.activityLog,
+        }));
+        syncNow(accountId);
+      },
+
+      completeFollowUp: (accountId, followUpId) => {
+        const f = (get().followUps[accountId] ?? []).find((x) => x.id === followUpId);
+        if (!f || f.doneAt) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: updateInList(s.followUps[accountId], followUpId, (x) => ({ ...x, doneAt: now, updatedAt: now })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'follow_up_completed', `Followed up: ${f.subject}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      deleteFollowUp: (accountId, followUpId) => {
+        const f = (get().followUps[accountId] ?? []).find((x) => x.id === followUpId);
+        if (!f) return;
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: (s.followUps[accountId] ?? []).filter((x) => x.id !== followUpId) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Removed the follow-up for ${f.subject} (was ${formatShortDate(f.dueDate)}).`),
+        }));
+        syncNow(accountId);
+      },
+
+      setItemsFollowUp: (accountId, itemIds, followUpDate) => {
+        const items = (get().missingItems[accountId] ?? []).filter((i) => itemIds.includes(i.id));
+        if (items.length === 0 || !followUpDate) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: (s.missingItems[accountId] ?? []).map((i) => (itemIds.includes(i.id) ? { ...i, followUpDate, updatedAt: now } : i)),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'follow_up_scheduled',
+            items.length === 1 ? `Client follow-up for "${items[0].label}" set for ${formatShortDate(followUpDate)}.` : `Client follow-up for ${items.length} requested items set for ${formatShortDate(followUpDate)}.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      addQuoteOption: (accountId, quoteId, input) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!quote) return '';
+        const now = new Date().toISOString();
+        const option: QuoteOption = {
+          id: generateId('qopt'),
+          label: input.label?.trim() || undefined,
+          premium: input.premium,
+          notes: input.notes?.trim() || undefined,
+          receivedAt: now,
+          ...(input.file ? { attachment: { id: generateId('qfile'), name: input.file.name, sizeBytes: input.file.size, fileType: inferQuoteFileType(input.file.name) } } : {}),
+        };
+        const options = [...(quote.options ?? []), option];
+        const count = options.length;
+        const name = option.label ?? `Quote ${count}`;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              options,
+              status: q.status === 'bound' ? q.status : ('quoted' as const),
+              premium: headlinePremium({ ...q, options }),
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'quote_received',
+            `${quote.marketName} quoted${option.premium ? ` ${money(option.premium)}` : ''}${count > 1 || option.label ? ` (${name})` : ''}${option.attachment ? ` — ${option.attachment.name} attached` : ''}.`
+          ),
+        }));
+        if (input.file && option.attachment) storeQuoteFile(accountId, quoteId, option.id, option.attachment.id, input.file);
+        syncNow(accountId);
+        return option.id;
+      },
+
+      attachQuoteFile: (accountId, quoteId, optionId, file) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        if (!quote || !option) return;
+        const attachment = { id: generateId('qfile'), name: file.name, sizeBytes: file.size, fileType: inferQuoteFileType(file.name) };
+        const replaced = option.attachment;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              options: (q.options ?? []).map((o) => (o.id === optionId ? { ...o, attachment } : o)),
+              updatedAt: new Date().toISOString(),
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'carrier_note_added', `Attached ${file.name} to ${quote.marketName} ${option.label ?? 'quote'}.`),
+        }));
+        if (replaced) removeQuoteFile(replaced);
+        storeQuoteFile(accountId, quoteId, optionId, attachment.id, file);
+        syncNow(accountId);
+      },
+
+      selectQuoteOption: (accountId, quoteId, optionId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        if (!quote || !option || quote.selectedOptionId === optionId) return;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => {
+              const next = { ...q, selectedOptionId: optionId };
+              return { ...next, premium: headlinePremium(next), updatedAt: new Date().toISOString() };
+            }),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'quote_status_changed',
+            `Selected ${quote.marketName} ${option.label ?? 'quote'}${option.premium ? ` at ${money(option.premium)}` : ''}${actorSuffix(s.currentUserEmail)}.`
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      deleteQuoteOption: (accountId, quoteId, optionId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        if (!quote || !option) return;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => {
+              const next = { ...q, options: (q.options ?? []).filter((o) => o.id !== optionId), selectedOptionId: q.selectedOptionId === optionId ? undefined : q.selectedOptionId };
+              return { ...next, premium: headlinePremium(next), updatedAt: new Date().toISOString() };
+            }),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'quote_status_changed', `Removed ${quote.marketName} ${option.label ?? 'quote'}${option.premium ? ` (${money(option.premium)})` : ''}.`),
+        }));
+        if (option.attachment) removeQuoteFile(option.attachment);
+        syncNow(accountId);
+      },
+
+      deleteQuote: (accountId, quoteId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!quote) return;
+        for (const o of quote.options ?? []) if (o.attachment) removeQuoteFile(o.attachment);
+        set((s) => ({
+          quotes: { ...s.quotes, [accountId]: (s.quotes[accountId] ?? []).filter((q) => q.id !== quoteId) },
+          // Items this carrier asked for stay on the checklist (the client may still owe them), just no longer tied to a carrier.
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: (s.missingItems[accountId] ?? []).map((i) => {
+              if (!carriersFor(i).includes(quoteId)) return i;
+              const { [quoteId]: _removed, ...forwardedTo } = i.forwardedTo ?? {};
+              const remaining = carriersFor(i).filter((q) => q !== quoteId);
+              return { ...i, neededByQuoteId: undefined, forwardedToCarrierAt: undefined, neededByQuoteIds: remaining.length ? remaining : undefined, forwardedTo: Object.keys(forwardedTo).length ? forwardedTo : undefined };
+            }),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'market_removed', `Removed ${quote.marketName} from Markets & Quotes.`),
+        }));
+        syncNow(accountId);
+      },
+
+      recordCarrierRequest: (accountId, quoteId, input) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const label = input.label.trim();
+        if (!quote || !label) return '';
+        const now = new Date().toISOString();
+        const items = get().missingItems[accountId] ?? [];
+        const existing = findRequirement(items, { label });
+        const note = input.notes?.trim();
+        let item: MissingItem;
+        let list: MissingItem[];
+        if (existing) {
+          // Same logical requirement already on the checklist — link this carrier to it. A waived
+          // item comes back to missing (the carrier needs it after all); a received one is simply
+          // "ready to send" to this carrier too.
+          item = {
+            ...existing,
+            neededByQuoteIds: carriersFor(existing).includes(quoteId) ? carriersFor(existing) : [...carriersFor(existing), quoteId],
+            ...(existing.status === 'waived' ? { status: 'missing' as const } : {}),
+            ...(note ? { notes: existing.notes ? `${existing.notes}\n${note}` : note } : {}),
+            updatedAt: now,
+          };
+          list = items.map((i) => (i.id === existing.id ? item : i));
+        } else {
+          item = { id: generateId('item'), accountId, type: input.type, label, status: 'missing', neededByQuoteIds: [quoteId], notes: note || undefined, createdAt: now, updatedAt: now };
+          list = [...items, item];
+        }
+        set((s) => ({
+          missingItems: { ...s.missingItems, [accountId]: list },
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              status: q.status === 'quoted' || q.status === 'bound' ? q.status : ('additional_info_requested' as const),
+              notes: [...q.notes, { id: generateId('note'), text: `Requested ${label}.`, createdAt: now }],
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'carrier_requested_item',
+            existing ? `${quote.marketName} requested ${label} — linked to the existing checklist item "${existing.label}".` : `${quote.marketName} requested ${label}.`
+          ),
+        }));
+        syncNow(accountId);
+        return item.id;
+      },
+
+      saveAccountNow: async (accountId) => {
+        const res = await pushAccount(accountId);
+        if (!res) return { ok: true, complete: true };
+        return { ok: res.coreSaved, complete: res.message === null, message: res.message ?? undefined };
+      },
+
+      markActionDone: (action) => {
+        const { accountId } = action;
+        if (action.followUpId) return get().completeFollowUp(accountId, action.followUpId);
+        if (action.kind === 'ready_to_send' && action.itemId) return get().markItemSentToCarrier(accountId, action.itemId, action.quoteId);
+        const now = new Date().toISOString();
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, doneActions: { ...(a.doneActions ?? {}), [actionDoneKey(action)]: now } } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'action_done', `Marked done: ${action.title}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      addAccountNote: (accountId, text) => {
+        const body = text.trim();
+        if (!body) return;
+        const s = get();
+        const now = new Date().toISOString();
+        const note: AccountNote = {
+          id: generateId('note'),
+          text: body,
+          createdAt: now,
+          ...(s.currentUserId ? { authorId: s.currentUserId } : {}),
+          authorName: s.myProfile?.fullName || currentActor?.name || s.currentUserEmail || 'You',
+        };
+        set((st) => ({ accounts: touchAccount(st.accounts.map((a) => (a.id === accountId ? { ...a, notes: [...(a.notes ?? []), note] } : a)), accountId) }));
+        syncNow(accountId);
+      },
+
+      updateAccountNote: (accountId, noteId, text) => {
+        const body = text.trim();
+        const s = get();
+        const note = s.accounts.find((a) => a.id === accountId)?.notes?.find((n) => n.id === noteId);
+        if (!body || !note || note.text === body) return;
+        const now = new Date().toISOString();
+        const editor = s.myProfile?.fullName || currentActor?.name || s.currentUserEmail || 'You';
+        set((st) => ({
+          accounts: touchAccount(
+            st.accounts.map((a) => (a.id === accountId ? { ...a, notes: (a.notes ?? []).map((n) => (n.id === noteId ? { ...n, text: body, updatedAt: now, updatedByName: editor } : n)) } : a)),
+            accountId
+          ),
+        }));
+        syncNow(accountId);
+      },
+
+      undoActionDone: (accountId, key, title) => {
+        const account = get().accounts.find((a) => a.id === accountId);
+        if (!account?.doneActions?.[key]) return;
+        const rest = { ...account.doneActions };
+        delete rest[key];
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, doneActions: rest } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'action_reopened', `Reopened: ${title}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      reopenFollowUp: (accountId, followUpId) => {
+        const f = (get().followUps[accountId] ?? []).find((x) => x.id === followUpId);
+        if (!f || !f.doneAt) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: updateInList(s.followUps[accountId], followUpId, ({ doneAt: _done, ...x }) => ({ ...x, updatedAt: now })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'action_reopened', `Reopened follow-up: ${f.subject}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      ensureChecklist: (accountId) => {
+        const s = get();
+        const account = s.accounts.find((a) => a.id === accountId);
+        if (!account || account.archived) return;
+        if ((s.missingItems[accountId] ?? []).length > 0) return;
+        if ((s.activityLog[accountId] ?? []).some((e) => e.type === 'item_added' || e.type === 'item_removed')) return;
+        if (s.cloudAccountIds[accountId] && (!s.currentUserId || s.cloudHydratedFor !== s.currentUserId)) return;
+        const items = defaultChecklist(accountId, s.riskProfiles[accountId], s.documents[accountId] ?? [], new Date().toISOString());
+        if (items.length === 0) return;
+        set((st) => ({
+          missingItems: { ...st.missingItems, [accountId]: items },
+          activityLog: appendEvent(st.activityLog, accountId, 'item_added', 'Started the submission checklist.'),
+        }));
+        syncNow(accountId);
+      },
+
+      assignAccountToAgent: async (accountId, userId) => {
+        const s = get();
+        if (!isSupabaseConfigured || !s.currentUserId || s.agencyAccess?.role !== 'admin') return { ok: false, message: 'Only an agency admin can reassign accounts.' };
+        if (!s.cloudAccountIds[accountId]) return { ok: false, message: 'This account is only in this browser — it has to be saved to the cloud before it can be assigned.' };
+        const res = await cloudRepo.assignSubmission(accountId, userId);
+        if (!res.ok) return res;
+        const member = userId ? get().agencyMembers.find((m) => m.userId === userId) : undefined;
+        set((st) => ({
+          accounts: touchAccount(
+            st.accounts.map((a) =>
+              a.id === accountId
+                ? { ...a, assignedUserId: userId, assignedBroker: member ? { name: member.name, email: member.email ?? undefined, userId: member.userId } : undefined }
+                : a
+            ),
+            accountId
+          ),
+          activityLog: appendEvent(
+            st.activityLog,
+            accountId,
+            'broker_assigned',
+            `${member ? `Assigned to agent ${member.name}` : 'Removed the assigned agent'}${actorSuffix(st.currentUserEmail, member?.email ?? undefined)}.`
+          ),
+        }));
+        syncNow(accountId);
+        return { ok: true };
+      },
+
+      setCurrentUserId: (userId, email) =>
+        set((s) => {
+          const actorEmail = userId ? (email ?? s.currentUserEmail) : null;
+          const sameUserName = userId !== null && userId === s.currentUserId ? s.myProfile?.fullName : undefined;
+          currentActor = userId ? { id: userId, name: sameUserName || actorEmail || 'Unknown' } : null;
+          const { accounts, hiddenAccounts } = partitionAccounts([...s.accounts, ...s.hiddenAccounts], s.cloudAccountIds, s.accountOwners, userId);
+          const activeVisible = accounts.some((a) => a.id === s.activeAccountId);
+          const sameUser = userId !== null && userId === s.currentUserId;
+          return {
+            currentUserId: userId,
+            currentUserEmail: userId ? (email ?? s.currentUserEmail) : null,
+            accounts,
+            hiddenAccounts,
+            activeAccountId: activeVisible ? s.activeAccountId : null,
+            // Roles are re-read from the database on every sign-in (hydrateCloudSubmissions).
+            ...(sameUser ? {} : { agencyAccess: null, agencyMembers: [], cloudHydratedFor: null, myProfile: null }),
+          };
+        }),
+
+      setMyProfile: (profile) =>
+        set((s) => {
+          if (profile?.fullName && s.currentUserId && currentActor?.id === s.currentUserId) currentActor = { id: s.currentUserId, name: profile.fullName };
+          return {
+            myProfile: profile,
+            // The agency list shows the new name right away (the database has it via save_my_profile).
+            agencyMembers: profile?.fullName ? s.agencyMembers.map((m) => (m.userId === s.currentUserId ? { ...m, name: profile.fullName } : m)) : s.agencyMembers,
+          };
+        }),
 
       hydrateCloudSubmissions: async () => {
         const userId = get().currentUserId;
         if (!isSupabaseConfigured || !userId) return;
-        const result = await cloudRepo.fetchUserSubmissions(userId);
+        const [result, accessRes] = await Promise.all([cloudRepo.fetchUserSubmissions(userId), cloudRepo.fetchAgencyAccess(userId)]);
+        if (get().currentUserId !== userId) return; // signed out / switched user mid-fetch
+        if (accessRes.ok) {
+          set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
+          const me = accessRes.data.members.find((m) => m.userId === userId);
+          if (me && currentActor?.id === userId) currentActor = { id: userId, name: get().myProfile?.fullName || me.name };
+        }
         if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
+        const needsPush: string[] = [];
         set((s) => {
-          const accounts = [...s.accounts];
+          const cloudIds = new Set(result.data.map((b) => b.account.id));
+          // A cloud account hidden at sign-out comes back as this device's local copy to merge with.
+          const accounts = [...s.accounts, ...s.hiddenAccounts.filter((a) => cloudIds.has(a.id))];
+          const hiddenAccounts = s.hiddenAccounts.filter((a) => !cloudIds.has(a.id));
+          const accountOwners = { ...s.accountOwners, ...Object.fromEntries([...cloudIds].map((id) => [id, userId])) };
           const documents = { ...s.documents };
           const riskProfiles = { ...s.riskProfiles };
           const activityLog = { ...s.activityLog };
+          const missingItems = { ...s.missingItems };
+          const quotes = { ...s.quotes };
+          const followUps = { ...s.followUps };
           const cloudAccountIds = { ...s.cloudAccountIds };
           for (const bundle of result.data) {
-            const idx = accounts.findIndex((a) => a.id === bundle.account.id);
-            if (idx === -1) accounts.push(bundle.account);
-            else accounts[idx] = bundle.account; // cloud is authoritative for an already-known cloud account
-            documents[bundle.account.id] = bundle.documents;
-            riskProfiles[bundle.account.id] = bundle.profile;
-            activityLog[bundle.account.id] = bundle.activity;
+            const id = bundle.account.id;
+            const idx = accounts.findIndex((a) => a.id === id);
+            const local = idx === -1 ? undefined : accounts[idx];
+            // Cloud is authoritative for an already-known cloud account — except for fields the
+            // project's database can't hold yet (0007 / 0008 not applied), which would otherwise be
+            // wiped on every reload (e.g. the assigned broker "disappearing").
+            const merged: Account = {
+              ...bundle.account,
+              ...(!bundle.hasWorkflowColumns && local ? { contacts: local.contacts, assignedBroker: local.assignedBroker } : {}),
+              ...(!bundle.hasStageColumn && local ? { stage: local.stage } : {}),
+              ...(!bundle.hasDoneColumn && local?.doneActions ? { doneActions: local.doneActions } : {}),
+              ...(!bundle.hasNotesColumn && local?.notes ? { notes: local.notes } : {}),
+            };
+            if (idx === -1) accounts.push(merged);
+            else accounts[idx] = merged;
+            // Documents: cloud rows win, but keep what the cloud never stores (per-document extracted
+            // fields, candidate notes) and a storage path the cloud row is missing; keep local-only rows.
+            const localDocs = s.documents[id] ?? [];
+            const cloudDocIds = new Set(bundle.documents.map((d) => d.id));
+            documents[id] = [
+              ...bundle.documents.map((d) => {
+                const l = localDocs.find((x) => x.id === d.id);
+                return l ? { ...l, ...d, storagePath: d.storagePath ?? l.storagePath, previewDataUrl: d.previewDataUrl ?? l.previewDataUrl } : d;
+              }),
+              ...localDocs.filter((d) => !cloudDocIds.has(d.id)),
+            ];
+            riskProfiles[id] = bundle.profile;
+            // Activity is append-only: union by id, so events that never reached the cloud aren't lost.
+            const byId = new Map<string, ActivityEvent>();
+            for (const e of [...(s.activityLog[id] ?? []), ...bundle.activity]) byId.set(e.id, e);
+            const localHadMore = (s.activityLog[id] ?? []).some((e) => !bundle.activity.some((c) => c.id === e.id));
+            if (localHadMore) needsPush.push(id);
+            activityLog[id] = trimEvents([...byId.values()].sort((x, y) => (x.timestamp < y.timestamp ? -1 : 1)));
+            // undefined = the workflow columns don't exist yet (migration 0007 not applied) — keep
+            // whatever this device has rather than wiping it with an empty list.
+            if (bundle.missingItems) missingItems[bundle.account.id] = normalizeMissingItems(bundle.missingItems);
+            if (bundle.quotes) quotes[bundle.account.id] = bundle.quotes;
+            if (bundle.followUps) followUps[bundle.account.id] = bundle.followUps;
             cloudAccountIds[bundle.account.id] = true;
           }
-          return { accounts, documents, riskProfiles, activityLog, cloudAccountIds };
+          return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, followUps, cloudAccountIds };
         });
+        // Accounts this device holds for this user that the cloud no longer returned: if they still
+        // exist, access was removed (e.g. an admin reassigned them to another agent) — drop the local
+        // copy so it can't be opened or re-saved from here. If they don't exist they were never
+        // uploaded (or were deleted) and are left alone, exactly as before.
+        {
+          const s = get();
+          const returned = new Set(result.data.map((b) => b.account.id));
+          const candidates = s.accounts.filter((a) => s.cloudAccountIds[a.id] && !returned.has(a.id)).map((a) => a.id);
+          const revoked = await cloudRepo.submissionsRevoked(candidates);
+          const gone = new Set(Object.keys(revoked).filter((id) => revoked[id]));
+          if (gone.size > 0 && get().currentUserId === userId) {
+            const st = get();
+            void deleteLocalFiles([...gone].flatMap((id) => localFileIds(st, id)));
+            set((cur) => withoutAccounts(cur, gone));
+          }
+        }
+        if (get().currentUserId === userId) set({ cloudHydratedFor: userId });
         for (const bundle of result.data) get().runMatching(bundle.account.id);
+        // Push back anything this device had that the cloud didn't (e.g. events lost to the old sync bug).
+        for (const id of needsPush) syncNow(id);
       },
 
       importAccountsToCloud: async (accountIds) => {
@@ -818,6 +2153,17 @@ export const useAccountsStore = create<AccountsState>()(
     },
     {
       name: 'renewaliq.state.v1',
+      // Reconcile checklists saved before requirements were shared across carriers: one row per
+      // logical requirement, legacy single-carrier links folded in. Idempotent, runs on every load.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<AccountsState>;
+        const missingItems = Object.fromEntries(Object.entries(p.missingItems ?? {}).map(([id, items]) => [id, normalizeMissingItems(items ?? [])]));
+        const merged = { ...current, ...p, missingItems };
+        // Nobody is known to be signed in until App.tsx reads the session, so cloud accounts start
+        // hidden — no flash of another broker's accounts after they signed out.
+        const { accounts, hiddenAccounts } = partitionAccounts([...(merged.accounts ?? []), ...(merged.hiddenAccounts ?? [])], merged.cloudAccountIds ?? {}, merged.accountOwners ?? {}, null);
+        return { ...merged, accounts, hiddenAccounts };
+      },
       // effectiveAppetiteRecords is derived (base + fetched overrides), re-loaded on demand — never
       // persisted, so a stale override can't get stuck in one broker's browser after an admin change.
       partialize: (state) => {
@@ -825,7 +2171,19 @@ export const useAccountsStore = create<AccountsState>()(
         // currentUserId: re-derived from the live Supabase session on load, never trusted from a
         // stale persisted value (see App.tsx's bootstrap effect).
         // syncStatus: a snapshot of in-flight/last save outcome — meaningless across a reload.
-        const { effectiveAppetiteRecords: _effectiveAppetiteRecords, currentUserId: _currentUserId, syncStatus: _syncStatus, ...rest } = state;
+        const {
+          effectiveAppetiteRecords: _effectiveAppetiteRecords,
+          currentUserId: _currentUserId,
+          currentUserEmail: _currentUserEmail,
+          myProfile: _myProfile,
+          pendingIntakeCount: _pendingIntakeCount,
+          syncStatus: _syncStatus,
+          syncError: _syncError,
+          agencyAccess: _agencyAccess,
+          agencyMembers: _agencyMembers,
+          cloudHydratedFor: _cloudHydratedFor,
+          ...rest
+        } = state;
         return rest;
       },
     }

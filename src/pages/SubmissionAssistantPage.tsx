@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, Download, FileJson, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, Download, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, OverflowMenu, ConfirmDialog } from '../components/ui';
@@ -20,7 +20,7 @@ function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
-type ExportKind = 'pdf' | 'json' | 'csv';
+type ExportKind = 'pdf' | 'csv';
 
 export function SubmissionAssistantPage() {
   const { accountId = '' } = useParams();
@@ -40,6 +40,8 @@ export function SubmissionAssistantPage() {
   const application = useMemo(() => (profile ? mapRiskProfileToApplication(profile, template) : null), [profile, template]);
   const stats = useMemo(() => (application ? computeApplicationStats(application) : null), [application]);
   const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
+
+  const missingCount = completeness ? completeness.missingRequiredFields.length + completeness.missingRecommendedFields.length + completeness.missingRecommendedDocuments.length : 0;
 
   if (!account || !profile || !application || !stats || !completeness) {
     return <AccountNotFound />;
@@ -79,12 +81,9 @@ export function SubmissionAssistantPage() {
         const { generateApplicationPdf } = await import('../services/application/exportApplication');
         const bytes = await generateApplicationPdf(application!, account!.namedInsured);
         downloadBlob(new Uint8Array(bytes), `${slugify(account!.namedInsured)}_${slugify(application!.templateName)}.pdf`, 'application/pdf');
-      } else if (kind === 'json') {
-        const { generateApplicationJson } = await import('../services/application/exportApplication');
-        downloadBlob(generateApplicationJson(application!), `${slugify(account!.namedInsured)}_application.json`, 'application/json');
       } else {
         const { generateApplicationCsv } = await import('../services/application/exportApplication');
-        downloadBlob(generateApplicationCsv(application!), `${slugify(account!.namedInsured)}_application.csv`, 'text/csv');
+        downloadBlob(generateApplicationCsv(application!, account!.namedInsured), `${slugify(account!.namedInsured)}_application.csv`, 'text/csv;charset=utf-8');
       }
     } catch (err) {
       // Never fail silently — an export that neither downloads nor explains why is indistinguishable
@@ -118,7 +117,6 @@ export function SubmissionAssistantPage() {
   return (
     <PageContainer
       title={`Submission Assistant — ${account.namedInsured}`}
-      description="Renewal IQ already knows this account. Review what it filled instead of retyping everything."
       actions={
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)} className="print:hidden">
@@ -126,12 +124,11 @@ export function SubmissionAssistantPage() {
           </Button>
           <OverflowMenu
             items={[
-              { key: 'json', label: 'Export as JSON', icon: <FileJson size={14} />, onSelect: () => guardExport('json') },
               { key: 'csv', label: 'Export as CSV', icon: <FileSpreadsheet size={14} />, onSelect: () => guardExport('csv') },
             ]}
           />
           <Button icon={exportingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} onClick={() => guardExport('pdf')} disabled={exportingPdf} className="print:hidden">
-            Download PDF
+            Download Application
           </Button>
           <Button variant="secondary" icon={<Compass size={15} />} onClick={() => navigate(`/accounts/${accountId}/carrier-appetite`)} className="print:hidden">
             Carrier Appetite
@@ -139,8 +136,9 @@ export function SubmissionAssistantPage() {
         </>
       }
     >
-      <div className="flex flex-col gap-1 print:hidden">
-        {APPLICATION_TEMPLATES.length > 1 ? (
+      {/* Only a real choice of templates is shown; the single built-in template's internal name isn't. */}
+      {APPLICATION_TEMPLATES.length > 1 && (
+        <div className="flex flex-col gap-1 print:hidden">
           <select
             value={template.id}
             onChange={(e) => setTemplateId(e.target.value)}
@@ -152,43 +150,44 @@ export function SubmissionAssistantPage() {
               </option>
             ))}
           </select>
-        ) : (
-          <p className="text-sm font-medium text-[var(--color-ink-700)]">{template.name}</p>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-4 print:hidden">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-base font-semibold text-[var(--color-ink-900)]">{applicationTitleFor(account.namedInsured, application.templateName)}</h2>
-          <span className="text-sm font-semibold text-[var(--color-ink-900)]">{stats.percentComplete}% Complete</span>
+          {/* The same submission-completeness number shown on Risk Profile and in What's Missing. */}
+          <button onClick={() => setWhatsMissingOpen(true)} className="text-sm font-semibold text-[var(--color-ink-900)] hover:underline cursor-pointer print:hidden">
+            {completeness.percent}% Complete
+          </button>
         </div>
-        <ProgressBar value={stats.percentComplete} />
+        <ProgressBar value={completeness.percent} />
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
           <span className="flex items-center gap-1.5 text-[var(--color-success-600)]">
             <CircleCheck size={14} />
             <span className="font-semibold text-[var(--color-ink-900)]">{stats.autoFilled + stats.manuallyEntered}</span> fields filled
           </span>
-          {stats.missing > 0 && (
+          {/* Counts match the What's Missing list item for item. */}
+          {missingCount > 0 && (
             <span className="flex items-center gap-1.5 text-[var(--color-warning-600)]">
               <TriangleAlert size={14} />
-              <span className="font-semibold text-[var(--color-ink-900)]">{stats.missing}</span> fields missing
+              <span className="font-semibold text-[var(--color-ink-900)]">{missingCount}</span> missing
             </span>
           )}
-          {stats.conflict > 0 && (
+          {completeness.conflicts.length > 0 && (
             <span className="flex items-center gap-1.5 text-[var(--color-danger-600)]">
               <TriangleAlert size={14} />
-              <span className="font-semibold text-[var(--color-ink-900)]">{stats.conflict}</span> conflict{stats.conflict === 1 ? '' : 's'}
+              <span className="font-semibold text-[var(--color-ink-900)]">{completeness.conflicts.length}</span> conflict{completeness.conflicts.length === 1 ? '' : 's'}
             </span>
           )}
-          {stats.needsReview > 0 && (
+          {completeness.needsReview.length > 0 && (
             <span className="flex items-center gap-1.5 text-[var(--color-warning-600)]">
               <CircleHelp size={14} />
-              <span className="font-semibold text-[var(--color-ink-900)]">{stats.needsReview}</span> need review
+              <span className="font-semibold text-[var(--color-ink-900)]">{completeness.needsReview.length}</span> need review
             </span>
           )}
           <span className="text-[var(--color-ink-400)]">{stats.itemizedRows} itemized rows mapped</span>
         </div>
-        <p className="text-xs text-[var(--color-ink-400)]">This is a sample application layout for demo purposes, not a certified ACORD form.</p>
       </div>
 
       {stats.conflict > 0 && (
@@ -224,6 +223,7 @@ export function SubmissionAssistantPage() {
       />
 
       <WhatsMissingPanel
+        accountId={accountId}
         open={whatsMissingOpen}
         onClose={() => setWhatsMissingOpen(false)}
         completeness={completeness}

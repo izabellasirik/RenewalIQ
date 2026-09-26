@@ -17,7 +17,7 @@ sufficient for this workload.
 
 ## 2. Run the migrations
 
-Five migration files, run in order — all are required, and **none has been applied to any live
+Nine migration files, run in order — all are required, and **none has been applied to any live
 Supabase project by this repo automatically**. Run each one yourself, once, via the Supabase SQL
 editor (paste the file's contents and run) or the Supabase CLI (`supabase db push`):
 
@@ -70,6 +70,74 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   (`contact_name`, `contact_email`, `contact_phone`) to the existing `submissions` table from 0003,
   so an account created by importing an intake submission keeps the applicant's contact info after
   a reload. Must run after 0003.
+- **`supabase/migrations/0006_widen_coverage_type_check.sql`** — widens the `coverage_lines`
+  coverage-type check to include Trailer Interchange and Non-Trucking Liability. Must run after 0003.
+- **`supabase/migrations/0007_account_workflow.sql`** — adds the account-workflow columns to
+  `submissions`: `contacts`, `assigned_broker`, `missing_items` (the submission checklist, including
+  carrier-requested items), and `market_quotes` (Markets & Quotes with dated notes). Purely additive
+  jsonb columns, covered by the existing owner-only RLS on `submissions` — no new policies. Must run
+  after 0003. Until it's applied, cloud-backed accounts still sync their Risk Profile, but the
+  workspace shows "Failed to save to your account" and contacts/checklist/quotes stay in this
+  browser only.
+- **`supabase/migrations/0008_account_stage.sql`** — adds a nullable `stage` column to
+  `submissions` for the broker-set client status (New, Collecting info, Out to market, Quoted,
+  Bound, On hold, …) used by the Accounts list filters. NULL means "automatic". Additive, no new
+  policies, safe to re-run. Must run after 0003. Until it's applied, a manually-set status stays in
+  this browser only and the app shows "Failed to save to your account".
+- **`supabase/migrations/0009_account_follow_ups.sql`** — adds a `follow_ups` jsonb column to
+  `submissions` for follow-ups scheduled by hand on an account (who, date, notes), shown on Today's
+  Plate. Additive, no new policies, safe to re-run. Must run after 0003.
+- **`supabase/migrations/0010_driver_experience_months.sql`** — adds `experience_months` and
+  `experience_or_more` to `drivers` so driver experience keeps month precision ("8 months",
+  "1 year 6 months", "16+ years"). Additive, no new policies, safe to re-run. Must run after 0003.
+  Until it's applied, driver experience syncs as whole years only and the app says so.
+- **`supabase/migrations/0011_agency_roles.sql`** — agency permissions (Agent vs Admin), enforced
+  by RLS. Adds `agencies`, `profiles` (user → agency + role), and `submissions.assigned_user_id`;
+  reuses `submissions.organization_id` as the agency. Replaces 0003's owner-only policies on every
+  broker table and on the `submission-documents` bucket with one rule: an **agent** reaches only
+  accounts assigned to them, an **admin** reaches every account in their agency, nobody reaches
+  another agency. Accounts not yet in an agency keep 0003's owner-only access, so nothing moves or
+  disappears until you run the agency setup below. Safe to re-run. Must run after 0003.
+- **`supabase/migrations/0012_widen_extraction_method_check.sql`** — lets fields read from a photo
+  (`vision_extraction`) or filled in by a client on a submission link (`applicant_provided`) be
+  saved; without it those saves fail with "Failed to save to your account". Same change as
+  eloquent-planck's `0006_widen_extraction_method_check.sql` — harmless if that was already run.
+- **`supabase/migrations/0013_intake_link_organization_name.sql`** — the agency name clients see on a
+  submission link. Same column as eloquent-planck's `0007_intake_link_organization_name.sql` —
+  does nothing if that was already run.
+- **`supabase/migrations/0014_activity_actor_name.sql`** — saves the person's name with each
+  activity entry so the Activity tab can show who did it to everyone on the account (agents can't
+  look up other members' profiles). The person's user id was already recorded. Additive, safe to
+  re-run. Until it's applied, activity still saves; agents just see no name on others' entries.
+- **`supabase/migrations/0015_document_source_url.sql`** — keeps the link a document came from when
+  it arrived as a URL instead of a file (opened and read when possible; otherwise shown as
+  "Document could not be accessed — upload the file directly."). Additive, safe to re-run. Until
+  it's applied, those documents still save, just without the link.
+- **`supabase/migrations/0016_account_done_actions.sql`** — remembers tasks a broker marked **Done**
+  on the Overview / Today's Plate (tasks are derived, so "done" is stored on the account). Additive,
+  safe to re-run. Until it's applied, a task marked done stays done only in that browser and the app
+  says it couldn't be saved.
+- **`supabase/migrations/0017_profile_contact_fields.sql`** — work phone and job title on the agency
+  member profile, and `save_my_profile()`, the only way a user can edit their own name / phone /
+  title (never their role or agency). Additive, safe to re-run, RLS unchanged. Until it's applied,
+  the "Set up your profile" screen still works (saved on the login), but agency admins keep seeing
+  the name from the setup script.
+- **`supabase/migrations/0018_agency_invitations.sql`** — Team invitations. An agency admin invites a
+  work email with a role (Agent / Admin) from the **Team** page; the person opens the link, signs up
+  or signs in with that email, and joins that agency with that role. Only admins can invite; the
+  agency is always the admin's own; accepting requires the signed-in, confirmed login email to match
+  the invitation; someone already in another agency is refused. Existing tables, policies and
+  account permissions are unchanged. Additive, safe to re-run; run after 0017. Invitation sign-up
+  emails need the Redirect URLs from §6.
+- **`supabase/migrations/0019_intake_documents_insert_fix.sql`** — fixes files sent through a
+  submission link not showing up: 0004's rule for attaching a file checked the submission with the
+  client's own (anonymous) permissions, which can't see submissions, so every file record was
+  rejected. Replaces that one rule with the same check done safely on the server (plus a 24-hour
+  window) and recovers files already uploaded without a record. Safe to re-run.
+- **`supabase/migrations/0020_account_notes.sql`** — account Notes (Workspace → Notes): an
+  `account_notes` column on `submissions`, so notes follow the account's existing agency
+  permissions with no new policies. Additive, safe to re-run. Until it's applied, notes stay in the
+  browser they were written in and the app says they couldn't be saved.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -78,6 +146,69 @@ Reviewing an appetite-update request happens exclusively through `review_appetit
 which re-checks admin status itself server-side; updating a feedback entry's status is a plain
 RLS-gated `UPDATE`, gated the same way (`is_admin()`) but without a dedicated function, since it
 doesn't need the multi-table atomic transaction the appetite-update review does.
+
+### Agency setup (Agent vs Admin) — after 0011
+
+Roles live in the database (`profiles.role`), never in frontend code, and there is no in-app way to
+grant them — only the SQL editor. Open `supabase/setup/agency_setup.sql`, replace the placeholder
+agency name and emails, and run its steps one at a time:
+
+1. **Preview (read-only)** — every login and how many accounts each created, and every account not
+   yet in an agency with its creator.
+2. **Create the agency.**
+3. **Add people** — 3a makes the owner an `admin`; repeat 3b for each broker as an `agent`. A person
+   must have signed up first (exist under Authentication → Users). To also give the owner the
+   existing `/admin/feedback` and appetite-update review, they must be in `admin_users` too (the
+   optional statement in step 3) — that list is separate and unchanged.
+4. **Move existing accounts into the agency** — each account is assigned to the broker who created
+   it, so agents keep seeing exactly what they see today and the admin sees them all.
+5. **Check** — counts of accounts per agent.
+
+Reassigning later: the admin picks the agent in the account's **Assigned agent** dropdown (or step 6
+of the script). Removing someone: reassign their accounts, then delete their `profiles` row. Don't
+delete their auth user — 0003's foreign keys cascade and would delete every account they created.
+
+To re-run the database permission tests locally (needs `psql` + a throwaway Postgres):
+`PGHOST=localhost PGUSER=postgres ./supabase/tests/agency_rls/run.sh`.
+
+### Checking which migrations are applied
+
+Not sure what's already been run on a project? Paste this read-only query into the SQL editor —
+any row showing `MISSING` is a migration you still need to apply (in number order). A
+"Could not find the table 'public.<name>' in the schema cache" error in the app almost always
+means the migration that creates that table was never run (e.g. `product_feedback` → 0002).
+
+```sql
+-- RenewalIQ: which migrations are applied? (read-only)
+select m.migration, case when m.applied then 'applied' else 'MISSING' end as status
+from (values
+  ('0001_appetite_update_workflow',   to_regclass('public.appetite_update_requests') is not null and to_regprocedure('public.is_admin()') is not null),
+  ('0002_product_feedback',           to_regclass('public.product_feedback') is not null),
+  ('0003_broker_workspaces',          to_regclass('public.submissions') is not null),
+  ('0004_intake_submissions',         to_regclass('public.intake_links') is not null),
+  ('0005_submission_contact_fields',  exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'contact_name')),
+  ('0006_widen_coverage_type_check',  exists (select 1 from pg_constraint where conrelid = to_regclass('public.coverage_lines') and pg_get_constraintdef(oid) like '%trailer_interchange%')),
+  ('0007_account_workflow',           exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'missing_items')),
+  ('0008_account_stage',              exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'stage')),
+  ('0009_account_follow_ups',         exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'follow_ups')),
+  ('0010_driver_experience_months',   exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'drivers' and column_name = 'experience_months')),
+  ('0011_agency_roles',               to_regclass('public.profiles') is not null),
+  ('0012_widen_extraction_method',    exists (select 1 from pg_constraint where conrelid = to_regclass('public.field_values') and pg_get_constraintdef(oid) like '%applicant_provided%')),
+  ('0013_intake_link_org_name',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'intake_links' and column_name = 'organization_name')),
+  ('0014_activity_actor_name',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'activity_events' and column_name = 'actor_name')),
+  ('0015_document_source_url',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'source_url')),
+  ('0016_account_done_actions',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'done_actions')),
+  ('0017_profile_contact_fields',     to_regprocedure('public.save_my_profile(text,text,text)') is not null),
+  ('0018_agency_invitations',         to_regclass('public.agency_invitations') is not null),
+  ('0019_intake_documents_fix',       to_regprocedure('public.intake_submission_accepts_documents(text,uuid)') is not null),
+  ('0020_account_notes',              exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'account_notes')),
+  ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
+  ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
+) as m(migration, applied);
+```
+
+If a table was just created and the app still reports the schema-cache error, run
+`notify pgrst, 'reload schema';` once in the SQL editor.
 
 ## 3. Get your API credentials
 
@@ -126,24 +257,29 @@ account happens directly in the Supabase dashboard, never through a public form:
 To add a second admin later, repeat the same three steps for that person — there's no in-app "add
 admin" button by design, so this stays entirely under your control in the Supabase dashboard.
 
-## 6. Enable "Forgot password?" (optional, one-time dashboard step)
+## 6. Auth email links — Site URL and Redirect URLs (required, one-time dashboard step)
 
-The admin sign-in page has a "Forgot password?" link. Sending the reset email works with zero
-extra setup, but **completing** the reset (clicking the emailed link and landing back on a "set a
-new password" form) requires the redirect URL to be allow-listed, or Supabase will reject it:
+Every email Supabase sends for Renewal IQ has a link back into the app: **sign-up confirmation**,
+**forgot password** (brokers → `/login`, admins → `/admin`) and **team invitations** (`/invite/…`).
+The app always asks Supabase to send people back to the site they're using right now — production
+on production, a Vercel preview on that preview, localhost in development (`src/services/supabase/authRedirect.ts`).
+Supabase only honours that address if it's on the allow-list; **anything else silently falls back
+to the Site URL**, which is `http://localhost:3000` on a new project. That is why a link can open
+`localhost:3000`.
 
-1. Supabase dashboard → **Authentication → URL Configuration**.
-2. Under **Redirect URLs**, add every URL admins might sign in from, each ending in `/admin` — e.g.
-   `https://your-production-domain.com/admin` and, for local development, `http://localhost:5173/admin`.
-   (If you'd previously allow-listed a URL ending in `/admin/appetite-updates` from an earlier
-   version of this app, update it to `/admin` — the Admin Dashboard at `/admin` is now the
-   canonical sign-in/reset landing page.)
+In the Supabase dashboard → **Authentication → URL Configuration**:
 
-If this step is skipped, the "send reset email" step still works and shows its normal
-confirmation (never revealing whether the address has an account), but the link in that email
-will fail with a redirect error instead of opening the "set a new password" form. This is a
-dashboard setting only — no code change is needed once it's configured, and there is no workaround
-in the app that bypasses it (nor should there be).
+1. **Site URL** → your production Renewal IQ address, e.g. `https://your-production-domain.com`
+   (no path). This is the fallback, so it must never be localhost.
+2. **Redirect URLs** → add:
+   - `https://your-production-domain.com/**`
+   - your Vercel preview URLs: `https://*-your-vercel-team.vercel.app/**` (the part after the last
+     `-` in any preview URL is your team slug)
+   - `http://localhost:5173/**` for local development
+
+The `/**` covers `/login`, `/admin` and `/invite/…`. After a reset link opens the app, the person
+sees **Set a new password**, saves it, and continues signed in; next time they sign in with the new
+password. An expired or already-used link shows "That email link has expired or was already used".
 
 ## 7. Managing broker appetite-update requests and product feedback
 
@@ -204,9 +340,8 @@ their own private workspace; this is the intended self-service flow (unlike admi
   before the account can sign in — `/signup` already handles this (it shows "check your email"
   rather than silently doing nothing). If you'd rather brokers get in immediately, turn it off in
   **Authentication → Providers → Email → Confirm email**; either setting works with this app as-is.
-- **"Forgot password?" on `/login`**: same one-time step as §6, except the redirect URL ends in
-  `/login` instead of `/admin` — add both `https://your-production-domain.com/login` and
-  `http://localhost:5173/login` under **Authentication → URL Configuration → Redirect URLs**.
+- **"Forgot password?" on `/login`** and the sign-up confirmation email: covered by §6 (Site URL +
+  Redirect URLs).
 - **What syncs**: business/transportation fields (with full provenance and conflict history),
   vehicles, drivers, loss history, coverage, document metadata + the original uploaded file, and
   activity history — everything the local-only experience already tracked. A submission created

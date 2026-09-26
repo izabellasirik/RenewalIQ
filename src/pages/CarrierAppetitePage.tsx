@@ -7,6 +7,7 @@ import { Tabs, EmptyState, Button } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketCardSkeleton } from '../components/appetite/MarketCardSkeleton';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
+import { AddToQuotesAction } from '../components/appetite/AddToQuotesAction';
 import { useAccountsStore } from '../state/useAccountsStore';
 import type { MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
@@ -28,7 +29,8 @@ export function CarrierAppetitePage() {
   useEffect(() => {
     loadEffectiveAppetiteRecords();
   }, [loadEffectiveAppetiteRecords]);
-  const [filter, setFilter] = useState<FilterKey>('all');
+  // Possible Match is the main view — first tab and open by default.
+  const [filter, setFilter] = useState<FilterKey>('possible_match');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<MatchResult | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -63,7 +65,7 @@ export function CarrierAppetitePage() {
     >
       <p className="mb-5 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
         <Info size={13} className="mt-0.5 shrink-0" />
-        Carrier appetite changes frequently. Renewal IQ recommendations are based on the latest information available and should be confirmed with the market before binding.
+        Carrier appetite changes frequently. RenewalIQ recommendations are based on the latest information available and should be confirmed with the market before binding.
       </p>
 
       {isAnalyzing ? (
@@ -94,9 +96,9 @@ export function CarrierAppetitePage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <Tabs
               items={[
+                { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
                 { key: 'all', label: 'All Markets', count: matchResults.length },
                 { key: 'likely_match', label: VERDICT_LABELS.likely_match, count: counts.likely_match },
-                { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
                 { key: 'needs_more_information', label: VERDICT_LABELS.needs_more_information, count: counts.needs_more_information },
                 { key: 'not_eligible', label: VERDICT_LABELS.not_eligible, count: counts.not_eligible },
               ]}
@@ -134,7 +136,13 @@ export function CarrierAppetitePage() {
         </>
       )}
 
-      <MarketDetailDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} record={selectedRecord} result={selected} />
+      <MarketDetailDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        record={selectedRecord}
+        result={selected}
+        actions={(record) => <AddToQuotesAction record={record} accountId={accountId} />}
+      />
     </PageContainer>
   );
 }

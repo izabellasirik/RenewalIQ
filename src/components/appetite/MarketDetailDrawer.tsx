@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus, Link2 } from 'lucide-react';
 import type { AppetiteCriterion, AppetiteRecord, MatchReason, MatchResult, ReasonGroup, RuleType } from '../../types';
 import { SOURCE_TYPE_LABELS } from '../../types';
@@ -10,6 +10,7 @@ import { formatDate } from '../../utils/dates';
 import { formatStates, formatFleetSize, formatCriterion } from '../../utils/appetiteFormatters';
 import { getDistributionSummary } from '../../services/appetite/distribution';
 import { cn } from '../../utils/cn';
+import { formatDuration, toMonths } from '../../utils/duration';
 
 const RULE_TYPE_LABELS: Record<RuleType, string> = {
   HARD_RULE: 'Hard Rule',
@@ -68,7 +69,7 @@ function criterionTier(status: AppetiteCriterion<unknown>['verificationStatus'])
 function SourcePanel({ criterion }: { criterion: AppetiteCriterion<unknown> }) {
   const tier = criterionTier(criterion.verificationStatus);
   if (tier === 'unknown') {
-    return <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">Renewal IQ has no source at all for this criterion.</p>;
+    return <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">RenewalIQ has no source at all for this criterion.</p>;
   }
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-[var(--color-ink-500)]">
@@ -139,13 +140,13 @@ function buildCriterionRows(record: AppetiteRecord): CriterionRow[] {
   return [
     { label: 'Eligible States', criterion: record.states, display: formatStates(record) },
     { label: 'Fleet Size', criterion: record.fleetSize, display: formatFleetSize(record) },
-    { label: 'Years in Business (min)', criterion: record.yearsInBusinessMin, display: formatCriterion(record.yearsInBusinessMin, (v) => `${v}+ years`) },
-    { label: 'Years in Business (max)', criterion: record.yearsInBusinessMax, display: formatCriterion(record.yearsInBusinessMax, (v) => `under ${v} years`) },
+    { label: 'Years in Business (min)', criterion: record.yearsInBusinessMin, display: formatCriterion(record.yearsInBusinessMin, (v) => formatDuration({ months: toMonths(v) ?? 0, orMore: true })) },
+    { label: 'Years in Business (max)', criterion: record.yearsInBusinessMax, display: formatCriterion(record.yearsInBusinessMax, (v) => `under ${formatDuration(v)}`) },
     { label: 'Operation Type', criterion: record.operationTypes, display: formatCriterion(record.operationTypes, (v) => v.join(', ')) },
     { label: 'Max Radius', criterion: record.maxRadius, display: formatCriterion(record.maxRadius, (v) => v) },
     { label: 'Commodities / Operations', criterion: record.commodities, display: formatCriterion(record.commodities, (v) => v.join(', ')) },
     { label: 'Min. Driver Age', criterion: record.minDriverAge, display: formatCriterion(record.minDriverAge, (v) => `${v}`) },
-    { label: 'Min. Driver Experience', criterion: record.minDriverExperienceYears, display: formatCriterion(record.minDriverExperienceYears, (v) => `${v} years`) },
+    { label: 'Min. Driver Experience', criterion: record.minDriverExperienceYears, display: formatCriterion(record.minDriverExperienceYears, (v) => formatDuration(v)) },
     { label: 'Telematics Required', criterion: record.telematicsRequired, display: formatCriterion(record.telematicsRequired, (v) => (v ? 'Yes' : 'No')) },
     { label: 'Dashcam Required', criterion: record.dashcamRequired, display: formatCriterion(record.dashcamRequired, (v) => (v ? 'Yes' : 'No')) },
     { label: 'DOT Number Required', criterion: record.dotNumberRequired, display: formatCriterion(record.dotNumberRequired, (v) => (v ? 'Yes' : 'No')) },
@@ -192,7 +193,7 @@ function CriterionCard({ row }: { row: CriterionRow }) {
           )}
         </div>
       ) : (
-        <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">Renewal IQ has no source at all for this criterion.</p>
+        <p className="mt-1.5 text-[11px] text-[var(--color-ink-400)]">RenewalIQ has no source at all for this criterion.</p>
       )}
     </div>
   );
@@ -232,16 +233,20 @@ export function MarketDetailDrawer({
   onClose,
   record,
   result,
+  actions,
 }: {
   open: boolean;
   onClose: () => void;
   record: AppetiteRecord | null;
+  /** Omit (null) to show the market on its own — its appetite record, with no match verdict (e.g. browsing All Markets before any filter is set). */
   result: MatchResult | null;
+  /** Optional workflow actions (e.g. "Add to Quotes") rendered under the verdict. */
+  actions?: (record: AppetiteRecord) => ReactNode;
 }) {
   const [updateFormOpen, setUpdateFormOpen] = useState(false);
-  if (!record || !result) return null;
+  if (!record) return null;
 
-  const groups = GROUP_ORDER.map((group) => ({ group, reasons: result.reasons.filter((r) => r.group === group) })).filter((g) => g.reasons.length > 0);
+  const groups = result ? GROUP_ORDER.map((group) => ({ group, reasons: result.reasons.filter((r) => r.group === group) })).filter((g) => g.reasons.length > 0) : [];
 
   return (
     <Drawer
@@ -256,25 +261,31 @@ export function MarketDetailDrawer({
       }`}
     >
       <div className="flex flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <VerdictBadge verdict={result.verdict} className="text-sm" />
-          {record.availableThrough && <AvailableThroughTag carrierName={record.availableThrough} />}
-        </div>
+        {(result || record.availableThrough) && (
+          <div className="flex items-center justify-between">
+            {result ? <VerdictBadge verdict={result.verdict} className="text-sm" /> : <span />}
+            {record.availableThrough && <AvailableThroughTag carrierName={record.availableThrough} />}
+          </div>
+        )}
+
+        {actions?.(record)}
 
         {updateFormOpen ? (
           <RequestAppetiteUpdateForm record={record} onClose={() => setUpdateFormOpen(false)} />
         ) : (
-          <Button variant="secondary" size="sm" icon={<MessageSquarePlus size={14} />} onClick={() => setUpdateFormOpen(true)} className="self-start">
+          <Button variant="accent" size="sm" icon={<MessageSquarePlus size={14} />} onClick={() => setUpdateFormOpen(true)} className="self-start">
             Request Appetite Update
           </Button>
         )}
 
+        {result && (
         <p className="text-xs text-[var(--color-ink-500)]">
           {result.verifiedMatchCount} verified criteri{result.verifiedMatchCount === 1 ? 'on' : 'a'} matched · {result.needsVerificationCount} need
           {result.needsVerificationCount === 1 ? 's' : ''} verification
         </p>
+        )}
 
-        {result.freshnessMessage && <FreshnessWarning message={result.freshnessMessage} />}
+        {result?.freshnessMessage && <FreshnessWarning message={result.freshnessMessage} />}
 
         {record.underwritingNotes && (
           <div className="flex items-start gap-2.5 rounded-lg border border-[var(--color-ink-100)] bg-white p-4">
@@ -288,6 +299,7 @@ export function MarketDetailDrawer({
 
         <AvailableThroughSection record={record} />
 
+        {groups.length > 0 && (
         <div>
           <h4 className="mb-2 text-sm font-semibold text-[var(--color-ink-900)]">Why this match?</h4>
           <div className="flex flex-col gap-4">
@@ -309,6 +321,7 @@ export function MarketDetailDrawer({
             })}
           </div>
         </div>
+        )}
 
         <div>
           <h4 className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">Appetite Record</h4>

@@ -15,7 +15,10 @@ export function CoverageSection({
   onResolve,
   onAdd,
   onDelete,
+  highlightType,
 }: {
+  /** Ring + scroll target for a deep link (e.g. from What's Missing). */
+  highlightType?: CoverageType | null;
   coverage: CoverageLine[];
   onSave: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
   onResolve: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', resolution: FieldResolution<string>) => void;
@@ -29,7 +32,7 @@ export function CoverageSection({
   return (
     <div>
       {availableToAdd.length > 0 && (
-        <div className="mb-3 flex items-center justify-end gap-2">
+        <div className="mb-3 flex items-center justify-start gap-2">
           <select
             value={addType}
             onChange={(e) => setAddType(e.target.value as CoverageType | '')}
@@ -60,7 +63,11 @@ export function CoverageSection({
       {coverage.length === 0 && <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No coverages requested yet.</p>}
 
       {coverage.map((line) => (
-        <div key={line.type} className="border-b border-[var(--color-ink-100)] py-3 last:border-0">
+        <div
+          key={line.type}
+          id={`coverage-${line.type}`}
+          className={`border-b border-[var(--color-ink-100)] py-3 last:border-0 ${highlightType === line.type ? 'rounded-lg ring-2 ring-[var(--color-brand-500)]' : ''}`}
+        >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-semibold text-[var(--color-ink-800)]">{COVERAGE_LABELS[line.type]}</p>
             <button

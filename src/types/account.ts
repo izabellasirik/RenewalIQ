@@ -1,5 +1,7 @@
 export type AccountStatus = 'new' | 'documents_uploaded' | 'profile_in_review' | 'ready_for_market';
 
+import type { AccountStage, AssignedBroker, Contact } from './workflow';
+
 export interface Account {
   id: string;
   namedInsured: string;
@@ -13,4 +15,28 @@ export interface Account {
   contactName?: string;
   contactEmail?: string;
   contactPhone?: string;
+  /** Every person at the insured the broker may contact. Absent on accounts persisted before contacts existed — read through getAccountContacts(), which falls back to the legacy contactName/Email/Phone fields above. */
+  contacts?: Contact[];
+  assignedBroker?: AssignedBroker;
+  /** Broker-set pipeline status. Absent = automatic (derived from checklist and quotes). */
+  stage?: AccountStage;
+  /** Agency this account belongs to (cloud accounts, 0011). Set by the database, read-only here. */
+  agencyId?: string;
+  /** Supabase Auth user id of the agent the account belongs to — what grants access (RLS). Set by the database; only an agency admin can change it (assignAccountToAgent). */
+  assignedUserId?: string | null;
+  /** Derived tasks the broker marked done: task key (see actionDoneKey) → when. */
+  doneActions?: Record<string, string>;
+  /** Human-written account notes (Workspace → Notes), newest last. Not part of Activity. */
+  notes?: AccountNote[];
+}
+
+export interface AccountNote {
+  id: string;
+  text: string;
+  createdAt: string;
+  authorId?: string;
+  authorName: string;
+  /** Set when the note was edited. */
+  updatedAt?: string;
+  updatedByName?: string;
 }

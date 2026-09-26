@@ -94,6 +94,8 @@ export interface MappedField {
   required?: boolean;
   /** See FieldMapping.neverFlagMissing — carried through so completeness.ts can skip this field's blank state without re-deriving it from the template. */
   neverFlagMissing?: boolean;
+  /** A value shown to the broker only (e.g. "Requested — limit not specified"), never printed on the exported application. */
+  isPlaceholder?: boolean;
   /** Carried through so the UI can offer "also save this to the Risk Profile" / "resolve in Risk Profile" for fields that have one. Undefined for fields with no Risk Profile equivalent. */
   riskProfilePath?: FieldPath;
 }

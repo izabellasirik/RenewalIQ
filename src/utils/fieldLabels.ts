@@ -49,7 +49,7 @@ export const DRIVER_FIELD_LABELS: Record<string, string> = {
   expirationDate: 'Expiration Date',
   restrictions: 'Restrictions',
   endorsements: 'Endorsements',
-  yearsExperience: 'Years Experience',
+  yearsExperience: 'Experience',
   violations: 'Violations',
 };
 

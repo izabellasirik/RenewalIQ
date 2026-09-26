@@ -1,6 +1,7 @@
 import type { ApplicationTemplate, DriverEntry, LossEntry, VehicleEntry } from '../../types';
 import { COVERAGE_LABELS } from '../../types';
 import { formatCurrency, formatDateMDY, formatNewVenture, formatStatus } from './formatters';
+import { formatDuration } from '../../utils/duration';
 
 const CURRENT_POLICY_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability'] as const;
 const REQUESTED_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability', 'warehouse_legal_liability'] as const;
@@ -13,7 +14,7 @@ const REQUESTED_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physic
 export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
   {
     id: 'renewal_iq_transportation_demo',
-    name: 'Renewal IQ Transportation Application - Demo',
+    name: 'RenewalIQ Transportation Application - Demo',
     description: 'An internal sample transportation insurance application layout for MVP testing. Not a certified/regulatory form.',
     exportTitle: 'Transportation Application',
     sections: [
@@ -39,7 +40,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           // fieldMappingEngine.ts).
           { targetFieldId: 'dot_number', targetLabel: 'DOT Number', riskProfilePath: 'transportation.dotNumber', required: true },
           { targetFieldId: 'mc_number', targetLabel: 'MC Number', riskProfilePath: 'transportation.mcNumber' },
-          { targetFieldId: 'effective_date', targetLabel: 'Requested Effective Date', riskProfilePath: 'business.effectiveDate', required: true },
+          { targetFieldId: 'effective_date', targetLabel: 'Requested Effective Date', riskProfilePath: 'business.effectiveDate', format: formatDateMDY, required: true },
         ],
       },
       {
@@ -67,6 +68,12 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           targetLabel: `${COVERAGE_LABELS[type]} (Current Limit)`,
           riskProfilePath: `coverage.${type}.currentLimit`,
           required: false,
+          // Never a completeness gap: a new-business or no-current-coverage account legitimately
+          // has nothing to report here, and there's no reliable signal in the Risk Profile to tell
+          // that case apart from "broker just hasn't filled it in yet" — so this is informational
+          // (still shown, still editable) but never blocks What's Missing/the Limits & Coverage
+          // workflow-nav checkmark the way a blank Requested Limit does.
+          neverFlagMissing: true,
         })),
       },
       {
@@ -86,7 +93,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           { key: 'name', label: 'Driver Name' },
           { key: 'dob', label: 'DOB', format: (e) => ((e as DriverEntry).dob ? formatDateMDY((e as DriverEntry).dob) : '') },
           { key: 'licenseState', label: 'License State' },
-          { key: 'yearsExperience', label: 'Years Experience' },
+          { key: 'yearsExperience', label: 'Experience', format: (e) => formatDuration((e as DriverEntry).yearsExperience) },
           { key: 'violations', label: 'Violations' },
         ],
       },

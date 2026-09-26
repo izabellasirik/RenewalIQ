@@ -25,6 +25,8 @@ import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
 import { emptyField } from '../types';
 import { cn } from '../utils/cn';
+import { formatDuration } from '../utils/duration';
+import { AssignedAgent } from '../components/workspace/AssignedAgent';
 
 const TREND_ICON = { increasing: TrendingUp, decreasing: TrendingDown, stable: Minus, insufficient_data: Minus };
 const TREND_LABEL = { increasing: 'Increasing', decreasing: 'Decreasing', stable: 'Stable', insufficient_data: 'Not enough data' };
@@ -100,8 +102,12 @@ export function RiskProfilePage() {
   // field that needs resolving, reusing this page's existing scroll-to-and-highlight behavior
   // instead of duplicating a conflict resolver elsewhere.
   useEffect(() => {
-    const target = (location.state as { focusField?: { section: 'business' | 'transportation'; key: string } } | null)?.focusField;
-    if (target) focusField(target.section, target.key);
+    const state = location.state as { focusField?: { section: 'business' | 'transportation'; key: string }; tab?: TabKey } | null;
+    if (state?.focusField) focusField(state.focusField.section, state.focusField.key);
+    else if (state?.tab) {
+      setTab(state.tab);
+      requestAnimationFrame(() => document.getElementById('risk-profile-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
@@ -120,7 +126,8 @@ export function RiskProfilePage() {
   return (
     <PageContainer
       title={`Risk Profile — ${account.namedInsured}`}
-      description="Unified, editable view of everything extracted from uploaded documents. Every value shows its confidence and source."
+      // Who owns this account, right under the title — the same control as the Workspace (admins can reassign here).
+      description={<AssignedAgent account={account} />}
       actions={
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)}>
@@ -147,17 +154,19 @@ export function RiskProfilePage() {
     >
       <AccountSummary account={account} profile={profile} />
 
-      <div className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3">
+      {/* The one submission-completeness number (same as Submission Assistant and What's Missing). */}
+      <button
+        onClick={() => setWhatsMissingOpen(true)}
+        className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3 text-left hover:border-[var(--color-brand-300,var(--color-ink-200))] cursor-pointer"
+      >
         <div className="flex-1">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-[var(--color-ink-700)]">Profile Completeness</span>
-            <span className="text-[var(--color-ink-500)]">
-              {stats.filled} of {stats.total} fields
-            </span>
+            <span className="font-medium text-[var(--color-ink-700)]">Submission completeness</span>
+            <span className="font-semibold text-[var(--color-ink-900)]">{completeness.percent}% · What's missing?</span>
           </div>
-          <ProgressBar value={(stats.filled / Math.max(stats.total, 1)) * 100} className="mt-1.5" />
+          <ProgressBar value={completeness.percent} className="mt-1.5" />
         </div>
-      </div>
+      </button>
 
       <ConflictBanner count={stats.conflicting.length} />
       <MissingFieldsPanel
@@ -165,16 +174,18 @@ export function RiskProfilePage() {
         onFieldClick={focusField}
       />
 
-      <Tabs
-        items={[
-          { key: 'details', label: 'Business & Transportation' },
-          { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
-          { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
-          { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
-        ]}
-        active={tab}
-        onChange={(k) => setTab(k as TabKey)}
-      />
+      <div id="risk-profile-tabs" className="scroll-mt-20">
+        <Tabs
+          items={[
+            { key: 'details', label: 'Business & Transportation' },
+            { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
+            { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
+            { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
+          ]}
+          active={tab}
+          onChange={(k) => setTab(k as TabKey)}
+        />
+      </div>
 
       {tab === 'details' && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -253,8 +264,8 @@ export function RiskProfilePage() {
                 { label: 'Driver Count', value: String(driverSummary.driverCount) },
                 { label: 'Min. Age', value: driverSummary.minDriverAge !== null ? String(driverSummary.minDriverAge) : '—' },
                 { label: 'Avg. Age', value: driverSummary.averageDriverAge !== null ? driverSummary.averageDriverAge.toFixed(1) : '—' },
-                { label: 'Min. Experience', value: driverSummary.minExperience !== null ? `${driverSummary.minExperience} yrs` : '—' },
-                { label: 'Avg. Experience', value: driverSummary.averageExperience !== null ? `${driverSummary.averageExperience.toFixed(1)} yrs` : '—' },
+                { label: 'Min. Experience', value: driverSummary.minExperience !== null ? formatDuration(driverSummary.minExperience) : '—' },
+                { label: 'Avg. Experience', value: driverSummary.averageExperience !== null ? formatDuration(driverSummary.averageExperience) : '—' },
                 {
                   label: 'Violations',
                   value: `${driverSummary.violations.driversWithViolations} of ${driverSummary.violations.totalDrivers} drivers`,
@@ -351,6 +362,7 @@ export function RiskProfilePage() {
       )}
 
       <WhatsMissingPanel
+        accountId={accountId}
         open={whatsMissingOpen}
         onClose={() => setWhatsMissingOpen(false)}
         completeness={completeness}

@@ -30,6 +30,10 @@ export interface RawDocument {
   warnings: string[];
   /** Image documents only — a resized, compressed JPEG data URL for on-screen preview. See parseImage.ts. */
   imagePreviewDataUrl?: string;
+  /** Set when the uploaded file was only a link: the URL it pointed to (kept for traceability). */
+  sourceUrl?: string;
+  /** Set when the uploaded file was only a link: the document downloaded from it (store/preview this, not the shortcut). */
+  linkedFile?: File;
   /** Image documents only — Tesseract's overall mean-confidence score (0-100) for the recognized text, so downstream code can scale field confidence to actual image/OCR quality rather than treating OCR text like verbatim embedded PDF text. */
   ocrConfidence?: number;
 }

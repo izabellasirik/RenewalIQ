@@ -1,3 +1,4 @@
+import type { DurationValue } from '../utils/duration';
 import type { Confidence, FieldConflict, FieldSource } from './common';
 
 export interface DriverEntry {
@@ -17,7 +18,8 @@ export interface DriverEntry {
   expirationDate?: string;
   restrictions?: string;
   endorsements?: string;
-  yearsExperience?: number;
+  /** Legacy number = years; new edits store a Duration in months (utils/duration.ts). */
+  yearsExperience?: DurationValue;
   violations?: string;
   /**
    * Per-field confidence for values read off a document (a license photo, most commonly) where

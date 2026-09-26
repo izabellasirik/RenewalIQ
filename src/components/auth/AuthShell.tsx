@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { BrandLogo } from '../branding/Logo';
 
 /** Shared centered-card layout for /login and /signup — deliberately outside AppShell (no Sidebar/TopBar/workspace chrome), since a visitor here isn't in a submission workspace yet. */
 export function AuthShell({ children }: { children: ReactNode }) {
@@ -6,8 +7,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen items-center justify-center bg-[var(--color-ink-50)] px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-brand-800)] text-base font-bold text-white">R</div>
-          <p className="text-sm font-semibold tracking-tight text-[var(--color-ink-900)]">Renewal IQ</p>
+          <BrandLogo size={40} />
         </div>
         {children}
       </div>

@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { Plus, Pencil, Trash2, Check, X, User, AlertTriangle } from 'lucide-react';
 import type { DriverEntry } from '../../types';
 import { Button, ConfirmDialog } from '../ui';
+import { formatDuration } from '../../utils/duration';
+import { DurationInput } from './DurationInput';
+import { EMPTY_DURATION_DRAFT, draftToDuration, durationToDraft, type DurationDraft } from '../../utils/durationDraft';
 
 type Draft = {
   name: string;
@@ -11,11 +14,11 @@ type Draft = {
   licenseNumber: string;
   licenseClass: string;
   expirationDate: string;
-  yearsExperience: string;
+  yearsExperience: DurationDraft;
   violations: string;
 };
 
-const EMPTY_DRAFT: Draft = { name: '', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', expirationDate: '', yearsExperience: '', violations: '' };
+const EMPTY_DRAFT: Draft = { name: '', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', expirationDate: '', yearsExperience: EMPTY_DURATION_DRAFT, violations: '' };
 
 function toDraft(d: DriverEntry): Draft {
   return {
@@ -26,7 +29,7 @@ function toDraft(d: DriverEntry): Draft {
     licenseNumber: d.licenseNumber ?? '',
     licenseClass: d.licenseClass ?? '',
     expirationDate: d.expirationDate ?? '',
-    yearsExperience: d.yearsExperience !== undefined ? String(d.yearsExperience) : '',
+    yearsExperience: durationToDraft(d.yearsExperience),
     violations: d.violations ?? '',
   };
 }
@@ -40,7 +43,7 @@ function fromDraft(d: Draft): Omit<DriverEntry, 'id'> {
     licenseNumber: d.licenseNumber.trim() || undefined,
     licenseClass: d.licenseClass.trim() || undefined,
     expirationDate: d.expirationDate.trim() || undefined,
-    yearsExperience: d.yearsExperience.trim() ? Number(d.yearsExperience) : undefined,
+    yearsExperience: draftToDuration(d.yearsExperience) ?? undefined,
     violations: d.violations.trim() || undefined,
   };
 }
@@ -105,7 +108,7 @@ export function DriversTable({
         <td className="py-2 pr-4"><input className={inputCls} placeholder="License #" value={draft.licenseNumber} onChange={(e) => setDraft({ ...draft, licenseNumber: e.target.value })} /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="Class" value={draft.licenseClass} onChange={(e) => setDraft({ ...draft, licenseClass: e.target.value })} /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="YYYY-MM-DD" value={draft.expirationDate} onChange={(e) => setDraft({ ...draft, expirationDate: e.target.value })} /></td>
-        <td className="py-2 pr-4"><input className={inputCls} placeholder="Years" value={draft.yearsExperience} onChange={(e) => setDraft({ ...draft, yearsExperience: e.target.value })} /></td>
+        <td className="py-2 pr-4"><DurationInput compact inputClassName={inputCls} value={draft.yearsExperience} onChange={(v) => setDraft({ ...draft, yearsExperience: v })} label="Driver experience" /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="None" value={draft.violations} onChange={(e) => setDraft({ ...draft, violations: e.target.value })} /></td>
         <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{isNew ? 'Entered by broker' : d?.source?.documentName ?? 'Entered by broker'}</td>
         <td className="py-2">
@@ -134,7 +137,7 @@ export function DriversTable({
             <th className="py-2 pr-4 font-medium">License #</th>
             <th className="py-2 pr-4 font-medium">Class</th>
             <th className="py-2 pr-4 font-medium">Expires</th>
-            <th className="py-2 pr-4 font-medium">Years Experience</th>
+            <th className="py-2 pr-4 font-medium">Experience</th>
             <th className="py-2 pr-4 font-medium">Violations</th>
             <th className="py-2 pr-4 font-medium">Source</th>
             <th className="py-2 font-medium" />
@@ -163,7 +166,7 @@ export function DriversTable({
                 <td className="py-2.5 pr-4 font-mono text-xs text-[var(--color-ink-800)]">{d.licenseNumber ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.licenseClass ?? '—'}{d.isCDL ? ' (CDL)' : ''}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.expirationDate ?? '—'}</td>
-                <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.yearsExperience ?? '—'}</td>
+                <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.yearsExperience !== undefined ? formatDuration(d.yearsExperience) || '—' : '—'}</td>
                 <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.violations ?? '—'}</td>
                 <td className="py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
                   {d.isManual ? (

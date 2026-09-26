@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2 } from 'lucide-react';
+import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2, Eye } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { previewDocumentRemovalImpact } from '../../services/extraction';
 import { Badge, ConfirmDialog } from '../ui';
-import { ImagePreviewModal } from './ImagePreviewModal';
+import { DocumentPreviewModal } from './DocumentPreviewModal';
 import { DocumentExtractionDetail } from './DocumentExtractionDetail';
 
 function fileIcon(doc: UploadedDocument) {
@@ -59,7 +59,7 @@ export function DocumentList({
         {documents.map((doc) => {
           const Icon = fileIcon(doc);
           const isImage = doc.fileType === 'image';
-          const canPreview = isImage && !!doc.previewDataUrl;
+          const hasThumb = isImage && !!doc.previewDataUrl;
           return (
             <motion.li
               key={doc.id}
@@ -67,28 +67,18 @@ export function DocumentList({
               animate={{ opacity: 1, y: 0 }}
               className="flex items-center gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3"
             >
-              {canPreview ? (
-                <button
-                  onClick={() => setPreviewDoc(doc)}
-                  className="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-[var(--color-ink-100)] cursor-pointer"
-                  aria-label={`View ${doc.name}`}
-                >
-                  <img src={doc.previewDataUrl} alt="" className="h-full w-full object-cover" />
-                </button>
-              ) : (
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-ink-50)] text-[var(--color-ink-500)]">
-                  <Icon size={17} />
-                </div>
-              )}
+              <button
+                onClick={() => setPreviewDoc(doc)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)] text-[var(--color-ink-500)] hover:border-[var(--color-brand-500)] cursor-pointer"
+                aria-label={`Preview ${doc.name}`}
+                title="Preview"
+              >
+                {hasThumb ? <img src={doc.previewDataUrl} alt="" className="h-full w-full object-cover" /> : <Icon size={17} />}
+              </button>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">
+                <button onClick={() => setPreviewDoc(doc)} className="block max-w-full truncate text-left text-sm font-medium text-[var(--color-ink-800)] hover:text-[var(--color-brand-700)] hover:underline cursor-pointer" title="Preview">
                   {doc.name}
-                  {canPreview && (
-                    <button onClick={() => setPreviewDoc(doc)} className="ml-2 text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
-                      View image
-                    </button>
-                  )}
-                </p>
+                </button>
                 <p className="text-xs text-[var(--color-ink-400)]">
                   {DOCUMENT_CATEGORY_LABELS[doc.category]} · {formatSize(doc.sizeBytes)}
                 </p>
@@ -96,6 +86,14 @@ export function DocumentList({
                   <p className={`mt-1 flex items-start gap-1 text-xs ${doc.status === 'error' ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-warning-600)]'}`}>
                     <TriangleAlert size={12} className="mt-0.5 shrink-0" />
                     {doc.warnings.join(' ')}
+                  </p>
+                )}
+                {doc.sourceUrl && (
+                  <p className="mt-0.5 truncate text-xs text-[var(--color-ink-400)]" title={doc.sourceUrl}>
+                    From link:{' '}
+                    <a href={doc.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--color-brand-700)]">
+                      {doc.sourceUrl}
+                    </a>
                   </p>
                 )}
               </div>
@@ -126,6 +124,14 @@ export function DocumentList({
                   {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted
                 </Badge>
               )}
+              <button
+                onClick={() => setPreviewDoc(doc)}
+                className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-brand-700)] cursor-pointer"
+                aria-label={`Preview ${doc.name}`}
+                title="Preview"
+              >
+                <Eye size={15} />
+              </button>
               {onDelete && (
                 <button
                   onClick={() => setDeleteTarget(doc)}
@@ -140,7 +146,7 @@ export function DocumentList({
         })}
       </ul>
 
-      <ImagePreviewModal open={!!previewDoc} onClose={() => setPreviewDoc(null)} src={previewDoc?.previewDataUrl ?? ''} name={previewDoc?.name ?? ''} />
+      <DocumentPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />
 
       {profile && (
         <DocumentExtractionDetail

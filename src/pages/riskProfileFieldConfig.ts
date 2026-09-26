@@ -31,9 +31,9 @@ export const RISK_PROFILE_GROUPS: RiskFieldGroup[] = [
       { key: 'city', label: 'City', type: 'text', section: 'business' },
       { key: 'state', label: 'State', type: 'text', section: 'business' },
       { key: 'zip', label: 'ZIP', type: 'text', section: 'business' },
-      { key: 'yearsInBusiness', label: 'Years in Business', type: 'number', section: 'business' },
+      { key: 'yearsInBusiness', label: 'Years in Business', type: 'duration', section: 'business' },
       { key: 'annualRevenue', label: 'Annual Revenue', type: 'currency', section: 'business', hint: 'Used for GL rating and required by most carrier appetite checks.' },
-      { key: 'effectiveDate', label: 'Requested Effective Date', type: 'text', section: 'business', hint: 'When the client wants coverage to start.' },
+      { key: 'effectiveDate', label: 'Requested Effective Date', type: 'date', section: 'business', hint: 'When the client wants coverage to start.' },
     ],
   },
   {
@@ -62,7 +62,7 @@ export const RISK_PROFILE_GROUPS: RiskFieldGroup[] = [
     fields: [
       { key: 'driverCount', label: 'Driver Count', type: 'number', section: 'transportation' },
       { key: 'minDriverAge', label: 'Minimum Driver Age', type: 'number', section: 'transportation' },
-      { key: 'minDriverExperienceYears', label: 'Minimum Driver Experience (yrs)', type: 'number', section: 'transportation' },
+      { key: 'minDriverExperienceYears', label: 'Minimum Driver Experience', type: 'duration', section: 'transportation' },
       { key: 'telematics', label: 'Telematics', type: 'boolean', section: 'transportation' },
       { key: 'dashcams', label: 'Dashcams', type: 'boolean', section: 'transportation', hint: 'Several markets require dashcams — confirm with the account.' },
     ],
