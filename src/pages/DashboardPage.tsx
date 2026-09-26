@@ -6,7 +6,7 @@ import { Button, EmptyState } from '../components/ui';
 import { AccountCard } from '../components/dashboard/AccountCard';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
-import { useAccountsStore } from '../state/useAccountsStore';
+import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
 import { cn } from '../utils/cn';
 import { effectiveAccountStage } from '../services/workflow/accountStage';
 import { daysBetween, normalizeDateKey, todayKey } from '../services/workflow/dates';
@@ -22,6 +22,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const accounts = useAccountsStore((s) => s.accounts);
   const activityLog = useAccountsStore((s) => s.activityLog);
+  const canManageArchive = useAccountsStore(selectCanManageArchive);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
   const cloudAccountIds = useAccountsStore((s) => s.cloudAccountIds);
@@ -111,7 +112,9 @@ export function DashboardPage() {
       title={showArchived ? 'Archived Accounts' : 'Accounts'}
       description={
         showArchived
-          ? 'Restore an archived submission or remove it for good.'
+          ? canManageArchive
+            ? 'Restore an archived account, or delete it permanently.'
+            : 'Accounts you archived. Your agency admin can restore them.'
           : byAgent
             ? `Every account in ${agencyAccess?.agencyName ?? 'your agency'}, across all agents.`
             : "Every account and renewal you're working, in one place."
@@ -229,7 +232,7 @@ export function DashboardPage() {
           {visible.length === 0 ? (
             <EmptyState
               icon={<Search size={24} strokeWidth={1.5} />}
-              title={showArchived ? 'No archived submissions' : 'No matching accounts'}
+              title={showArchived ? 'No archived accounts' : 'No matching accounts'}
               description={showArchived ? undefined : renewalSoon ? `No accounts renew in the next ${RENEWAL_WINDOW_DAYS} days. An account shows here once its Risk Profile has a Requested Effective Date.` : 'Try a different search term or clear the filters.'}
             />
           ) : (

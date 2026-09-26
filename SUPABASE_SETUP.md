@@ -138,6 +138,13 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   `account_notes` column on `submissions`, so notes follow the account's existing agency
   permissions with no new policies. Additive, safe to re-run. Until it's applied, notes stay in the
   browser they were written in and the app says they couldn't be saved.
+- **`supabase/migrations/0021_account_archive_permissions.sql`** — Archive instead of delete.
+  Anyone who can edit an account can archive it; only an agency admin (or, for a personal account
+  outside any agency, its owner) can restore it or delete it permanently, and only once it's
+  archived. Adds `archived_at` / `archived_by` (stamped by the database), replaces the delete
+  policy on `submissions`, and adds `can_delete_account(id)` so the app checks before removing any
+  files. Additive, safe to re-run. **Until it's applied, agents can still delete accounts through
+  the API** and the app's "Delete permanently" reports that the migration is needed.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -202,6 +209,7 @@ from (values
   ('0018_agency_invitations',         to_regclass('public.agency_invitations') is not null),
   ('0019_intake_documents_fix',       to_regprocedure('public.intake_submission_accepts_documents(text,uuid)') is not null),
   ('0020_account_notes',              exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'account_notes')),
+  ('0021_account_archive',            to_regprocedure('public.can_delete_account(text)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

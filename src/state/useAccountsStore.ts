@@ -197,7 +197,12 @@ interface AccountsState {
   restoreAccount: (accountId: string) => void;
   /** Returns { ok: false, message } if this account is cloud-backed and the cloud deletion fails — local state is left untouched in that case (see the STOP-and-report note in the implementation), so the broker never sees "deleted" when the cloud copy is still there. */
   /** `options.noFiles`: the account never had any stored files (e.g. rolling back a just-created intake import), so Storage cleanup is skipped. */
-  deleteAccountPermanently: (accountId: string, options?: { noFiles?: boolean }) => Promise<{ ok: boolean; message?: string }>;
+  /**
+   * Permanently deletes an ARCHIVED account (admins of its agency, or the owner of a personal
+   * account — the database enforces it). `rollbackUnsavedImport` is only for an intake import whose
+   * save failed: that account is removed here and, if part of it reached the cloud, archived there.
+   */
+  deleteAccountPermanently: (accountId: string, options?: { rollbackUnsavedImport?: boolean }) => Promise<{ ok: boolean; message?: string }>;
 
   // --- Account workflow (contacts, checklist, markets & quotes) ------------------------------
   updateAccountInfo: (accountId: string, patch: { namedInsured?: string; state?: string }) => void;
@@ -361,6 +366,12 @@ function defaultChecklist(accountId: string, profile: RiskProfile | undefined, d
     } satisfies MissingItem;
   });
 }
+
+/**
+ * Whether the UI offers Restore and Delete permanently: an agency admin, or a broker outside any
+ * agency (their own accounts). Agents only archive. The database (0021) enforces the same rule.
+ */
+export const selectCanManageArchive = (s: Pick<AccountsState, 'agencyAccess'>) => !s.agencyAccess || s.agencyAccess.role === 'admin';
 
 /** Local file ids (documents + quote attachments) stored in this browser for an account. */
 function localFileIds(st: AccountsState, accountId: string): string[] {
@@ -1203,24 +1214,48 @@ export const useAccountsStore = create<AccountsState>()(
       },
 
       archiveAccount: (accountId) => {
-        set((s) => ({ accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, archived: true } : a)) }));
+        set((s) => ({
+          accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, archived: true } : a)),
+          activityLog: appendEvent(s.activityLog, accountId, 'account_archived', `Account archived${actorSuffix(s.currentUserEmail)}.`),
+        }));
         syncNow(accountId);
       },
 
       restoreAccount: (accountId) => {
-        set((s) => ({ accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, archived: false } : a)) }));
+        set((s) => ({
+          accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, archived: false } : a)),
+          activityLog: appendEvent(s.activityLog, accountId, 'account_restored', `Account restored${actorSuffix(s.currentUserEmail)}.`),
+        }));
         syncNow(accountId);
       },
 
       deleteAccountPermanently: async (accountId, options) => {
         const s = get();
-        // A cloud-backed submission: remove the cloud copy FIRST (Storage objects, then the
-        // database row, which cascades to every dependent table) before touching local state. If
-        // either cloud step fails, local state is left completely untouched and the broker sees a
-        // real error — never a "deleted" submission that quietly still exists in their account.
-        if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId]) {
-          const filesResult = options?.noFiles ? ({ ok: true } as const) : await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
-          if (!filesResult.ok) return { ok: false, message: `Couldn't remove this submission's files from your account: ${filesResult.message}` };
+        const cloudBacked = isSupabaseConfigured && !!s.currentUserId && !!s.cloudAccountIds[accountId];
+
+        if (options?.rollbackUnsavedImport) {
+          // Nothing was uploaded yet. If the header row did land, take it out of the active views
+          // (and delete it where the database allows) — never leave a half-saved account active.
+          if (cloudBacked) {
+            await cloudRepo.archiveSubmissionCloud(accountId);
+            await cloudRepo.deleteSubmissionCloud(accountId);
+          }
+          set((st) => withoutAccounts(st, new Set([accountId])));
+          return { ok: true };
+        }
+
+        const account = s.accounts.find((a) => a.id === accountId);
+        if (!account?.archived) return { ok: false, message: 'Archive this account first — only archived accounts can be deleted permanently.' };
+
+        // A cloud-backed account: ask the database whether this user may delete it BEFORE removing
+        // any file, then remove the files, then the row (which cascades to every dependent table).
+        // If any step fails, local state is left untouched and the broker sees a real error.
+        if (cloudBacked && s.currentUserId) {
+          const allowed = await cloudRepo.canDeleteAccount(accountId);
+          if (!allowed.ok) return { ok: false, message: `Couldn't delete this account: ${allowed.message}` };
+          if (!allowed.data) return { ok: false, message: 'Only an agency admin can permanently delete an archived account.' };
+          const filesResult = await cloudRepo.deleteSubmissionFiles(s.currentUserId, accountId);
+          if (!filesResult.ok) return { ok: false, message: `Couldn't remove this account's files: ${filesResult.message}` };
           // Files other agency members uploaded to this account live under their own folder
           // ({uploader}/{account}/…) — remove those by their recorded paths too (RLS allows it for
           // anyone who can access the account).
@@ -1230,7 +1265,7 @@ export const useAccountsStore = create<AccountsState>()(
           ].filter((path): path is string => !!path && !path.startsWith(`${s.currentUserId}/`));
           await Promise.all(otherPaths.map((path) => cloudRepo.deleteDocumentFile(path)));
           const deleteResult = await cloudRepo.deleteSubmissionCloud(accountId);
-          if (!deleteResult.ok) return { ok: false, message: `Couldn't delete this submission from your account: ${deleteResult.message}` };
+          if (!deleteResult.ok) return { ok: false, message: `Couldn't delete this account: ${deleteResult.message}` };
         }
 
         void deleteLocalFiles(localFileIds(s, accountId));

@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Check, ChevronRight, Copy, History, Pencil, Trash2, X, ArchiveRestore, Archive as ArchiveIcon } from 'lucide-react';
 import type { Account } from '../../types';
 import { Card, CardBody, Badge, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../ui';
-import { useAccountsStore } from '../../state/useAccountsStore';
+import { selectCanManageArchive, useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, deriveSubmissionStatusLabel } from '../layout/WorkflowSteps';
 import { formatShortDate, todayKey } from '../../services/workflow/dates';
 import { cn } from '../../utils/cn';
@@ -21,11 +21,13 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   const restoreAccount = useAccountsStore((s) => s.restoreAccount);
   const deleteAccountPermanently = useAccountsStore((s) => s.deleteAccountPermanently);
   const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
+  const canManageArchive = useAccountsStore(selectCanManageArchive);
   const agencyMembers = useAccountsStore((s) => s.agencyMembers);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(account.namedInsured);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -59,46 +61,40 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
       const result = await deleteAccountPermanently(account.id);
       if (!result.ok) {
         setDeleting(false);
-        setDeleteError(result.message ?? "Something went wrong deleting this submission. It hasn't been removed — try again.");
+        setDeleteError(result.message ?? "Something went wrong deleting this account. It hasn't been removed — try again.");
         return;
       }
       setDeleteConfirmOpen(false);
       setDeleting(false);
     } catch {
       setDeleting(false);
-      setDeleteError("Something went wrong deleting this submission. It hasn't been removed — try again.");
+      setDeleteError("Something went wrong deleting this account. It hasn't been removed — try again.");
     }
   }
 
+  // Archived: only an admin (or a broker outside any agency) can restore or delete — an agent's
+  // archived account has no actions; the database enforces the same rule.
   const menuItems: OverflowMenuItem[] = account.archived
-    ? [
-        { key: 'restore', label: 'Restore', icon: <ArchiveRestore size={14} />, onSelect: () => restoreAccount(account.id) },
-        {
-          key: 'delete',
-          label: 'Delete permanently',
-          icon: <Trash2 size={14} />,
-          tone: 'danger',
-          onSelect: () => {
-            setDeleteError(null);
-            setDeleteConfirmOpen(true);
+    ? canManageArchive
+      ? [
+          { key: 'restore', label: 'Restore account', icon: <ArchiveRestore size={14} />, onSelect: () => restoreAccount(account.id) },
+          {
+            key: 'delete',
+            label: 'Delete permanently',
+            icon: <Trash2 size={14} />,
+            tone: 'danger',
+            onSelect: () => {
+              setDeleteError(null);
+              setDeleteConfirmOpen(true);
+            },
           },
-        },
-      ]
+        ]
+      : []
     : [
         { key: 'rename', label: 'Rename', icon: <Pencil size={14} />, onSelect: () => setIsRenaming(true) },
         { key: 'duplicate', label: 'Duplicate for renewal', icon: <Copy size={14} />, onSelect: () => duplicateAccount(account.id) },
         { key: 'history', label: 'View history', icon: <History size={14} />, onSelect: onOpenHistory },
-        { key: 'archive', label: 'Archive', icon: <ArchiveIcon size={14} />, onSelect: () => archiveAccount(account.id) },
-        {
-          key: 'delete',
-          label: 'Delete submission',
-          icon: <Trash2 size={14} />,
-          tone: 'danger',
-          onSelect: () => {
-            setDeleteError(null);
-            setDeleteConfirmOpen(true);
-          },
-        },
+        { key: 'archive', label: 'Archive account', icon: <ArchiveIcon size={14} />, onSelect: () => setArchiveConfirmOpen(true) },
       ];
 
   return (
@@ -138,7 +134,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
               {isAgencyAdmin && <p className="mt-0.5 truncate text-xs text-[var(--color-ink-500)]">Agent: {agentLabel(account, agencyMembers, currentUserId) ?? 'Unassigned'}</p>}
             </div>
             <div className="flex shrink-0 items-center gap-0.5">
-              <OverflowMenu items={menuItems} />
+              {menuItems.length > 0 && <OverflowMenu items={menuItems} />}
               <ChevronRight size={18} className="text-[var(--color-ink-400)] transition-transform group-hover:translate-x-0.5" aria-hidden />
             </div>
           </div>
@@ -181,12 +177,25 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
 
       <div onClick={(e) => e.stopPropagation()}>
         <ConfirmDialog
+          open={archiveConfirmOpen}
+          onCancel={() => setArchiveConfirmOpen(false)}
+          onConfirm={() => {
+            archiveAccount(account.id);
+            setArchiveConfirmOpen(false);
+          }}
+          title={`Archive ${account.namedInsured}?`}
+          description={archiveConfirmText(canManageArchive)}
+          confirmLabel="Archive account"
+          variant="default"
+        />
+        <ConfirmDialog
           open={deleteConfirmOpen}
           onCancel={() => setDeleteConfirmOpen(false)}
           onConfirm={confirmDelete}
-          title="Delete this submission?"
-          description={`This will permanently remove ${account.namedInsured} and its associated submission data. This action cannot be undone.`}
-          confirmLabel="Delete submission"
+          title={`Permanently delete ${account.namedInsured}?`}
+          description="This will permanently remove this account and its related data and cannot be undone."
+          typeToConfirm={account.namedInsured}
+          confirmLabel="Delete permanently"
           confirming={deleting}
         />
         {deleteError && (
@@ -197,4 +206,11 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
       </div>
     </motion.div>
   );
+}
+
+/** The archive confirmation's wording — agents are told who can bring it back. */
+export function archiveConfirmText(canManageArchive: boolean): string {
+  return canManageArchive
+    ? 'It will be removed from active views. You can restore it from Archived.'
+    : 'It will be removed from active views, but your agency admin can restore it.';
 }

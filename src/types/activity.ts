@@ -16,6 +16,8 @@ export type ActivityEventType =
   | 'matching_run'
   // Account workflow events (see types/workflow.ts) — the broker-meaningful history.
   | 'account_updated'
+  | 'account_archived'
+  | 'account_restored'
   | 'stage_changed'
   | 'broker_assigned'
   | 'contact_added'
@@ -44,6 +46,8 @@ export type ActivityEventType =
 export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<ActivityEventType>([
   'account_created',
   'account_updated',
+  'account_archived',
+  'account_restored',
   'stage_changed',
   'broker_assigned',
   'contact_added',

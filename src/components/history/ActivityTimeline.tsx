@@ -1,5 +1,7 @@
 import {
   PlusCircle,
+  Archive,
+  ArchiveRestore,
   Copy,
   UploadCloud,
   ScanLine,
@@ -52,6 +54,8 @@ const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   record_deleted: Trash2,
   matching_run: Compass,
   account_updated: Pencil,
+  account_archived: Archive,
+  account_restored: ArchiveRestore,
   stage_changed: Flag,
   broker_assigned: UserCog,
   contact_added: UserPlus,

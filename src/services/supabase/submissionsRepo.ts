@@ -646,15 +646,50 @@ export async function appendActivityEvents(userId: string, accountId: string, ev
   }
 }
 
-/** Deletes a submission and (via ON DELETE CASCADE) every dependent row — field_values, field_alternates, coverage_lines, vehicles, drivers, losses, documents, activity_events. Does not touch Storage objects; callers should list and remove those first (see deleteSubmissionFiles). */
+/**
+ * Permanently deletes a submission and (via ON DELETE CASCADE) every dependent row — field_values,
+ * field_alternates, coverage_lines, vehicles, drivers, losses, documents, activity_events. Does not
+ * touch Storage objects; callers should check canDeleteAccount, then remove those first (see
+ * deleteSubmissionFiles). Since 0021 the database only allows this for an ARCHIVED account, by an
+ * admin of its agency (or the owner of a personal account) — a refused delete removes nothing and
+ * returns no error, so the deleted row is read back to tell the two apart.
+ */
 export async function deleteSubmissionCloud(submissionId: string): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const { error } = await supabase.from('submissions').delete().eq('id', submissionId);
+    const { data, error } = await supabase.from('submissions').delete().eq('id', submissionId).select('id');
     if (error) return fail(error.message);
+    if (!data || data.length === 0) return fail('The account was not deleted — only an agency admin can permanently delete an archived account.');
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not delete this submission.');
+  }
+}
+
+/** Whether the database will let the signed-in user permanently delete this account (0021: archived, and an admin of its agency or the owner of a personal account). */
+export async function canDeleteAccount(submissionId: string): Promise<RepoResult<boolean>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('can_delete_account', { p_submission_id: submissionId });
+    if (error) {
+      if (/can_delete_account|function|schema cache/i.test(error.message)) return fail('Permanent delete needs database migration 0021_account_archive_permissions.sql.');
+      return fail(error.message);
+    }
+    return { ok: true, data: data === true };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not check this account.');
+  }
+}
+
+/** Marks just the row archived (the database stamps who/when) — used to take a half-saved import out of the active views. */
+export async function archiveSubmissionCloud(submissionId: string): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { error } = await supabase.from('submissions').update({ archived: true }).eq('id', submissionId);
+    if (error) return fail(error.message);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not archive this submission.');
   }
 }
 

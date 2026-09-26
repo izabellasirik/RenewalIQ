@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, ListChecks, TrendingUp, TrendingDown, Minus, Trash2 } from 'lucide-react';
+import { ArrowRight, ListChecks, TrendingUp, TrendingDown, Minus, Archive as ArchiveIcon } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, Tabs, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../components/ui';
@@ -15,7 +15,8 @@ import { VehiclesTable } from '../components/riskProfile/VehiclesTable';
 import { DriversTable } from '../components/riskProfile/DriversTable';
 import { LossHistoryTable } from '../components/riskProfile/LossHistoryTable';
 import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
-import { useAccountsStore } from '../state/useAccountsStore';
+import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
+import { archiveConfirmText } from '../components/dashboard/AccountCard';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { computeSubmissionCompleteness } from '../services/application';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
@@ -58,35 +59,13 @@ export function RiskProfilePage() {
   const addLoss = useAccountsStore((s) => s.addLoss);
   const updateLoss = useAccountsStore((s) => s.updateLoss);
   const deleteLoss = useAccountsStore((s) => s.deleteLoss);
-  const deleteAccountPermanently = useAccountsStore((s) => s.deleteAccountPermanently);
+  const archiveAccount = useAccountsStore((s) => s.archiveAccount);
+  const canManageArchive = useAccountsStore(selectCanManageArchive);
   const [tab, setTab] = useState<TabKey>('details');
   const [highlightFieldId, setHighlightFieldId] = useState<string | null>(null);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [whatsMissingOpen, setWhatsMissingOpen] = useState(false);
   const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
-
-  async function confirmDelete() {
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      const result = await deleteAccountPermanently(accountId);
-      if (!result.ok) {
-        // A cloud-backed submission whose cloud deletion failed — local state is untouched (see
-        // deleteAccountPermanently), so the submission is still here and still safe to retry.
-        setDeleting(false);
-        setDeleteConfirmOpen(false);
-        setDeleteError(result.message ?? "Something went wrong deleting this submission. It hasn't been removed — try again.");
-        return;
-      }
-      navigate('/');
-    } catch {
-      setDeleting(false);
-      setDeleteConfirmOpen(false);
-      setDeleteError("Something went wrong deleting this submission. It hasn't been removed — try again.");
-    }
-  }
 
   function focusField(section: 'business' | 'transportation', key: string) {
     const id = `field-${section}-${key}`;
@@ -133,22 +112,10 @@ export function RiskProfilePage() {
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)}>
             What's missing?
           </Button>
-          <OverflowMenu
-            items={
-              [
-                {
-                  key: 'delete',
-                  label: 'Delete submission',
-                  icon: <Trash2 size={14} />,
-                  tone: 'danger',
-                  onSelect: () => {
-                    setDeleteError(null);
-                    setDeleteConfirmOpen(true);
-                  },
-                },
-              ] satisfies OverflowMenuItem[]
-            }
-          />
+          {/* Archive only — Restore / Delete permanently live on the Archived view of Accounts. */}
+          {!account.archived && (
+            <OverflowMenu items={[{ key: 'archive', label: 'Archive account', icon: <ArchiveIcon size={14} />, onSelect: () => setArchiveConfirmOpen(true) }] satisfies OverflowMenuItem[]} />
+          )}
         </>
       }
     >
@@ -347,19 +314,18 @@ export function RiskProfilePage() {
 
 
       <ConfirmDialog
-        open={deleteConfirmOpen}
-        onCancel={() => setDeleteConfirmOpen(false)}
-        onConfirm={confirmDelete}
-        title="Delete this submission?"
-        description={`This will permanently remove ${account.namedInsured} and its associated submission data. This action cannot be undone.`}
-        confirmLabel="Delete submission"
-        confirming={deleting}
+        open={archiveConfirmOpen}
+        onCancel={() => setArchiveConfirmOpen(false)}
+        onConfirm={() => {
+          archiveAccount(accountId);
+          setArchiveConfirmOpen(false);
+          navigate('/');
+        }}
+        title={`Archive ${account.namedInsured}?`}
+        description={archiveConfirmText(canManageArchive)}
+        confirmLabel="Archive account"
+        variant="default"
       />
-      {deleteError && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-4 py-2.5 text-sm text-[var(--color-danger-700)] shadow-lg">
-          {deleteError}
-        </div>
-      )}
 
       <WhatsMissingPanel
         accountId={accountId}

@@ -115,7 +115,7 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   const saved = await saveAccountNow(accountId);
   if (!saved.ok) {
     // Files are only added after a successful save, so there's nothing in Storage to clean up.
-    await deleteAccountPermanently(accountId, { noFiles: true });
+    await deleteAccountPermanently(accountId, { rollbackUnsavedImport: true });
     return { ok: false, message: `Couldn't save this submission to your account, so nothing was imported — please try again.${saved.message ? ` (${saved.message})` : ''}` };
   }
 

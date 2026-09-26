@@ -46,7 +46,7 @@ select 'T3 is_agency_admin(agentB)=' || is_agency_admin();
 do $$ begin insert into profiles (user_id, agency_id, role) values ('00000000-0000-0000-0000-00000000000b', current_agency_id(), 'admin'); raise notice 'T3 self-promote insert: ALLOWED (BAD)'; exception when others then raise notice 'T3 self-promote denied: %', sqlerrm; end $$;
 with u as (update profiles set role = 'admin' where user_id = auth.uid() returning 1) select 'T3 self-promote update affected=' || count(*) from u;
 do $$ begin insert into submissions (id, user_id, named_insured, organization_id) values ('acct_spoof','00000000-0000-0000-0000-00000000000a','spoof', (select id from agencies limit 1)); raise notice 'T3 spoof creator → row user_id=%', (select user_id from submissions where id='acct_spoof'); exception when others then raise notice 'T3 spoof insert denied: %', sqlerrm; end $$;
-delete from submissions where id = 'acct_spoof';
+reset role; delete from submissions where id = 'acct_spoof'; set role authenticated; -- test cleanup (agents can't delete since 0021)
 
 \echo '== 5. Admin sees Roman''s and Agent B''s (and not the other agency''s)'
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
@@ -194,3 +194,39 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 with u as (update agency_invitations set role = 'admin' returning 1) select 'I12 agent direct update affected=' || count(*) from u;
 reset role;
 
+
+\echo '== 0021: archive, restore, permanent delete'
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+insert into activity_events (id, submission_id, user_id, type, message) values ('ev_b1','acct_b1','00000000-0000-0000-0000-00000000000b','account_created','x') on conflict (id) do nothing;
+with u as (update submissions set archived = true, archived_at = '2000-01-01', archived_by = '00000000-0000-0000-0000-00000000000d' where id = 'acct_b1' returning 1) select 'A1 agent archives own account affected=' || count(*) from u;
+select 'A1 stamped by db: by_agentB=' || (archived_by = auth.uid()) || ' recent=' || (archived_at > now() - interval '1 minute') from submissions where id = 'acct_b1';
+select 'A2 agent can_delete_account(archived own)=' || can_delete_account('acct_b1');
+with d as (delete from submissions where id = 'acct_b1' returning 1) select 'A2 agent deletes archived own affected=' || count(*) from d;
+update submissions set archived = false where id = 'acct_b1';
+select 'A3 agent restore attempt → archived=' || archived || ' by_agentB=' || (archived_by = auth.uid()) from submissions where id = 'acct_b1';
+insert into submissions (id, user_id, named_insured, archived) values ('acct_b1','00000000-0000-0000-0000-00000000000b','B Logistics',false) on conflict (id) do update set archived = excluded.archived;
+select 'A3 stale full save (archived=false) → archived=' || archived from submissions where id = 'acct_b1';
+with d as (delete from submissions where id = 'acct_r3' returning 1) select 'A4 agent deletes active account affected=' || count(*) from d;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select 'A5 other agency admin can_delete_account(acct_b1)=' || can_delete_account('acct_b1');
+with d as (delete from submissions where id = 'acct_b1' returning 1) select 'A5 other agency admin deletes affected=' || count(*) from d;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'A6 admin can_delete_account(active acct_r3)=' || can_delete_account('acct_r3');
+with d as (delete from submissions where id = 'acct_r3' returning 1) select 'A6 admin deletes active account affected=' || count(*) from d;
+select 'A6 admin sees archived acct_b1=' || count(*) from submissions where id = 'acct_b1' and archived;
+update submissions set archived = false where id = 'acct_b1';
+select 'A7 admin restores → archived=' || archived || ' at=' || coalesce(archived_at::text, 'null') || ' by=' || coalesce(archived_by::text, 'null') from submissions where id = 'acct_b1';
+update submissions set archived = true where id = 'acct_b1';
+select 'A8 admin archives: by_admin=' || (archived_by = auth.uid()) || ' can_delete=' || can_delete_account('acct_b1') from submissions where id = 'acct_b1';
+with d as (delete from submissions where id = 'acct_b1' returning 1) select 'A8 admin deletes archived affected=' || count(*) from d;
+reset role;
+select 'A8 after delete: row=' || (select count(*) from submissions where id = 'acct_b1') || ' activity=' || (select count(*) from activity_events where submission_id = 'acct_b1');
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+update submissions set archived = true where id = 'acct_n1';
+select 'A9 personal account owner can_delete=' || can_delete_account('acct_n1');
+with d as (delete from submissions where id = 'acct_n1' returning 1) select 'A9 owner deletes own archived personal account affected=' || count(*) from d;
+select pg_temp.as_user('');
+select 'A10 signed out can_delete_account(acct_r1)=' || can_delete_account('acct_r1');
+reset role;

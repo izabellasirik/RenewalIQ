@@ -83,3 +83,22 @@ I10 admin revokes=true
 I10 status after revoke: revoked
 I11 expired status: expired
 I12 agent direct update affected=0
+A1 agent archives own account affected=1
+A1 stamped by db: by_agentB=true recent=true
+A2 agent can_delete_account(archived own)=false
+A2 agent deletes archived own affected=0
+A3 agent restore attempt → archived=true by_agentB=true
+A3 stale full save (archived=false) → archived=true
+A4 agent deletes active account affected=0
+A5 other agency admin can_delete_account(acct_b1)=false
+A5 other agency admin deletes affected=0
+A6 admin can_delete_account(active acct_r3)=false
+A6 admin deletes active account affected=0
+A6 admin sees archived acct_b1=1
+A7 admin restores → archived=false at=null by=null
+A8 admin archives: by_admin=true can_delete=true
+A8 admin deletes archived affected=1
+A8 after delete: row=0 activity=0
+A9 personal account owner can_delete=true
+A9 owner deletes own archived personal account affected=1
+A10 signed out can_delete_account(acct_r1)=false
