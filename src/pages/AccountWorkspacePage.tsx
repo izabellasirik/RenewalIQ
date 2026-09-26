@@ -110,7 +110,7 @@ export function AccountWorkspacePage() {
                 requestAnimationFrame(() => document.getElementById('needs-attention')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
               }}
               tone="danger"
-              label={`${actions.now.length} need${actions.now.length === 1 ? 's' : ''} attention`}
+              label={`${actions.now.length} action${actions.now.length === 1 ? '' : 's'} required`}
             />
           )}
         </div>
@@ -135,7 +135,7 @@ export function AccountWorkspacePage() {
           <div className="flex min-w-0 flex-col gap-5 lg:col-span-2">
             <Card id="needs-attention" className="scroll-mt-24">
               <CardBody className="pt-5">
-                <h3 className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">Needs your attention</h3>
+                <h3 className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">Action required</h3>
                 <ActionList actions={actions.now} emptyText="Nothing needs you right now — every follow-up is scheduled and nothing is waiting to be sent." />
                 {actions.upcoming.length > 0 && (
                   <>
@@ -146,7 +146,7 @@ export function AccountWorkspacePage() {
                 <DoneTasks accountId={accountId} doneActions={doneActions} followUps={followUps} />
               </CardBody>
             </Card>
-            {/* Follow-ups right under "Needs your attention"; the checklist itself lives on its own tab. */}
+            {/* Follow-ups right under "Action required"; the checklist itself lives on its own tab. */}
             <FollowUpsCard accountId={accountId} />
             {/* Markets right under Follow-ups. */}
             <Card>

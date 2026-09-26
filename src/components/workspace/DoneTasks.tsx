@@ -9,7 +9,7 @@ const SHOWN = 5;
 
 /**
  * Tasks marked done on this account — tasks checked off with Done and completed follow-ups — newest
- * first, each with Undo to put it back under Needs your attention.
+ * first, each with Undo to put it back under Action required.
  */
 export function DoneTasks({ accountId, doneActions, followUps }: { accountId: string; doneActions: { action: ActionItem; key: string; doneAt: string }[]; followUps: FollowUp[] }) {
   const undoActionDone = useAccountsStore((s) => s.undoActionDone);

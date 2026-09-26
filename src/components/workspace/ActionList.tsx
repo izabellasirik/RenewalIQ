@@ -95,13 +95,13 @@ function ActionRow({
           <Icon size={14} />
         </span>
         <div className="min-w-0">
-          {showAccount && <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">{action.accountName}</p>}
+          {showAccount && <p className="text-sm font-semibold text-[var(--color-ink-900)]">{action.accountName}</p>}
           {isGroup ? (
-            <button onClick={() => onOpenGroup({ accountId: action.accountId, itemIds: action.itemIds! })} className="text-left text-sm font-medium text-[var(--color-ink-900)] hover:text-[var(--color-brand-700)] hover:underline cursor-pointer">
+            <button onClick={() => onOpenGroup({ accountId: action.accountId, itemIds: action.itemIds! })} className={cn('text-left text-sm hover:text-[var(--color-brand-700)] hover:underline cursor-pointer', showAccount ? 'text-[var(--color-ink-700)]' : 'font-medium text-[var(--color-ink-900)]')}>
               {action.title}
             </button>
           ) : (
-            <p className="text-sm font-medium text-[var(--color-ink-900)]">{action.title}</p>
+            <p className={cn('text-sm', showAccount ? 'text-[var(--color-ink-700)]' : 'font-medium text-[var(--color-ink-900)]')}>{action.title}</p>
           )}
           <p className={cn('text-xs', action.overdue ? 'font-medium text-[var(--color-danger-600)]' : 'text-[var(--color-ink-500)]')}>{action.detail}</p>
         </div>

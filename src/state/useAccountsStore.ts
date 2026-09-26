@@ -130,7 +130,7 @@ interface AccountsState {
   /** Account notes (Workspace → Notes) — written by people, kept apart from Activity. */
   addAccountNote: (accountId: string, text: string) => void;
   updateAccountNote: (accountId: string, noteId: string, text: string) => void;
-  /** Undo "mark done" on a task (by its actionDoneKey) — it shows up again under Needs your attention. */
+  /** Undo "mark done" on a task (by its actionDoneKey) — it shows up again under Action required. */
   undoActionDone: (accountId: string, key: string, title: string) => void;
   /** Undo a completed follow-up. */
   reopenFollowUp: (accountId: string, followUpId: string) => void;

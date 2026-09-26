@@ -149,7 +149,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
             {needsAttention && (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-danger-600)]" title="Something on this account is overdue">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-danger-500)]" />
-                Needs attention
+                Action required
               </span>
             )}
           </div>

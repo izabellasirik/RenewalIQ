@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, LayoutGrid, Plus, Sparkles, Building2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Hourglass, LayoutGrid, Plus, Sparkles, Building2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Card, CardBody, EmptyState } from '../components/ui';
 import { ActionList } from '../components/workspace/ActionList';
@@ -9,7 +9,7 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { useBrokerSession } from '../hooks/useBrokerSession';
 import { getAccountContacts } from '../services/workflow/contacts';
 import { normalizeDateKey, todayKey } from '../services/workflow/dates';
-import { deriveAccountActions, sortActions, type ActionItem, type ActionKind } from '../services/workflow/nextActions';
+import { deriveAccountActions, sortActions, summarizeWaiting, type ActionItem, type ActionKind } from '../services/workflow/nextActions';
 
 const SECTION_ORDER: { kind: ActionKind; title: string; hint: string }[] = [
   { kind: 'ready_to_send', title: 'Ready to send', hint: 'Received from the client — a carrier is waiting for it.' },
@@ -40,9 +40,11 @@ export function TodaysPlatePage() {
 
   const today = todayKey();
 
-  const { now, upcoming } = useMemo(() => {
+  const { now, upcoming, waiting } = useMemo(() => {
     const allNow: ActionItem[] = [];
     const allUpcoming: ActionItem[] = [];
+    // Blocked on someone else, nothing to do right now — shown apart, just so it isn't forgotten.
+    const waitingRows: { accountId: string; accountName: string; onClient: number; onCarriers: string[] }[] = [];
     for (const account of accounts) {
       if (account.archived) continue;
       if (mineOnly && session.status === 'signed_in') {
@@ -67,8 +69,11 @@ export function TodaysPlatePage() {
       );
       allNow.push(...derived.now);
       allUpcoming.push(...derived.upcoming);
+      const w = summarizeWaiting(missingItems[account.id] ?? [], quotes[account.id] ?? []);
+      if (w.onClient > 0 || w.onCarriers.length > 0) waitingRows.push({ accountId: account.id, accountName: account.namedInsured, onClient: w.onClient, onCarriers: w.onCarriers });
     }
-    return { now: sortActions(allNow), upcoming: sortActions(allUpcoming) };
+    waitingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
+    return { now: sortActions(allNow), upcoming: sortActions(allUpcoming), waiting: waitingRows };
   }, [accounts, riskProfiles, missingItems, quotes, followUps, mineOnly, session.status, session.userId, session.email, today, agencyAccess]);
 
   const overdue = now.filter((a) => a.overdue).length;
@@ -153,6 +158,44 @@ export function TodaysPlatePage() {
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Coming up · next 7 days</h2>
           <ActionList actions={upcoming} showAccount />
+        </section>
+      )}
+
+      {waiting.length > 0 && (
+        <section className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">
+              <Hourglass size={15} />
+              Waiting
+              <span className="rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-xs text-[var(--color-ink-600)]">{waiting.length}</span>
+            </h2>
+            <p className="text-xs text-[var(--color-ink-400)]">On the client or a carrier — nothing for you to do yet.</p>
+          </div>
+          <ul className="flex flex-col gap-2">
+            {waiting.map((w) => (
+              <li key={w.accountId}>
+                <button
+                  onClick={() => navigate(`/accounts/${w.accountId}?tab=${w.onClient > 0 ? 'checklist' : 'quotes'}`)}
+                  className="flex w-full items-center gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2.5 text-left transition-colors hover:border-[var(--color-brand-500)]/50 hover:bg-[var(--color-ink-50)] cursor-pointer"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[var(--color-ink-900)]">{w.accountName}</p>
+                    <p className="truncate text-sm text-[var(--color-ink-600)]">
+                      {[
+                        w.onClient > 0 ? `Waiting on client · ${w.onClient} item${w.onClient === 1 ? '' : 's'}` : null,
+                        w.onCarriers.length > 0 ? `Waiting on ${w.onCarriers.length === 1 ? 'carrier' : 'carriers'} · ${w.onCarriers.join(', ')}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join('  ·  ')}
+                    </p>
+                  </div>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-[var(--color-brand-700)]">
+                    Open <ArrowRight size={12} />
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
     </PageContainer>
