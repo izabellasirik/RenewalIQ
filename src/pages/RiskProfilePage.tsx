@@ -126,7 +126,6 @@ export function RiskProfilePage() {
   return (
     <PageContainer
       title={`Risk Profile — ${account.namedInsured}`}
-      description="Unified, editable view of everything extracted from uploaded documents. Every value shows its confidence and source."
       actions={
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)}>

@@ -160,11 +160,10 @@ export async function generateApplicationPdf(
 
   // --- Scalar sections, two columns ---
   for (const section of application.sections) {
-    // An optional field with nothing in it doesn't get a row at all — no blank label, no "Not
-    // provided" placeholder, nothing. A required field still renders (blank) even when empty, since
-    // silently hiding an incomplete required field would misrepresent the application as more
-    // complete than it is; that gap belongs in the broker's "What's Missing?" panel, not erased here.
-    const fieldsToRender = section.fields.filter((f) => f.required || f.value);
+    // Only fields that have data are printed — an empty field (required or not) gets no row at all,
+    // and a section with nothing filled is left out. What's still missing is shown to the broker in
+    // the "What's Missing?" panel, not on the application.
+    const fieldsToRender = section.fields.filter((f) => f.status !== 'missing' && !!f.value?.trim());
     if (fieldsToRender.length === 0) continue;
 
     const colWidth = CONTENT_WIDTH / 2;
@@ -229,7 +228,12 @@ export async function generateApplicationPdf(
   }
 
   // --- Table sections ---
-  for (const table of application.tableSections) {
+  for (const fullTable of application.tableSections) {
+    // Same rule for itemized sections: drop columns that are empty on every row, and empty rows.
+    const filled = (row: (typeof fullTable.rows)[number], key: string) => row.cells[key]?.status !== 'missing' && !!row.cells[key]?.value?.trim();
+    const columns = fullTable.columns.filter((col) => fullTable.rows.some((row) => filled(row, col.key)));
+    const table = { ...fullTable, columns, rows: fullTable.rows.filter((row) => columns.some((col) => filled(row, col.key))) };
+    if (table.columns.length === 0) continue;
     const colWidth = CONTENT_WIDTH / table.columns.length;
     const usableWidth = colWidth - TABLE_COLUMN_GUTTER;
 

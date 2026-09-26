@@ -120,7 +120,6 @@ export function SubmissionAssistantPage() {
   return (
     <PageContainer
       title={`Submission Assistant — ${account.namedInsured}`}
-      description="RenewalIQ already knows this account. Review what it filled instead of retyping everything."
       actions={
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)} className="print:hidden">
@@ -141,8 +140,9 @@ export function SubmissionAssistantPage() {
         </>
       }
     >
-      <div className="flex flex-col gap-1 print:hidden">
-        {APPLICATION_TEMPLATES.length > 1 ? (
+      {/* Only a real choice of templates is shown; the single built-in template's internal name isn't. */}
+      {APPLICATION_TEMPLATES.length > 1 && (
+        <div className="flex flex-col gap-1 print:hidden">
           <select
             value={template.id}
             onChange={(e) => setTemplateId(e.target.value)}
@@ -154,10 +154,8 @@ export function SubmissionAssistantPage() {
               </option>
             ))}
           </select>
-        ) : (
-          <p className="text-sm font-medium text-[var(--color-ink-700)]">{template.name}</p>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-4 print:hidden">
         <div className="flex items-center justify-between gap-4">

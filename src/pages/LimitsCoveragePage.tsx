@@ -46,7 +46,7 @@ export function LimitsCoveragePage() {
   }
 
   return (
-    <PageContainer title={`Limits & Coverage — ${account.namedInsured}`} description="Expiring limits (from loss run) vs. requested limits (from application).">
+    <PageContainer title={`Limits & Coverage — ${account.namedInsured}`} description="Expiring limits vs. Requested limits">
       <SectionCard title="Coverage">
         <CoverageSection
           coverage={profile.coverage}
