@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import type { AccountStage } from '../../types';
-import { ACCOUNT_STAGE_LABELS, ACCOUNT_STAGE_ORDER } from '../../types';
+import { ACCOUNT_STAGE_ORDER } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { deriveAccountStage } from '../../services/workflow/accountStage';
-import { Badge } from '../ui';
-import { ACCOUNT_STAGE_TONE } from './accountStageStyle';
+import { StageBadge } from './StageBadge';
 import { cn } from '../../utils/cn';
 
 /**
@@ -58,9 +57,7 @@ export function AccountStageSelect({ accountId, className }: { accountId: string
         aria-label="Client status"
         className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-ink-200)] bg-white py-1 pl-1.5 pr-2 outline-none hover:border-[var(--color-ink-300)] focus-visible:border-[var(--color-brand-500)] focus-visible:ring-2 focus-visible:ring-[var(--color-brand-500)]/15 cursor-pointer"
       >
-        <Badge tone={ACCOUNT_STAGE_TONE[current]} dot>
-          {ACCOUNT_STAGE_LABELS[current]}
-        </Badge>
+        <StageBadge stage={current} />
         {!account.stage && <span className="text-xs text-[var(--color-ink-400)]">Automatic</span>}
         <ChevronDown size={14} className="text-[var(--color-ink-400)]" />
       </button>
@@ -70,9 +67,7 @@ export function AccountStageSelect({ accountId, className }: { accountId: string
             <button type="button" onClick={() => choose(null)} className={optionClass}>
               <span className="flex items-center gap-2">
                 <span className="text-xs text-[var(--color-ink-500)]">Automatic —</span>
-                <Badge tone={ACCOUNT_STAGE_TONE[derived]} dot>
-                  {ACCOUNT_STAGE_LABELS[derived]}
-                </Badge>
+                <StageBadge stage={derived} />
               </span>
               {!account.stage && <Check size={14} className="text-[var(--color-brand-700)]" />}
             </button>
@@ -81,9 +76,7 @@ export function AccountStageSelect({ accountId, className }: { accountId: string
           {ACCOUNT_STAGE_ORDER.map((s) => (
             <li key={s} role="option" aria-selected={account.stage === s}>
               <button type="button" onClick={() => choose(s)} className={optionClass}>
-                <Badge tone={ACCOUNT_STAGE_TONE[s]} dot>
-                  {ACCOUNT_STAGE_LABELS[s]}
-                </Badge>
+                <StageBadge stage={s} />
                 {account.stage === s && <Check size={14} className="text-[var(--color-brand-700)]" />}
               </button>
             </li>

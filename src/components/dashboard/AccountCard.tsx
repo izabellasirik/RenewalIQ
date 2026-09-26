@@ -1,24 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, Check, Clock, Copy, History, Pencil, Trash2, X, ArchiveRestore, Archive as ArchiveIcon } from 'lucide-react';
+import { Check, ChevronRight, Copy, History, Pencil, Trash2, X, ArchiveRestore, Archive as ArchiveIcon } from 'lucide-react';
 import type { Account } from '../../types';
 import { Card, CardBody, Badge, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, deriveSubmissionStatusLabel } from '../layout/WorkflowSteps';
-import { formatDate } from '../../utils/dates';
-import { EMPTY_DOCUMENTS, EMPTY_MATCH_RESULTS } from '../../utils/emptyArrays';
+import { formatShortDate, todayKey } from '../../services/workflow/dates';
+import { cn } from '../../utils/cn';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
-import { summarizeWaiting } from '../../services/workflow/nextActions';
 import { effectiveAccountStage } from '../../services/workflow/accountStage';
-import { ACCOUNT_STAGE_TONE } from '../workspace/accountStageStyle';
-import { ACCOUNT_STAGE_LABELS } from '../../types';
+import { StageBadge } from '../workspace/StageBadge';
 import { agentLabel } from '../../services/agency/agentLabel';
 
 export function AccountCard({ account, index, onOpenHistory }: { account: Account; index: number; onOpenHistory: () => void }) {
   const navigate = useNavigate();
-  const documents = useAccountsStore((s) => s.documents[account.id]) ?? EMPTY_DOCUMENTS;
-  const matchResults = useAccountsStore((s) => s.matchResults[account.id]) ?? EMPTY_MATCH_RESULTS;
   const renameAccount = useAccountsStore((s) => s.renameAccount);
   const duplicateAccount = useAccountsStore((s) => s.duplicateAccount);
   const archiveAccount = useAccountsStore((s) => s.archiveAccount);
@@ -36,11 +32,17 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
 
   const steps = useWorkflowStatus(account.id);
   const status = deriveSubmissionStatusLabel(steps);
-  const likelyMatches = matchResults.filter((m) => m.verdict === 'likely_match').length;
-  const { items, quotes, dotNumber, actions } = useAccountWorkflow(account.id);
-  const waiting = summarizeWaiting(items, quotes);
-  const nextAction = actions.now[0] ?? actions.upcoming[0];
+  const { items, quotes, followUps, effectiveDate } = useAccountWorkflow(account.id);
   const { stage, manual } = effectiveAccountStage(account, items, quotes);
+  // Checklist documents not in yet (missing or requested from the client).
+  const missingDocuments = items.filter((i) => i.type === 'document' && (i.status === 'missing' || i.status === 'requested')).length;
+  // The earliest follow-up still open: scheduled follow-ups, client requests, and markets.
+  const nextFollowUp =
+    [
+      ...followUps.filter((f) => !f.doneAt).map((f) => f.dueDate),
+      ...items.filter((i) => i.status === 'requested' && i.followUpDate).map((i) => i.followUpDate!),
+      ...quotes.filter((q) => q.followUpDate && q.status !== 'declined' && q.status !== 'bound').map((q) => q.followUpDate!),
+    ].sort()[0] ?? null;
 
   function commitRename() {
     const trimmed = draftName.trim();
@@ -123,50 +125,36 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
                   </button>
                 </div>
               ) : (
-                <p className="truncate font-semibold text-[var(--color-ink-900)]">{account.namedInsured}</p>
+                <p className="truncate text-lg font-semibold text-[var(--color-ink-900)]">{account.namedInsured}</p>
               )}
-              <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">
-                {account.state || '—'} · DOT {dotNumber || '—'} · Commercial Auto
-              </p>
               {isAgencyAdmin && <p className="mt-0.5 truncate text-xs text-[var(--color-ink-500)]">Agent: {agentLabel(account, agencyMembers, currentUserId) ?? 'Unassigned'}</p>}
             </div>
-            <div className="flex shrink-0 items-center gap-1">
-              {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}
-              <Badge tone={ACCOUNT_STAGE_TONE[stage]} title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'}>
-                {ACCOUNT_STAGE_LABELS[stage]}
-              </Badge>
+            <div className="flex shrink-0 items-center gap-0.5">
               <OverflowMenu items={menuItems} />
+              <ChevronRight size={18} className="text-[var(--color-ink-400)] transition-transform group-hover:translate-x-0.5" aria-hidden />
             </div>
           </div>
 
-          <div className="mt-4 flex items-center gap-4 text-xs text-[var(--color-ink-500)]">
-            <span>{documents.length} document{documents.length === 1 ? '' : 's'}</span>
-            {matchResults.length > 0 && (
-              <span>
-                {likelyMatches} likely match{likelyMatches === 1 ? '' : 'es'}
-              </span>
-            )}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <StageBadge stage={stage} className="px-3 py-1.5 text-sm" title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'} />
+            {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}
           </div>
 
-          {(waiting.onClient > 0 || waiting.onCarriers.length > 0) && (
-            <p className="mt-2 text-xs text-[var(--color-ink-600)]">
-              Waiting on {[waiting.onClient > 0 ? `client (${waiting.onClient})` : null, ...waiting.onCarriers].filter(Boolean).join(', ')}
-            </p>
-          )}
-          {nextAction && (
-            <p className={`mt-1 truncate text-xs font-medium ${nextAction.overdue ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-brand-700)]'}`} title={nextAction.detail}>
-              Next: {nextAction.title}
-            </p>
-          )}
+          <div className="mt-4 border-t border-[var(--color-ink-100)] pt-3 text-sm text-[var(--color-ink-500)]">
+            Renewal: <span className="font-semibold text-[var(--color-ink-900)]">{effectiveDate ? formatShortDate(effectiveDate) : '—'}</span>
+          </div>
 
-          <div className="mt-4 flex items-center justify-between border-t border-[var(--color-ink-100)] pt-3 text-xs">
-            <span className="flex items-center gap-1 text-[var(--color-ink-400)]">
-              <Clock size={11} />
-              Updated {formatDate(account.updatedAt)}
-            </span>
-            <span className="flex items-center gap-1 font-medium text-[var(--color-brand-700)] opacity-0 transition-opacity group-hover:opacity-100">
-              Open <ArrowRight size={13} />
-            </span>
+          <div className="mt-3 flex items-start justify-between gap-4 border-t border-[var(--color-ink-100)] pt-3 text-sm">
+            <div>
+              <p className="text-[var(--color-ink-500)]">Missing documents</p>
+              <p className="font-semibold text-[var(--color-ink-900)]">{missingDocuments > 0 ? missingDocuments : '—'}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[var(--color-ink-500)]">Next follow-up</p>
+              <p className={cn('font-semibold', nextFollowUp && nextFollowUp < todayKey() ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-900)]')}>
+                {nextFollowUp ? formatShortDate(nextFollowUp) : '—'}
+              </p>
+            </div>
           </div>
         </CardBody>
       </Card>
