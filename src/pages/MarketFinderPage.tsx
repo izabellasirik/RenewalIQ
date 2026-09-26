@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Compass, Search, Info, RotateCcw, X } from 'lucide-react';
+import { ChevronRight, Search, Info, RotateCcw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
@@ -181,7 +181,7 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
 function NeutralMarketList({ records, onOpen }: { records: AppetiteRecord[]; onOpen: (record: AppetiteRecord) => void }) {
   return (
     <div>
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">All Markets ({records.length})</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">All Markets</p>
       <div className="divide-y divide-[var(--color-ink-100)] overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-white">
         {records.map((r) => (
           <button
@@ -277,7 +277,6 @@ export function MarketFinderPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr] lg:items-start">
         <div className="lg:col-start-2 lg:row-start-1">
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">Market Finder</h1>
-          <p className="mt-1 text-sm text-[var(--color-ink-500)]">Search trucking markets based on risk characteristics — no submission required.</p>
           <p className="mt-2 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
             <Info size={13} className="mt-0.5 shrink-0" />
             Carrier appetite changes frequently. RenewalIQ recommendations are based on the latest information available and should be confirmed with the market before binding.
@@ -382,7 +381,6 @@ export function MarketFinderPage() {
         <div className="min-w-0 lg:col-start-2 lg:row-start-2">
           {!filtersActive ? (
             <div className="flex flex-col gap-6">
-              <EmptyState icon={<Compass size={28} strokeWidth={1.5} />} title="Start by selecting any risk characteristic." description="Pick a state, fleet size, or anything else you know — results appear immediately, no search button needed." />
               <NeutralMarketList
                 records={effectiveAppetiteRecords}
                 onOpen={(record) => {
