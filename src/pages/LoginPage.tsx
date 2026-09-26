@@ -4,6 +4,7 @@ import { KeyRound } from 'lucide-react';
 import { Button } from '../components/ui';
 import { AuthShell, authInputClass as inputClass } from '../components/auth/AuthShell';
 import { signInBroker, requestBrokerPasswordReset, updateBrokerPassword } from '../services/supabase/brokerAuth';
+import { authLinkError } from '../services/supabase/authRedirect';
 import { useBrokerSession } from '../hooks/useBrokerSession';
 
 function ForgotPasswordForm({ initialEmail, onBack }: { initialEmail: string; onBack: () => void }) {
@@ -57,7 +58,6 @@ function ForgotPasswordForm({ initialEmail, onBack }: { initialEmail: string; on
 }
 
 function ResetPasswordForm() {
-  const navigate = useNavigate();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +88,8 @@ function ResetPasswordForm() {
     return (
       <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-success-100)] bg-[var(--color-success-50)] p-6 text-center">
         <p className="text-sm font-medium text-[var(--color-ink-800)]">Password updated.</p>
-        <Button size="sm" onClick={() => navigate('/')}>
+        {/* A full load so every part of the app sees an ordinary signed-in session, not the reset one. */}
+        <Button size="sm" onClick={() => window.location.assign('/')}>
           Continue to RenewalIQ
         </Button>
       </div>
@@ -127,6 +128,8 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
+  // Opened from an expired / already-used email link.
+  const linkError = authLinkError();
 
   useEffect(() => {
     if (session.status === 'signed_in') navigate(invite ? `/invite/${invite}` : '/', { replace: true });
@@ -173,6 +176,7 @@ export function LoginPage() {
       ) : (
         <div className="flex flex-col gap-3 rounded-xl border border-[var(--color-ink-100)] bg-white p-6">
           <p className="text-sm font-semibold text-[var(--color-ink-900)]">Sign in</p>
+          {linkError && <p className="rounded-lg bg-[var(--color-warning-100)]/60 px-3 py-2 text-sm text-[var(--color-ink-800)]">{linkError}</p>}
           <div>
             <label className="mb-1 block text-xs font-medium text-[var(--color-ink-600)]">Email</label>
             <input autoFocus type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputClass} onKeyDown={(e) => e.key === 'Enter' && handleSubmit()} />

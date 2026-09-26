@@ -1,4 +1,5 @@
 import { supabase } from './client';
+import { authRedirectUrl, clearPasswordRecovery } from './authRedirect';
 
 export type SignInResult = { ok: true } | { ok: false; message: string };
 
@@ -11,6 +12,7 @@ export async function signInAdmin(email: string, password: string): Promise<Sign
 }
 
 export async function signOutAdmin(): Promise<void> {
+  clearPasswordRecovery();
   if (!supabase) return;
   await supabase.auth.signOut();
 }
@@ -26,7 +28,7 @@ export async function signOutAdmin(): Promise<void> {
 export async function requestPasswordReset(email: string): Promise<SignInResult> {
   if (!supabase) return { ok: false, message: 'Supabase is not configured in this environment. See SUPABASE_SETUP.md.' };
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/admin`,
+    redirectTo: authRedirectUrl('/admin'),
   });
   if (error) return { ok: false, message: error.message };
   return { ok: true };
@@ -37,6 +39,7 @@ export async function updateAdminPassword(newPassword: string): Promise<SignInRe
   if (!supabase) return { ok: false, message: 'Supabase is not configured in this environment. See SUPABASE_SETUP.md.' };
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   if (error) return { ok: false, message: error.message };
+  clearPasswordRecovery();
   return { ok: true };
 }
 

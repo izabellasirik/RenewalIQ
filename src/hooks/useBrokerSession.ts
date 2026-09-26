@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../services/supabase/client';
+import { passwordRecoveryPending } from '../services/supabase/authRedirect';
 
 export type BrokerSessionStatus = 'loading' | 'not_configured' | 'signed_out' | 'signed_in' | 'password_recovery';
 
@@ -28,7 +29,9 @@ export function useBrokerSession(): BrokerSession {
       if (cancelled) return;
       setEmail(sessionEmail);
       setUserId(id);
-      setStatus(sessionEmail ? 'signed_in' : 'signed_out');
+      // Opened from a password-reset link: stay on "Set a new password" until it's saved, even if
+      // the PASSWORD_RECOVERY event fired before this component was listening.
+      setStatus(sessionEmail ? (passwordRecoveryPending() ? 'password_recovery' : 'signed_in') : 'signed_out');
     }
 
     supabase.auth.getSession().then(({ data }) => apply(data.session?.user.email ?? null, data.session?.user.id ?? null));

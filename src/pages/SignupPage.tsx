@@ -33,7 +33,7 @@ export function SignupPage() {
     }
     setSubmitting(true);
     setError(null);
-    const result = await signUpBroker(email.trim(), password, invite ? `${window.location.origin}/invite/${invite}` : undefined);
+    const result = await signUpBroker(email.trim(), password, invite ? `/invite/${invite}` : '/login');
     setSubmitting(false);
     if (!result.ok) {
       setError(result.message);

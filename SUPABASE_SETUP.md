@@ -127,11 +127,8 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   or signs in with that email, and joins that agency with that role. Only admins can invite; the
   agency is always the admin's own; accepting requires the signed-in, confirmed login email to match
   the invitation; someone already in another agency is refused. Existing tables, policies and
-  account permissions are unchanged. Additive, safe to re-run; run after 0017. **Also add
-  `https://<your-domain>/invite/**` (and your preview domain) to Authentication → URL Configuration
-  → Redirect URLs**, so the sign-up confirmation email brings the person back to their invitation.
-  (Without it, Supabase sends them to the Site URL and the app still takes them to the invitation in
-  the same browser.)
+  account permissions are unchanged. Additive, safe to re-run; run after 0017. Invitation sign-up
+  emails need the Redirect URLs from §6.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -249,24 +246,29 @@ account happens directly in the Supabase dashboard, never through a public form:
 To add a second admin later, repeat the same three steps for that person — there's no in-app "add
 admin" button by design, so this stays entirely under your control in the Supabase dashboard.
 
-## 6. Enable "Forgot password?" (optional, one-time dashboard step)
+## 6. Auth email links — Site URL and Redirect URLs (required, one-time dashboard step)
 
-The admin sign-in page has a "Forgot password?" link. Sending the reset email works with zero
-extra setup, but **completing** the reset (clicking the emailed link and landing back on a "set a
-new password" form) requires the redirect URL to be allow-listed, or Supabase will reject it:
+Every email Supabase sends for Renewal IQ has a link back into the app: **sign-up confirmation**,
+**forgot password** (brokers → `/login`, admins → `/admin`) and **team invitations** (`/invite/…`).
+The app always asks Supabase to send people back to the site they're using right now — production
+on production, a Vercel preview on that preview, localhost in development (`src/services/supabase/authRedirect.ts`).
+Supabase only honours that address if it's on the allow-list; **anything else silently falls back
+to the Site URL**, which is `http://localhost:3000` on a new project. That is why a link can open
+`localhost:3000`.
 
-1. Supabase dashboard → **Authentication → URL Configuration**.
-2. Under **Redirect URLs**, add every URL admins might sign in from, each ending in `/admin` — e.g.
-   `https://your-production-domain.com/admin` and, for local development, `http://localhost:5173/admin`.
-   (If you'd previously allow-listed a URL ending in `/admin/appetite-updates` from an earlier
-   version of this app, update it to `/admin` — the Admin Dashboard at `/admin` is now the
-   canonical sign-in/reset landing page.)
+In the Supabase dashboard → **Authentication → URL Configuration**:
 
-If this step is skipped, the "send reset email" step still works and shows its normal
-confirmation (never revealing whether the address has an account), but the link in that email
-will fail with a redirect error instead of opening the "set a new password" form. This is a
-dashboard setting only — no code change is needed once it's configured, and there is no workaround
-in the app that bypasses it (nor should there be).
+1. **Site URL** → your production Renewal IQ address, e.g. `https://your-production-domain.com`
+   (no path). This is the fallback, so it must never be localhost.
+2. **Redirect URLs** → add:
+   - `https://your-production-domain.com/**`
+   - your Vercel preview URLs: `https://*-your-vercel-team.vercel.app/**` (the part after the last
+     `-` in any preview URL is your team slug)
+   - `http://localhost:5173/**` for local development
+
+The `/**` covers `/login`, `/admin` and `/invite/…`. After a reset link opens the app, the person
+sees **Set a new password**, saves it, and continues signed in; next time they sign in with the new
+password. An expired or already-used link shows "That email link has expired or was already used".
 
 ## 7. Managing broker appetite-update requests and product feedback
 
@@ -327,9 +329,8 @@ their own private workspace; this is the intended self-service flow (unlike admi
   before the account can sign in — `/signup` already handles this (it shows "check your email"
   rather than silently doing nothing). If you'd rather brokers get in immediately, turn it off in
   **Authentication → Providers → Email → Confirm email**; either setting works with this app as-is.
-- **"Forgot password?" on `/login`**: same one-time step as §6, except the redirect URL ends in
-  `/login` instead of `/admin` — add both `https://your-production-domain.com/login` and
-  `http://localhost:5173/login` under **Authentication → URL Configuration → Redirect URLs**.
+- **"Forgot password?" on `/login`** and the sign-up confirmation email: covered by §6 (Site URL +
+  Redirect URLs).
 - **What syncs**: business/transportation fields (with full provenance and conflict history),
   vehicles, drivers, loss history, coverage, document metadata + the original uploaded file, and
   activity history — everything the local-only experience already tracked. A submission created
