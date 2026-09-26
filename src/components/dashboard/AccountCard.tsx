@@ -144,7 +144,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <StageBadge stage={stage} title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'} />
+            <StageBadge stage={stage} className="px-3 py-1.5 text-sm" title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'} />
             {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}
             {needsAttention && (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-danger-600)]" title="Something on this account is overdue">
@@ -153,26 +153,29 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
               </span>
             )}
           </div>
-          <p className="mt-2 truncate text-sm text-[var(--color-ink-500)]">
-            {account.state || '—'} · DOT {dotNumber || '—'} · Commercial Auto
-          </p>
 
-          <dl className="mt-3 flex flex-col gap-1 border-t border-[var(--color-ink-100)] pt-3 text-sm">
-            <div className="flex gap-1">
-              <dt className="text-[var(--color-ink-500)]">Renewal:</dt>
-              <dd className="font-semibold text-[var(--color-ink-900)]">{effectiveDate ? formatShortDate(effectiveDate) : '—'}</dd>
+
+          {/* Renewal and DOT on one line; below it, what's missing and when to follow up. */}
+          <div className="mt-4 flex items-center justify-between gap-4 border-t border-[var(--color-ink-100)] pt-3 text-sm">
+            <p className="text-[var(--color-ink-500)]">
+              Renewal: <span className="font-semibold text-[var(--color-ink-900)]">{effectiveDate ? formatShortDate(effectiveDate) : '—'}</span>
+            </p>
+            <p className="text-right text-[var(--color-ink-500)]">
+              DOT # <span className="font-semibold text-[var(--color-ink-900)]">{dotNumber || '—'}</span>
+            </p>
+          </div>
+          <div className="mt-3 flex items-start justify-between gap-4 border-t border-[var(--color-ink-100)] pt-3 text-sm">
+            <div>
+              <p className="text-[var(--color-ink-500)]">Missing documents</p>
+              <p className="font-semibold text-[var(--color-ink-900)]">{missingDocuments > 0 ? missingDocuments : '—'}</p>
             </div>
-            <div className="flex gap-1">
-              <dt className="text-[var(--color-ink-500)]">Missing documents:</dt>
-              <dd className="font-semibold text-[var(--color-ink-900)]">{missingDocuments > 0 ? missingDocuments : '—'}</dd>
-            </div>
-            <div className="flex gap-1">
-              <dt className="text-[var(--color-ink-500)]">Next follow-up:</dt>
-              <dd className={cn('font-semibold', nextFollowUp && nextFollowUp < todayKey() ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-900)]')}>
+            <div className="text-right">
+              <p className="text-[var(--color-ink-500)]">Next follow-up</p>
+              <p className={cn('font-semibold', nextFollowUp && nextFollowUp < todayKey() ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-900)]')}>
                 {nextFollowUp ? formatShortDate(nextFollowUp) : '—'}
-              </dd>
+              </p>
             </div>
-          </dl>
+          </div>
         </CardBody>
       </Card>
 
