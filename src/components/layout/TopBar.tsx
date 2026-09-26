@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, LogOut, UserRound, CloudOff, CloudUpload, AlertTriangle, Menu } from 'lucide-react';
+import { Check, ChevronDown, Loader2, LogOut, UserRound, CloudOff, CloudUpload, AlertTriangle, Menu } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, WorkflowStepsBar } from './WorkflowSteps';
@@ -104,6 +104,10 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
   const syncStatus = useAccountsStore((s) => (accountId ? s.syncStatus[accountId] : undefined));
   const syncError = useAccountsStore((s) => (accountId ? s.syncError[accountId] : undefined));
   const [errorOpen, setErrorOpen] = useState(false);
+  // A fresh error starts with its details closed.
+  useEffect(() => {
+    if (syncStatus !== 'error') setErrorOpen(false);
+  }, [syncStatus]);
   const steps = useWorkflowStatus(account?.id);
   // Workspace's address is the start of every account page's, so it's only active on its own page.
   const activeKey = steps.find((s) => (s.hub ? location.pathname.replace(/\/$/, '') === s.path : location.pathname.startsWith(s.path)))?.key ?? '';
@@ -124,22 +128,34 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
             Saving…
           </span>
         )}
+        {/* A save hiccup being retried quietly — not an error (yet). */}
+        {account && syncStatus === 'retrying' && (
+          <span className="flex items-center gap-1.5 text-xs text-[var(--color-ink-400)]" title="The last save didn't go through — retrying automatically.">
+            <Loader2 size={13} className="animate-spin text-[var(--color-ink-300)]" />
+            Saving… retrying
+          </span>
+        )}
         {account && syncStatus === 'error' && (
           <div className="relative">
             <button
               onClick={() => setErrorOpen((v) => !v)}
               className="flex items-center gap-1.5 text-xs text-[var(--color-danger-600)] hover:underline cursor-pointer"
-              title={syncError ?? 'This change is only saved in this browser — it did not reach your account.'}
+              title="Couldn’t sync this change yet. It’s saved locally and we’ll retry."
             >
               <AlertTriangle size={13} />
-              <span className="hidden sm:inline">Failed to save to your account</span>
-              <span className="sm:hidden">Not saved</span>
+              <span className="hidden sm:inline">Couldn’t sync this change yet</span>
+              <span className="sm:hidden">Not synced yet</span>
             </button>
             {errorOpen && (
               <div className="absolute right-0 top-full z-30 mt-2 w-80 rounded-lg border border-[var(--color-danger-100)] bg-white p-3 text-xs text-[var(--color-ink-700)] [box-shadow:var(--shadow-popover)]">
-                <p className="font-semibold text-[var(--color-danger-600)]">This change is saved in this browser only.</p>
-                <p className="mt-1 break-words">{syncError ?? 'The cloud save failed.'}</p>
-                <p className="mt-2 text-[var(--color-ink-500)]">It will be retried on your next edit. If the message mentions a migration, apply it in Supabase (see SUPABASE_SETUP.md).</p>
+                <p className="font-semibold text-[var(--color-danger-600)]">Couldn’t sync this change yet. It’s saved locally and we’ll retry.</p>
+                <p className="mt-2 text-[var(--color-ink-500)]">Retrying automatically every minute and on your next edit — this clears by itself once it goes through.</p>
+                {syncError && (
+                  <details className="mt-2 text-[var(--color-ink-500)]">
+                    <summary className="cursor-pointer">Technical details</summary>
+                    <p className="mt-1 break-words font-mono text-[11px]">{syncError}</p>
+                  </details>
+                )}
               </div>
             )}
           </div>

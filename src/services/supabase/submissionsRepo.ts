@@ -455,7 +455,18 @@ export async function saveSubmissionSnapshot(
 
     const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
     let driverMonthsNotSaved = false;
-    if (values.length) inserts.push(supabase.from('field_values').insert(values));
+    // field_alternates are only writable once their parent field_values row exists (their RLS
+    // check looks the parent up), so they go in right after it — never in parallel with it, which
+    // intermittently failed with a row-level-security error when the child request won the race.
+    if (values.length) {
+      inserts.push(
+        (async () => {
+          const res = await supabase.from('field_values').insert(values);
+          if (res.error || !alternates.length) return res;
+          return supabase.from('field_alternates').insert(alternates);
+        })()
+      );
+    }
     if (profile.coverage.length) {
       inserts.push(
         supabase.from('coverage_lines').insert(profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type })))
@@ -537,7 +548,6 @@ export async function saveSubmissionSnapshot(
         )
       );
     }
-    if (alternates.length) inserts.push(supabase.from('field_alternates').insert(alternates));
 
     const insRes = await Promise.all(inserts);
     const insErr = insRes.find((r) => r.error);

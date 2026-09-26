@@ -86,7 +86,8 @@ interface AccountsState {
   /** Which local account ids are mirrored to the signed-in broker's Supabase account. An id absent here is local-only (this browser only), regardless of whether anyone is currently signed in. Persisted, so the distinction survives a reload. */
   cloudAccountIds: Record<string, true>;
   /** Per-account cloud save status, for the "Saving… / Saved / Failed to save" indicator. Ephemeral — never persisted, since a stale "saving" from a previous session would be meaningless. */
-  syncStatus: Record<string, 'saving' | 'saved' | 'error'>;
+  /** 'retrying': a save failed and is being retried quietly; 'error' only once the quick retries are used up (it keeps retrying slowly). */
+  syncStatus: Record<string, 'saving' | 'retrying' | 'saved' | 'error'>;
   /** Why the last cloud save for an account failed (e.g. a missing migration), shown behind "Failed to save". Ephemeral. */
   syncError: Record<string, string>;
   /** Local accounts the signed-in broker explicitly dismissed ("Not now") from the "import to your account" prompt, or already imported — either way, never prompt again for these ids. Persisted. */
@@ -384,6 +385,9 @@ function money(n: number): string {
   return `$${n.toLocaleString('en-US')}`;
 }
 
+/** Quiet retries after a failed cloud save, then a slow retry for as long as it keeps failing. Tests shorten these. */
+export const SYNC_RETRY = { delaysMs: [2000, 5000, 15000], slowMs: 60000 };
+
 export const useAccountsStore = create<AccountsState>()(
   persist(
     (set, get) => {
@@ -425,16 +429,61 @@ export const useAccountsStore = create<AccountsState>()(
         void pushAccount(accountId);
       }
 
+      /**
+       * Saves are serialized per account (a save waits for the one in flight; bursts of edits
+       * collapse into one follow-up save) — two overlapping full-snapshot saves used to race each
+       * other's delete-and-reinsert. A failed save is retried quietly ('retrying'); only after the
+       * quick retries are used up does the top bar show an error, and it keeps retrying slowly —
+       * any later success clears it. Every failure is still logged to the console for diagnostics.
+       */
+      type PushResult = { coreSaved: boolean; message: string | null } | null;
+      const running: Record<string, Promise<PushResult> | undefined> = {};
+      const queued: Record<string, Promise<PushResult> | undefined> = {};
+      const failStreak: Record<string, number> = {};
+      const retryTimer: Record<string, ReturnType<typeof setTimeout> | undefined> = {};
+
+      function pushAccount(accountId: string): Promise<PushResult> {
+        if (queued[accountId]) return queued[accountId]!;
+        const prev = running[accountId];
+        const p: Promise<PushResult> = (prev ? prev.catch(() => null) : Promise.resolve(null)).then(() => {
+          if (queued[accountId] === p) queued[accountId] = undefined;
+          running[accountId] = p;
+          return pushAccountOnce(accountId);
+        });
+        // Registered right away, so a save requested in the same tick waits for this one.
+        if (prev) queued[accountId] = p;
+        else running[accountId] = p;
+        void p.finally(() => {
+          if (running[accountId] === p) running[accountId] = undefined;
+        });
+        return p;
+      }
+
+      function scheduleRetry(accountId: string) {
+        if (retryTimer[accountId]) clearTimeout(retryTimer[accountId]);
+        const n = failStreak[accountId] ?? 1;
+        const delay = SYNC_RETRY.delaysMs[n - 1] ?? SYNC_RETRY.slowMs;
+        retryTimer[accountId] = setTimeout(() => {
+          retryTimer[accountId] = undefined;
+          void pushAccount(accountId);
+        }, delay);
+      }
+
       /** One cloud save of an account; resolves with how it went. null = nothing to save (local-only / signed out). */
-      async function pushAccount(accountId: string): Promise<{ coreSaved: boolean; message: string | null } | null> {
+      async function pushAccountOnce(accountId: string): Promise<PushResult> {
         const s = get();
         if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return null;
         const account = s.accounts.find((a) => a.id === accountId);
         const profile = s.riskProfiles[accountId];
         if (!account || !profile) return null;
         const userId = s.currentUserId;
+        if (retryTimer[accountId]) {
+          clearTimeout(retryTimer[accountId]);
+          retryTimer[accountId] = undefined;
+        }
         set((st) => ({
-          syncStatus: { ...st.syncStatus, [accountId]: 'saving' },
+          // While retrying (or after the retries ran out) keep saying so until a save succeeds.
+          syncStatus: st.syncStatus[accountId] === 'retrying' || st.syncStatus[accountId] === 'error' ? st.syncStatus : { ...st.syncStatus, [accountId]: 'saving' },
           accountOwners: st.accountOwners[accountId] === userId ? st.accountOwners : { ...st.accountOwners, [accountId]: userId },
         }));
         const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [], followUps: s.followUps[accountId] ?? [] };
@@ -443,7 +492,20 @@ export const useAccountsStore = create<AccountsState>()(
         const snapRes = await cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow);
         const actRes = snapRes.headerSaved ? await cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []) : null;
         const message = !snapRes.ok ? snapRes.message : actRes && !actRes.ok ? `Activity history: ${actRes.message}` : null;
-        recordSync(accountId, message);
+        if (!message) {
+          failStreak[accountId] = 0;
+          recordSync(accountId, null);
+        } else {
+          const n = (failStreak[accountId] ?? 0) + 1;
+          failStreak[accountId] = n;
+          // Never hidden from diagnostics, even while the UI only says "retrying".
+          console.warn(`[RenewalIQ] Cloud save of ${accountId} failed (attempt ${n}):`, message);
+          set((st) => ({
+            syncStatus: { ...st.syncStatus, [accountId]: n > SYNC_RETRY.delaysMs.length ? 'error' : 'retrying' },
+            syncError: { ...st.syncError, [accountId]: message },
+          }));
+          scheduleRetry(accountId);
+        }
         return { coreSaved: snapRes.coreSaved, message };
       }
 
