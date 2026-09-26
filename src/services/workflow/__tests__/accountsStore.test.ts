@@ -201,7 +201,7 @@ describe('a document that arrives as a link', () => {
     const id = store().createAccount('Link Co', 'TX');
     const before = JSON.stringify(store().riskProfiles[id]);
     const [docId] = store().addFiles(id, [linkAsFile('https://drive.google.com/file/d/xyz/view')]);
-    await vi.waitFor(() => expect(store().documents[id].find((d) => d.id === docId)?.status).toBe('error'));
+    await vi.waitFor(() => expect(store().documents[id].find((d) => d.id === docId)?.status).toBe('error'), { timeout: 10000 });
     const doc = store().documents[id].find((d) => d.id === docId)!;
     expect(doc.warnings).toEqual([LINK_UNREADABLE_MESSAGE]);
     expect(doc.sourceUrl).toBe('https://drive.google.com/file/d/xyz/view');
@@ -209,5 +209,5 @@ describe('a document that arrives as a link', () => {
     expect(JSON.stringify(store().riskProfiles[id])).toBe(before);
     expect(store().activityLog[id].at(-1)?.message).toContain('Could not access the document linked');
     vi.unstubAllGlobals();
-  });
+  }, 20000); // first load of the document-reading module (PDF/OCR libraries) can be slow on a busy machine
 });

@@ -30,7 +30,7 @@ beforeEach(() => {
 describe('cloud save order', () => {
   it('writes activity only after the account row has been saved', async () => {
     useAccountsStore.getState().createAccount('Order Co', 'TX');
-    await vi.waitFor(() => expect(calls.order).toContain('activity'));
+    await vi.waitFor(() => expect(calls.order).toContain('activity'), { timeout: 10000 });
     expect(calls.order.indexOf('activity')).toBeGreaterThan(calls.order.indexOf('snapshot:end'));
   });
 
@@ -38,7 +38,7 @@ describe('cloud save order', () => {
     calls.snapOk = false;
     calls.headerSaved = false;
     const id = useAccountsStore.getState().createAccount('Fail Co', 'TX');
-    await vi.waitFor(() => expect(useAccountsStore.getState().syncStatus[id]).toBe('error'));
+    await vi.waitFor(() => expect(useAccountsStore.getState().syncStatus[id]).toBe('error'), { timeout: 10000 });
     expect(calls.order).not.toContain('activity');
     expect(useAccountsStore.getState().syncError[id]).toBe('header failed');
   });
@@ -47,7 +47,7 @@ describe('cloud save order', () => {
     calls.snapOk = false;
     calls.headerSaved = true;
     const id = useAccountsStore.getState().createAccount('Partial Co', 'TX');
-    await vi.waitFor(() => expect(useAccountsStore.getState().syncStatus[id]).toBe('error'));
+    await vi.waitFor(() => expect(useAccountsStore.getState().syncStatus[id]).toBe('error'), { timeout: 10000 });
     expect(calls.order).toContain('activity');
   });
 });

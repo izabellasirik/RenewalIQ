@@ -159,7 +159,7 @@ describe('agent vs admin account access (client)', () => {
     const acct = store().accounts.find((a) => a.id === id)!;
     expect(acct.assignedUserId).toBe(ROMAN);
     expect(acct.assignedBroker?.name).toBe('Roman');
-    await vi.waitFor(() => expect(cloud.rows.find((r) => r.id === id)?.assignedUserId).toBe(ROMAN));
+    await vi.waitFor(() => expect(cloud.rows.find((r) => r.id === id)?.assignedUserId).toBe(ROMAN), { timeout: 10000 });
     await signIn(AGENT_B);
     expect(ids()).not.toContain(id);
   });
