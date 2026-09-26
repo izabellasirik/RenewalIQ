@@ -269,7 +269,12 @@ function ItemRow({
                 <div className="flex flex-wrap items-center gap-1.5">
                   <p className={cn('text-sm font-medium text-[var(--color-ink-800)]', item.status === 'waived' && 'line-through')}>{item.label}</p>
                   {item.type === 'information' && <span className="rounded bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-500)]">Info</span>}
-                  <ItemStatusSelect value={item.status} onChange={(status) => setItemStatus(accountId, item.id, status)} label={item.label} />
+                  <ItemStatusSelect
+                    value={item.status}
+                    // Choosing Received asks for the file, the same as the Received button; cancelling keeps the old status.
+                    onChange={(status) => (status === 'received' && item.status !== 'received' ? onReceive() : setItemStatus(accountId, item.id, status))}
+                    label={item.label}
+                  />
                   {carriers.length > 0 && (
                     <Badge tone="brand" className="px-2 py-0.5 text-[11px]">
                       Needed by {carriers.map((q) => q.marketName).join(', ')}
