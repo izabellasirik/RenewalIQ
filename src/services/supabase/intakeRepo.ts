@@ -165,7 +165,8 @@ export function storageSafeName(name: string): string {
  * `userId` is what the anti-spoofing WITH CHECK cross-references, so it's forced onto the insert
  * here rather than left to whatever a tampered client might send.
  */
-export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, files: File[]): Promise<RepoResult<{ submissionId: string; failedFiles: string[] }>> {
+/** `onProgress(done, total)` is called as each file finishes (uploaded or given up on). */
+export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, files: File[], onProgress?: (done: number, total: number) => void): Promise<RepoResult<{ submissionId: string; failedFiles: string[] }>> {
   if (!supabase) return NOT_CONFIGURED;
   const submissionId = generateId('isub');
   try {
@@ -197,6 +198,8 @@ export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, fil
     // Each file: upload, then record it — retried once. One bad file doesn't fail the submission the
     // applicant already sent, but it's reported back so they know to send it another way.
     const failedFiles: string[] = [];
+    let done = 0;
+    onProgress?.(0, files.length);
     for (const file of files) {
       let attached = false;
       for (let attempt = 0; attempt < 2 && !attached; attempt++) {
@@ -215,6 +218,7 @@ export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, fil
         attached = !rowErr;
       }
       if (!attached) failedFiles.push(file.name);
+      onProgress?.(++done, files.length);
     }
 
     return { ok: true, data: { submissionId, failedFiles } };
