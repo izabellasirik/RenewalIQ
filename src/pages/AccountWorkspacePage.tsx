@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Building2, ClipboardList, Clock, FileText, Hash, MapPin, CalendarDays, History, ArrowRight } from 'lucide-react';
+import { Building2, ClipboardList, Clock, FileText, Hash, MapPin, CalendarDays } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Badge, Card, CardBody, EmptyState, Tabs } from '../components/ui';
@@ -182,38 +182,6 @@ export function AccountWorkspacePage() {
           <div className="flex min-w-0 flex-col gap-5">
             <AccountInfoCard accountId={accountId} />
             <ContactsCard accountId={accountId} />
-            <Card>
-              <CardBody className="pt-5">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--color-ink-900)]">
-                    <History size={16} className="text-[var(--color-ink-500)]" />
-                    Recent activity
-                  </h3>
-                  <button onClick={() => setTab('activity')} className="text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
-                    All →
-                  </button>
-                </div>
-                {workflowEvents.length === 0 ? (
-                  <p className="text-sm italic text-[var(--color-ink-400)]">No activity yet.</p>
-                ) : (
-                  <ActivityTimeline events={[...workflowEvents].sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1)).slice(0, 6)} />
-                )}
-              </CardBody>
-            </Card>
-            <Card>
-              <CardBody className="flex flex-col gap-1 pt-5 text-sm">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Submission details</p>
-                <Link to={`/accounts/${accountId}/risk-profile`} className="inline-flex items-center justify-between gap-2 rounded-md px-1 py-1 text-[var(--color-ink-700)] hover:bg-[var(--color-ink-50)]">
-                  Risk Profile <ArrowRight size={13} />
-                </Link>
-                <Link to={`/accounts/${accountId}/submission-assistant`} className="inline-flex items-center justify-between gap-2 rounded-md px-1 py-1 text-[var(--color-ink-700)] hover:bg-[var(--color-ink-50)]">
-                  Submission Assistant <ArrowRight size={13} />
-                </Link>
-                <Link to={`/accounts/${accountId}/carrier-appetite`} className="inline-flex items-center justify-between gap-2 rounded-md px-1 py-1 text-[var(--color-ink-700)] hover:bg-[var(--color-ink-50)]">
-                  Carrier Appetite <ArrowRight size={13} />
-                </Link>
-              </CardBody>
-            </Card>
           </div>
         </div>
       )}

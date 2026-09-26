@@ -13,7 +13,7 @@ import { RiskProfilePage } from './pages/RiskProfilePage';
 import { LimitsCoveragePage } from './pages/LimitsCoveragePage';
 import { SubmissionAssistantPage } from './pages/SubmissionAssistantPage';
 import { CarrierAppetitePage } from './pages/CarrierAppetitePage';
-import { AnalyticsPage } from './pages/AnalyticsPage';
+import { AnalyticsComingSoonPage } from './pages/AnalyticsComingSoonPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminAppetiteUpdatesPage } from './pages/AdminAppetiteUpdatesPage';
 import { AdminFeedbackPage } from './pages/AdminFeedbackPage';
@@ -47,7 +47,8 @@ export const router = createBrowserRouter([
       // Old link to the accounts list, from when Today's Plate was the home page.
       { path: '/accounts', element: <Navigate to="/" replace /> },
       { path: '/market-finder', element: <MarketFinderPage /> },
-      { path: '/analytics', element: <AnalyticsPage /> },
+      // V1: the dashboard (AnalyticsPage) is kept but not shown — Coming Soon instead.
+      { path: '/analytics', element: <AnalyticsComingSoonPage /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },
       { path: '/team', element: <TeamPage /> },
       { path: '/accounts/new', element: <NewAccountPage /> },
