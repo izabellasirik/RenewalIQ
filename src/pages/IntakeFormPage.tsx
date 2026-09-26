@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { CircleCheck, Loader2, TriangleAlert, X } from 'lucide-react';
+import { CircleCheck, Loader2, Plus, TriangleAlert, X } from 'lucide-react';
 import { Button } from '../components/ui';
 import { Dropzone } from '../components/upload/Dropzone';
 import { COVERAGE_LABELS } from '../types';
@@ -168,6 +168,21 @@ export function IntakeFormPage() {
           <CircleCheck size={26} className="text-[var(--color-success-600)]" />
           <p className="text-sm font-medium text-[var(--color-ink-800)]">Thank you — your submission has been received.</p>
           <p className="max-w-xs text-xs text-[var(--color-ink-500)]">Someone will review it and follow up if anything else is needed. You can close this page.</p>
+          {/* A safety company or agency often has several clients to send — start a fresh, empty form on the same link. */}
+          <Button
+            size="sm"
+            icon={<Plus size={14} />}
+            className="mt-3"
+            onClick={() => {
+              setAnswers(emptyAnswers);
+              setFiles([]);
+              setError(null);
+              setStatus('ready');
+              window.scrollTo({ top: 0 });
+            }}
+          >
+            Submit another client
+          </Button>
         </div>
       </IntakeShell>
     );
