@@ -164,7 +164,7 @@ export function NewAccountPage() {
       <div className="mx-auto w-full max-w-xl">
         {mode === 'choice' && (
           <div className="flex flex-col gap-4">
-            <Dropzone onFiles={handleFiles} />
+            <Dropzone onFiles={handleFiles} allowLinkPaste={false} />
             <div className="text-center">
               <button
                 onClick={() => setMode('manual')}

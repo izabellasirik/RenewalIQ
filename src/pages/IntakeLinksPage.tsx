@@ -120,13 +120,13 @@ function LinksSection({ userId }: { userId: string }) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <label className="flex-1 text-xs font-medium text-[var(--color-ink-600)]">
           Label (only you see this)
-          <input className={`${inputClass} mt-1`} placeholder="e.g. Acme Safety Group" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
+          <input className={`${inputClass} mt-1`} placeholder="e.g. ABC Client" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
         </label>
         <label className="flex-1 text-xs font-medium text-[var(--color-ink-600)]">
           Agency name (shown to the client)
           <input
             className={`${inputClass} mt-1`}
-            placeholder="e.g. Adriatic Insurance Agency"
+            placeholder="e.g. DXP Services Inc."
             value={orgName}
             onChange={(e) => {
               setOrgName(e.target.value);
@@ -358,7 +358,7 @@ export function IntakeLinksPage() {
   const session = useBrokerSession();
 
   return (
-    <PageContainer title="Submission Intake" description="Let an agency, safety company, or client submit a new account directly — no RenewalIQ login required.">
+    <PageContainer title="Submission Intake">
       {session.status === 'loading' && (
         <div className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
           <Loader2 size={16} className="animate-spin" />

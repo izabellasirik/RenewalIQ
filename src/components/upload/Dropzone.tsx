@@ -5,7 +5,8 @@ import { linkAsFile } from '../../services/ingestion/documentLinks';
 
 const LINK = /^https?:\/\/\S+$/i;
 
-export function Dropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
+/** `allowLinkPaste={false}` hides the "paste a link" box (dropping a link still works). */
+export function Dropzone({ onFiles, allowLinkPaste = true }: { onFiles: (files: File[]) => void; allowLinkPaste?: boolean }) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const [link, setLink] = useState('');
@@ -69,6 +70,7 @@ export function Dropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
       />
     </div>
       {/* The document is only a link? Renewal IQ opens it if it can, or says clearly that it can't. */}
+      {allowLinkPaste && (
       <form onSubmit={addLink} className="flex items-center gap-2">
         <Link2 size={14} className="shrink-0 text-[var(--color-ink-400)]" />
         <input
@@ -82,6 +84,7 @@ export function Dropzone({ onFiles }: { onFiles: (files: File[]) => void }) {
           Add link
         </button>
       </form>
+      )}
     </div>
   );
 }

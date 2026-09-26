@@ -36,7 +36,7 @@ export function ProfileForm({ email, initial, submitLabel, onSaved }: { email: s
         <label className={labelClass} htmlFor="profile-name">
           Full name <span className="text-[var(--color-danger-600)]">*</span>
         </label>
-        <input id="profile-name" autoFocus autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} className={inputClass} placeholder="e.g. Roman Smith" />
+        <input id="profile-name" autoFocus autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} className={inputClass} placeholder="e.g. John Smith" />
       </div>
       <div>
         <label className={labelClass} htmlFor="profile-email">
