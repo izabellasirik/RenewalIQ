@@ -21,7 +21,6 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { useAccountWorkflow } from '../hooks/useAccountWorkflow';
 import { summarizeWaiting, type WorkspaceTab } from '../services/workflow/nextActions';
 import { formatShortDate } from '../services/workflow/dates';
-import { carriersFor, forwardedAt } from '../services/workflow/requirementKey';
 import { QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { EMPTY_ACTIVITY_EVENTS } from '../utils/emptyArrays';
 import { AssignedAgent } from '../components/workspace/AssignedAgent';
@@ -65,8 +64,6 @@ export function AccountWorkspacePage() {
     setParams(p, { replace: true });
   }
 
-  const openCarrierRequests = items.filter((i) => i.status !== 'waived' && carriersFor(i).some((q) => !forwardedAt(i, q))).length;
-
   return (
     <PageContainer>
       {/* Header — the "where does this account stand" strip */}
@@ -94,26 +91,6 @@ export function AccountWorkspacePage() {
           <AccountStageSelect accountId={accountId} />
         </div>
 
-        <div className="flex flex-wrap gap-2 text-xs">
-          <StatusPill onClick={() => setTab('checklist')} tone={waiting.onClient > 0 ? 'warning' : 'neutral'} label={waiting.onClient > 0 ? `Waiting on client · ${waiting.onClient} item${waiting.onClient === 1 ? '' : 's'}` : 'Nothing requested from client'} />
-          <StatusPill
-            onClick={() => setTab('quotes')}
-            tone={waiting.onCarriers.length > 0 ? 'info' : 'neutral'}
-            label={waiting.onCarriers.length > 0 ? `Waiting on ${waiting.onCarriers.join(', ')}` : 'No carriers pending'}
-          />
-          {waiting.missing > 0 && <StatusPill onClick={() => setTab('checklist')} tone="danger" label={`${waiting.missing} not yet requested`} />}
-          {openCarrierRequests > 0 && <StatusPill onClick={() => setTab('quotes')} tone="brand" label={`${openCarrierRequests} carrier request${openCarrierRequests === 1 ? '' : 's'} open`} />}
-          {actions.now.length > 0 && (
-            <StatusPill
-              onClick={() => {
-                setTab('overview');
-                requestAnimationFrame(() => document.getElementById('needs-attention')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-              }}
-              tone="danger"
-              label={`${actions.now.length} action${actions.now.length === 1 ? '' : 's'} required`}
-            />
-          )}
-        </div>
       </div>
 
       <div className="-mx-1 overflow-x-auto px-1">
@@ -236,16 +213,5 @@ export function AccountWorkspacePage() {
         </Card>
       )}
     </PageContainer>
-  );
-}
-
-/** A status chip that opens the part of the workspace it's about. */
-function StatusPill({ tone, label, onClick }: { tone: 'neutral' | 'warning' | 'info' | 'danger' | 'brand'; label: string; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} className="rounded-full transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-500)]/40">
-      <Badge tone={tone} dot className="cursor-pointer">
-        {label}
-      </Badge>
-    </button>
   );
 }
