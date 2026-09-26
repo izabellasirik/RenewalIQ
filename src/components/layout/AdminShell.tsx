@@ -4,9 +4,8 @@ import { BrandLogo } from '../branding/Logo';
 
 /**
  * Deliberately separate from AppShell (no broker Sidebar/TopBar/FeedbackWidget) — the admin area
- * is a distinct internal tool, not a broker-facing product surface. Reachable only via the
- * discreet footer link in the broker Sidebar and by knowing the /admin URL directly; see
- * router.tsx and Sidebar.tsx.
+ * is a distinct internal tool, not a broker-facing product surface. Reachable from the broker
+ * Sidebar's "Feedback & Updates" item, shown only to users is_admin() confirms, or /admin directly.
  */
 export function AdminShell() {
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -30,6 +29,9 @@ export function AdminShell() {
             </NavLink>
             <NavLink to="/admin/feedback" className={navLinkClass}>
               Product Feedback
+            </NavLink>
+            <NavLink to="/" className={navLinkClass}>
+              ← Back to Renewal IQ
             </NavLink>
           </nav>
         </div>
