@@ -263,7 +263,7 @@ export function IntakeFormPage() {
         </Field>
 
         <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Documents &amp; Photos</p>
-        <Dropzone onFiles={addFiles} />
+        <Dropzone onFiles={addFiles} allowLinkPaste={false} />
         {files.length > 0 && (
           <ul className="flex flex-col gap-1.5">
             {files.map((f, i) => (
