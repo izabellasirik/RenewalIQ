@@ -59,6 +59,7 @@ import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/do
 import { isSupabaseConfigured } from '../services/supabase/client';
 import type { MyProfile } from '../services/supabase/profileRepo';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
+import { mergeById, mergeNewerFields, noteChangedAt, toMs } from '../services/workflow/mergeCloud';
 import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
 import { inferFileType as inferQuoteFileType } from '../utils/documents';
 import { actionDoneKey, type ActionItem } from '../services/workflow/nextActions';
@@ -99,6 +100,10 @@ interface AccountsState {
   /** The signed-in user's professional profile (full name, work phone, job title) — the name shown for them in Activity and as assigned broker. Ephemeral; loaded after sign-in (see ProfileGate). */
   myProfile: MyProfile | null;
   setMyProfile: (profile: MyProfile | null) => void;
+  /** Accounts with changes this device hasn't confirmed saved to the cloud yet. Persisted, so a reload can't lose them: a cloud refresh keeps these local copies and re-saves them. */
+  unsyncedIds: Record<string, true>;
+  /** The cloud's updated_at this device last saw per account (loaded or saved) — to notice someone else saving in between. Persisted. */
+  cloudSeenAt: Record<string, string>;
   /** Intake submissions waiting in Pending (kept current by the notification bell). Ephemeral. */
   pendingIntakeCount: number;
   setPendingIntakeCount: (n: number) => void;
@@ -429,8 +434,40 @@ export const useAccountsStore = create<AccountsState>()(
         });
       }
 
+      const changeSeq: Record<string, number> = {};
+
       function syncNow(accountId: string) {
+        const s = get();
+        if (isSupabaseConfigured && s.currentUserId && s.cloudAccountIds[accountId]) {
+          changeSeq[accountId] = (changeSeq[accountId] ?? 0) + 1;
+          if (!s.unsyncedIds[accountId]) set((st) => ({ unsyncedIds: { ...st.unsyncedIds, [accountId]: true } }));
+        }
         void pushAccount(accountId);
+      }
+
+      /**
+       * Someone else saved this account since this device last loaded it (another agent, the admin,
+       * or another tab): bring in their newer field values and notes before saving, so this device's
+       * older copy can't overwrite them. Fields keep whichever copy changed most recently.
+       */
+      async function mergeNewerCloudCopy(accountId: string, userId: string): Promise<void> {
+        const seen = get().cloudSeenAt[accountId];
+        if (!seen) return;
+        const cloudAt = await cloudRepo.fetchSubmissionUpdatedAt(accountId);
+        if (!cloudAt || toMs(cloudAt) <= toMs(seen)) return;
+        const res = await cloudRepo.fetchUserSubmissions(userId, accountId);
+        const bundle = res.ok ? res.data.find((b) => b.account.id === accountId) : undefined;
+        if (!bundle) return;
+        set((st) => {
+          const local = st.accounts.find((a) => a.id === accountId);
+          const profile = st.riskProfiles[accountId];
+          if (!local || !profile) return {};
+          return {
+            riskProfiles: { ...st.riskProfiles, [accountId]: mergeNewerFields(profile, bundle.profile) },
+            accounts: st.accounts.map((a) => (a.id === accountId ? { ...a, notes: mergeById(a.notes ?? [], bundle.account.notes ?? [], noteChangedAt) } : a)),
+            cloudSeenAt: { ...st.cloudSeenAt, [accountId]: cloudAt },
+          };
+        });
       }
 
       /**
@@ -490,12 +527,27 @@ export const useAccountsStore = create<AccountsState>()(
           syncStatus: st.syncStatus[accountId] === 'retrying' || st.syncStatus[accountId] === 'error' ? st.syncStatus : { ...st.syncStatus, [accountId]: 'saving' },
           accountOwners: st.accountOwners[accountId] === userId ? st.accountOwners : { ...st.accountOwners, [accountId]: userId },
         }));
-        const workflow = { missingItems: s.missingItems[accountId] ?? [], quotes: s.quotes[accountId] ?? [], followUps: s.followUps[accountId] ?? [] };
+        const seqAtStart = changeSeq[accountId] ?? 0;
+        await mergeNewerCloudCopy(accountId, userId);
+        const cur = get();
+        const accountNow = cur.accounts.find((a) => a.id === accountId) ?? account;
+        const profileNow = cur.riskProfiles[accountId] ?? profile;
+        const workflow = { missingItems: cur.missingItems[accountId] ?? [], quotes: cur.quotes[accountId] ?? [], followUps: cur.followUps[accountId] ?? [] };
         // Account row first, then activity: activity_events has a foreign key onto submissions, so
         // writing both at once on a brand-new account could fail with a confusing secondary error.
-        const snapRes = await cloudRepo.saveSubmissionSnapshot(userId, account, profile, workflow);
+        const snapRes = await cloudRepo.saveSubmissionSnapshot(userId, accountNow, profileNow, workflow);
         const actRes = snapRes.headerSaved ? await cloudRepo.appendActivityEvents(userId, accountId, get().activityLog[accountId] ?? []) : null;
         const message = !snapRes.ok ? snapRes.message : actRes && !actRes.ok ? `Activity history: ${actRes.message}` : null;
+        if (snapRes.coreSaved) {
+          // The account is in the cloud as of this save; it's no longer "unsynced" unless it changed again meanwhile.
+          set((st) => {
+            const { [accountId]: _done, ...rest } = st.unsyncedIds;
+            return {
+              cloudSeenAt: { ...st.cloudSeenAt, [accountId]: accountNow.updatedAt },
+              ...((changeSeq[accountId] ?? 0) === seqAtStart ? { unsyncedIds: rest } : {}),
+            };
+          });
+        }
         if (!message) {
           failStreak[accountId] = 0;
           recordSync(accountId, null);
@@ -574,6 +626,8 @@ export const useAccountsStore = create<AccountsState>()(
       currentUserEmail: null,
       myProfile: null,
       pendingIntakeCount: 0,
+      unsyncedIds: {},
+      cloudSeenAt: {},
       setPendingIntakeCount: (n) => set({ pendingIntakeCount: n }),
       accountOwners: {},
       hiddenAccounts: [],
@@ -2071,10 +2125,26 @@ export const useAccountsStore = create<AccountsState>()(
           const quotes = { ...s.quotes };
           const followUps = { ...s.followUps };
           const cloudAccountIds = { ...s.cloudAccountIds };
+          const cloudSeenAt = { ...s.cloudSeenAt };
           for (const bundle of result.data) {
             const id = bundle.account.id;
             const idx = accounts.findIndex((a) => a.id === id);
             const local = idx === -1 ? undefined : accounts[idx];
+            cloudSeenAt[id] = bundle.account.updatedAt;
+            // Changes on this device that never reached the cloud: keep them (merged with anything
+            // newer from the cloud) and save again, instead of letting the cloud copy replace them.
+            if (local && s.unsyncedIds[id] && s.riskProfiles[id]) {
+              accounts[idx] = {
+                ...local,
+                agencyId: bundle.account.agencyId ?? local.agencyId,
+                assignedUserId: bundle.account.assignedUserId !== undefined ? bundle.account.assignedUserId : local.assignedUserId,
+                notes: mergeById(local.notes ?? [], bundle.account.notes ?? [], noteChangedAt),
+              };
+              riskProfiles[id] = mergeNewerFields(s.riskProfiles[id], bundle.profile);
+              needsPush.push(id);
+              cloudAccountIds[id] = true;
+              continue;
+            }
             // Cloud is authoritative for an already-known cloud account — except for fields the
             // project's database can't hold yet (0007 / 0008 not applied), which would otherwise be
             // wiped on every reload (e.g. the assigned broker "disappearing").
@@ -2112,7 +2182,7 @@ export const useAccountsStore = create<AccountsState>()(
             if (bundle.followUps) followUps[bundle.account.id] = bundle.followUps;
             cloudAccountIds[bundle.account.id] = true;
           }
-          return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, followUps, cloudAccountIds };
+          return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, followUps, cloudAccountIds, cloudSeenAt };
         });
         // Accounts this device holds for this user that the cloud no longer returned: if they still
         // exist, access was removed (e.g. an admin reassigned them to another agent) — drop the local

@@ -206,23 +206,30 @@ function normalizeItems(value: unknown, accountId: string): MissingItem[] | unde
  * (0011_agency_roles.sql) decides what comes back — an agent's own accounts, or the whole agency
  * for an admin.
  */
-async function selectAllVisible(table: string) {
+async function selectAllVisible(table: string, onlySubmissionId?: string) {
   const PAGE = 1000;
   const rows = [];
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase!.from(table).select('*').order('id').range(from, from + PAGE - 1);
+    let q = supabase!.from(table).select('*');
+    // One account only: its own row, and its child rows (field_alternates hang off field_values ids "<submission>::…").
+    if (onlySubmissionId) {
+      if (table === 'submissions') q = q.eq('id', onlySubmissionId);
+      else if (table === 'field_alternates') q = q.like('field_value_id', `${onlySubmissionId}::%`);
+      else q = q.eq('submission_id', onlySubmissionId);
+    }
+    const { data, error } = await q.order('id').range(from, from + PAGE - 1);
     if (error) return { data: null, error };
     rows.push(...(data ?? []));
     if (!data || data.length < PAGE) return { data: rows, error: null };
   }
 }
 
-/** Fetches every submission the current user can access (RLS-scoped), fully hydrated. Used on sign-in to populate the workspace. */
-export async function fetchUserSubmissions(_userId: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
+/** Fetches every submission the current user can access (RLS-scoped), fully hydrated — or just one (`onlySubmissionId`). Used on sign-in to populate the workspace. */
+export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
     const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await Promise.all(
-      ['submissions', 'field_values', 'field_alternates', 'coverage_lines', 'vehicles', 'drivers', 'losses', 'documents', 'activity_events'].map(selectAllVisible)
+      ['submissions', 'field_values', 'field_alternates', 'coverage_lines', 'vehicles', 'drivers', 'losses', 'documents', 'activity_events'].map((t) => selectAllVisible(t, onlySubmissionId))
     );
     const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes].find((r) => r.error);
     if (errored?.error) return fail(errored.error.message);
@@ -565,6 +572,17 @@ export async function saveSubmissionSnapshot(
     return { ok: true, data: undefined, headerSaved, coreSaved };
   } catch (err) {
     return { ...fail(err instanceof Error ? err.message : 'Could not save to your account.'), headerSaved, coreSaved };
+  }
+}
+
+/** When the account was last saved to the cloud (by anyone), or null if unknown / not there. Cheap check before a save. */
+export async function fetchSubmissionUpdatedAt(submissionId: string): Promise<string | null> {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.from('submissions').select('updated_at').eq('id', submissionId).maybeSingle();
+    return error || !data ? null : ((data as { updated_at: string | null }).updated_at ?? null);
+  } catch {
+    return null;
   }
 }
 
