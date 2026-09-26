@@ -248,7 +248,15 @@ function QuoteCard({
     <Card className={cn(highlighted && 'ring-2 ring-[var(--color-brand-500)]')}>
       <MarketDetailsDialog accountId={accountId} quote={quote} requestedItems={requestedItems} open={detailsOpen} onClose={() => setDetailsOpen(false)} />
       <CardBody className="pt-4">
-        <div className="flex flex-wrap items-start justify-between gap-2">
+        {/* Clicking the card's header (anywhere but its own buttons and fields) collapses / expands it. */}
+        <div
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('button, a, input, select, textarea, label')) return;
+            onToggleCollapsed();
+          }}
+          className="-m-2 flex cursor-pointer flex-wrap items-start justify-between gap-2 rounded-lg p-2 hover:bg-[var(--color-ink-50)]"
+          title={collapsed ? 'Click to show details' : 'Click to collapse'}
+        >
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <button
