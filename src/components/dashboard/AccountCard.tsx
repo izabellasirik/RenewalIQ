@@ -32,7 +32,9 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
 
   const steps = useWorkflowStatus(account.id);
   const status = deriveSubmissionStatusLabel(steps);
-  const { items, quotes, followUps, effectiveDate } = useAccountWorkflow(account.id);
+  const { items, quotes, followUps, effectiveDate, dotNumber, actions } = useAccountWorkflow(account.id);
+  // Only something genuinely overdue earns the red flag — otherwise the card stays calm.
+  const needsAttention = actions.now.some((a) => a.overdue);
   const { stage, manual } = effectiveAccountStage(account, items, quotes);
   // Checklist documents not in yet (missing or requested from the client).
   const missingDocuments = items.filter((i) => i.type === 'document' && (i.status === 'missing' || i.status === 'requested')).length;
@@ -104,6 +106,12 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
       <Card
         className="group relative cursor-pointer transition-shadow hover:[box-shadow:var(--shadow-card-hover)]"
         onClick={() => !isRenaming && navigate(`/accounts/${account.id}`)}
+        role="link"
+        tabIndex={0}
+        aria-label={`Open ${account.namedInsured}`}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !isRenaming && e.target === e.currentTarget) navigate(`/accounts/${account.id}`);
+        }}
       >
         <CardBody className="pt-5">
           <div className="flex items-start justify-between gap-2">
@@ -136,26 +144,35 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <StageBadge stage={stage} className="px-3 py-1.5 text-sm" title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'} />
+            <StageBadge stage={stage} title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'} />
             {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}
+            {needsAttention && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-danger-600)]" title="Something on this account is overdue">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-danger-500)]" />
+                Needs attention
+              </span>
+            )}
           </div>
+          <p className="mt-2 truncate text-sm text-[var(--color-ink-500)]">
+            {account.state || '—'} · DOT {dotNumber || '—'} · Commercial Auto
+          </p>
 
-          <div className="mt-4 border-t border-[var(--color-ink-100)] pt-3 text-sm text-[var(--color-ink-500)]">
-            Renewal: <span className="font-semibold text-[var(--color-ink-900)]">{effectiveDate ? formatShortDate(effectiveDate) : '—'}</span>
-          </div>
-
-          <div className="mt-3 flex items-start justify-between gap-4 border-t border-[var(--color-ink-100)] pt-3 text-sm">
-            <div>
-              <p className="text-[var(--color-ink-500)]">Missing documents</p>
-              <p className="font-semibold text-[var(--color-ink-900)]">{missingDocuments > 0 ? missingDocuments : '—'}</p>
+          <dl className="mt-3 flex flex-col gap-1 border-t border-[var(--color-ink-100)] pt-3 text-sm">
+            <div className="flex gap-1">
+              <dt className="text-[var(--color-ink-500)]">Renewal:</dt>
+              <dd className="font-semibold text-[var(--color-ink-900)]">{effectiveDate ? formatShortDate(effectiveDate) : '—'}</dd>
             </div>
-            <div className="text-right">
-              <p className="text-[var(--color-ink-500)]">Next follow-up</p>
-              <p className={cn('font-semibold', nextFollowUp && nextFollowUp < todayKey() ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-900)]')}>
+            <div className="flex gap-1">
+              <dt className="text-[var(--color-ink-500)]">Missing documents:</dt>
+              <dd className="font-semibold text-[var(--color-ink-900)]">{missingDocuments > 0 ? missingDocuments : '—'}</dd>
+            </div>
+            <div className="flex gap-1">
+              <dt className="text-[var(--color-ink-500)]">Next follow-up:</dt>
+              <dd className={cn('font-semibold', nextFollowUp && nextFollowUp < todayKey() ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-900)]')}>
                 {nextFollowUp ? formatShortDate(nextFollowUp) : '—'}
-              </p>
+              </dd>
             </div>
-          </div>
+          </dl>
         </CardBody>
       </Card>
 
