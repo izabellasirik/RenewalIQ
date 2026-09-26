@@ -24,4 +24,6 @@ export interface Account {
   agencyId?: string;
   /** Supabase Auth user id of the agent the account belongs to — what grants access (RLS). Set by the database; only an agency admin can change it (assignAccountToAgent). */
   assignedUserId?: string | null;
+  /** Derived tasks the broker marked done: task key (see actionDoneKey) → when. */
+  doneActions?: Record<string, string>;
 }

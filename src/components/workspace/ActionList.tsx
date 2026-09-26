@@ -54,6 +54,7 @@ function ActionRow({
   const setItemsFollowUp = useAccountsStore((s) => s.setItemsFollowUp);
   const updateFollowUp = useAccountsStore((s) => s.updateFollowUp);
   const completeFollowUp = useAccountsStore((s) => s.completeFollowUp);
+  const markActionDone = useAccountsStore((s) => s.markActionDone);
   const isGroup = (action.itemIds?.length ?? 0) > 1;
   const navigate = useNavigate();
 
@@ -123,6 +124,12 @@ function ActionRow({
         )}
         {action.followUpId && (
           <Button size="sm" variant="secondary" icon={<Check size={13} />} onClick={() => completeFollowUp(action.accountId, action.followUpId!)}>
+            Done
+          </Button>
+        )}
+        {/* Every other task can be marked done too (it comes back if its date or wording changes). */}
+        {!action.followUpId && action.kind !== 'ready_to_send' && (
+          <Button size="sm" variant="secondary" icon={<Check size={13} />} onClick={() => markActionDone(action)} title="Mark this task done">
             Done
           </Button>
         )}

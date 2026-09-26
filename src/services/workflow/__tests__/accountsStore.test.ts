@@ -211,3 +211,28 @@ describe('a document that arrives as a link', () => {
     vi.unstubAllGlobals();
   }, 20000); // first load of the document-reading module (PDF/OCR libraries) can be slow on a busy machine
 });
+
+describe('marking a task done', () => {
+  it('a renewal reminder disappears when done, logs it, and comes back for a different date', async () => {
+    const { deriveAccountActions } = await import('../nextActions');
+    const id = store().createAccount('Renewal Co', 'TX');
+    const derive = (eff: string) => deriveAccountActions({ account: store().accounts.find((a) => a.id === id)!, items: [], quotes: [], contacts: [], effectiveDate: eff }, '2026-09-26').now;
+    const renewal = derive('2026-10-13').find((a) => a.kind === 'renewal')!;
+    expect(renewal.title).toBe('Renewal effective Oct 13');
+    store().markActionDone(renewal);
+    expect(derive('2026-10-13').some((a) => a.kind === 'renewal')).toBe(false);
+    expect(store().activityLog[id].at(-1)).toMatchObject({ type: 'action_done', message: 'Marked done: Renewal effective Oct 13.' });
+    expect(derive('2026-10-20').some((a) => a.kind === 'renewal')).toBe(true); // new date → new task
+  });
+
+  it('a scheduled follow-up is completed (not just hidden)', async () => {
+    const { deriveAccountActions } = await import('../nextActions');
+    const id = store().createAccount('FU Co', 'TX');
+    store().addFollowUp(id, { subject: 'Sara', dueDate: '2026-09-26', notes: '' });
+    const acct = () => store().accounts.find((a) => a.id === id)!;
+    const fu = deriveAccountActions({ account: acct(), items: [], quotes: [], contacts: [], followUps: store().followUps[id] }, '2026-09-26').now.find((a) => a.kind === 'follow_up')!;
+    store().markActionDone(fu);
+    expect(store().followUps[id][0].doneAt).toBeTruthy();
+    expect(acct().doneActions).toBeUndefined();
+  });
+});

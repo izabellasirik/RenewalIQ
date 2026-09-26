@@ -60,6 +60,7 @@ const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   item_requested: Mail,
   follow_up_scheduled: CalendarClock,
   follow_up_completed: CheckCircle2,
+  action_done: CheckCircle2,
   item_received: PackageCheck,
   item_waived: Ban,
   item_removed: Trash2,

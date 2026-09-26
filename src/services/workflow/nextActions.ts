@@ -64,7 +64,23 @@ const KIND_PRIORITY: Record<ActionKind, number> = {
   renewal: 5,
 };
 
+/**
+ * Identity of a task for "marked done": its id plus its date and wording, so a task only stays done
+ * while it's the same task — a new follow-up date, a new renewal or a changed count brings it back.
+ */
+export function actionDoneKey(a: Pick<ActionItem, 'id' | 'dueDate' | 'title'>): string {
+  return `${a.id}|${a.dueDate ?? ''}|${a.title}`;
+}
+
 export function deriveAccountActions(input: AccountWorkflowInput, today = todayKey()): DerivedActions {
+  const derived = deriveAllAccountActions(input, today);
+  const done = input.account.doneActions;
+  if (!done || Object.keys(done).length === 0) return derived;
+  const open = (a: ActionItem) => !done[actionDoneKey(a)];
+  return { now: derived.now.filter(open), upcoming: derived.upcoming.filter(open) };
+}
+
+function deriveAllAccountActions(input: AccountWorkflowInput, today: string): DerivedActions {
   const { account, items, quotes, contacts, effectiveDate, followUps = [] } = input;
   const now: ActionItem[] = [];
   const upcoming: ActionItem[] = [];

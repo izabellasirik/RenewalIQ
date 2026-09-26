@@ -59,6 +59,7 @@ import { isSupabaseConfigured } from '../services/supabase/client';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
 import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
 import { inferFileType as inferQuoteFileType } from '../utils/documents';
+import { actionDoneKey, type ActionItem } from '../services/workflow/nextActions';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
 
@@ -111,6 +112,12 @@ interface AccountsState {
    * empty local copy can't overwrite a checklist saved from another device.
    */
   ensureChecklist: (accountId: string) => void;
+  /**
+   * The broker marks a task done. A task with a real finishing action does it (a scheduled
+   * follow-up is completed; "Send X to carrier" is marked sent); any other task is recorded as done
+   * on the account (it returns if its date or wording changes). Logged to Activity either way.
+   */
+  markActionDone: (action: ActionItem) => void;
   setCurrentUserId: (userId: string | null, email?: string | null) => void;
   /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud. Never touches local-only (not-yet-imported) accounts. */
   hydrateCloudSubmissions: () => Promise<void>;
@@ -1813,6 +1820,21 @@ export const useAccountsStore = create<AccountsState>()(
         return { ok: res.coreSaved, complete: res.message === null, message: res.message ?? undefined };
       },
 
+      markActionDone: (action) => {
+        const { accountId } = action;
+        if (action.followUpId) return get().completeFollowUp(accountId, action.followUpId);
+        if (action.kind === 'ready_to_send' && action.itemId) return get().markItemSentToCarrier(accountId, action.itemId, action.quoteId);
+        const now = new Date().toISOString();
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, doneActions: { ...(a.doneActions ?? {}), [actionDoneKey(action)]: now } } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'action_done', `Marked done: ${action.title}.`),
+        }));
+        syncNow(accountId);
+      },
+
       ensureChecklist: (accountId) => {
         const s = get();
         const account = s.accounts.find((a) => a.id === accountId);
@@ -1910,6 +1932,7 @@ export const useAccountsStore = create<AccountsState>()(
               ...bundle.account,
               ...(!bundle.hasWorkflowColumns && local ? { contacts: local.contacts, assignedBroker: local.assignedBroker } : {}),
               ...(!bundle.hasStageColumn && local ? { stage: local.stage } : {}),
+              ...(!bundle.hasDoneColumn && local?.doneActions ? { doneActions: local.doneActions } : {}),
             };
             if (idx === -1) accounts.push(merged);
             else accounts[idx] = merged;

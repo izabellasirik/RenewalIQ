@@ -113,6 +113,10 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   it arrived as a URL instead of a file (opened and read when possible; otherwise shown as
   "Document could not be accessed — upload the file directly."). Additive, safe to re-run. Until
   it's applied, those documents still save, just without the link.
+- **`supabase/migrations/0016_account_done_actions.sql`** — remembers tasks a broker marked **Done**
+  on the Overview / Today's Plate (tasks are derived, so "done" is stored on the account). Additive,
+  safe to re-run. Until it's applied, a task marked done stays done only in that browser and the app
+  says it couldn't be saved.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -172,6 +176,7 @@ from (values
   ('0013_intake_link_org_name',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'intake_links' and column_name = 'organization_name')),
   ('0014_activity_actor_name',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'activity_events' and column_name = 'actor_name')),
   ('0015_document_source_url',        exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'source_url')),
+  ('0016_account_done_actions',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'done_actions')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

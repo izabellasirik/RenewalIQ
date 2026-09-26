@@ -155,6 +155,8 @@ export interface CloudSubmissionBundle {
   /** Whether the project has 0007's workflow columns / 0008's stage column — when not, the cloud simply can't hold those fields, and the local values must be kept on hydrate. */
   hasWorkflowColumns: boolean;
   hasStageColumn: boolean;
+  /** Whether 0016's done_actions column exists — when not, keep this device's own. */
+  hasDoneColumn: boolean;
   /** undefined when 0009 isn't applied. */
   followUps?: FollowUp[];
 }
@@ -165,7 +167,7 @@ export interface CloudSubmissionBundle {
  * and written together with the submission, the existing owner-only RLS on `submissions` covers
  * it with no new policies, and it keeps this file's full-snapshot save a single upsert.
  */
-const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups'] as const;
+const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions'] as const;
 
 function isMissingWorkflowColumnError(error: { message: string; code?: string }): boolean {
   return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
@@ -238,6 +240,7 @@ export async function fetchUserSubmissions(_userId: string): Promise<RepoResult<
         ...(Array.isArray(sub.contacts) ? { contacts: sub.contacts as Contact[] } : {}),
         ...(sub.assigned_broker && typeof sub.assigned_broker === 'object' ? { assignedBroker: sub.assigned_broker as AssignedBroker } : {}),
         ...(sub.stage ? { stage: sub.stage as AccountStage } : {}),
+        ...(sub.done_actions && typeof sub.done_actions === 'object' && Object.keys(sub.done_actions).length > 0 ? { doneActions: sub.done_actions as Record<string, string> } : {}),
         // Set by the database (0011) — never sent back on save, so the app can't grant itself access.
         ...(sub.organization_id ? { agencyId: sub.organization_id as string } : {}),
         ...(sub.assigned_user_id !== undefined ? { assignedUserId: (sub.assigned_user_id as string | null) ?? null } : {}),
@@ -361,6 +364,7 @@ export async function fetchUserSubmissions(_userId: string): Promise<RepoResult<
         activity,
         hasWorkflowColumns,
         hasStageColumn: 'stage' in sub,
+        hasDoneColumn: 'done_actions' in sub,
         followUps: 'follow_ups' in sub ? (Array.isArray(sub.follow_ups) ? (sub.follow_ups as FollowUp[]).filter((f) => f && typeof f.id === 'string').map((f) => ({ ...f, accountId: sub.id })) : []) : undefined,
         missingItems: hasWorkflowColumns ? (normalizeItems(sub.missing_items, sub.id) ?? []) : undefined,
         quotes: hasWorkflowColumns ? (normalizeQuotes(sub.market_quotes, sub.id) ?? []) : undefined,
@@ -414,11 +418,13 @@ export async function saveSubmissionSnapshot(
     };
     const stageRow = { ...workflowRow, stage: account.stage ?? null };
     const submissionRow = { ...stageRow, ...(workflow?.followUps ? { follow_ups: workflow.followUps } : {}) };
+    const doneRow = { ...submissionRow, done_actions: account.doneActions ?? {} };
     // A project that hasn't applied the newest migrations still saves everything it can (so the
     // Risk Profile never stops syncing), stepping down one migration at a time — 0009 (follow-ups),
     // 0008 (stage), then 0007 (workflow) — and reports the gap honestly instead of claiming "Saved".
     const attempts: { row: Record<string, unknown>; missing: string }[] = [
-      { row: submissionRow, missing: '' },
+      { row: doneRow, missing: '' },
+      { row: submissionRow, missing: 'Tasks marked done were not saved to your account — the database needs migration 0016_account_done_actions.sql.' },
       { row: stageRow, missing: 'Follow-ups were not saved to your account — the database needs migration 0009_account_follow_ups.sql.' },
       { row: workflowRow, missing: 'Status and follow-ups were not saved to your account — the database needs migrations 0008_account_stage.sql and 0009_account_follow_ups.sql.' },
       { row: legacyRow, missing: 'Contacts, checklist, quotes, status, and follow-ups were not saved to your account — the database needs migrations 0007, 0008 and 0009 (see SUPABASE_SETUP.md).' },
