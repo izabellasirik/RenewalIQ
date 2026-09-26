@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, Check, ChevronDown, LogOut, CloudOff, CloudUpload, AlertTriangle, Menu } from 'lucide-react';
+import { Check, ChevronDown, LogOut, CloudOff, CloudUpload, AlertTriangle, Menu } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, WorkflowStepsBar } from './WorkflowSteps';
 import { relativeTime } from '../../utils/dates';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { signOutBroker } from '../../services/supabase/brokerAuth';
+import { NotificationBell } from './NotificationBell';
 
 /** email + Sign out when signed in; a discreet "Sign in" link otherwise. Deliberately small — see PROJECT direction not to overbuild profiles yet. */
 function AccountMenu() {
@@ -131,9 +132,7 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
             Saved {relativeTime(account.updatedAt)}
           </span>
         )}
-        <button className="hidden rounded-full p-2 text-[var(--color-ink-400)] sm:block hover:bg-[var(--color-ink-50)] hover:text-[var(--color-ink-600)]" aria-label="Notifications">
-          <Bell size={17} />
-        </button>
+        <NotificationBell />
         <AccountMenu />
       </div>
     </header>
