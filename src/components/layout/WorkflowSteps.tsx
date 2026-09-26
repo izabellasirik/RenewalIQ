@@ -14,6 +14,8 @@ export interface WorkflowStep {
   label: string;
   path: string;
   status: StepStatus;
+  /** The account's home (Workspace): part of the chain, but never something to "complete" — no status dot, no completion rule. */
+  hub?: boolean;
 }
 
 /** Pure computation — safe to call per-account in a loop (e.g. cross-account analytics), unlike the hook below. */
@@ -51,6 +53,7 @@ export function computeWorkflowSteps(
 
   return [
     { key: 'upload', label: 'Documents', path: `/accounts/${accountId}/upload`, status: documentsStatus },
+    { key: 'workspace', label: 'Workspace', path: `/accounts/${accountId}`, status: 'not_started', hub: true },
     { key: 'risk-profile', label: 'Risk Profile', path: `/accounts/${accountId}/risk-profile`, status: profileStatus },
     { key: 'limits-coverage', label: 'Limits & Coverage', path: `/accounts/${accountId}/limits-coverage`, status: coverageStatus },
     { key: 'submission-assistant', label: 'Submission Assistant', path: `/accounts/${accountId}/submission-assistant`, status: submissionAssistantStatus },
@@ -109,7 +112,7 @@ export function WorkflowStepsBar({ steps, activeKey }: { steps: WorkflowStep[]; 
                 isActive ? 'bg-[var(--color-ink-100)] text-[var(--color-ink-900)]' : 'text-[var(--color-ink-500)] hover:text-[var(--color-ink-800)]'
               )}
             >
-              <StepStatusDot status={step.status} />
+              {!step.hub && <StepStatusDot status={step.status} />}
               {step.label}
             </Link>
           </div>

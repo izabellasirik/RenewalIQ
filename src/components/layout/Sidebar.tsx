@@ -10,6 +10,7 @@ const navItemClass =
 
 const NAV_ICONS = {
   upload: UploadCloud,
+  workspace: Briefcase,
   'risk-profile': ClipboardList,
   'limits-coverage': Shield,
   'submission-assistant': FileText,
@@ -126,27 +127,13 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
             <p className="mb-1 mt-5 truncate px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">
               {account.namedInsured}
             </p>
-            <NavLink
-              to={`/accounts/${account.id}`}
-              end
-              className={({ isActive }) =>
-                cn(
-                  navItemClass,
-                  isActive
-                    ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                    : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-                )
-              }
-            >
-              <Briefcase size={17} />
-              <span className="flex-1">Workspace</span>
-            </NavLink>
             {steps.map((step) => {
               const Icon = NAV_ICONS[step.key as keyof typeof NAV_ICONS];
               return (
                 <NavLink
                   key={step.key}
                   to={step.path}
+                  end={step.hub}
                   className={({ isActive }) =>
                     cn(
                       navItemClass,
@@ -158,7 +145,7 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
                 >
                   <Icon size={17} />
                   <span className="flex-1">{step.label}</span>
-                  <StepStatusDot status={step.status} />
+                  {!step.hub && <StepStatusDot status={step.status} />}
                 </NavLink>
               );
             })}

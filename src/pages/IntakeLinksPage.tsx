@@ -200,7 +200,7 @@ function SubmissionCard({ submission, onChanged }: { submission: IntakeSubmissio
       return;
     }
     onChanged();
-    if (result.accountId) navigate(`/accounts/${result.accountId}/risk-profile`);
+    if (result.accountId) navigate(`/accounts/${result.accountId}`);
   }
 
   async function handleDismiss() {

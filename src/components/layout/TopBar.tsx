@@ -86,7 +86,8 @@ export function TopBar({ onOpenNav }: { onOpenNav?: () => void }) {
   const syncError = useAccountsStore((s) => (accountId ? s.syncError[accountId] : undefined));
   const [errorOpen, setErrorOpen] = useState(false);
   const steps = useWorkflowStatus(account?.id);
-  const activeKey = steps.find((s) => location.pathname.startsWith(s.path))?.key ?? '';
+  // Workspace's address is the start of every account page's, so it's only active on its own page.
+  const activeKey = steps.find((s) => (s.hub ? location.pathname.replace(/\/$/, '') === s.path : location.pathname.startsWith(s.path)))?.key ?? '';
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-[var(--color-ink-100)] bg-white px-3 sm:px-8">

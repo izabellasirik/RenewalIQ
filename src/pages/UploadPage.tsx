@@ -85,9 +85,9 @@ export function UploadPage() {
               className="mt-4 w-full"
               disabled={!allProcessed}
               icon={<ArrowRight size={15} />}
-              onClick={() => navigate(`/accounts/${accountId}/risk-profile`)}
+              onClick={() => navigate(`/accounts/${accountId}`)}
             >
-              Review Risk Profile
+              Go to Workspace
             </Button>
           </CardBody>
         </Card>

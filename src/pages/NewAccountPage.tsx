@@ -39,7 +39,7 @@ export function NewAccountPage() {
 
   function finalizeAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
     const id = createAccountFromExtraction(namedInsured, state, docs, profile, files);
-    navigate(`/accounts/${id}/risk-profile`);
+    navigate(`/accounts/${id}`);
   }
 
   async function handleFiles(files: File[]) {
