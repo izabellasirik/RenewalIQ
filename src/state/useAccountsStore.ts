@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
   Account,
+  AccountNote,
   ActivityEvent,
   ActivityEventType,
   AppetiteRecord,
@@ -126,6 +127,9 @@ interface AccountsState {
    * on the account (it returns if its date or wording changes). Logged to Activity either way.
    */
   markActionDone: (action: ActionItem) => void;
+  /** Account notes (Workspace → Notes) — written by people, kept apart from Activity. */
+  addAccountNote: (accountId: string, text: string) => void;
+  updateAccountNote: (accountId: string, noteId: string, text: string) => void;
   /** Undo "mark done" on a task (by its actionDoneKey) — it shows up again under Needs your attention. */
   undoActionDone: (accountId: string, key: string, title: string) => void;
   /** Undo a completed follow-up. */
@@ -1911,6 +1915,38 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
+      addAccountNote: (accountId, text) => {
+        const body = text.trim();
+        if (!body) return;
+        const s = get();
+        const now = new Date().toISOString();
+        const note: AccountNote = {
+          id: generateId('note'),
+          text: body,
+          createdAt: now,
+          ...(s.currentUserId ? { authorId: s.currentUserId } : {}),
+          authorName: s.myProfile?.fullName || currentActor?.name || s.currentUserEmail || 'You',
+        };
+        set((st) => ({ accounts: touchAccount(st.accounts.map((a) => (a.id === accountId ? { ...a, notes: [...(a.notes ?? []), note] } : a)), accountId) }));
+        syncNow(accountId);
+      },
+
+      updateAccountNote: (accountId, noteId, text) => {
+        const body = text.trim();
+        const s = get();
+        const note = s.accounts.find((a) => a.id === accountId)?.notes?.find((n) => n.id === noteId);
+        if (!body || !note || note.text === body) return;
+        const now = new Date().toISOString();
+        const editor = s.myProfile?.fullName || currentActor?.name || s.currentUserEmail || 'You';
+        set((st) => ({
+          accounts: touchAccount(
+            st.accounts.map((a) => (a.id === accountId ? { ...a, notes: (a.notes ?? []).map((n) => (n.id === noteId ? { ...n, text: body, updatedAt: now, updatedByName: editor } : n)) } : a)),
+            accountId
+          ),
+        }));
+        syncNow(accountId);
+      },
+
       undoActionDone: (accountId, key, title) => {
         const account = get().accounts.find((a) => a.id === accountId);
         if (!account?.doneActions?.[key]) return;
@@ -2047,6 +2083,7 @@ export const useAccountsStore = create<AccountsState>()(
               ...(!bundle.hasWorkflowColumns && local ? { contacts: local.contacts, assignedBroker: local.assignedBroker } : {}),
               ...(!bundle.hasStageColumn && local ? { stage: local.stage } : {}),
               ...(!bundle.hasDoneColumn && local?.doneActions ? { doneActions: local.doneActions } : {}),
+              ...(!bundle.hasNotesColumn && local?.notes ? { notes: local.notes } : {}),
             };
             if (idx === -1) accounts.push(merged);
             else accounts[idx] = merged;

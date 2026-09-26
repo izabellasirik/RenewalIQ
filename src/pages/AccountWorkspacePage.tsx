@@ -12,6 +12,7 @@ import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
 import { ActionList } from '../components/workspace/ActionList';
 import { DoneTasks } from '../components/workspace/DoneTasks';
+import { NotesPanel } from '../components/workspace/NotesPanel';
 import { QUOTE_STATUS_TONE } from '../components/workspace/quoteStatus';
 import { ActivityTimeline } from '../components/history/ActivityTimeline';
 import { Dropzone } from '../components/upload/Dropzone';
@@ -25,7 +26,7 @@ import { QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { EMPTY_ACTIVITY_EVENTS } from '../utils/emptyArrays';
 import { AssignedAgent } from '../components/workspace/AssignedAgent';
 
-const TABS: WorkspaceTab[] = ['overview', 'checklist', 'quotes', 'activity'];
+const TABS: WorkspaceTab[] = ['overview', 'checklist', 'quotes', 'notes', 'activity'];
 
 /**
  * The Account Workspace — the broker's home for one account. Answers, at a glance: where does
@@ -121,6 +122,7 @@ export function AccountWorkspacePage() {
             { key: 'overview', label: 'Overview', count: actions.now.length || undefined },
             { key: 'checklist', label: 'Checklist & Documents', count: waiting.missing + waiting.onClient || undefined },
             { key: 'quotes', label: 'Markets & Quotes', count: quotes.length || undefined },
+            { key: 'notes', label: 'Notes', count: account.notes?.length || undefined },
             { key: 'activity', label: 'Activity' },
           ]}
           active={tab}
@@ -241,6 +243,8 @@ export function AccountWorkspacePage() {
       )}
 
       {tab === 'quotes' && <QuotesPanel accountId={accountId} focusQuoteId={focusQuoteId} />}
+
+      {tab === 'notes' && <NotesPanel accountId={accountId} notes={account.notes ?? []} />}
 
       {tab === 'activity' && (
         <Card>

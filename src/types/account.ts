@@ -26,4 +26,17 @@ export interface Account {
   assignedUserId?: string | null;
   /** Derived tasks the broker marked done: task key (see actionDoneKey) → when. */
   doneActions?: Record<string, string>;
+  /** Human-written account notes (Workspace → Notes), newest last. Not part of Activity. */
+  notes?: AccountNote[];
+}
+
+export interface AccountNote {
+  id: string;
+  text: string;
+  createdAt: string;
+  authorId?: string;
+  authorName: string;
+  /** Set when the note was edited. */
+  updatedAt?: string;
+  updatedByName?: string;
 }

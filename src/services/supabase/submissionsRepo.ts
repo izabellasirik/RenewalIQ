@@ -1,5 +1,5 @@
 import { supabase } from './client';
-import type { Account, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
+import type { Account, AccountNote, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
 import { isDuration, toMonths } from '../../utils/duration';
 import { createEmptyRiskProfile } from '../extraction/emptyRiskProfile';
@@ -157,6 +157,8 @@ export interface CloudSubmissionBundle {
   hasStageColumn: boolean;
   /** Whether 0016's done_actions column exists — when not, keep this device's own. */
   hasDoneColumn: boolean;
+  /** Whether 0020's account_notes column exists — when not, keep this device's own. */
+  hasNotesColumn: boolean;
   /** undefined when 0009 isn't applied. */
   followUps?: FollowUp[];
 }
@@ -167,7 +169,7 @@ export interface CloudSubmissionBundle {
  * and written together with the submission, the existing owner-only RLS on `submissions` covers
  * it with no new policies, and it keeps this file's full-snapshot save a single upsert.
  */
-const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions'] as const;
+const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions', 'account_notes'] as const;
 
 function isMissingWorkflowColumnError(error: { message: string; code?: string }): boolean {
   return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
@@ -241,6 +243,7 @@ export async function fetchUserSubmissions(_userId: string): Promise<RepoResult<
         ...(sub.assigned_broker && typeof sub.assigned_broker === 'object' ? { assignedBroker: sub.assigned_broker as AssignedBroker } : {}),
         ...(sub.stage ? { stage: sub.stage as AccountStage } : {}),
         ...(sub.done_actions && typeof sub.done_actions === 'object' && Object.keys(sub.done_actions).length > 0 ? { doneActions: sub.done_actions as Record<string, string> } : {}),
+        ...(Array.isArray(sub.account_notes) && sub.account_notes.length > 0 ? { notes: (sub.account_notes as AccountNote[]).filter((n) => n && typeof n.id === 'string' && typeof n.text === 'string') } : {}),
         // Set by the database (0011) — never sent back on save, so the app can't grant itself access.
         ...(sub.organization_id ? { agencyId: sub.organization_id as string } : {}),
         ...(sub.assigned_user_id !== undefined ? { assignedUserId: (sub.assigned_user_id as string | null) ?? null } : {}),
@@ -365,6 +368,7 @@ export async function fetchUserSubmissions(_userId: string): Promise<RepoResult<
         hasWorkflowColumns,
         hasStageColumn: 'stage' in sub,
         hasDoneColumn: 'done_actions' in sub,
+        hasNotesColumn: 'account_notes' in sub,
         followUps: 'follow_ups' in sub ? (Array.isArray(sub.follow_ups) ? (sub.follow_ups as FollowUp[]).filter((f) => f && typeof f.id === 'string').map((f) => ({ ...f, accountId: sub.id })) : []) : undefined,
         missingItems: hasWorkflowColumns ? (normalizeItems(sub.missing_items, sub.id) ?? []) : undefined,
         quotes: hasWorkflowColumns ? (normalizeQuotes(sub.market_quotes, sub.id) ?? []) : undefined,
@@ -419,11 +423,13 @@ export async function saveSubmissionSnapshot(
     const stageRow = { ...workflowRow, stage: account.stage ?? null };
     const submissionRow = { ...stageRow, ...(workflow?.followUps ? { follow_ups: workflow.followUps } : {}) };
     const doneRow = { ...submissionRow, done_actions: account.doneActions ?? {} };
+    const notesRow = { ...doneRow, account_notes: account.notes ?? [] };
     // A project that hasn't applied the newest migrations still saves everything it can (so the
     // Risk Profile never stops syncing), stepping down one migration at a time — 0009 (follow-ups),
     // 0008 (stage), then 0007 (workflow) — and reports the gap honestly instead of claiming "Saved".
     const attempts: { row: Record<string, unknown>; missing: string }[] = [
-      { row: doneRow, missing: '' },
+      { row: notesRow, missing: '' },
+      { row: doneRow, missing: 'Notes were not saved to your account — the database needs migration 0020_account_notes.sql.' },
       { row: submissionRow, missing: 'Tasks marked done were not saved to your account — the database needs migration 0016_account_done_actions.sql.' },
       { row: stageRow, missing: 'Follow-ups were not saved to your account — the database needs migration 0009_account_follow_ups.sql.' },
       { row: workflowRow, missing: 'Status and follow-ups were not saved to your account — the database needs migrations 0008_account_stage.sql and 0009_account_follow_ups.sql.' },

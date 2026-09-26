@@ -252,4 +252,23 @@ describe('marking a task done', () => {
     expect(deriveAccountActions(input(), '2026-09-26').now.some((a) => a.kind === 'renewal')).toBe(true);
     expect(store().activityLog[id].at(-1)).toMatchObject({ type: 'action_reopened', message: 'Reopened: Renewal effective Oct 13.' });
   });
+
+  it('account notes: added with author and time, editable, and never written to Activity', async () => {
+    const id = store().createAccount('Notes Co', 'TX');
+    const activityBefore = store().activityLog[id]?.length ?? 0;
+    store().addAccountNote(id, '  Owner prefers calls after 3pm  ');
+    const [note] = store().accounts.find((a) => a.id === id)!.notes!;
+    expect(note.text).toBe('Owner prefers calls after 3pm');
+    expect(note.authorName).toBeTruthy();
+    expect(note.createdAt).toBeTruthy();
+    store().updateAccountNote(id, note.id, 'Owner prefers calls after 4pm');
+    const edited = store().accounts.find((a) => a.id === id)!.notes![0];
+    expect(edited.text).toBe('Owner prefers calls after 4pm');
+    expect(edited.updatedAt).toBeTruthy();
+    expect(edited.createdAt).toBe(note.createdAt);
+    store().addAccountNote(id, '   ');
+    expect(store().accounts.find((a) => a.id === id)!.notes).toHaveLength(1);
+    expect(store().activityLog[id]?.length ?? 0).toBe(activityBefore);
+  });
 });
+

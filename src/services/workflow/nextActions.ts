@@ -12,7 +12,7 @@ import { carriersFor, forwardedAt } from './requirementKey';
 
 export type ActionKind = 'client_follow_up' | 'carrier_follow_up' | 'action_required' | 'ready_to_send' | 'follow_up' | 'renewal';
 
-export type WorkspaceTab = 'overview' | 'checklist' | 'quotes' | 'activity';
+export type WorkspaceTab = 'overview' | 'checklist' | 'quotes' | 'notes' | 'activity';
 
 export interface ActionItem {
   /** Stable across renders — derived from the record it came from. */
