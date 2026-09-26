@@ -132,7 +132,7 @@ export function SubmissionAssistantPage() {
             ]}
           />
           <Button icon={exportingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} onClick={() => guardExport('pdf')} disabled={exportingPdf} className="print:hidden">
-            Download PDF
+            Download Application
           </Button>
           <Button variant="secondary" icon={<Compass size={15} />} onClick={() => navigate(`/accounts/${accountId}/carrier-appetite`)} className="print:hidden">
             Carrier Appetite
