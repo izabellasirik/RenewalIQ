@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWarning, Inbox, Link2, Loader2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWarning, Inbox, Link2, Loader2, RotateCcw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, ConfirmDialog, EmptyState, Skeleton, Tabs } from '../components/ui';
 import { COVERAGE_LABELS } from '../types';
@@ -190,7 +190,20 @@ function useCollapsedSubmissions(): [Set<string>, (id: string) => void] {
   return [collapsed, toggle];
 }
 
-function SubmissionCard({ submission, onChanged, collapsed, onToggle }: { submission: IntakeSubmission; onChanged: () => void; collapsed: boolean; onToggle: () => void }) {
+function SubmissionCard({
+  submission,
+  onChanged,
+  onNotice,
+  collapsed,
+  onToggle,
+}: {
+  submission: IntakeSubmission;
+  onChanged: () => void;
+  /** A message that should outlive this card (it moves to another tab after importing). */
+  onNotice: (text: string) => void;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState<'import' | 'dismiss' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -230,8 +243,14 @@ function SubmissionCard({ submission, onChanged, collapsed, onToggle }: { submis
       setError(result.message ?? 'Could not import this submission.');
       return;
     }
-    onChanged();
-    if (result.accountId) navigate(`/accounts/${result.accountId}`);
+    // Something needs attention (a file didn't come through): stay here and say so.
+    if (result.warning) {
+      onNotice(`${submission.namedInsured || 'Submission'}: ${result.warning}`);
+      onChanged();
+    } else {
+      onChanged();
+      if (result.accountId) navigate(`/accounts/${result.accountId}`);
+    }
   }
 
   function openPreview(d: IntakeDocument) {
@@ -366,10 +385,16 @@ function SubmissionCard({ submission, onChanged, collapsed, onToggle }: { submis
         cancelLabel="Don't import"
         variant="default"
       />
-      {submission.status === 'imported' && submission.importedAccountId && (
-        <div className="mt-4 border-t border-[var(--color-ink-100)] pt-3">
-          <Button size="sm" variant="secondary" onClick={() => navigate(`/accounts/${submission.importedAccountId}/risk-profile`)}>
-            View Submission
+      {submission.status !== 'pending' && (
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-ink-100)] pt-3">
+          {submission.status === 'imported' && submission.importedAccountId && (
+            <Button size="sm" variant="secondary" onClick={() => navigate(`/accounts/${submission.importedAccountId}/risk-profile`)}>
+              View Submission
+            </Button>
+          )}
+          {/* Import again — e.g. the files didn't come through, or the account was removed. Warns first if an account for this business already exists. */}
+          <Button size="sm" variant="secondary" icon={busy === 'import' ? <Loader2 size={13} className="animate-spin" /> : <RotateCcw size={13} />} disabled={busy !== null} onClick={handleImportClick}>
+            {busy === 'import' ? 'Importing…' : 'Reimport'}
           </Button>
         </div>
       )}
@@ -386,6 +411,7 @@ function SubmissionsSection({ userId }: { userId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<IntakeSubmissionStatus>('pending');
   const [collapsed, toggleCollapsed] = useCollapsedSubmissions();
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -413,6 +439,15 @@ function SubmissionsSection({ userId }: { userId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {notice && (
+        <div className="flex items-start gap-2 rounded-lg border border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/40 px-3 py-2 text-sm text-[var(--color-ink-800)]">
+          <FileWarning size={16} className="mt-0.5 shrink-0 text-[var(--color-warning-600)]" />
+          <p className="flex-1">{notice}</p>
+          <button onClick={() => setNotice(null)} className="rounded p-0.5 text-[var(--color-ink-400)] hover:text-[var(--color-ink-700)] cursor-pointer" aria-label="Dismiss message">
+            <X size={14} />
+          </button>
+        </div>
+      )}
       <Tabs items={FILTER_ORDER.map((key) => ({ key, label: FILTER_LABELS[key], count: counts[key] }))} active={filter} onChange={(k) => setFilter(k as IntakeSubmissionStatus)} />
       {loading ? (
         <Skeleton variant="block" className="h-32 w-full" />
@@ -423,7 +458,7 @@ function SubmissionsSection({ userId }: { userId: string }) {
       ) : (
         <div className="flex flex-col gap-3">
           {filtered.map((s) => (
-            <SubmissionCard key={s.id} submission={s} onChanged={load} collapsed={collapsed.has(s.id)} onToggle={() => toggleCollapsed(s.id)} />
+            <SubmissionCard key={s.id} submission={s} onChanged={load} onNotice={setNotice} collapsed={collapsed.has(s.id)} onToggle={() => toggleCollapsed(s.id)} />
           ))}
         </div>
       )}

@@ -66,6 +66,8 @@ export function IntakeFormPage() {
   const [answers, setAnswers] = useState<IntakeAnswers>(emptyAnswers);
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Files that couldn't be uploaded with the last submission — shown so the sender can resend them.
+  const [failedFiles, setFailedFiles] = useState<string[]>([]);
 
   useEffect(() => {
     if (!token) {
@@ -123,6 +125,7 @@ export function IntakeFormPage() {
       setStatus('ready');
       return;
     }
+    setFailedFiles(result.data.failedFiles);
     setStatus('submitted');
   }
 
@@ -168,6 +171,18 @@ export function IntakeFormPage() {
           <CircleCheck size={26} className="text-[var(--color-success-600)]" />
           <p className="text-sm font-medium text-[var(--color-ink-800)]">Thank you — your submission has been received.</p>
           <p className="max-w-xs text-xs text-[var(--color-ink-500)]">Someone will review it and follow up if anything else is needed. You can close this page.</p>
+          {failedFiles.length > 0 && (
+            <div className="mt-2 max-w-sm rounded-lg border border-[var(--color-warning-100)] bg-white px-3 py-2 text-left text-xs text-[var(--color-ink-700)]">
+              <p className="font-medium text-[var(--color-warning-700)]">
+                {failedFiles.length === 1 ? 'This file' : 'These files'} couldn’t be uploaded — please email {failedFiles.length === 1 ? 'it' : 'them'} to your broker:
+              </p>
+              <ul className="mt-1 list-disc pl-4">
+                {failedFiles.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {/* A safety company or agency often has several clients to send — start a fresh, empty form on the same link. */}
           <Button
             size="sm"
@@ -177,6 +192,7 @@ export function IntakeFormPage() {
               setAnswers(emptyAnswers);
               setFiles([]);
               setError(null);
+              setFailedFiles([]);
               setStatus('ready');
               window.scrollTo({ top: 0 });
             }}

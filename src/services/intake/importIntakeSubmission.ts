@@ -62,6 +62,8 @@ export interface ImportResult {
   ok: boolean;
   accountId?: string;
   message?: string;
+  /** Imported, but something needs the broker's attention (e.g. a file that couldn't be downloaded). */
+  warning?: string;
 }
 
 /**
@@ -76,11 +78,15 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   if (!docsResult.ok) return { ok: false, message: docsResult.message };
 
   const files: File[] = [];
+  const missing: string[] = [];
   for (const doc of docsResult.data) {
-    const fileResult = await downloadIntakeDocumentFile(doc);
+    // One retry — a dropped connection shouldn't lose a document.
+    let fileResult = await downloadIntakeDocumentFile(doc);
+    if (!fileResult.ok) fileResult = await downloadIntakeDocumentFile(doc);
     if (fileResult.ok) files.push(fileResult.data);
+    else missing.push(doc.fileName);
     // A single file that fails to download doesn't block the rest — the account is still created
-    // from the applicant's typed answers and whatever documents did come through.
+    // from the applicant's typed answers and whatever documents did come through — but it's reported.
   }
 
   const profile = mergeIntoRiskProfile(createEmptyRiskProfile('pending'), buildApplicantFieldResults(submission));
@@ -116,7 +122,9 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   if (files.length > 0) addFiles(accountId, files);
 
   const markResult = await markIntakeSubmissionImported(submission.id, accountId);
-  if (!markResult.ok) return { ok: true, accountId, message: `Account created, but couldn't mark the intake submission as imported: ${markResult.message}` };
-
-  return { ok: true, accountId };
+  const warnings = [
+    missing.length > 0 ? `${missing.length} document${missing.length === 1 ? '' : 's'} couldn't be downloaded (${missing.join(', ')}) — use Reimport, or download ${missing.length === 1 ? 'it' : 'them'} here and upload to the account.` : null,
+    markResult.ok ? null : `The account was created, but the submission couldn't be marked imported: ${markResult.message}`,
+  ].filter(Boolean);
+  return { ok: true, accountId, ...(warnings.length ? { warning: warnings.join(' ') } : {}) };
 }

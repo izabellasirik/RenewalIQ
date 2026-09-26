@@ -152,6 +152,12 @@ export interface IntakeAnswers {
   additionalNotes: string;
 }
 
+/** Storage rejects some characters in object names (accents, emoji, #, ?, …) — the stored path uses a safe version; the original name is kept in file_name. */
+export function storageSafeName(name: string): string {
+  const safe = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9._ ()-]+/g, '_').replace(/\s+/g, ' ').trim();
+  return safe || 'file';
+}
+
 /**
  * Inserts one submission and uploads its files, in that order — the submission row must exist
  * first, since intake_documents' RLS insert policy requires a matching pending intake_submissions
@@ -159,7 +165,7 @@ export interface IntakeAnswers {
  * `userId` is what the anti-spoofing WITH CHECK cross-references, so it's forced onto the insert
  * here rather than left to whatever a tampered client might send.
  */
-export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, files: File[]): Promise<RepoResult<{ submissionId: string }>> {
+export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, files: File[]): Promise<RepoResult<{ submissionId: string; failedFiles: string[] }>> {
   if (!supabase) return NOT_CONFIGURED;
   const submissionId = generateId('isub');
   try {
@@ -188,22 +194,30 @@ export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, fil
     });
     if (insertErr) return fail(insertErr.message);
 
+    // Each file: upload, then record it — retried once. One bad file doesn't fail the submission the
+    // applicant already sent, but it's reported back so they know to send it another way.
+    const failedFiles: string[] = [];
     for (const file of files) {
-      const documentId = generateId('idoc');
-      const path = `${submissionId}/${documentId}/${file.name}`;
-      const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, file);
-      if (uploadErr) continue; // best-effort: one bad file shouldn't fail the whole submission the applicant already committed to
-      await supabase.from('intake_documents').insert({
-        id: documentId,
-        intake_submission_id: submissionId,
-        user_id: link.userId,
-        file_name: file.name,
-        storage_path: path,
-        size_bytes: file.size,
-      });
+      let attached = false;
+      for (let attempt = 0; attempt < 2 && !attached; attempt++) {
+        const documentId = generateId('idoc');
+        const path = `${submissionId}/${documentId}/${storageSafeName(file.name)}`;
+        const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, file);
+        if (uploadErr) continue;
+        const { error: rowErr } = await supabase.from('intake_documents').insert({
+          id: documentId,
+          intake_submission_id: submissionId,
+          user_id: link.userId,
+          file_name: file.name,
+          storage_path: path,
+          size_bytes: file.size,
+        });
+        attached = !rowErr;
+      }
+      if (!attached) failedFiles.push(file.name);
     }
 
-    return { ok: true, data: { submissionId } };
+    return { ok: true, data: { submissionId, failedFiles } };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not submit this form.');
   }

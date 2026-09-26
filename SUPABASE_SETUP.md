@@ -129,6 +129,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   the invitation; someone already in another agency is refused. Existing tables, policies and
   account permissions are unchanged. Additive, safe to re-run; run after 0017. Invitation sign-up
   emails need the Redirect URLs from §6.
+- **`supabase/migrations/0019_intake_documents_insert_fix.sql`** — fixes files sent through a
+  submission link not showing up: 0004's rule for attaching a file checked the submission with the
+  client's own (anonymous) permissions, which can't see submissions, so every file record was
+  rejected. Replaces that one rule with the same check done safely on the server (plus a 24-hour
+  window) and recovers files already uploaded without a record. Safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -191,6 +196,7 @@ from (values
   ('0016_account_done_actions',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'done_actions')),
   ('0017_profile_contact_fields',     to_regprocedure('public.save_my_profile(text,text,text)') is not null),
   ('0018_agency_invitations',         to_regclass('public.agency_invitations') is not null),
+  ('0019_intake_documents_fix',       to_regprocedure('public.intake_submission_accepts_documents(text,uuid)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);
