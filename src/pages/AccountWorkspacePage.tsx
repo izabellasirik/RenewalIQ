@@ -93,14 +93,24 @@ export function AccountWorkspacePage() {
         </div>
 
         <div className="flex flex-wrap gap-2 text-xs">
-          <StatusPill tone={waiting.onClient > 0 ? 'warning' : 'neutral'} label={waiting.onClient > 0 ? `Waiting on client · ${waiting.onClient} item${waiting.onClient === 1 ? '' : 's'}` : 'Nothing requested from client'} />
+          <StatusPill onClick={() => setTab('checklist')} tone={waiting.onClient > 0 ? 'warning' : 'neutral'} label={waiting.onClient > 0 ? `Waiting on client · ${waiting.onClient} item${waiting.onClient === 1 ? '' : 's'}` : 'Nothing requested from client'} />
           <StatusPill
+            onClick={() => setTab('quotes')}
             tone={waiting.onCarriers.length > 0 ? 'info' : 'neutral'}
             label={waiting.onCarriers.length > 0 ? `Waiting on ${waiting.onCarriers.join(', ')}` : 'No carriers pending'}
           />
-          {waiting.missing > 0 && <StatusPill tone="danger" label={`${waiting.missing} not yet requested`} />}
-          {openCarrierRequests > 0 && <StatusPill tone="brand" label={`${openCarrierRequests} carrier request${openCarrierRequests === 1 ? '' : 's'} open`} />}
-          {actions.now.length > 0 && <StatusPill tone="danger" label={`${actions.now.length} need${actions.now.length === 1 ? 's' : ''} attention`} />}
+          {waiting.missing > 0 && <StatusPill onClick={() => setTab('checklist')} tone="danger" label={`${waiting.missing} not yet requested`} />}
+          {openCarrierRequests > 0 && <StatusPill onClick={() => setTab('quotes')} tone="brand" label={`${openCarrierRequests} carrier request${openCarrierRequests === 1 ? '' : 's'} open`} />}
+          {actions.now.length > 0 && (
+            <StatusPill
+              onClick={() => {
+                setTab('overview');
+                requestAnimationFrame(() => document.getElementById('needs-attention')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+              }}
+              tone="danger"
+              label={`${actions.now.length} need${actions.now.length === 1 ? 's' : ''} attention`}
+            />
+          )}
         </div>
       </div>
 
@@ -120,7 +130,7 @@ export function AccountWorkspacePage() {
       {tab === 'overview' && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
           <div className="flex min-w-0 flex-col gap-5 lg:col-span-2">
-            <Card>
+            <Card id="needs-attention" className="scroll-mt-24">
               <CardBody className="pt-5">
                 <h3 className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">Needs your attention</h3>
                 <ActionList actions={actions.now} emptyText="Nothing needs you right now — every follow-up is scheduled and nothing is waiting to be sent." />
@@ -254,10 +264,13 @@ export function AccountWorkspacePage() {
   );
 }
 
-function StatusPill({ tone, label }: { tone: 'neutral' | 'warning' | 'info' | 'danger' | 'brand'; label: string }) {
+/** A status chip that opens the part of the workspace it's about. */
+function StatusPill({ tone, label, onClick }: { tone: 'neutral' | 'warning' | 'info' | 'danger' | 'brand'; label: string; onClick: () => void }) {
   return (
-    <Badge tone={tone} dot>
-      {label}
-    </Badge>
+    <button type="button" onClick={onClick} className="rounded-full transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-500)]/40">
+      <Badge tone={tone} dot className="cursor-pointer">
+        {label}
+      </Badge>
+    </button>
   );
 }
