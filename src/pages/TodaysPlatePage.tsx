@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, Hourglass, LayoutGrid, Plus, Sparkles, Building2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Hourglass, LayoutGrid, Plus, RotateCcw, Sparkles, Building2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Button, Card, CardBody, EmptyState } from '../components/ui';
+import { Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { ActionList } from '../components/workspace/ActionList';
 import { ACTION_KIND_META } from '../components/workspace/actionMeta';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useBrokerSession } from '../hooks/useBrokerSession';
 import { getAccountContacts } from '../services/workflow/contacts';
-import { normalizeDateKey, todayKey } from '../services/workflow/dates';
-import { deriveAccountActions, sortActions, summarizeWaiting, type ActionItem, type ActionKind } from '../services/workflow/nextActions';
+import { normalizeDateKey, toLocalDateKey, todayKey } from '../services/workflow/dates';
+import { deriveAccountActions, deriveDoneActions, sortActions, summarizeWaiting, type ActionItem, type ActionKind } from '../services/workflow/nextActions';
 
 const SECTION_ORDER: { kind: ActionKind; title: string; hint: string }[] = [
   { kind: 'ready_to_send', title: 'Ready to send', hint: 'Received from the client — a carrier is waiting for it.' },
@@ -35,13 +35,20 @@ export function TodaysPlatePage() {
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
   const session = useBrokerSession();
   const [mineOnly, setMineOnly] = useState(false);
+  const [view, setView] = useState<'active' | 'done'>('active');
+  const undoActionDone = useAccountsStore((s) => s.undoActionDone);
+  const reopenFollowUp = useAccountsStore((s) => s.reopenFollowUp);
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   // An agent only ever has their own accounts (RLS), so the toggle only means something outside an agency or for an admin.
 
   const today = todayKey();
 
-  const { now, upcoming, waiting } = useMemo(() => {
+  const { now, upcoming, waiting, doneToday } = useMemo(() => {
     const allNow: ActionItem[] = [];
+    // Marked Done today — the same records as the account's "Done" list (done actions and completed
+    // follow-ups); Undo puts each back on the plate. Earlier days stay in the account's Activity.
+    const doneRows: { id: string; accountId: string; accountName: string; title: string; doneAt: string; undo: () => void }[] = [];
+    const isToday = (iso: string) => toLocalDateKey(new Date(iso)) === today;
     const allUpcoming: ActionItem[] = [];
     // Blocked on someone else, nothing to do right now — shown apart, just so it isn't forgotten.
     const waitingRows: { accountId: string; accountName: string; onClient: number; onCarriers: string[] }[] = [];
@@ -56,25 +63,31 @@ export function TodaysPlatePage() {
         }
       }
       const profile = riskProfiles[account.id];
-      const derived = deriveAccountActions(
-        {
-          account,
-          items: missingItems[account.id] ?? [],
-          quotes: quotes[account.id] ?? [],
-          contacts: getAccountContacts(account),
-          effectiveDate: normalizeDateKey((profile?.business?.effectiveDate?.value as string | null | undefined) ?? null),
-          followUps: followUps[account.id] ?? [],
-        },
-        today
-      );
+      const input = {
+        account,
+        items: missingItems[account.id] ?? [],
+        quotes: quotes[account.id] ?? [],
+        contacts: getAccountContacts(account),
+        effectiveDate: normalizeDateKey((profile?.business?.effectiveDate?.value as string | null | undefined) ?? null),
+        followUps: followUps[account.id] ?? [],
+      };
+      const derived = deriveAccountActions(input, today);
+      const base = { accountId: account.id, accountName: account.namedInsured };
+      for (const d of deriveDoneActions(input, today)) {
+        if (isToday(d.doneAt)) doneRows.push({ ...base, id: `${account.id}:${d.key}`, title: d.action.title, doneAt: d.doneAt, undo: () => undoActionDone(account.id, d.key, d.action.title) });
+      }
+      for (const f of input.followUps) {
+        if (f.doneAt && isToday(f.doneAt)) doneRows.push({ ...base, id: f.id, title: `Follow up: ${f.subject}`, doneAt: f.doneAt, undo: () => reopenFollowUp(account.id, f.id) });
+      }
       allNow.push(...derived.now);
       allUpcoming.push(...derived.upcoming);
       const w = summarizeWaiting(missingItems[account.id] ?? [], quotes[account.id] ?? []);
       if (w.onClient > 0 || w.onCarriers.length > 0) waitingRows.push({ accountId: account.id, accountName: account.namedInsured, onClient: w.onClient, onCarriers: w.onCarriers });
     }
     waitingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
-    return { now: sortActions(allNow), upcoming: sortActions(allUpcoming), waiting: waitingRows };
-  }, [accounts, riskProfiles, missingItems, quotes, followUps, mineOnly, session.status, session.userId, session.email, today, agencyAccess]);
+    doneRows.sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
+    return { now: sortActions(allNow), upcoming: sortActions(allUpcoming), waiting: waitingRows, doneToday: doneRows };
+  }, [accounts, riskProfiles, missingItems, quotes, followUps, mineOnly, session.status, session.userId, session.email, today, agencyAccess, undoActionDone, reopenFollowUp]);
 
   const overdue = now.filter((a) => a.overdue).length;
   const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -125,7 +138,47 @@ export function TodaysPlatePage() {
         </label>
       )}
 
-      {now.length === 0 ? (
+      <Tabs
+        items={[
+          { key: 'active', label: 'Active', count: now.length || undefined },
+          { key: 'done', label: 'Done today', count: doneToday.length || undefined },
+        ]}
+        active={view}
+        onChange={(k) => setView(k as 'active' | 'done')}
+      />
+
+      {view === 'done' ? (
+        doneToday.length === 0 ? (
+          <Card>
+            <CardBody className="py-10 text-center text-sm text-[var(--color-ink-500)]">Nothing marked done today yet. Earlier completed tasks are in each account's Activity.</CardBody>
+          </Card>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {doneToday.map((r) => (
+              <li key={r.id} className="flex items-center gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2.5">
+                <CheckCircle2 size={16} className="shrink-0 text-[var(--color-success-600)]" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{r.title}</p>
+                  <p className="truncate text-xs text-[var(--color-ink-500)]">
+                    <button onClick={() => navigate(`/accounts/${r.accountId}`)} className="font-medium text-[var(--color-ink-700)] hover:underline cursor-pointer">
+                      {r.accountName}
+                    </button>
+                    {' · Done at '}
+                    {new Date(r.doneAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                  </p>
+                </div>
+                <button
+                  onClick={r.undo}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer"
+                  aria-label={`Undo: ${r.title}`}
+                >
+                  <RotateCcw size={12} /> Undo
+                </button>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : now.length === 0 ? (
         <Card>
           <CardBody className="flex flex-col items-center gap-2 py-10 text-center">
             <CheckCircle2 size={26} className="text-[var(--color-success-500)]" />
@@ -154,14 +207,14 @@ export function TodaysPlatePage() {
         })
       )}
 
-      {upcoming.length > 0 && (
+      {view === 'active' && upcoming.length > 0 && (
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Coming up · next 7 days</h2>
           <ActionList actions={upcoming} showAccount />
         </section>
       )}
 
-      {waiting.length > 0 && (
+      {view === 'active' && waiting.length > 0 && (
         <section className="flex flex-col gap-2">
           <div className="flex flex-wrap items-baseline gap-x-2">
             <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">
