@@ -97,6 +97,9 @@ interface AccountsState {
   /** The signed-in user's professional profile (full name, work phone, job title) — the name shown for them in Activity and as assigned broker. Ephemeral; loaded after sign-in (see ProfileGate). */
   myProfile: MyProfile | null;
   setMyProfile: (profile: MyProfile | null) => void;
+  /** Intake submissions waiting in Pending (kept current by the notification bell). Ephemeral. */
+  pendingIntakeCount: number;
+  setPendingIntakeCount: (n: number) => void;
   /** Which broker's cloud account each cloud-backed account belongs to — so signing out (or in as someone else) hides it. Persisted. */
   accountOwners: Record<string, string>;
   /** Cloud-backed accounts hidden because their owner isn't the one signed in. Kept (not deleted) so nothing unsynced is lost; restored when the owner signs back in. Persisted. */
@@ -504,6 +507,8 @@ export const useAccountsStore = create<AccountsState>()(
       syncError: {},
       currentUserEmail: null,
       myProfile: null,
+      pendingIntakeCount: 0,
+      setPendingIntakeCount: (n) => set({ pendingIntakeCount: n }),
       accountOwners: {},
       hiddenAccounts: [],
       agencyAccess: null,
@@ -2072,6 +2077,7 @@ export const useAccountsStore = create<AccountsState>()(
           currentUserId: _currentUserId,
           currentUserEmail: _currentUserEmail,
           myProfile: _myProfile,
+          pendingIntakeCount: _pendingIntakeCount,
           syncStatus: _syncStatus,
           syncError: _syncError,
           agencyAccess: _agencyAccess,

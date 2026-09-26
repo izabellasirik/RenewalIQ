@@ -146,11 +146,7 @@ export function AccountWorkspacePage() {
             </Card>
             {/* Follow-ups right under "Needs your attention"; the checklist itself lives on its own tab. */}
             <FollowUpsCard accountId={accountId} />
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-5">
-            <AccountInfoCard accountId={accountId} />
-            <ContactsCard accountId={accountId} />
+            {/* Markets right under Follow-ups. */}
             <Card>
               <CardBody className="pt-5">
                 <div className="flex items-center justify-between">
@@ -179,6 +175,11 @@ export function AccountWorkspacePage() {
                 )}
               </CardBody>
             </Card>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-5">
+            <AccountInfoCard accountId={accountId} />
+            <ContactsCard accountId={accountId} />
             <Card>
               <CardBody className="pt-5">
                 <div className="mb-3 flex items-center justify-between">

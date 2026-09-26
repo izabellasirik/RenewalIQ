@@ -113,7 +113,7 @@ export function IntakeFormPage() {
     setFiles((f) => f.filter((_, i) => i !== index));
   }
 
-  const canSubmit = !!link && answers.namedInsured.trim() && answers.contactName.trim() && answers.contactEmail.trim();
+  const canSubmit = !!link && answers.namedInsured.trim() && answers.dotNumber.trim() && answers.contactName.trim() && answers.contactEmail.trim();
 
   async function handleSubmit() {
     if (!link || !canSubmit) return;
@@ -219,12 +219,29 @@ export function IntakeFormPage() {
       </div>
 
       <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-5">
-        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Company</p>
+        {/* Documents first — most senders start from what they already have. */}
+        <p className="text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Documents &amp; Photos</p>
+        <Dropzone onFiles={addFiles} allowLinkPaste={false} />
+        {files.length > 0 && (
+          <ul className="flex flex-col gap-1.5">
+            {files.map((f, i) => (
+              <li key={i} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-ink-100)] px-3 py-2 text-sm text-[var(--color-ink-700)]">
+                <span className="truncate">{f.name}</span>
+                <button type="button" onClick={() => removeFile(i)} className="shrink-0 rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer" aria-label="Remove file">
+                  <X size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+
+        <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Company</p>
         <Field label="Named insured / company name" required>
           <input className={inputClass} value={answers.namedInsured} onChange={(e) => set('namedInsured', e.target.value)} placeholder="e.g. Blue Ridge Logistics LLC" />
         </Field>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="DOT number">
+          <Field label="DOT number" required>
             <input className={inputClass} value={answers.dotNumber} onChange={(e) => set('dotNumber', e.target.value)} />
           </Field>
           <Field label="MC number (if applicable)">
@@ -292,21 +309,6 @@ export function IntakeFormPage() {
         <Field label="Additional notes">
           <textarea rows={3} className={inputClass} value={answers.additionalNotes} onChange={(e) => set('additionalNotes', e.target.value)} />
         </Field>
-
-        <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Documents &amp; Photos</p>
-        <Dropzone onFiles={addFiles} allowLinkPaste={false} />
-        {files.length > 0 && (
-          <ul className="flex flex-col gap-1.5">
-            {files.map((f, i) => (
-              <li key={i} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-ink-100)] px-3 py-2 text-sm text-[var(--color-ink-700)]">
-                <span className="truncate">{f.name}</span>
-                <button type="button" onClick={() => removeFile(i)} className="shrink-0 rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer" aria-label="Remove file">
-                  <X size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
 
         {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
 

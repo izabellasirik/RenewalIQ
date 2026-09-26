@@ -423,6 +423,8 @@ function SubmissionsSection({ userId }: { userId: string }) {
     }
     setLoadError(null);
     setSubmissions(result.data);
+    // Keeps the sidebar's pending dot in step right after an import / dismiss.
+    useAccountsStore.getState().setPendingIntakeCount(result.data.filter((x) => x.status === 'pending').length);
   }, [userId]);
 
   useEffect(() => {

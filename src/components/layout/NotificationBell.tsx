@@ -6,6 +6,7 @@ import { fetchIntakeLinks, fetchIntakeSubmissions } from '../../services/supabas
 import type { IntakeSubmission } from '../../types';
 import { relativeTime } from '../../utils/dates';
 import { cn } from '../../utils/cn';
+import { useAccountsStore } from '../../state/useAccountsStore';
 
 const POLL_MS = 60_000;
 const seenKey = (userId: string) => `renewaliq.notifications.seen.${userId}`;
@@ -29,6 +30,7 @@ export function NotificationBell() {
   const { pathname } = useLocation();
   const userId = session.status === 'signed_in' ? session.userId : null;
   const [pending, setPending] = useState<IntakeSubmission[]>([]);
+  const setPendingIntakeCount = useAccountsStore((s) => s.setPendingIntakeCount);
   const [linkNames, setLinkNames] = useState<Record<string, string>>({});
   const [seen, setSeen] = useState('');
   const [open, setOpen] = useState(false);
@@ -39,9 +41,13 @@ export function NotificationBell() {
   const load = useCallback(async () => {
     if (!userId) return;
     const [subs, links] = await Promise.all([fetchIntakeSubmissions(userId), fetchIntakeLinks(userId)]);
-    if (subs.ok) setPending(subs.data.filter((s) => s.status === 'pending'));
+    if (subs.ok) {
+      const open = subs.data.filter((s) => s.status === 'pending');
+      setPending(open);
+      setPendingIntakeCount(open.length);
+    }
     if (links.ok) setLinkNames(Object.fromEntries(links.data.map((l) => [l.id, l.organizationName || l.label])));
-  }, [userId]);
+  }, [userId, setPendingIntakeCount]);
 
   useEffect(() => {
     if (!userId) return;

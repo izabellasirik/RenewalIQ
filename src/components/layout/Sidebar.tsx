@@ -46,6 +46,7 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
   const steps = useWorkflowStatus(account?.id);
   const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   const isReviewer = useIsReviewer();
+  const pendingIntake = useAccountsStore((s) => s.pendingIntakeCount);
 
   return (
     <aside
@@ -127,6 +128,8 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
         >
           <Link2 size={17} />
           Submission Intake
+          {/* Something is waiting in Pending. */}
+          {pendingIntake > 0 && <span className="ml-auto h-2 w-2 rounded-full bg-[var(--color-warning-500)]" title={`${pendingIntake} pending submission${pendingIntake === 1 ? '' : 's'}`} aria-label={`${pendingIntake} pending`} />}
         </NavLink>
 
         <NavLink
