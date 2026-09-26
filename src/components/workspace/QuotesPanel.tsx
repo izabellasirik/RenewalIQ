@@ -1,5 +1,5 @@
-import { useMemo, useState, type FormEvent } from 'react';
-import { BadgeDollarSign, Building2, FileQuestion, Plus, Send, ShieldCheck, StickyNote, Trash2, XCircle } from 'lucide-react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { BadgeDollarSign, Building2, ChevronDown, ChevronRight, FileQuestion, Plus, Send, ShieldCheck, StickyNote, Trash2, XCircle } from 'lucide-react';
 import type { MarketQuote, MissingItem, MissingItemType, QuoteStatus } from '../../types';
 import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, QUOTE_STATUS_ORDER } from '../../types';
 import { Badge, Button, Card, CardBody, EmptyState, OverflowMenu } from '../ui';
@@ -22,6 +22,7 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
   const appetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const [adding, setAdding] = useState(false);
   const [requestIds, setRequestIds] = useState<string[] | null>(null);
+  const [collapsed, setCollapsed] = useCollapsedMarkets(accountId);
 
   // Newest market first, so one just added is right at the top.
   const sorted = useMemo(() => [...quotes].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)), [quotes]);
@@ -31,9 +32,16 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[var(--color-ink-500)]">Every market this account is out to, where it stands, and what each carrier is waiting on.</p>
-        <Button size="sm" icon={<Plus size={14} />} onClick={() => setAdding((v) => !v)}>
-          Add market
-        </Button>
+        <div className="flex items-center gap-2">
+          {quotes.length > 1 && (
+            <Button size="sm" variant="ghost" onClick={() => setCollapsed(collapsed.size >= quotes.length ? new Set() : new Set(quotes.map((q) => q.id)))}>
+              {collapsed.size >= quotes.length ? 'Expand all' : 'Collapse all'}
+            </Button>
+          )}
+          <Button size="sm" icon={<Plus size={14} />} onClick={() => setAdding((v) => !v)}>
+            Add market
+          </Button>
+        </div>
       </div>
 
       {adding && <AddMarketForm accountId={accountId} marketNames={marketNames} onDone={() => setAdding(false)} />}
@@ -56,6 +64,14 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
             accountId={accountId}
             quote={quote}
             highlighted={quote.id === focusQuoteId}
+            // A market someone was sent to (e.g. from Today's Plate) always opens expanded.
+            collapsed={collapsed.has(quote.id) && quote.id !== focusQuoteId}
+            onToggleCollapsed={() => {
+              const next = new Set(collapsed);
+              if (next.has(quote.id)) next.delete(quote.id);
+              else next.add(quote.id);
+              setCollapsed(next);
+            }}
             requestedItems={items.filter((i) => carriersFor(i).includes(quote.id))}
             contactName={(id) => contacts.find((c) => c.id === id)?.name}
             onRequestFromClient={(ids) => setRequestIds(ids)}
@@ -155,6 +171,8 @@ function QuoteCard({
   accountId,
   quote,
   highlighted,
+  collapsed,
+  onToggleCollapsed,
   requestedItems,
   contactName,
   onRequestFromClient,
@@ -162,6 +180,9 @@ function QuoteCard({
   accountId: string;
   quote: MarketQuote;
   highlighted: boolean;
+  /** Collapsed: only the header and a one-line summary. */
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   requestedItems: MissingItem[];
   contactName: (id?: string) => string | undefined;
   onRequestFromClient: (itemIds: string[]) => void;
@@ -220,6 +241,8 @@ function QuoteCard({
   }
 
   const notes = [...quote.notes].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  // Requested items this carrier is still waiting on (not yet received and passed on).
+  const waitingOn = requestedItems.filter((i) => i.status !== 'waived' && !forwardedAt(i, quote.id)).length;
 
   return (
     <Card className={cn(highlighted && 'ring-2 ring-[var(--color-brand-500)]')}>
@@ -228,6 +251,15 @@ function QuoteCard({
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={onToggleCollapsed}
+                className="-ml-1 rounded-md p-0.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer"
+                aria-expanded={!collapsed}
+                aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${quote.marketName}`}
+                title={collapsed ? 'Show details' : 'Show only the main info'}
+              >
+                {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+              </button>
               <h3 className="text-base font-semibold text-[var(--color-ink-900)]">
                 <button onClick={() => setDetailsOpen(true)} className="text-left hover:text-[var(--color-brand-700)] hover:underline cursor-pointer" title="Show everything about this market">
                   {quote.marketName}
@@ -241,6 +273,16 @@ function QuoteCard({
             <p className="mt-1 text-xs text-[var(--color-ink-500)]">
               {quote.submittedAt ? `Submitted ${formatShortDate(quote.submittedAt)}` : 'Not submitted yet'}
               {quote.status === 'declined' && quote.declineReason ? ` · Declined: ${quote.declineReason}` : ''}
+              {collapsed && (
+                <>
+                  {!closed && quote.followUpDate && (
+                    <span className={cn(followUpDue && 'font-medium text-[var(--color-danger-600)]')}> · Follow up {formatShortDate(quote.followUpDate)}{followUpDue ? ' (due)' : ''}</span>
+                  )}
+                  {(quote.options?.length ?? 0) > 0 && ` · ${quote.options!.length} quote${quote.options!.length === 1 ? '' : 's'}`}
+                  {waitingOn > 0 && ` · ${waitingOn} requested item${waitingOn === 1 ? '' : 's'} outstanding`}
+                  {quote.notes.length > 0 && ` · ${quote.notes.length} note${quote.notes.length === 1 ? '' : 's'}`}
+                </>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-1">
@@ -260,6 +302,8 @@ function QuoteCard({
           </div>
         </div>
 
+        {!collapsed && (
+          <>
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[var(--color-ink-600)]">
           <label className="inline-flex items-center gap-1.5">
             Sent
@@ -447,7 +491,33 @@ function QuoteCard({
             </ul>
           )}
         </div>
+          </>
+        )}
       </CardBody>
     </Card>
   );
+}
+
+/** Which market cards are collapsed on this account — remembered in this browser only (a view preference, not account data). */
+function useCollapsedMarkets(accountId: string): [Set<string>, (next: Set<string>) => void] {
+  const key = `renewaliq.collapsedMarkets.${accountId}`;
+  const read = () => {
+    try {
+      return new Set<string>(JSON.parse(localStorage.getItem(key) ?? '[]'));
+    } catch {
+      return new Set<string>();
+    }
+  };
+  const [collapsed, setState] = useState<Set<string>>(read);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setState(read()), [key]);
+  function set(next: Set<string>) {
+    setState(next);
+    try {
+      localStorage.setItem(key, JSON.stringify([...next]));
+    } catch {
+      // storage unavailable (private window) — still works for this visit
+    }
+  }
+  return [collapsed, set];
 }
