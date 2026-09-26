@@ -196,14 +196,14 @@ describe('activity records who did it', () => {
 describe('a document that arrives as a link', () => {
   it("that can't be opened shows the clear status, keeps the URL, and extracts nothing", async () => {
     const { vi } = await import('vitest');
-    const { linkAsFile, LINK_UNREADABLE_MESSAGE } = await import('../../ingestion/documentLinks');
+    const { linkAsFile, GOOGLE_LINK_UNREADABLE_MESSAGE } = await import('../../ingestion/documentLinks');
     vi.stubGlobal('fetch', vi.fn(async () => new Response('<html>Sign in</html>', { status: 200, headers: { 'content-type': 'text/html' } })));
     const id = store().createAccount('Link Co', 'TX');
     const before = JSON.stringify(store().riskProfiles[id]);
     const [docId] = store().addFiles(id, [linkAsFile('https://drive.google.com/file/d/xyz/view')]);
     await vi.waitFor(() => expect(store().documents[id].find((d) => d.id === docId)?.status).toBe('error'), { timeout: 10000 });
     const doc = store().documents[id].find((d) => d.id === docId)!;
-    expect(doc.warnings).toEqual([LINK_UNREADABLE_MESSAGE]);
+    expect(doc.warnings).toEqual([GOOGLE_LINK_UNREADABLE_MESSAGE]);
     expect(doc.sourceUrl).toBe('https://drive.google.com/file/d/xyz/view');
     expect(doc.fieldsExtracted).toBeUndefined();
     expect(JSON.stringify(store().riskProfiles[id])).toBe(before);

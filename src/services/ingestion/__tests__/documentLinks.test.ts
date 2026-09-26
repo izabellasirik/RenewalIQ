@@ -1,11 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DocumentLinkError, LINK_UNREADABLE_MESSAGE, detectDocumentLink, directDownloadUrl, fetchLinkedDocument, isFetchableUrl, linkAsFile } from '../documentLinks';
+import { DocumentLinkError, GOOGLE_LINK_UNREADABLE_MESSAGE, LINK_UNREADABLE_MESSAGE, downloadCandidates, detectDocumentLink, directDownloadUrl, fetchLinkedDocument, isFetchableUrl, linkAsFile } from '../documentLinks';
 import { parseFile } from '../parseFile';
+
+// Signed out by default; one test signs in to exercise the server fallback.
+const session = vi.hoisted(() => ({ token: null as string | null }));
+vi.mock('../../supabase/client', () => ({ supabase: { auth: { getSession: async () => ({ data: { session: session.token ? { access_token: session.token } : null } }) } } }));
 
 const file = (content: string, name: string) => new File([content], name, { type: 'text/plain' });
 const respond = (body: BodyInit, headers: Record<string, string>, status = 200) => vi.fn(async () => new Response(body, { status, headers }));
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  session.token = null;
+});
 
 describe('spotting a document that is really a link', () => {
   it('reads .url and .webloc shortcuts, and text files that are only a URL', async () => {
@@ -35,6 +42,15 @@ describe('only safe links are opened', () => {
     expect(directDownloadUrl('https://drive.google.com/file/d/ABC123/view?usp=sharing')).toBe('https://drive.google.com/uc?export=download&id=ABC123');
     expect(directDownloadUrl('https://www.dropbox.com/s/xyz/loss.pdf?dl=0')).toBe('https://www.dropbox.com/s/xyz/loss.pdf?dl=1');
   });
+
+  it('rewrites Google Sheets / Docs / Slides editor links to their export form', () => {
+    expect(downloadCandidates('https://docs.google.com/spreadsheets/d/1WLy3JliZ/edit?gid=42#gid=42')).toEqual([
+      'https://docs.google.com/spreadsheets/d/1WLy3JliZ/export?format=xlsx',
+      'https://docs.google.com/spreadsheets/d/1WLy3JliZ/gviz/tq?tqx=out:csv&gid=42',
+    ]);
+    expect(downloadCandidates('https://docs.google.com/document/d/DOC1/edit?usp=sharing')).toEqual(['https://docs.google.com/document/d/DOC1/export?format=pdf']);
+    expect(downloadCandidates('https://docs.google.com/presentation/d/P1/view')).toEqual(['https://docs.google.com/presentation/d/P1/export?format=pdf']);
+  });
 });
 
 describe('downloading the linked document', () => {
@@ -62,6 +78,45 @@ describe('downloading the linked document', () => {
     expect(err.sourceUrl).toBe('https://example.com/doc');
   });
 
+  it('a Google Sheet: falls back to CSV when the workbook download is blocked', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('format=xlsx')) throw new TypeError('Failed to fetch');
+      return new Response('Unit,VIN\n1,ABC', { status: 200, headers: { 'content-type': 'text/csv' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const f = await fetchLinkedDocument('https://docs.google.com/spreadsheets/d/S1/edit#gid=0', 'docs.google.com.url');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(f.name).toBe('docs.google.com.csv');
+  });
+
+  it('signed in: when the site blocks a direct download, it comes through the RenewalIQ server', async () => {
+    session.token = 'tok';
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (!url.startsWith('/api/fetch-document')) throw new TypeError('Failed to fetch'); // CORS
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer tok');
+      return new Response('%PDF-1.7 ...', { status: 200, headers: { 'content-type': 'application/pdf', 'x-final-url': 'https://files.example.com/Loss%20Runs.pdf' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const f = await fetchLinkedDocument('https://files.example.com/share/abc', 'link.url');
+    expect(f.name).toBe('Loss Runs.pdf');
+    expect(fetchMock.mock.calls[1][0]).toBe(`/api/fetch-document?url=${encodeURIComponent('https://files.example.com/share/abc')}`);
+  });
+
+  it('signed out: nothing is sent to the server', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchLinkedDocument('https://files.example.com/a.pdf', 'x.url')).rejects.toBeInstanceOf(DocumentLinkError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a Google file that is not shared publicly says so', async () => {
+    vi.stubGlobal('fetch', respond('<html>Sign in</html>', { 'content-type': 'text/html' }));
+    const err = await fetchLinkedDocument('https://docs.google.com/spreadsheets/d/S1/edit', 'x.url').catch((e) => e);
+    expect(err.message).toBe(GOOGLE_LINK_UNREADABLE_MESSAGE);
+  });
+
   it('never fetches an unsafe link at all', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -81,6 +136,6 @@ describe('through the normal pipeline (parseFile)', () => {
 
   it('a link that cannot be opened fails clearly — never read as text', async () => {
     vi.stubGlobal('fetch', respond('<html>Sign in to Google</html>', { 'content-type': 'text/html' }));
-    await expect(parseFile(file('https://drive.google.com/file/d/abc/view', 'loss runs.txt'))).rejects.toMatchObject({ message: LINK_UNREADABLE_MESSAGE, sourceUrl: 'https://drive.google.com/file/d/abc/view' });
+    await expect(parseFile(file('https://drive.google.com/file/d/abc/view', 'loss runs.txt'))).rejects.toMatchObject({ message: GOOGLE_LINK_UNREADABLE_MESSAGE, sourceUrl: 'https://drive.google.com/file/d/abc/view' });
   });
 });
