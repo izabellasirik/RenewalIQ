@@ -15,8 +15,8 @@ type Content =
 
 const MAX_TABLE_ROWS = 500;
 
-/** What the viewer needs — an uploaded document, or a quote attachment shaped like one. */
-export type PreviewableFile = Pick<UploadedDocument, 'id' | 'name' | 'fileType' | 'storagePath' | 'previewDataUrl'>;
+/** What the viewer needs — an uploaded document, or a quote attachment shaped like one. `loadBlob` fetches files that live elsewhere (e.g. a client's intake upload). */
+export type PreviewableFile = Pick<UploadedDocument, 'id' | 'name' | 'fileType' | 'storagePath' | 'previewDataUrl'> & { loadBlob?: () => Promise<Blob | null> };
 
 async function render(doc: PreviewableFile, blob: Blob): Promise<Content> {
   const file = new File([blob], doc.name, { type: blob.type });
@@ -57,6 +57,10 @@ function PdfPages({ blob }: { blob: Blob }) {
 
   useEffect(() => {
     let cancelled = false;
+    let task: { destroy: () => Promise<void> } | null = null;
+    // Each render draws into its own holder and only a live one is shown — a stale run (React
+    // re-running this effect, or a new file) can never clear or mix into the pages on screen.
+    const holder = document.createElement('div');
     (async () => {
       try {
         // The legacy build bundles polyfills (e.g. Map.prototype.getOrInsertComputed) that page
@@ -64,10 +68,12 @@ function PdfPages({ blob }: { blob: Blob }) {
         const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
         const worker = (await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')).default;
         pdfjs.GlobalWorkerOptions.workerSrc = worker;
-        const pdf = await pdfjs.getDocument({ data: await blob.arrayBuffer() }).promise;
+        const loading = pdfjs.getDocument({ data: await blob.arrayBuffer() });
+        task = loading;
+        const pdf = await loading.promise;
         const container = ref.current;
-        if (!container) return;
-        container.innerHTML = '';
+        if (!container || cancelled) return;
+        container.replaceChildren(holder);
         const width = Math.min(container.clientWidth || 800, 1000);
         for (let i = 1; i <= pdf.numPages && !cancelled; i++) {
           const page = await pdf.getPage(i);
@@ -79,7 +85,7 @@ function PdfPages({ blob }: { blob: Blob }) {
           canvas.height = viewport.height;
           canvas.style.width = `${width}px`;
           canvas.className = 'mx-auto mb-3 block rounded bg-white shadow';
-          container.appendChild(canvas);
+          holder.appendChild(canvas);
           await page.render({ canvas, viewport }).promise;
         }
       } catch (err) {
@@ -88,6 +94,7 @@ function PdfPages({ blob }: { blob: Blob }) {
     })();
     return () => {
       cancelled = true;
+      void task?.destroy();
     };
   }, [blob]);
 
@@ -108,7 +115,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
     setBlob(null);
     setSheet(0);
     (async () => {
-      const b = await loadStoredFile(doc);
+      const b = doc.loadBlob ? await doc.loadBlob() : await loadStoredFile(doc);
       if (cancelled) return;
       if (!b) {
         // Photos always have a small preview copy even when the original isn't available.
