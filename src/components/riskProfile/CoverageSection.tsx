@@ -32,7 +32,7 @@ export function CoverageSection({
   return (
     <div>
       {availableToAdd.length > 0 && (
-        <div className="mb-3 flex items-center justify-end gap-2">
+        <div className="mb-3 flex items-center justify-start gap-2">
           <select
             value={addType}
             onChange={(e) => setAddType(e.target.value as CoverageType | '')}

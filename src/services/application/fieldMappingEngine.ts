@@ -45,6 +45,7 @@ function coverageRequestedOverride(profile: RiskProfile, path: string, base: Map
   return {
     ...base,
     value: 'Requested — limit not specified',
+    isPlaceholder: true,
     status: 'needs_review',
     reviewReason: isNewCoverage
       ? 'Requested this renewal; not on the current policy — confirm the desired limit with the client.'

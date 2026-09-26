@@ -29,7 +29,8 @@ export function CarrierAppetitePage() {
   useEffect(() => {
     loadEffectiveAppetiteRecords();
   }, [loadEffectiveAppetiteRecords]);
-  const [filter, setFilter] = useState<FilterKey>('all');
+  // Possible Match is the main view — first tab and open by default.
+  const [filter, setFilter] = useState<FilterKey>('possible_match');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<MatchResult | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -95,9 +96,9 @@ export function CarrierAppetitePage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <Tabs
               items={[
+                { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
                 { key: 'all', label: 'All Markets', count: matchResults.length },
                 { key: 'likely_match', label: VERDICT_LABELS.likely_match, count: counts.likely_match },
-                { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
                 { key: 'needs_more_information', label: VERDICT_LABELS.needs_more_information, count: counts.needs_more_information },
                 { key: 'not_eligible', label: VERDICT_LABELS.not_eligible, count: counts.not_eligible },
               ]}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, Download, FileJson, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, Download, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, OverflowMenu, ConfirmDialog } from '../components/ui';
@@ -20,7 +20,7 @@ function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
-type ExportKind = 'pdf' | 'json' | 'csv';
+type ExportKind = 'pdf' | 'csv';
 
 export function SubmissionAssistantPage() {
   const { accountId = '' } = useParams();
@@ -81,12 +81,9 @@ export function SubmissionAssistantPage() {
         const { generateApplicationPdf } = await import('../services/application/exportApplication');
         const bytes = await generateApplicationPdf(application!, account!.namedInsured);
         downloadBlob(new Uint8Array(bytes), `${slugify(account!.namedInsured)}_${slugify(application!.templateName)}.pdf`, 'application/pdf');
-      } else if (kind === 'json') {
-        const { generateApplicationJson } = await import('../services/application/exportApplication');
-        downloadBlob(generateApplicationJson(application!), `${slugify(account!.namedInsured)}_application.json`, 'application/json');
       } else {
         const { generateApplicationCsv } = await import('../services/application/exportApplication');
-        downloadBlob(generateApplicationCsv(application!), `${slugify(account!.namedInsured)}_application.csv`, 'text/csv');
+        downloadBlob(generateApplicationCsv(application!, account!.namedInsured), `${slugify(account!.namedInsured)}_application.csv`, 'text/csv;charset=utf-8');
       }
     } catch (err) {
       // Never fail silently — an export that neither downloads nor explains why is indistinguishable
@@ -127,7 +124,6 @@ export function SubmissionAssistantPage() {
           </Button>
           <OverflowMenu
             items={[
-              { key: 'json', label: 'Export as JSON', icon: <FileJson size={14} />, onSelect: () => guardExport('json') },
               { key: 'csv', label: 'Export as CSV', icon: <FileSpreadsheet size={14} />, onSelect: () => guardExport('csv') },
             ]}
           />

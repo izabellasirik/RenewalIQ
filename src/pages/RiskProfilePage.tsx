@@ -126,6 +126,8 @@ export function RiskProfilePage() {
   return (
     <PageContainer
       title={`Risk Profile — ${account.namedInsured}`}
+      // Who owns this account, right under the title — the same control as the Workspace (admins can reassign here).
+      description={<AssignedAgent account={account} />}
       actions={
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)}>
@@ -150,10 +152,6 @@ export function RiskProfilePage() {
         </>
       }
     >
-      {/* Who owns this account — the same control as the Workspace (admins can reassign here). */}
-      <div className="-mb-2 flex">
-        <AssignedAgent account={account} />
-      </div>
       <AccountSummary account={account} profile={profile} />
 
       {/* The one submission-completeness number (same as Submission Assistant and What's Missing). */}
@@ -176,17 +174,18 @@ export function RiskProfilePage() {
         onFieldClick={focusField}
       />
 
-      <div id="risk-profile-tabs" />
-      <Tabs
-        items={[
-          { key: 'details', label: 'Business & Transportation' },
-          { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
-          { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
-          { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
-        ]}
-        active={tab}
-        onChange={(k) => setTab(k as TabKey)}
-      />
+      <div id="risk-profile-tabs" className="scroll-mt-20">
+        <Tabs
+          items={[
+            { key: 'details', label: 'Business & Transportation' },
+            { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
+            { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
+            { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
+          ]}
+          active={tab}
+          onChange={(k) => setTab(k as TabKey)}
+        />
+      </div>
 
       {tab === 'details' && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">

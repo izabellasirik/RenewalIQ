@@ -165,7 +165,7 @@ export function WhatsMissingPanel({
   const goTo = useGoToItem(accountId, onClose);
 
   return (
-    <Drawer open={open} onClose={onClose} title="What's Missing?" subtitle={`Submission completeness: ${completeness.percent}%`}>
+    <Drawer open={open} onClose={onClose} title="What's Missing?">
       <div className="flex flex-col gap-5">
         <div>
           <div className="flex items-center justify-between text-sm">
@@ -178,8 +178,11 @@ export function WhatsMissingPanel({
               <CheckCircle2 size={13} />
               All required information complete
             </p>
-          ) : (
-            <p className="mt-2 text-xs text-[var(--color-ink-500)]">{completeness.percentRequired}% of required fields complete</p>
+          ) : completeness.missingRequiredFields.length === 0 ? null : (
+            // A count, not a second percentage — the one completeness % is the number above.
+            <p className="mt-2 text-xs text-[var(--color-ink-500)]">
+              {completeness.missingRequiredFields.length} required field{completeness.missingRequiredFields.length === 1 ? '' : 's'} still missing
+            </p>
           )}
         </div>
 
