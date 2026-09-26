@@ -192,7 +192,6 @@ export function SubmissionAssistantPage() {
           )}
           <span className="text-[var(--color-ink-400)]">{stats.itemizedRows} itemized rows mapped</span>
         </div>
-        <p className="text-xs text-[var(--color-ink-400)]">This is a sample application layout for demo purposes, not a certified ACORD form.</p>
       </div>
 
       {stats.conflict > 0 && (
