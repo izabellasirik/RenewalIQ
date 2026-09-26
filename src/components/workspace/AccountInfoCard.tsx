@@ -148,9 +148,10 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
                 {effectiveDate ? formatShortDate(effectiveDate) : rawEffective || 'Not set'}
               </dd>
             </div>
-            <div>
+            {/* min-w-0: a long email wraps inside the card instead of pushing past it. */}
+            <div className="min-w-0">
               <dt className="text-xs text-[var(--color-ink-500)]">{agencyAccess ? 'Assigned agent' : 'Assigned broker'}</dt>
-              <dd className="flex flex-wrap items-center gap-1.5">
+              <dd className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <AssignedAgent account={account} variant="plain" />
                 {canAssignSelf && (
                   <button onClick={assignToMe} className="inline-flex items-center gap-0.5 text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">

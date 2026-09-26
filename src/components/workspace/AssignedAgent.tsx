@@ -49,8 +49,8 @@ export function AssignedAgent({ account, variant = 'chip' }: { account: Account;
       ))}
     </select>
   ) : label ? (
-    <span className="font-semibold text-[var(--color-ink-900)]" title={agencyAccess ? undefined : account.assignedBroker?.email}>
-      {mine ? 'You' : label}
+    <span className="min-w-0 font-semibold text-[var(--color-ink-900)] [overflow-wrap:anywhere]" title={agencyAccess ? undefined : account.assignedBroker?.email}>
+      {mine ? 'You' : breakableEmail(label)}
     </span>
   ) : (
     <span className="italic text-[var(--color-ink-400)]">Unassigned</span>
@@ -58,7 +58,7 @@ export function AssignedAgent({ account, variant = 'chip' }: { account: Account;
 
   if (variant === 'plain') {
     return (
-      <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
         {control}
         {error && <span className="basis-full text-xs text-[var(--color-danger-600)]">{error}</span>}
       </span>
@@ -78,5 +78,18 @@ export function AssignedAgent({ account, variant = 'chip' }: { account: Account;
       </span>
       {error && <span className="basis-full text-xs text-[var(--color-danger-600)]">{error}</span>}
     </span>
+  );
+}
+
+/** An email wraps before the "@" (not mid-word) when it doesn't fit, e.g. in the narrow Account card. */
+function breakableEmail(text: string) {
+  const at = text.indexOf('@');
+  if (at <= 0) return text;
+  return (
+    <>
+      {text.slice(0, at)}
+      <wbr />
+      {text.slice(at)}
+    </>
   );
 }
