@@ -273,7 +273,7 @@ export function MarketDetailDrawer({
         {updateFormOpen ? (
           <RequestAppetiteUpdateForm record={record} onClose={() => setUpdateFormOpen(false)} />
         ) : (
-          <Button variant="secondary" size="sm" icon={<MessageSquarePlus size={14} />} onClick={() => setUpdateFormOpen(true)} className="self-start">
+          <Button variant="accent" size="sm" icon={<MessageSquarePlus size={14} />} onClick={() => setUpdateFormOpen(true)} className="self-start">
             Request Appetite Update
           </Button>
         )}
