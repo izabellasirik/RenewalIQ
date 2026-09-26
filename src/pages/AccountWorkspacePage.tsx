@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Building2, ClipboardList, Clock, FileText, Hash, MapPin, CalendarDays } from 'lucide-react';
+import { Building2, ClipboardList, Clock, FileText } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Badge, Card, CardBody, EmptyState, Tabs } from '../components/ui';
@@ -20,7 +20,6 @@ import { DocumentList } from '../components/upload/DocumentList';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useAccountWorkflow } from '../hooks/useAccountWorkflow';
 import { summarizeWaiting, type WorkspaceTab } from '../services/workflow/nextActions';
-import { formatShortDate } from '../services/workflow/dates';
 import { QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { EMPTY_ACTIVITY_EVENTS } from '../utils/emptyArrays';
 import { AssignedAgent } from '../components/workspace/AssignedAgent';
@@ -40,7 +39,7 @@ export function AccountWorkspacePage() {
   const tab: WorkspaceTab = tabParam && TABS.includes(tabParam) ? tabParam : 'overview';
   const focusQuoteId = params.get('quote') ?? undefined;
 
-  const { account, profile, documents, items, quotes, followUps, effectiveDate, dotNumber, actions, doneActions } = useAccountWorkflow(accountId);
+  const { account, profile, documents, items, quotes, followUps, actions, doneActions } = useAccountWorkflow(accountId);
   const ensureChecklist = useAccountsStore((s) => s.ensureChecklist);
   const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
   // Accounts from before new accounts got a checklist automatically get it the first time they're opened.
@@ -72,23 +71,12 @@ export function AccountWorkspacePage() {
           <div className="min-w-0">
             {/* Plain text — the name is changed from the Account card's Edit. */}
             <h1 className="truncate text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">{account.namedInsured}</h1>
+            {/* Status under the name; DOT #, state and effective date live on the Account card. */}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-ink-600)]">
-              <span className="inline-flex items-center gap-1">
-                <Hash size={13} className="text-[var(--color-ink-400)]" />
-                DOT <span className="font-semibold text-[var(--color-ink-900)]">{dotNumber || '—'}</span>
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <MapPin size={13} className="text-[var(--color-ink-400)]" />
-                <span className="font-semibold text-[var(--color-ink-900)]">{account.state || '—'}</span>
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <CalendarDays size={13} className="text-[var(--color-ink-400)]" />
-                Effective <span className="font-medium text-[var(--color-ink-900)]">{effectiveDate ? formatShortDate(effectiveDate) : '—'}</span>
-              </span>
+              <AccountStageSelect accountId={accountId} />
               <AssignedAgent account={account} />
             </div>
           </div>
-          <AccountStageSelect accountId={accountId} />
         </div>
 
       </div>

@@ -62,7 +62,7 @@ export function AccountStageSelect({ accountId, className }: { accountId: string
         <ChevronDown size={14} className="text-[var(--color-ink-400)]" />
       </button>
       {open && (
-        <ul role="listbox" aria-label="Client status" className="absolute right-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-white py-1 [box-shadow:var(--shadow-popover)]">
+        <ul role="listbox" aria-label="Client status" className="absolute left-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-white py-1 [box-shadow:var(--shadow-popover)]">
           <li role="option" aria-selected={!account.stage}>
             <button type="button" onClick={() => choose(null)} className={optionClass}>
               <span className="flex items-center gap-2">
