@@ -11,6 +11,7 @@ import { FollowUpsCard } from '../components/workspace/FollowUpsCard';
 import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
 import { ActionList } from '../components/workspace/ActionList';
+import { DoneTasks } from '../components/workspace/DoneTasks';
 import { QUOTE_STATUS_TONE } from '../components/workspace/quoteStatus';
 import { ActivityTimeline } from '../components/history/ActivityTimeline';
 import { Dropzone } from '../components/upload/Dropzone';
@@ -39,7 +40,7 @@ export function AccountWorkspacePage() {
   const tab: WorkspaceTab = tabParam && TABS.includes(tabParam) ? tabParam : 'overview';
   const focusQuoteId = params.get('quote') ?? undefined;
 
-  const { account, profile, documents, items, quotes, effectiveDate, dotNumber, actions } = useAccountWorkflow(accountId);
+  const { account, profile, documents, items, quotes, followUps, effectiveDate, dotNumber, actions, doneActions } = useAccountWorkflow(accountId);
   const ensureChecklist = useAccountsStore((s) => s.ensureChecklist);
   const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
   // Accounts from before new accounts got a checklist automatically get it the first time they're opened.
@@ -140,6 +141,7 @@ export function AccountWorkspacePage() {
                     <ActionList actions={actions.upcoming} />
                   </>
                 )}
+                <DoneTasks accountId={accountId} doneActions={doneActions} followUps={followUps} />
               </CardBody>
             </Card>
             {/* Follow-ups right under "Needs your attention"; the checklist itself lives on its own tab. */}

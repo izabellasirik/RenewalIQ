@@ -118,6 +118,10 @@ interface AccountsState {
    * on the account (it returns if its date or wording changes). Logged to Activity either way.
    */
   markActionDone: (action: ActionItem) => void;
+  /** Undo "mark done" on a task (by its actionDoneKey) — it shows up again under Needs your attention. */
+  undoActionDone: (accountId: string, key: string, title: string) => void;
+  /** Undo a completed follow-up. */
+  reopenFollowUp: (accountId: string, followUpId: string) => void;
   setCurrentUserId: (userId: string | null, email?: string | null) => void;
   /** Pulls every submission the signed-in broker owns in the cloud and merges it into local state — cloud accounts already known locally are refreshed (cloud wins, per the "cloud becomes authoritative" rule); cloud accounts not yet seen on this device are added and marked cloud. Never touches local-only (not-yet-imported) accounts. */
   hydrateCloudSubmissions: () => Promise<void>;
@@ -1831,6 +1835,33 @@ export const useAccountsStore = create<AccountsState>()(
             accountId
           ),
           activityLog: appendEvent(s.activityLog, accountId, 'action_done', `Marked done: ${action.title}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      undoActionDone: (accountId, key, title) => {
+        const account = get().accounts.find((a) => a.id === accountId);
+        if (!account?.doneActions?.[key]) return;
+        const rest = { ...account.doneActions };
+        delete rest[key];
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, doneActions: rest } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'action_reopened', `Reopened: ${title}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      reopenFollowUp: (accountId, followUpId) => {
+        const f = (get().followUps[accountId] ?? []).find((x) => x.id === followUpId);
+        if (!f || !f.doneAt) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          followUps: { ...s.followUps, [accountId]: updateInList(s.followUps[accountId], followUpId, ({ doneAt: _done, ...x }) => ({ ...x, updatedAt: now })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'action_reopened', `Reopened follow-up: ${f.subject}.`),
         }));
         syncNow(accountId);
       },

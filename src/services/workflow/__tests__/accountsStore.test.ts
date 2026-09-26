@@ -234,5 +234,22 @@ describe('marking a task done', () => {
     store().markActionDone(fu);
     expect(store().followUps[id][0].doneAt).toBeTruthy();
     expect(acct().doneActions).toBeUndefined();
+    store().reopenFollowUp(id, fu.followUpId!);
+    expect(store().followUps[id][0].doneAt).toBeUndefined();
+    expect(deriveAccountActions({ account: acct(), items: [], quotes: [], contacts: [], followUps: store().followUps[id] }, '2026-09-26').now.some((a) => a.kind === 'follow_up')).toBe(true);
+  });
+
+  it('a done task is listed as done and Undo brings it back', async () => {
+    const { deriveAccountActions, deriveDoneActions } = await import('../nextActions');
+    const id = store().createAccount('Undo Co', 'TX');
+    const input = () => ({ account: store().accounts.find((a) => a.id === id)!, items: [], quotes: [], contacts: [], effectiveDate: '2026-10-13' });
+    const renewal = deriveAccountActions(input(), '2026-09-26').now.find((a) => a.kind === 'renewal')!;
+    store().markActionDone(renewal);
+    const done = deriveDoneActions(input(), '2026-09-26');
+    expect(done.map((d) => d.action.title)).toEqual(['Renewal effective Oct 13']);
+    store().undoActionDone(id, done[0].key, done[0].action.title);
+    expect(deriveDoneActions(input(), '2026-09-26')).toEqual([]);
+    expect(deriveAccountActions(input(), '2026-09-26').now.some((a) => a.kind === 'renewal')).toBe(true);
+    expect(store().activityLog[id].at(-1)).toMatchObject({ type: 'action_reopened', message: 'Reopened: Renewal effective Oct 13.' });
   });
 });

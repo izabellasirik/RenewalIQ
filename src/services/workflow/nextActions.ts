@@ -80,6 +80,17 @@ export function deriveAccountActions(input: AccountWorkflowInput, today = todayK
   return { now: derived.now.filter(open), upcoming: derived.upcoming.filter(open) };
 }
 
+/** Tasks the broker marked done that still exist (undoing one brings it back), newest first. */
+export function deriveDoneActions(input: AccountWorkflowInput, today = todayKey()): { action: ActionItem; key: string; doneAt: string }[] {
+  const done = input.account.doneActions;
+  if (!done || Object.keys(done).length === 0) return [];
+  const all = deriveAllAccountActions(input, today);
+  return [...all.now, ...all.upcoming]
+    .map((action) => ({ action, key: actionDoneKey(action), doneAt: done[actionDoneKey(action)] }))
+    .filter((d) => !!d.doneAt)
+    .sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
+}
+
 function deriveAllAccountActions(input: AccountWorkflowInput, today: string): DerivedActions {
   const { account, items, quotes, contacts, effectiveDate, followUps = [] } = input;
   const now: ActionItem[] = [];

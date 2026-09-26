@@ -17,6 +17,7 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
   const addFollowUp = useAccountsStore((s) => s.addFollowUp);
   const updateFollowUp = useAccountsStore((s) => s.updateFollowUp);
   const completeFollowUp = useAccountsStore((s) => s.completeFollowUp);
+  const reopenFollowUp = useAccountsStore((s) => s.reopenFollowUp);
   const deleteFollowUp = useAccountsStore((s) => s.deleteFollowUp);
 
   const [adding, setAdding] = useState(false);
@@ -129,7 +130,10 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
               <ul className="mt-2 flex flex-col gap-1">
                 {done.map((f) => (
                   <li key={f.id} className="text-xs text-[var(--color-ink-500)]">
-                    <span className="line-through">{f.subject}</span> · done {formatShortDate(f.doneAt)}
+                    <span className="line-through">{f.subject}</span> · done {formatShortDate(f.doneAt)} ·{' '}
+                    <button onClick={() => reopenFollowUp(accountId, f.id)} className="font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer" aria-label={`Undo follow-up for ${f.subject}`}>
+                      Undo
+                    </button>
                   </li>
                 ))}
               </ul>
