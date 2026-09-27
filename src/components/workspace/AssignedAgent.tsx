@@ -45,7 +45,7 @@ export function AssignedAgent({ account, variant = 'chip' }: { account: Account;
         // Inside the chip it's just the chip's text (the chip is the box); on its own it gets a border.
         variant === 'chip'
           ? '-my-0.5 appearance-none rounded-full bg-transparent py-0.5 pl-1 pr-5 hover:bg-[var(--color-ink-100)] focus-visible:ring-2 focus-visible:ring-[var(--color-brand-500)]/20'
-          : 'rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-0.5 focus:border-[var(--color-brand-500)]'
+          : 'w-full min-w-0 max-w-full truncate rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-0.5 focus:border-[var(--color-brand-500)]'
       )}
       style={variant === 'chip' ? { backgroundImage: CHEVRON, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.3rem center', backgroundSize: '0.75rem', fieldSizing: 'content' } as React.CSSProperties : undefined}
       aria-label="Assigned agent"
@@ -68,7 +68,7 @@ export function AssignedAgent({ account, variant = 'chip' }: { account: Account;
 
   if (variant === 'plain') {
     return (
-      <span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
+      <span className="flex w-full min-w-0 max-w-full flex-wrap items-center gap-1.5">
         {control}
         {error && <span className="basis-full text-xs text-[var(--color-danger-600)]">{error}</span>}
       </span>
