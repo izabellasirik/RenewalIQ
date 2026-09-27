@@ -7,6 +7,7 @@ import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
 import { AddToQuotesAction } from '../components/appetite/AddToQuotesAction';
+import { StateListInput } from '../components/appetite/StateListInput';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { matchAllMarkets, VERDICT_RANK } from '../services/appetite/matchingEngine';
 import {
@@ -19,7 +20,7 @@ import {
   type MarketFinderFilters,
   type TriState,
 } from '../services/appetite/marketFinderInput';
-import { US_STATES, parseStateList } from '../utils/usStates';
+import { US_STATES } from '../utils/usStates';
 import type { AppetiteRecord, MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
 import { cn } from '../utils/cn';
@@ -311,12 +312,7 @@ export function MarketFinderPage() {
 
           <div>
             <label className={fieldLabelClass()}>Operating States</label>
-            <input
-              value={filters.operatingStates.join(', ')}
-              onChange={(e) => update('operatingStates', parseStateList(e.target.value))}
-              placeholder="e.g. NJ, NY, PA"
-              className={inputClass()}
-            />
+            <StateListInput value={filters.operatingStates} onChange={(states) => update('operatingStates', states)} placeholder="e.g. NJ, NY, PA" className={inputClass()} />
           </div>
 
           <div>
