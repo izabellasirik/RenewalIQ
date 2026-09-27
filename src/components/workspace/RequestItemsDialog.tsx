@@ -4,7 +4,8 @@ import { Button, Modal } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { draftClientRequestEmail, mailtoHref } from '../../services/workflow/emailDraft';
-import { addBusinessDays } from '../../services/workflow/dates';
+import { addBusinessDays, todayKey } from '../../services/workflow/dates';
+import type { MissingItem } from '../../types';
 import { inputClass, labelClass } from './formStyles';
 
 /**
@@ -12,15 +13,30 @@ import { inputClass, labelClass } from './formStyles';
  * copy it / open it in the broker's email app, choose a follow-up date, then mark it sent. Nothing
  * is emailed by Renewal IQ itself — "Mark as sent" records that the broker sent it.
  */
-export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { accountId: string; itemIds: string[]; open: boolean; onClose: () => void }) {
+/**
+ * `newDocument`: "+ Request document" — the broker names a document that isn't on the checklist yet
+ * (e.g. "Updated MVR"); sending adds it to the checklist as Requested, through the same flow.
+ */
+export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocument = false }: { accountId: string; itemIds: string[]; open: boolean; onClose: () => void; newDocument?: boolean }) {
   const { account, items, quotes, contacts, effectiveDate } = useAccountWorkflow(accountId);
   const markItemsRequested = useAccountsStore((s) => s.markItemsRequested);
+  const addMissingItems = useAccountsStore((s) => s.addMissingItems);
   const addContact = useAccountsStore((s) => s.addContact);
+  const [docName, setDocName] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [requestedOn, setRequestedOn] = useState(todayKey());
 
   // Every item that can still be requested — the broker ticks which ones go in this one email.
   const candidates = useMemo(() => items.filter((i) => i.status === 'missing' || i.status === 'requested' || itemIds.includes(i.id)), [items, itemIds]);
   const [selectedIds, setSelectedIds] = useState<string[]>(itemIds);
-  const selectedItems = useMemo(() => candidates.filter((i) => selectedIds.includes(i.id)), [candidates, selectedIds]);
+  const draftItem: MissingItem | null = useMemo(
+    () =>
+      newDocument
+        ? { id: 'new', accountId, type: 'document', label: docName.trim() || 'Document', instructions: instructions.trim() || undefined, status: 'missing', createdAt: '', updatedAt: '' }
+        : null,
+    [newDocument, accountId, docName, instructions]
+  );
+  const selectedItems = useMemo(() => (draftItem ? [draftItem] : candidates.filter((i) => selectedIds.includes(i.id))), [draftItem, candidates, selectedIds]);
   const [contactId, setContactId] = useState('');
   const [followUpDate, setFollowUpDate] = useState(() => addBusinessDays(new Date(), 3));
   const [subject, setSubject] = useState('');
@@ -37,6 +53,9 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
     setContactId(initial?.id ?? '');
     setSelectedIds(itemIds);
     setFollowUpDate(addBusinessDays(new Date(), 3));
+    setRequestedOn(todayKey());
+    setDocName('');
+    setInstructions('');
     setCopied(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, itemIds.join(',')]);
@@ -57,7 +76,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
     setSubject(draft.subject);
     setBody(draft.body);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, contactId, selectedIds.join(','), account?.id]);
+  }, [open, contactId, selectedIds.join(','), account?.id, draftItem?.label, draftItem?.instructions]);
 
   if (!account) return null;
 
@@ -81,7 +100,16 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
   }
 
   function markSent() {
-    markItemsRequested(accountId, selectedItems.map((i) => i.id), { contactId: contactId || undefined, followUpDate: followUpDate || undefined });
+    const opts = { contactId: contactId || undefined, followUpDate: followUpDate || undefined, requestedOn };
+    if (newDocument) {
+      if (!docName.trim()) return;
+      // Same requirement still outstanding on the checklist? That item is requested — no duplicate row.
+      // Already received? A newer copy is being asked for, so it gets its own row.
+      const [id] = addMissingItems(accountId, [{ label: docName.trim(), type: 'document', newCopyOfReceived: true }]);
+      markItemsRequested(accountId, [id], { ...opts, instructions });
+    } else {
+      markItemsRequested(accountId, selectedItems.map((i) => i.id), opts);
+    }
     onClose();
   }
 
@@ -90,7 +118,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
       open={open}
       onClose={onClose}
       size="lg"
-      title={selectedItems.length === 1 ? `Request ${selectedItems[0].label}` : `Request ${selectedItems.length} items in one email`}
+      title={newDocument ? 'Request a document' : selectedItems.length === 1 ? `Request ${selectedItems[0].label}` : `Request ${selectedItems.length} items in one email`}
       subtitle={account.namedInsured}
       footer={
         <>
@@ -104,14 +132,30 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
             <Mail size={14} />
             Open in email app
           </a>
-          <Button size="sm" icon={<Send size={14} />} onClick={markSent} disabled={selectedItems.length === 0}>
-            Mark as sent
+          <Button size="sm" icon={<Send size={14} />} onClick={markSent} disabled={newDocument ? !docName.trim() : selectedItems.length === 0}>
+            {newDocument ? 'Add to checklist as requested' : 'Mark as sent'}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
-        <div>
+        {newDocument && (
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className={labelClass} htmlFor="req-doc-name">
+                Document
+              </label>
+              <input id="req-doc-name" value={docName} onChange={(e) => setDocName(e.target.value)} className={inputClass} placeholder="e.g. Updated MVR" autoFocus />
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="req-doc-instructions">
+                Note / instructions for the client (optional)
+              </label>
+              <input id="req-doc-instructions" value={instructions} onChange={(e) => setInstructions(e.target.value)} className={inputClass} placeholder="e.g. for John Smith, dated within the last 14 days" />
+            </div>
+          </div>
+        )}
+        <div className={newDocument ? 'hidden' : undefined}>
           <div className="flex items-center justify-between">
             <p className={labelClass}>
               Requesting {selectedItems.length} of {candidates.length} — all in one email
@@ -171,11 +215,19 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose }: { acco
             )}
             {contact && !contact.email && <p className="mt-1 text-[11px] text-[var(--color-warning-600)]">No email on file for {contact.name}.</p>}
           </div>
+          <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="req-requested-on">
+              Requested on
+            </label>
+            <input id="req-requested-on" type="date" value={requestedOn} max={todayKey()} onChange={(e) => setRequestedOn(e.target.value)} className={inputClass} />
+          </div>
           <div>
             <label className={labelClass} htmlFor="req-followup">
               Follow up on
             </label>
             <input id="req-followup" type="date" value={followUpDate} onChange={(e) => setFollowUpDate(e.target.value)} className={inputClass} />
+          </div>
           </div>
         </div>
 

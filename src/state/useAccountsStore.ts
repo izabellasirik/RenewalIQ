@@ -27,7 +27,7 @@ import type {
 } from '../types';
 import { emptyField, ACCOUNT_STAGE_LABELS, AWAITING_CARRIER_STATUSES, MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { getAccountContacts } from '../services/workflow/contacts';
-import { addBusinessDays, formatShortDate, todayKey } from '../services/workflow/dates';
+import { addBusinessDays, formatShortDate, parseDateKey, todayKey } from '../services/workflow/dates';
 import { carriersFor, findRequirement, forwardedAt, normalizeMissingItems } from '../services/workflow/requirementKey';
 import { CHECKLIST_TEMPLATES, expandTemplate, findTemplateItem } from '../services/workflow/checklistTemplates';
 import { DocumentLinkError } from '../services/ingestion/documentLinks';
@@ -219,7 +219,8 @@ interface AccountsState {
   addMissingItems: (accountId: string, seeds: MissingItemSeed[]) => string[];
   updateMissingItem: (accountId: string, itemId: string, patch: Partial<Pick<MissingItem, 'label' | 'type' | 'notes' | 'followUpDate' | 'documentId'>>) => void;
   /** The broker sent the client a request (the email itself is sent outside Renewal IQ). */
-  markItemsRequested: (accountId: string, itemIds: string[], opts: { contactId?: string; followUpDate?: string }) => void;
+  /** `requestedOn` (YYYY-MM-DD) records when the request went out when it wasn't today; `instructions` updates the client-facing note. */
+  markItemsRequested: (accountId: string, itemIds: string[], opts: { contactId?: string; followUpDate?: string; requestedOn?: string; instructions?: string }) => void;
   markItemReceived: (accountId: string, itemId: string, opts?: { documentId?: string }) => void;
   /** Set a checklist item's status directly (the broker's manual override of the request/receive flow). */
   setItemStatus: (accountId: string, itemId: string, status: MissingItemStatus) => void;
@@ -258,6 +259,8 @@ export interface MissingItemSeed {
   neededByQuoteId?: string;
   notes?: string;
   status?: MissingItemStatus;
+  /** Add a new row even if the same requirement was already received/waived (a newer copy is being requested). */
+  newCopyOfReceived?: boolean;
 }
 
 function newAccount(namedInsured: string, state: string): Account {
@@ -1418,7 +1421,8 @@ export const useAccountsStore = create<AccountsState>()(
         const created: MissingItem[] = [];
         const ids: string[] = [];
         for (const seed of seeds) {
-          const existing = findRequirement(list, seed);
+          const found = findRequirement(list, seed);
+          const existing = found && seed.newCopyOfReceived && (found.status === 'received' || found.status === 'waived') ? undefined : found;
           if (existing) {
             ids.push(existing.id);
             const linkCarrier = !!seed.neededByQuoteId && !carriersFor(existing).includes(seed.neededByQuoteId);
@@ -1498,13 +1502,16 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
-      markItemsRequested: (accountId, itemIds, { contactId, followUpDate }) => {
+      markItemsRequested: (accountId, itemIds, { contactId, followUpDate, requestedOn, instructions }) => {
         const s0 = get();
         const account = s0.accounts.find((a) => a.id === accountId);
         const items = (s0.missingItems[accountId] ?? []).filter((i) => itemIds.includes(i.id));
         if (!account || items.length === 0) return;
         const contact = getAccountContacts(account).find((c) => c.id === contactId);
         const now = new Date().toISOString();
+        const onDate = parseDateKey(requestedOn ?? '');
+        // A back-dated request is recorded at midday that day (the calendar date is what matters).
+        const requestedAt = requestedOn && requestedOn !== todayKey() && onDate ? new Date(onDate.setHours(12)).toISOString() : now;
         set((s) => {
           let log = appendEvent(
             s.activityLog,
@@ -1517,7 +1524,17 @@ export const useAccountsStore = create<AccountsState>()(
             missingItems: {
               ...s.missingItems,
               [accountId]: (s.missingItems[accountId] ?? []).map((i) =>
-                itemIds.includes(i.id) ? { ...i, status: 'requested' as const, requestedAt: now, requestedFromContactId: contactId, followUpDate: followUpDate || undefined, updatedAt: now } : i
+                itemIds.includes(i.id)
+                  ? {
+                      ...i,
+                      status: 'requested' as const,
+                      requestedAt,
+                      requestedFromContactId: contactId,
+                      followUpDate: followUpDate || undefined,
+                      ...(instructions !== undefined ? { instructions: instructions.trim() || undefined } : {}),
+                      updatedAt: now,
+                    }
+                  : i
               ),
             },
             accounts: touchAccount(s.accounts, accountId),

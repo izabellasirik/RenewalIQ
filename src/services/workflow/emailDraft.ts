@@ -40,7 +40,7 @@ export function draftClientRequestEmail({
         ? `To get ${account.namedInsured}'s renewal (effective ${formatShortDate(effectiveDate)}) out to the markets, we still need ${one ? 'the following' : 'the following items'}:`
         : `To finish ${account.namedInsured}'s insurance submission, we still need ${one ? 'the following' : 'the following items'}:`;
 
-  const list = items.map((i) => `  • ${i.label}`).join('\n');
+  const list = items.map((i) => `  • ${i.label}${i.instructions ? ` — ${i.instructions}` : ''}`).join('\n');
 
   const body = [
     greeting,

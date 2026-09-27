@@ -333,3 +333,29 @@ describe('merging a newer cloud copy of markets', () => {
     expect(names).toEqual(['A edited here', 'B edited elsewhere', 'D added elsewhere']);
   });
 });
+
+describe('requesting a document that is not on the checklist yet', () => {
+  it('adds it as Requested from the contact, with the dates and instructions, and it shows on Today\'s Plate', async () => {
+    const { deriveAccountActions } = await import('../nextActions');
+    const { draftClientRequestEmail } = await import('../emailDraft');
+    const id = store().createAccount('Blue Ridge Logistics', 'TX');
+    const john = store().addContact(id, { name: 'John Smith', email: 'john@blueridge.com' });
+    // The standard checklist already has MVRs, still outstanding: the request is for that row (no duplicate).
+    const [mvr] = store().addMissingItems(id, [{ label: 'Updated MVR', type: 'document', newCopyOfReceived: true }]);
+    expect(store().missingItems[id].find((i) => i.id === mvr)!.label).toBe('MVRs — all drivers');
+    // Once received, asking for an updated one adds its own row.
+    store().markItemReceived(id, mvr);
+    const [itemId] = store().addMissingItems(id, [{ label: 'Updated MVR', type: 'document', newCopyOfReceived: true }]);
+    expect(itemId).not.toBe(mvr);
+    store().markItemsRequested(id, [itemId], { contactId: john, requestedOn: '2026-09-27', followUpDate: '2026-09-30', instructions: 'dated within the last 14 days' });
+    const item = store().missingItems[id].find((i) => i.id === itemId)!;
+    expect(item).toMatchObject({ label: 'Updated MVR', status: 'requested', requestedFromContactId: john, followUpDate: '2026-09-30', instructions: 'dated within the last 14 days' });
+    expect(item.requestedAt!.slice(0, 10)).toBe('2026-09-27');
+    const account = store().accounts.find((a) => a.id === id)!;
+    const email = draftClientRequestEmail({ account, contact: { id: john, name: 'John Smith' }, items: [item] });
+    expect(email.body).toContain('• Updated MVR — dated within the last 14 days');
+    const onTheDay = deriveAccountActions({ account, items: store().missingItems[id], quotes: [], contacts: [{ id: john, name: 'John Smith' }] }, '2026-09-30');
+    expect(onTheDay.now.some((a) => a.kind === 'client_follow_up' && a.itemId === itemId)).toBe(true);
+    expect(store().activityLog[id].map((e) => e.message)).toContain('Requested Updated MVR from John Smith.');
+  });
+});

@@ -40,6 +40,7 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
   const [requestIds, setRequestIds] = useState<string[] | null>(null);
   const [receiveId, setReceiveId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [requestingNew, setRequestingNew] = useState(false);
 
   const sorted = useMemo(() => [...items].sort((a, b) => statusRank(a) - statusRank(b) || (a.createdAt < b.createdAt ? -1 : 1)), [items]);
   const outstanding = sorted.filter((i) => i.status === 'missing' || i.status === 'requested' || awaitingSend(i));
@@ -80,6 +81,9 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" icon={<Plus size={14} />} onClick={() => setRequestingNew(true)}>
+              Request document
+            </Button>
             {unrequested.length > 1 && (
               <Button size="sm" variant="secondary" icon={<Mail size={14} />} onClick={() => setRequestIds(unrequested.map((i) => i.id))}>
                 Request all missing ({unrequested.length})
@@ -169,6 +173,7 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
       </CardBody>
 
       <RequestItemsDialog accountId={accountId} itemIds={requestIds ?? []} open={!!requestIds} onClose={() => setRequestIds(null)} />
+      <RequestItemsDialog accountId={accountId} itemIds={[]} open={requestingNew} onClose={() => setRequestingNew(false)} newDocument />
       <ReceiveItemDialog accountId={accountId} itemId={receiveId} open={!!receiveId} onClose={() => setReceiveId(null)} />
     </Card>
   );
@@ -282,6 +287,7 @@ function ItemRow({
                   )}
                 </div>
                 <div className="mt-1 flex flex-col gap-0.5 text-xs text-[var(--color-ink-500)]">
+                  {item.instructions && <span className="text-[var(--color-ink-600)]">{item.instructions}</span>}
                   {item.status === 'requested' && (
                     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                       Requested{contactName ? ` from ${contactName}` : ''}

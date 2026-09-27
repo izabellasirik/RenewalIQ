@@ -81,6 +81,8 @@ export interface MissingItem {
   followUpDate?: string;
   receivedAt?: string;
   notes?: string;
+  /** What to tell the client about this item (e.g. "dated within the last 14 days") — goes into the request email; `notes` stay internal. */
+  instructions?: string;
   /** Which checklist template entry created this item, if any (e.g. "loss_runs") — lets requirements vary by line/carrier later without changing the item shape. */
   templateKey?: string;
   /**
