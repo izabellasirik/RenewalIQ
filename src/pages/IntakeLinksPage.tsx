@@ -196,8 +196,11 @@ function SubmissionCard({
   onNotice,
   collapsed,
   onToggle,
+  linkLabel,
 }: {
   submission: IntakeSubmission;
+  /** The broker's label for the submission link the client used (e.g. "ABC Client"). */
+  linkLabel?: string;
   onChanged: () => void;
   /** A message that should outlive this card (it moves to another tab after importing). */
   onNotice: (text: string) => void;
@@ -294,8 +297,14 @@ function SubmissionCard({
           {collapsed ? <ChevronRight size={16} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" /> : <ChevronDown size={16} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />}
           <div className="min-w-0">
             <p className="text-sm font-semibold text-[var(--color-ink-900)]">{submission.namedInsured || 'Unnamed submission'}</p>
-            <p className="text-xs text-[var(--color-ink-400)]">
-              {[submission.contactName, submission.contactEmail, submission.contactPhone].filter(Boolean).join(' · ')}
+            {/* Who sent it — the person who filled in the form, and through which of your links. */}
+            <p className="mt-0.5 text-sm text-[var(--color-ink-700)]">
+              <span className="text-[var(--color-ink-500)]">From: </span>
+              {[submission.contactName, submission.contactEmail, submission.contactPhone].filter(Boolean).join(' · ') || <span className="italic text-[var(--color-ink-400)]">no contact details given</span>}
+            </p>
+            <p className="text-xs text-[var(--color-ink-500)]">
+              {linkLabel ? <>Via link: <span className="font-medium text-[var(--color-ink-700)]">{linkLabel}</span></> : 'Via a submission link'}
+              {submission.dotNumber && ` · DOT ${submission.dotNumber}`}
               {collapsed && documents && documents.length > 0 && ` · ${documents.length} document${documents.length === 1 ? '' : 's'}`}
             </p>
           </div>
@@ -412,9 +421,14 @@ function SubmissionsSection({ userId }: { userId: string }) {
   const [filter, setFilter] = useState<IntakeSubmissionStatus>('pending');
   const [collapsed, toggleCollapsed] = useCollapsedSubmissions();
   const [notice, setNotice] = useState<string | null>(null);
+  const [linkLabels, setLinkLabels] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Link labels only name the source on each card — a failure here just leaves them out.
+    fetchIntakeLinks(userId).then((links) => {
+      if (links.ok) setLinkLabels(Object.fromEntries(links.data.map((l) => [l.id, l.label])));
+    });
     const result = await fetchIntakeSubmissions(userId);
     setLoading(false);
     if (!result.ok) {
@@ -460,7 +474,7 @@ function SubmissionsSection({ userId }: { userId: string }) {
       ) : (
         <div className="flex flex-col gap-3">
           {filtered.map((s) => (
-            <SubmissionCard key={s.id} submission={s} onChanged={load} onNotice={setNotice} collapsed={collapsed.has(s.id)} onToggle={() => toggleCollapsed(s.id)} />
+            <SubmissionCard key={s.id} submission={s} onChanged={load} onNotice={setNotice} collapsed={collapsed.has(s.id)} onToggle={() => toggleCollapsed(s.id)} linkLabel={linkLabels[s.intakeLinkId]} />
           ))}
         </div>
       )}
