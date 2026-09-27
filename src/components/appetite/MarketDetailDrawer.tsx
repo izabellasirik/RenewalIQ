@@ -287,6 +287,29 @@ export function MarketDetailDrawer({
 
         {result?.freshnessMessage && <FreshnessWarning message={result.freshnessMessage} />}
 
+        {record.agencyCarrier && (record.agencyCarrier.website || record.agencyCarrier.contactName || record.agencyCarrier.contactEmail || record.agencyCarrier.contactPhone) && (
+          <div className="rounded-lg border border-[var(--color-ink-100)] bg-white p-4 text-sm">
+            <p className="font-semibold text-[var(--color-ink-900)]">Carrier contact</p>
+            <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">From your agency's carrier appetite.</p>
+            <div className="mt-2 flex flex-col gap-0.5 text-[var(--color-ink-700)]">
+              {record.agencyCarrier.contactName && <span>{record.agencyCarrier.contactName}</span>}
+              {record.agencyCarrier.contactEmail && (
+                <a className="text-[var(--color-brand-700)] hover:underline" href={`mailto:${record.agencyCarrier.contactEmail}`}>
+                  {record.agencyCarrier.contactEmail}
+                </a>
+              )}
+              {record.agencyCarrier.contactPhone && <span>{record.agencyCarrier.contactPhone}</span>}
+              {record.agencyCarrier.website && /^https?:\/\//i.test(record.agencyCarrier.website) ? (
+                <a className="text-[var(--color-brand-700)] hover:underline [overflow-wrap:anywhere]" href={record.agencyCarrier.website} target="_blank" rel="noreferrer">
+                  {record.agencyCarrier.website}
+                </a>
+              ) : (
+                record.agencyCarrier.website && <span className="[overflow-wrap:anywhere]">{record.agencyCarrier.website}</span>
+              )}
+            </div>
+          </div>
+        )}
+
         {record.underwritingNotes && (
           <div className="flex items-start gap-2.5 rounded-lg border border-[var(--color-ink-100)] bg-white p-4">
             <NotebookPen size={16} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />

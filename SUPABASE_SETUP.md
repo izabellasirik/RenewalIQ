@@ -150,6 +150,12 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   reassignment with "Only an agency admin can reassign an account."). Assigning one moves it into
   the admin's agency. Agents still can't reassign; nobody can take another user's personal account.
   Replaces one trigger function; safe to re-run.
+- **`supabase/migrations/0023_agency_carriers.sql`** — Carrier Appetite managed by the agency:
+  an `agency_carriers` table (one row per carrier/program per agency: name, website, contact,
+  appetite criteria, notes). Every member reads it (Market Finder); only agency admins add, edit
+  or archive — no deletes. A row can also be the agency's version of a built-in carrier (or hide
+  it). Additive, safe to re-run. Until it's applied, Market Finder uses the built-in carriers only
+  and the Carrier Appetite page says the migration is needed.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -216,6 +222,7 @@ from (values
   ('0020_account_notes',              exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'account_notes')),
   ('0021_account_archive',            to_regprocedure('public.can_delete_account(text)') is not null),
   ('0022_assign_own_personal',        exists (select 1 from pg_proc where proname = 'submissions_before_update' and prosrc like '%A personal account%')),
+  ('0023_agency_carriers',            to_regclass('public.agency_carriers') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

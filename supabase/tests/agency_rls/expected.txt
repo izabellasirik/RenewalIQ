@@ -109,3 +109,15 @@ G3 agent reassign own personal denied: Only an agency admin can reassign an acco
 G3 acct_n2 still personal=true
 G4 other agency admin assigns it affected=0
 G4 acct_d_old2 still personal=true unassigned=true
+C1 admin adds carrier → own agency=true created_by_admin=true
+C2 second version of same built-in denied
+C3 admin archives: stamped_now=true by_admin=true
+C4 agent reads agency carriers=2
+C5 agent add denied
+C5 agent update affected=0
+C5 agent delete affected=0
+C6 admin delete affected=0
+C7 other agency admin sees=0
+C7 other agency admin update affected=0
+C8 newbie (agent) sees=2
+C9 names intact: Blue Ridge Mutual,Built-in edited

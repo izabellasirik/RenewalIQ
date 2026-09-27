@@ -23,6 +23,7 @@ import { RequireBrokerAuth } from './components/layout/RequireBrokerAuth';
 import { ProfileGate } from './components/profile/ProfileGate';
 import { InvitePage } from './pages/InvitePage';
 import { TeamPage } from './pages/TeamPage';
+import { CarriersPage } from './pages/CarriersPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
       { path: '/analytics', element: <AnalyticsComingSoonPage /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },
       { path: '/team', element: <TeamPage /> },
+      { path: '/carriers', element: <CarriersPage /> },
       { path: '/accounts/new', element: <NewAccountPage /> },
       { path: '/accounts/:accountId', element: <AccountWorkspacePage /> },
       { path: '/accounts/:accountId/upload', element: <UploadPage /> },

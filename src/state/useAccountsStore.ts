@@ -52,6 +52,8 @@ import { matchAllMarkets } from '../services/appetite';
 import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
 import { fetchAppetiteOverrides } from '../services/appetiteUpdates/appetiteUpdateService';
 import { sampleAppetiteRecords } from '../data/carriers';
+import { layerAgencyCarriers, type AgencyCarrier } from '../services/appetite/agencyCarriers';
+import { fetchAgencyCarriers } from '../services/supabase/carriersRepo';
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
@@ -191,6 +193,10 @@ interface AccountsState {
   runMatching: (accountId: string) => void;
   /** Fetches approved appetite_overrides from Supabase and merges them onto the base records. No-ops (leaves effectiveAppetiteRecords as the base data) if Supabase isn't configured or the fetch fails. */
   loadEffectiveAppetiteRecords: () => Promise<void>;
+  /** The agency's own carriers (0023), archived included — what the Carriers admin page edits. Empty outside an agency. */
+  agencyCarriers: AgencyCarrier[];
+  /** Re-reads carrier appetite and re-matches every account that has results, so a carrier change shows everywhere at once. */
+  reloadCarrierAppetite: () => Promise<{ ok: boolean; message?: string }>;
   renameAccount: (accountId: string, namedInsured: string) => void;
   duplicateAccount: (accountId: string) => string;
   archiveAccount: (accountId: string) => void;
@@ -653,6 +659,7 @@ export const useAccountsStore = create<AccountsState>()(
       followUps: {},
       activeAccountId: null,
       effectiveAppetiteRecords: sampleAppetiteRecords,
+      agencyCarriers: [],
 
       createAccount: (namedInsured, state) => {
         const account = ownedByMe(newAccount(namedInsured, state));
@@ -1172,9 +1179,28 @@ export const useAccountsStore = create<AccountsState>()(
       },
 
       loadEffectiveAppetiteRecords: async () => {
-        const result = await fetchAppetiteOverrides();
-        if (!result.ok) return; // not configured, or a transient fetch failure — base records stay in effect, nothing breaks
-        set({ effectiveAppetiteRecords: applyOverrides(sampleAppetiteRecords, result.data) });
+        // Built-in carriers → Renewal IQ's approved overrides → the agency's own carrier list.
+        const inAgency = !!get().agencyAccess;
+        const [result, carriers] = await Promise.all([fetchAppetiteOverrides(), inAgency ? fetchAgencyCarriers() : Promise.resolve(null)]);
+        // Not configured, or a transient fetch failure — keep what's in effect, nothing breaks.
+        if (!result.ok && !carriers?.ok) return;
+        const base = result.ok ? applyOverrides(sampleAppetiteRecords, result.data) : sampleAppetiteRecords;
+        const agencyCarriers = carriers?.ok ? carriers.data : inAgency ? get().agencyCarriers : [];
+        set({ agencyCarriers, effectiveAppetiteRecords: layerAgencyCarriers(base, agencyCarriers, get().agencyAccess?.agencyName ?? null) });
+      },
+
+      reloadCarrierAppetite: async () => {
+        const carriers = get().agencyAccess ? await fetchAgencyCarriers() : null;
+        await get().loadEffectiveAppetiteRecords();
+        // Quietly re-match accounts already matched (no Activity entry per account for a carrier edit).
+        const s = get();
+        const matchResults = { ...s.matchResults };
+        for (const id of Object.keys(matchResults)) {
+          const profile = s.riskProfiles[id];
+          if (profile) matchResults[id] = matchAllMarkets(s.effectiveAppetiteRecords, profile);
+        }
+        set({ matchResults });
+        return carriers && !carriers.ok ? { ok: false, message: carriers.message } : { ok: true };
       },
 
       renameAccount: (accountId, namedInsured) => {
@@ -2121,7 +2147,7 @@ export const useAccountsStore = create<AccountsState>()(
             hiddenAccounts,
             activeAccountId: activeVisible ? s.activeAccountId : null,
             // Roles are re-read from the database on every sign-in (hydrateCloudSubmissions).
-            ...(sameUser ? {} : { agencyAccess: null, agencyMembers: [], cloudHydratedFor: null, myProfile: null }),
+            ...(sameUser ? {} : { agencyAccess: null, agencyMembers: [], cloudHydratedFor: null, myProfile: null, agencyCarriers: [], effectiveAppetiteRecords: sampleAppetiteRecords }),
           };
         }),
 
@@ -2141,7 +2167,10 @@ export const useAccountsStore = create<AccountsState>()(
         const [result, accessRes] = await Promise.all([cloudRepo.fetchUserSubmissions(userId), cloudRepo.fetchAgencyAccess(userId)]);
         if (get().currentUserId !== userId) return; // signed out / switched user mid-fetch
         if (accessRes.ok) {
+          const agencyChanged = get().agencyAccess?.agencyId !== accessRes.data.access?.agencyId;
           set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
+          // The agency's carrier appetite applies as soon as we know which agency this is.
+          if (agencyChanged) void get().reloadCarrierAppetite();
           const me = accessRes.data.members.find((m) => m.userId === userId);
           if (me && currentActor?.id === userId) currentActor = { id: userId, name: get().myProfile?.fullName || me.name };
         }
@@ -2286,6 +2315,7 @@ export const useAccountsStore = create<AccountsState>()(
           syncError: _syncError,
           agencyAccess: _agencyAccess,
           agencyMembers: _agencyMembers,
+          agencyCarriers: _agencyCarriers,
           cloudHydratedFor: _cloudHydratedFor,
           ...rest
         } = state;

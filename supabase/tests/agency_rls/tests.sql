@@ -247,3 +247,27 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
 with u as (update submissions set assigned_user_id = '00000000-0000-0000-0000-00000000000c' where id = 'acct_d_old2' returning 1) select 'G4 other agency admin assigns it affected=' || count(*) from u;
 reset role;
 select 'G4 acct_d_old2 still personal=' || (organization_id is null) || ' unassigned=' || (assigned_user_id is null) from submissions where id = 'acct_d_old2';
+
+\echo '== 0023: agency carriers — admins manage, members read'
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+insert into agency_carriers (name, agency_id, criteria) values ('Blue Ridge Mutual', (select id from agencies where name <> (select name from agencies a2 where a2.id = current_agency_id()) limit 1), '{"fleetSize":{"min":1,"max":25}}');
+select 'C1 admin adds carrier → own agency=' || (agency_id = current_agency_id()) || ' created_by_admin=' || (created_by = auth.uid()) from agency_carriers where name = 'Blue Ridge Mutual';
+insert into agency_carriers (name, base_record_id) values ('Built-in edited', 'canal-express');
+do $$ begin insert into agency_carriers (name, base_record_id) values ('dup', 'canal-express'); raise notice 'C2 second version of same built-in: ALLOWED (BAD)'; exception when others then raise notice 'C2 second version of same built-in denied'; end $$;
+update agency_carriers set notes = 'Prefers 3+ yrs', archived_at = '2000-01-01' where name = 'Built-in edited';
+select 'C3 admin archives: stamped_now=' || (archived_at > now() - interval '1 minute') || ' by_admin=' || (archived_by = auth.uid()) from agency_carriers where name = 'Built-in edited';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select 'C4 agent reads agency carriers=' || count(*) from agency_carriers;
+do $$ begin insert into agency_carriers (name) values ('Agent carrier'); raise notice 'C5 agent adds carrier: ALLOWED (BAD)'; exception when others then raise notice 'C5 agent add denied'; end $$;
+with u as (update agency_carriers set name = 'hacked' returning 1) select 'C5 agent update affected=' || count(*) from u;
+with d as (delete from agency_carriers returning 1) select 'C5 agent delete affected=' || count(*) from d;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+with d as (delete from agency_carriers returning 1) select 'C6 admin delete affected=' || count(*) from d;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select 'C7 other agency admin sees=' || count(*) from agency_carriers;
+with u as (update agency_carriers set name = 'stolen' returning 1) select 'C7 other agency admin update affected=' || count(*) from u;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+select 'C8 newbie (agent) sees=' || count(*) from agency_carriers;
+reset role;
+select 'C9 names intact: ' || string_agg(name, ',' order by name) from agency_carriers;
