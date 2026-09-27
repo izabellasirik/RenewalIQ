@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { BadgeDollarSign, Building2, ChevronDown, ChevronRight, FileQuestion, Plus, Send, ShieldCheck, StickyNote, Trash2, XCircle } from 'lucide-react';
-import type { MarketQuote, MissingItem, MissingItemType, QuoteStatus } from '../../types';
+import { BadgeDollarSign, Building2, ChevronDown, ChevronRight, FileQuestion, Pencil, Plus, Send, ShieldCheck, StickyNote, Trash2, XCircle } from 'lucide-react';
+import type { MarketQuote, MissingItem, MissingItemType, QuoteNote, QuoteStatus } from '../../types';
 import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, QUOTE_STATUS_ORDER } from '../../types';
 import { Badge, Button, Card, CardBody, EmptyState, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -165,7 +165,7 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
   );
 }
 
-type InlineForm = null | 'submit' | 'quote' | 'decline' | 'request' | 'note';
+type InlineForm = null | 'submit' | 'quote' | 'decline' | 'request' | 'note' | 'edit';
 
 function QuoteCard({
   accountId,
@@ -205,6 +205,13 @@ function QuoteCard({
   const [reqType, setReqType] = useState<MissingItemType>('document');
   const [note, setNote] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // "Edit market": every field of an existing market, prefilled with what's saved.
+  const [edit, setEdit] = useState({ name: '', status: quote.status as QuoteStatus, sent: '', followUp: '', reason: '', premium: '' });
+  const hasOptions = (quote.options?.length ?? 0) > 0;
+  function startEdit() {
+    setEdit({ name: quote.marketName, status: quote.status, sent: quote.submittedAt ?? '', followUp: quote.followUpDate ?? '', reason: quote.declineReason ?? '', premium: quote.premium ? String(quote.premium) : '' });
+    setForm('edit');
+  }
 
   const closed = quote.status === 'declined' || quote.status === 'bound';
   const followUpDue = !closed && quote.followUpDate && quote.followUpDate <= todayKey();
@@ -232,6 +239,18 @@ function QuoteCard({
     if (form === 'quote') addQuoteOption(accountId, quote.id, { label: optionLabel, premium: parsePremium(premium), file: quoteFile ?? undefined });
     if (form === 'decline') updateQuote(accountId, quote.id, { status: 'declined', declineReason: reason.trim() || undefined });
     if (form === 'note') addQuoteNote(accountId, quote.id, note);
+    if (form === 'edit') {
+      if (!edit.name.trim()) return;
+      updateQuote(accountId, quote.id, {
+        marketName: edit.name.trim(),
+        status: edit.status,
+        submittedAt: edit.sent || undefined,
+        followUpDate: edit.followUp || undefined,
+        declineReason: edit.reason.trim() || undefined,
+        // With recorded quotes the premium comes from them (edit each quote below); otherwise it's the market's own.
+        ...(hasOptions ? {} : { premium: parsePremium(edit.premium) }),
+      });
+    }
     if (form === 'request') {
       if (!reqLabel.trim()) return;
       // Only records the request. The client email is drafted when the broker clicks "Request from client".
@@ -306,9 +325,60 @@ function QuoteCard({
                 </option>
               ))}
             </select>
-            <OverflowMenu items={[{ key: 'delete', label: 'Remove market', icon: <Trash2 size={14} />, tone: 'danger', onSelect: () => deleteQuote(accountId, quote.id) }]} />
+            <OverflowMenu
+              items={[
+                { key: 'edit', label: 'Edit market', icon: <Pencil size={14} />, onSelect: startEdit },
+                { key: 'delete', label: 'Remove market', icon: <Trash2 size={14} />, tone: 'danger', onSelect: () => deleteQuote(accountId, quote.id) },
+              ]}
+            />
           </div>
         </div>
+
+        {form === 'edit' && (
+          <form onSubmit={submitInline} className="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-dashed border-[var(--color-ink-200)] p-3 sm:grid-cols-2" aria-label={`Edit ${quote.marketName}`}>
+            <div>
+              <label className={labelClass}>Market / carrier</label>
+              <input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} list="market-name-options" className={inputClass} aria-label="Market name" autoFocus />
+            </div>
+            <div>
+              <label className={labelClass}>Status</label>
+              <select value={edit.status} onChange={(e) => setEdit({ ...edit, status: e.target.value as QuoteStatus })} className={inputClass} aria-label="Edit status">
+                {QUOTE_STATUS_ORDER.map((st) => (
+                  <option key={st} value={st}>
+                    {QUOTE_STATUS_LABELS[st]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Submission sent</label>
+              <input type="date" value={edit.sent} onChange={(e) => setEdit({ ...edit, sent: e.target.value })} className={inputClass} aria-label="Edit date sent" />
+            </div>
+            <div>
+              <label className={labelClass}>Follow up on</label>
+              <input type="date" value={edit.followUp} onChange={(e) => setEdit({ ...edit, followUp: e.target.value })} className={inputClass} aria-label="Edit follow-up date" />
+            </div>
+            {!hasOptions && (
+              <div>
+                <label className={labelClass}>Premium</label>
+                <input value={edit.premium} onChange={(e) => setEdit({ ...edit, premium: e.target.value })} className={inputClass} placeholder="$12,500" inputMode="decimal" aria-label="Edit premium" />
+              </div>
+            )}
+            <div className={hasOptions ? 'sm:col-span-2' : ''}>
+              <label className={labelClass}>Decline reason</label>
+              <input value={edit.reason} onChange={(e) => setEdit({ ...edit, reason: e.target.value })} className={inputClass} placeholder="Only if declined" aria-label="Edit decline reason" />
+            </div>
+            {hasOptions && <p className="text-xs text-[var(--color-ink-500)] sm:col-span-2">Premium and quote date are edited on each quote below.</p>}
+            <div className="flex justify-end gap-2 sm:col-span-2">
+              <Button type="button" size="sm" variant="ghost" onClick={() => setForm(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" size="sm" disabled={!edit.name.trim()}>
+                Save changes
+              </Button>
+            </div>
+          </form>
+        )}
 
         {!collapsed && (
           <>
@@ -350,7 +420,7 @@ function QuoteCard({
           </div>
         )}
 
-        {form && form !== 'note' && (
+        {form && form !== 'note' && form !== 'edit' && (
           <form onSubmit={submitInline} className="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-dashed border-[var(--color-ink-200)] p-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
             {form === 'submit' && (
               <>
@@ -491,10 +561,7 @@ function QuoteCard({
           ) : (
             <ul className="mt-2 flex flex-col gap-1.5">
               {notes.map((n) => (
-                <li key={n.id} className="text-sm">
-                  <span className="mr-2 text-xs text-[var(--color-ink-400)]">{formatTimestampShort(n.createdAt)}</span>
-                  <span className="whitespace-pre-line text-[var(--color-ink-700)]">{n.text}</span>
-                </li>
+                <QuoteNoteRow key={n.id} accountId={accountId} quoteId={quote.id} note={n} />
               ))}
             </ul>
           )}
@@ -528,4 +595,62 @@ function useCollapsedMarkets(accountId: string): [Set<string>, (next: Set<string
     }
   }
   return [collapsed, set];
+}
+
+/** One dated market note — editable in place; the original date stays and the edit is labeled. */
+function QuoteNoteRow({ accountId, quoteId, note }: { accountId: string; quoteId: string; note: QuoteNote }) {
+  const updateQuoteNote = useAccountsStore((s) => s.updateQuoteNote);
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(note.text);
+  if (editing) {
+    return (
+      <li>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            updateQuoteNote(accountId, quoteId, note.id, text);
+            setEditing(false);
+          }}
+          className="flex flex-col gap-2"
+        >
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} className={inputClass} aria-label="Edit note" autoFocus />
+          <div className="flex justify-end gap-2">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={!text.trim()}>
+              Save note
+            </Button>
+          </div>
+        </form>
+      </li>
+    );
+  }
+  return (
+    <li className="group flex items-start gap-2 text-sm">
+      <div className="min-w-0 flex-1">
+        <span className="mr-2 text-xs text-[var(--color-ink-400)]">
+          {formatTimestampShort(note.createdAt)}
+          {note.authorName ? ` · ${note.authorName}` : ''}
+        </span>
+        <span className="whitespace-pre-line text-[var(--color-ink-700)]">{note.text}</span>
+        {note.updatedAt && (
+          <span className="ml-1 text-xs text-[var(--color-ink-400)]">
+            (edited {formatTimestampShort(note.updatedAt)}
+            {note.updatedByName ? ` by ${note.updatedByName}` : ''})
+          </span>
+        )}
+      </div>
+      <button
+        onClick={() => {
+          setText(note.text);
+          setEditing(true);
+        }}
+        className="shrink-0 rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer"
+        aria-label="Edit note"
+      >
+        <Pencil size={12} />
+      </button>
+    </li>
+  );
 }

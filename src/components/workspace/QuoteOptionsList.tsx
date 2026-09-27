@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react';
-import { CheckCircle2, Download, Eye, FileText, Loader2, Paperclip, Trash2 } from 'lucide-react';
+import { CheckCircle2, Download, Eye, FileText, Loader2, Paperclip, Pencil, Trash2 } from 'lucide-react';
 import type { MarketQuote, QuoteOption } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { DocumentPreviewModal, type PreviewableFile } from '../upload/DocumentPreviewModal';
 import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
-import { formatShortDate } from '../../services/workflow/dates';
+import { formatShortDate, normalizeDateKey, parseDateKey } from '../../services/workflow/dates';
+import { Button } from '../ui';
+import { inputClass } from './formStyles';
 import { cn } from '../../utils/cn';
 
 /**
@@ -40,6 +42,9 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
   const fileRef = useRef<HTMLInputElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const updateQuoteOption = useAccountsStore((s) => s.updateQuoteOption);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ label: '', premium: '', date: '' });
   const selected = quote.selectedOptionId === option.id;
   const file = option.attachment ? { id: option.attachment.id, name: option.attachment.name, fileType: option.attachment.fileType, storagePath: option.attachment.storagePath } : null;
 
@@ -51,6 +56,39 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
     setDownloading(false);
     if (blob) saveBlobAs(blob, file.name);
     else setError("File isn't on this device or in your account.");
+  }
+
+  if (editing) {
+    return (
+      <li className="rounded-lg border border-dashed border-[var(--color-ink-200)] px-3 py-2">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const n = Number(draft.premium.replace(/[$,\s]/g, ''));
+            updateQuoteOption(accountId, quote.id, option.id, {
+              label: draft.label,
+              premium: draft.premium.trim() === '' ? null : n,
+              // Midday local time on the chosen date, so it reads as that date in any time zone nearby.
+              receivedAt: draft.date && draft.date !== normalizeDateKey(option.receivedAt) ? new Date(parseDateKey(draft.date)!.setHours(12)).toISOString() : undefined,
+            });
+            setEditing(false);
+          }}
+          className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end"
+        >
+          <input value={draft.premium} onChange={(e) => setDraft({ ...draft, premium: e.target.value })} className={inputClass} placeholder="Premium" inputMode="decimal" aria-label="Quote premium" autoFocus />
+          <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} className={inputClass} placeholder="Name (optional)" aria-label="Quote name" />
+          <input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} className={inputClass} aria-label="Quote date" />
+          <div className="flex gap-1">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm">
+              Save
+            </Button>
+          </div>
+        </form>
+      </li>
+    );
   }
 
   return (
@@ -94,6 +132,16 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
             </button>
           </>
         )}
+        <button
+          onClick={() => {
+            setDraft({ label: option.label ?? '', premium: option.premium ? String(option.premium) : '', date: normalizeDateKey(option.receivedAt) ?? '' });
+            setEditing(true);
+          }}
+          className="rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer"
+          aria-label="Edit quote"
+        >
+          <Pencil size={13} />
+        </button>
         {!selected && (
           <button onClick={() => selectQuoteOption(accountId, quote.id, option.id)} className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-ink-600)] hover:bg-[var(--color-ink-100)] cursor-pointer">
             Select

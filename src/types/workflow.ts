@@ -122,6 +122,11 @@ export interface QuoteNote {
   id: string;
   text: string;
   createdAt: string;
+  /** Who wrote it (absent on notes from before authors were recorded). */
+  authorName?: string;
+  /** Set when the note was edited — the original date stays. */
+  updatedAt?: string;
+  updatedByName?: string;
 }
 
 /** A file attached to a quote (the carrier's quote PDF). Bytes live in this browser's IndexedDB and, for cloud accounts, the private submission-documents bucket — never run through extraction. */
@@ -140,6 +145,7 @@ export interface QuoteOption {
   label?: string;
   premium?: number;
   notes?: string;
+  /** The quote date — when it was received; editable. */
   receivedAt: string;
   attachment?: QuoteAttachment;
 }

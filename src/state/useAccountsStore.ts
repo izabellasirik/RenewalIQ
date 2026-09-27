@@ -61,7 +61,7 @@ import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/do
 import { isSupabaseConfigured } from '../services/supabase/client';
 import type { MyProfile } from '../services/supabase/profileRepo';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
-import { mergeById, mergeNewerFields, noteChangedAt, toMs } from '../services/workflow/mergeCloud';
+import { mergeById, mergeNewerFields, mergeWorkflowList, noteChangedAt, toMs } from '../services/workflow/mergeCloud';
 import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
 import { inferFileType as inferQuoteFileType } from '../utils/documents';
 import { actionDoneKey, type ActionItem } from '../services/workflow/nextActions';
@@ -231,6 +231,10 @@ interface AccountsState {
   addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
   updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason'>>) => void;
   addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
+  /** Edit a dated market note: the original date stays; who edited it and when are recorded. */
+  updateQuoteNote: (accountId: string, quoteId: string, noteId: string, text: string) => void;
+  /** Edit one recorded quote (name, premium, quote date); the market's headline premium follows. */
+  updateQuoteOption: (accountId: string, quoteId: string, optionId: string, patch: { label?: string; premium?: number | null; receivedAt?: string }) => void;
   addFollowUp: (accountId: string, input: { subject: string; dueDate: string; notes?: string }) => string;
   updateFollowUp: (accountId: string, followUpId: string, patch: Partial<Pick<FollowUp, 'subject' | 'dueDate' | 'notes'>>) => void;
   completeFollowUp: (accountId: string, followUpId: string) => void;
@@ -387,6 +391,11 @@ function localFileIds(st: AccountsState, accountId: string): string[] {
   ];
 }
 
+/** The signed-in person's display name, for notes they write or edit. */
+function actorName(s: Pick<AccountsState, 'myProfile' | 'currentUserEmail'>): string {
+  return s.myProfile?.fullName || currentActor?.name || s.currentUserEmail || 'You';
+}
+
 /** " by Jane Smith" (or their email before they've set a name) — who made the change, when a broker is signed in ("by themselves" reads oddly, so self-assignment says so). */
 function actorSuffix(actorEmail: string | null, subjectEmail?: string): string {
   if (!actorEmail) return '';
@@ -479,9 +488,15 @@ export const useAccountsStore = create<AccountsState>()(
           const local = st.accounts.find((a) => a.id === accountId);
           const profile = st.riskProfiles[accountId];
           if (!local || !profile) return {};
+          // Markets & quotes, checklist items and follow-ups: each keeps whichever copy changed last
+          // (a quote edited here isn't lost to someone else's older copy, and vice versa).
+          const merge = <T extends { id: string; createdAt?: string; updatedAt?: string }>(l: T[] | undefined, c: T[]) => mergeWorkflowList(l ?? [], c, seen);
           return {
             riskProfiles: { ...st.riskProfiles, [accountId]: mergeNewerFields(profile, bundle.profile) },
             accounts: st.accounts.map((a) => (a.id === accountId ? { ...a, notes: mergeById(a.notes ?? [], bundle.account.notes ?? [], noteChangedAt) } : a)),
+            ...(bundle.quotes ? { quotes: { ...st.quotes, [accountId]: merge(st.quotes[accountId], bundle.quotes) } } : {}),
+            ...(bundle.missingItems ? { missingItems: { ...st.missingItems, [accountId]: merge(st.missingItems[accountId], bundle.missingItems) } } : {}),
+            ...(bundle.followUps ? { followUps: { ...st.followUps, [accountId]: merge(st.followUps[accountId], bundle.followUps) } } : {}),
             cloudSeenAt: { ...st.cloudSeenAt, [accountId]: cloudAt },
           };
         });
@@ -1750,10 +1765,60 @@ export const useAccountsStore = create<AccountsState>()(
         set((s) => ({
           quotes: {
             ...s.quotes,
-            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, notes: [...q.notes, { id: generateId('note'), text: trimmed, createdAt: now }], updatedAt: now })),
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, notes: [...q.notes, { id: generateId('note'), text: trimmed, createdAt: now, authorName: actorName(s) }], updatedAt: now })),
           },
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(s.activityLog, accountId, 'carrier_note_added', `Note on ${quote.marketName}: ${trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed}`),
+        }));
+        syncNow(accountId);
+      },
+
+      updateQuoteNote: (accountId, quoteId, noteId, text) => {
+        const trimmed = text.trim();
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const note = quote?.notes.find((n) => n.id === noteId);
+        if (!trimmed || !quote || !note || note.text === trimmed) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              notes: q.notes.map((n) => (n.id === noteId ? { ...n, text: trimmed, updatedAt: now, updatedByName: actorName(s) } : n)),
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+        }));
+        syncNow(accountId);
+      },
+
+      updateQuoteOption: (accountId, quoteId, optionId, patch) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        if (!quote || !option) return;
+        const next: QuoteOption = {
+          ...option,
+          ...(patch.label !== undefined ? { label: patch.label.trim() || undefined } : {}),
+          ...(patch.premium !== undefined ? { premium: patch.premium === null || !Number.isFinite(patch.premium) || patch.premium <= 0 ? undefined : patch.premium } : {}),
+          ...(patch.receivedAt ? { receivedAt: patch.receivedAt } : {}),
+        };
+        if (JSON.stringify(next) === JSON.stringify(option)) return;
+        const now = new Date().toISOString();
+        const changes: string[] = [];
+        if (next.premium !== option.premium) changes.push(next.premium ? `premium ${money(next.premium)}` : 'premium cleared');
+        if (next.receivedAt !== option.receivedAt) changes.push(`quote date ${formatShortDate(next.receivedAt)}`);
+        if (next.label !== option.label) changes.push(`name "${next.label ?? 'Quote'}"`);
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => {
+              const updated = { ...q, options: (q.options ?? []).map((o) => (o.id === optionId ? next : o)) };
+              return { ...updated, premium: headlinePremium(updated), updatedAt: now };
+            }),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'quote_status_changed', `Edited ${quote.marketName} ${option.label ?? 'quote'}: ${changes.join(', ')}${actorSuffix(s.currentUserEmail)}.`),
         }));
         syncNow(accountId);
       },

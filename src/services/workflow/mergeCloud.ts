@@ -34,3 +34,15 @@ export function mergeById<T extends { id: string }>(local: T[], cloud: T[], chan
 }
 
 export const noteChangedAt = (n: AccountNote) => toMs(n.updatedAt ?? n.createdAt);
+
+/**
+ * Workflow lists (markets & quotes, checklist items, follow-ups): like mergeById by updatedAt, but
+ * an entry only the cloud has is added back only if it was created after this device last loaded
+ * the account (someone else added it). An older one missing here was deleted here — keep it deleted.
+ */
+export function mergeWorkflowList<T extends { id: string; createdAt?: string; updatedAt?: string }>(local: T[], cloud: T[], seenAt: string | undefined): T[] {
+  const localIds = new Set(local.map((x) => x.id));
+  const seen = toMs(seenAt);
+  const fresh = cloud.filter((c) => localIds.has(c.id) || toMs(c.createdAt) > seen);
+  return mergeById(local, fresh, (x) => toMs(x.updatedAt));
+}

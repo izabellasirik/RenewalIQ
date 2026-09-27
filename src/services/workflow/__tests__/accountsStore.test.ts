@@ -272,3 +272,64 @@ describe('marking a task done', () => {
   });
 });
 
+
+// Regression: markets couldn't be edited after being added (carrier name, a quote's premium/date,
+// decline reason), and notes could only be added — never corrected.
+describe('editing an existing market', () => {
+  it('edits carrier, status, dates and decline reason without losing quotes or notes', () => {
+    const id = store().createAccount('ABC Trucking', 'TX');
+    const q = store().addQuote(id, { marketName: 'Progresive', status: 'submitted', submittedAt: '2026-09-20' });
+    store().addQuoteOption(id, q, { premium: 12000 });
+    store().addQuoteNote(id, q, 'UW wants loss runs');
+    store().updateQuote(id, q, { marketName: 'Progressive', status: 'declined', submittedAt: '2026-09-21', followUpDate: '2026-10-01', declineReason: 'Outside appetite' });
+    const quote = store().quotes[id].find((x) => x.id === q)!;
+    expect(quote).toMatchObject({ marketName: 'Progressive', status: 'declined', submittedAt: '2026-09-21', followUpDate: '2026-10-01', declineReason: 'Outside appetite' });
+    expect(quote.options).toHaveLength(1);
+    expect(quote.notes.map((n) => n.text)).toEqual(['UW wants loss runs']);
+    store().updateQuote(id, q, { declineReason: 'Hazmat exposure' });
+    expect(store().quotes[id].find((x) => x.id === q)!.declineReason).toBe('Hazmat exposure');
+  });
+
+  it("edits a recorded quote's premium and date; the headline premium follows", () => {
+    const id = store().createAccount('ABC Trucking', 'TX');
+    const q = store().addQuote(id, { marketName: 'Canal', status: 'submitted' });
+    const o = store().addQuoteOption(id, q, { label: 'Option A', premium: 18000 });
+    store().updateQuoteOption(id, q, o, { premium: 17250, receivedAt: '2026-09-15T12:00:00.000Z', label: 'Option A2' });
+    const quote = store().quotes[id].find((x) => x.id === q)!;
+    expect(quote.options![0]).toMatchObject({ premium: 17250, receivedAt: '2026-09-15T12:00:00.000Z', label: 'Option A2' });
+    expect(quote.premium).toBe(17250);
+    expect(store().activityLog[id].map((e) => e.message)).toContain('Edited Canal Option A: premium $17,250, quote date Sep 15, name "Option A2".');
+  });
+
+  it('a dated note is editable: text changes, its date stays, the edit is recorded', () => {
+    const id = store().createAccount('ABC Trucking', 'TX');
+    store().setCurrentUserId('u1', 'roman@agency.com');
+    const q = store().addQuote(id, { marketName: 'Canal', status: 'submitted' });
+    store().addQuoteNote(id, q, 'Quote expected Friday');
+    const before = store().quotes[id].find((x) => x.id === q)!.notes[0];
+    expect(before.authorName).toBe('roman@agency.com');
+    store().updateQuoteNote(id, q, before.id, 'Quote expected Monday');
+    const after = store().quotes[id].find((x) => x.id === q)!.notes[0];
+    expect(after).toMatchObject({ id: before.id, text: 'Quote expected Monday', createdAt: before.createdAt, updatedByName: 'roman@agency.com' });
+    expect(after.updatedAt).toBeTruthy();
+  });
+});
+
+describe('merging a newer cloud copy of markets', () => {
+  it('keeps the newest version of each market, keeps local deletes, adds markets others created', async () => {
+    const { mergeWorkflowList } = await import('../mergeCloud');
+    const seen = '2026-09-27T10:00:00.000Z';
+    const local = [
+      { id: 'a', createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-27T11:00:00Z', marketName: 'A edited here' },
+      { id: 'b', createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-26T00:00:00Z', marketName: 'B old' },
+    ];
+    const cloud = [
+      { id: 'a', createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-27T10:30:00Z', marketName: 'A older' },
+      { id: 'b', createdAt: '2026-09-20T00:00:00Z', updatedAt: '2026-09-27T10:45:00Z', marketName: 'B edited elsewhere' },
+      { id: 'c', createdAt: '2026-09-19T00:00:00Z', updatedAt: '2026-09-19T00:00:00Z', marketName: 'C deleted here' },
+      { id: 'd', createdAt: '2026-09-27T10:40:00Z', updatedAt: '2026-09-27T10:40:00Z', marketName: 'D added elsewhere' },
+    ];
+    const names = mergeWorkflowList(local, cloud, seen).map((x) => x.marketName).sort();
+    expect(names).toEqual(['A edited here', 'B edited elsewhere', 'D added elsewhere']);
+  });
+});
