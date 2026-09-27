@@ -9,8 +9,6 @@ export interface RiskFieldConfig {
   section: ProfileSection;
   /** Why this field matters — shown on the Review page for missing fields. */
   hint?: string;
-  /** Only shown (and counted) when another field in the same section has this value — e.g. the provider once "Telematics" is Yes. */
-  showWhen?: { key: string; equals: unknown };
 }
 
 export interface RiskFieldGroup {
@@ -45,6 +43,7 @@ export const RISK_PROFILE_GROUPS: RiskFieldGroup[] = [
       { key: 'descriptionOfOperations', label: 'Description of Operations', type: 'textarea', section: 'business' },
       { key: 'dotNumber', label: 'DOT Number', type: 'text', section: 'transportation' },
       { key: 'mcNumber', label: 'MC Number', type: 'text', section: 'transportation' },
+      { key: 'statesOfOperation', label: 'States of Operation', type: 'list', section: 'transportation' },
       { key: 'operatingRadius', label: 'Operating Radius', type: 'text', section: 'transportation' },
       { key: 'commoditiesHauled', label: 'Commodities Hauled', type: 'list', section: 'transportation' },
     ],
@@ -62,18 +61,10 @@ export const RISK_PROFILE_GROUPS: RiskFieldGroup[] = [
     title: 'Drivers & Safety',
     fields: [
       { key: 'driverCount', label: 'Driver Count', type: 'number', section: 'transportation' },
+      { key: 'minDriverAge', label: 'Minimum Driver Age', type: 'number', section: 'transportation' },
       { key: 'minDriverExperienceYears', label: 'Minimum Driver Experience', type: 'duration', section: 'transportation' },
       { key: 'telematics', label: 'Telematics', type: 'boolean', section: 'transportation' },
-      { key: 'telematicsProvider', label: 'Telematics provider/company', type: 'text', section: 'transportation', showWhen: { key: 'telematics', equals: true } },
       { key: 'dashcams', label: 'Dashcams', type: 'boolean', section: 'transportation', hint: 'Several markets require dashcams — confirm with the account.' },
-      { key: 'dashcamProvider', label: 'Dashcam provider/company', type: 'text', section: 'transportation', showWhen: { key: 'dashcams', equals: true } },
     ],
   },
 ];
-
-/** Whether a field is shown for this profile (see RiskFieldConfig.showWhen). */
-export function isFieldShown(field: RiskFieldConfig, profile: { business: object; transportation: object }): boolean {
-  if (!field.showWhen) return true;
-  const section = profile[field.section] as Record<string, { value?: unknown } | undefined>;
-  return section[field.showWhen.key]?.value === field.showWhen.equals;
-}

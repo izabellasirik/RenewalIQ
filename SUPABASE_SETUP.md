@@ -156,6 +156,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   or archive — no deletes. A row can also be the agency's version of a built-in carrier (or hide
   it). Additive, safe to re-run. Until it's applied, Market Finder uses the built-in carriers only
   and the Carrier Appetite page says the migration is needed.
+- **`supabase/migrations/0024_record_details.sql`** — fixes driver edits disappearing after a
+  refresh or on another device: a `details` jsonb column on drivers, vehicles and losses keeps every
+  field that has no column of its own (license number, class, dates, address, plate…). Additive,
+  safe to re-run. Until it's applied, saving says the migration is needed and those fields stay in
+  the browser only.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -223,6 +228,7 @@ from (values
   ('0021_account_archive',            to_regprocedure('public.can_delete_account(text)') is not null),
   ('0022_assign_own_personal',        exists (select 1 from pg_proc where proname = 'submissions_before_update' and prosrc like '%A personal account%')),
   ('0023_agency_carriers',            to_regclass('public.agency_carriers') is not null),
+  ('0024_record_details',             exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'drivers' and column_name = 'details')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);
