@@ -102,3 +102,10 @@ A8 after delete: row=0 activity=0
 A9 personal account owner can_delete=true
 A9 owner deletes own archived personal account affected=1
 A10 signed out can_delete_account(acct_r1)=false
+G1 assign own personal outside agency denied: The assigned agent is not a member of this agency.
+G2 admin assigns own personal → in agency=true assigned_agentB=true
+G2 agentB now sees it=1
+G3 agent reassign own personal denied: Only an agency admin can reassign an account.
+G3 acct_n2 still personal=true
+G4 other agency admin assigns it affected=0
+G4 acct_d_old2 still personal=true unassigned=true

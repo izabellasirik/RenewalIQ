@@ -145,6 +145,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   policy on `submissions`, and adds `can_delete_account(id)` so the app checks before removing any
   files. Additive, safe to re-run. **Until it's applied, agents can still delete accounts through
   the API** and the app's "Delete permanently" reports that the migration is needed.
+- **`supabase/migrations/0022_assign_own_personal_accounts.sql`** — lets an agency admin assign
+  their own accounts from before the agency existed (they have no agency, so 0011 refused every
+  reassignment with "Only an agency admin can reassign an account."). Assigning one moves it into
+  the admin's agency. Agents still can't reassign; nobody can take another user's personal account.
+  Replaces one trigger function; safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -210,6 +215,7 @@ from (values
   ('0019_intake_documents_fix',       to_regprocedure('public.intake_submission_accepts_documents(text,uuid)') is not null),
   ('0020_account_notes',              exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'account_notes')),
   ('0021_account_archive',            to_regprocedure('public.can_delete_account(text)') is not null),
+  ('0022_assign_own_personal',        exists (select 1 from pg_proc where proname = 'submissions_before_update' and prosrc like '%A personal account%')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

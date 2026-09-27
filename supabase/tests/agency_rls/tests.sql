@@ -230,3 +230,20 @@ with d as (delete from submissions where id = 'acct_n1' returning 1) select 'A9 
 select pg_temp.as_user('');
 select 'A10 signed out can_delete_account(acct_r1)=' || can_delete_account('acct_r1');
 reset role;
+
+\echo '== 0022: an admin assigns their own personal (pre-agency) account'
+insert into submissions (id, user_id, named_insured, organization_id, assigned_user_id) values ('acct_d_old','00000000-0000-0000-0000-00000000000d','Owner Early',null,null), ('acct_d_old2','00000000-0000-0000-0000-00000000000d','Owner Early 2',null,null);
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin update submissions set assigned_user_id = '00000000-0000-0000-0000-00000000000c' where id = 'acct_d_old2'; raise notice 'G1 assign own personal to other-agency user: ALLOWED (BAD)'; exception when others then raise notice 'G1 assign own personal outside agency denied: %', sqlerrm; end $$;
+update submissions set assigned_user_id = '00000000-0000-0000-0000-00000000000b' where id = 'acct_d_old';
+select 'G2 admin assigns own personal → in agency=' || (organization_id = current_agency_id()) || ' assigned_agentB=' || (assigned_user_id = '00000000-0000-0000-0000-00000000000b') from submissions where id = 'acct_d_old';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select 'G2 agentB now sees it=' || count(*) from submissions where id = 'acct_d_old';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+do $$ begin update submissions set assigned_user_id = '00000000-0000-0000-0000-00000000000b' where id = 'acct_n2'; raise notice 'G3 agent reassigns own personal: ALLOWED (BAD)'; exception when others then raise notice 'G3 agent reassign own personal denied: %', sqlerrm; end $$;
+select 'G3 acct_n2 still personal=' || (organization_id is null) from submissions where id = 'acct_n2';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+with u as (update submissions set assigned_user_id = '00000000-0000-0000-0000-00000000000c' where id = 'acct_d_old2' returning 1) select 'G4 other agency admin assigns it affected=' || count(*) from u;
+reset role;
+select 'G4 acct_d_old2 still personal=' || (organization_id is null) || ' unassigned=' || (assigned_user_id is null) from submissions where id = 'acct_d_old2';
