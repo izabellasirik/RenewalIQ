@@ -177,8 +177,12 @@ async function fetchOne(sourceUrl: string, target: string, fallbackName: string,
     const serverReason = serverToken ? ((await res.json().catch(() => null)) as { error?: string } | null)?.error : undefined;
     throw new DocumentLinkError(sourceUrl, serverReason ?? `The link returned HTTP ${res.status}.`);
   }
-  // Through the server, the address the file finally came from is reported in x-final-url.
-  const finalUrl = serverToken ? (res.headers.get('x-final-url') ?? target) : res.url || target;
+  // Through the server, the address the file finally came from is reported in x-final-url. A reply
+  // without it didn't come from api/fetch-document at all (e.g. the app's index.html served for
+  // /api/… by a catch-all rewrite) — say so instead of calling the broker's link a web page.
+  const serverFinalUrl = serverToken ? res.headers.get('x-final-url') : null;
+  if (serverToken && !serverFinalUrl) throw new DocumentLinkError(sourceUrl, 'The document link reader (/api/fetch-document) did not answer — check the deployment serves /api routes.');
+  const finalUrl = serverFinalUrl ?? (res.url || target);
   if (!isFetchableUrl(finalUrl)) throw new DocumentLinkError(sourceUrl, 'The link redirected somewhere that is not allowed.');
   const length = Number(res.headers.get('content-length') ?? 0);
   if (length > MAX_FETCH_BYTES) throw new DocumentLinkError(sourceUrl, 'The linked file is too large.');

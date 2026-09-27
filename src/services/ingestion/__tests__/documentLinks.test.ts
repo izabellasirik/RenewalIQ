@@ -102,6 +102,29 @@ describe('downloading the linked document', () => {
     expect(fetchMock.mock.calls[1][0]).toBe(`/api/fetch-document?url=${encodeURIComponent('https://files.example.com/share/abc')}`);
   });
 
+  // Regression: a catch-all SPA rewrite served index.html for /api/fetch-document, so every link that
+  // needed the server read as "a text/html page, not a document" and Add link never worked.
+  it('signed in: a reply that did not come from the link reader is reported as such, not as the broker\'s link', async () => {
+    session.token = 'tok';
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (!url.startsWith('/api/fetch-document')) throw new TypeError('Failed to fetch');
+      return new Response('<!doctype html><div id="root"></div>', { status: 200, headers: { 'content-type': 'text/html' } });
+    }));
+    const err = await fetchLinkedDocument('https://files.example.com/share/abc', 'link.url').catch((e) => e);
+    expect(err).toBeInstanceOf(DocumentLinkError);
+    expect(err.reason).toMatch(/link reader/);
+  });
+
+  it('vercel.json never rewrites /api routes to the app (the link reader must stay reachable)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const config = JSON.parse(readFileSync(new URL('../../../../vercel.json', import.meta.url), 'utf8')) as { rewrites: { source: string }[] };
+    // Vercel sources are path-to-regexp patterns; these are plain regex groups, anchored the same way.
+    const matches = (path: string) => config.rewrites.some((r) => new RegExp(`^${r.source}$`).test(path));
+    expect(matches('/api/fetch-document')).toBe(false);
+    expect(matches('/intake/abc123')).toBe(true);
+    expect(matches('/accounts/acct_1')).toBe(true);
+  });
+
   it('signed out: nothing is sent to the server', async () => {
     const fetchMock = vi.fn(async () => {
       throw new TypeError('Failed to fetch');
