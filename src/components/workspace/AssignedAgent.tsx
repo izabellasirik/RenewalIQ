@@ -12,6 +12,9 @@ import { cn } from '../../utils/cn';
  * logs it to Activity), an agent sees it read-only, highlighted when it's theirs. Outside an agency
  * it falls back to the display-only "assigned broker" label, as before.
  */
+// Small chevron for the borderless dropdown inside the chip (ink-400).
+const CHEVRON = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
+
 export function AssignedAgent({ account, variant = 'chip' }: { account: Account; variant?: 'chip' | 'plain' }) {
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const members = useAccountsStore((s) => s.agencyMembers);
@@ -37,7 +40,14 @@ export function AssignedAgent({ account, variant = 'chip' }: { account: Account;
       value={account.assignedUserId ?? ''}
       onChange={(e) => void reassign(e.target.value)}
       disabled={busy}
-      className="rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-0.5 text-sm font-medium text-[var(--color-ink-900)] outline-none focus:border-[var(--color-brand-500)] disabled:opacity-60 cursor-pointer"
+      className={cn(
+        'text-sm font-medium text-[var(--color-ink-900)] outline-none disabled:opacity-60 cursor-pointer',
+        // Inside the chip it's just the chip's text (the chip is the box); on its own it gets a border.
+        variant === 'chip'
+          ? '-my-0.5 appearance-none rounded-full bg-transparent py-0.5 pl-1 pr-5 hover:bg-[var(--color-ink-100)] focus-visible:ring-2 focus-visible:ring-[var(--color-brand-500)]/20'
+          : 'rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-0.5 focus:border-[var(--color-brand-500)]'
+      )}
+      style={variant === 'chip' ? { backgroundImage: CHEVRON, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.3rem center', backgroundSize: '0.75rem', fieldSizing: 'content' } as React.CSSProperties : undefined}
       aria-label="Assigned agent"
     >
       <option value="">Unassigned</option>
