@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Search, Info, RotateCcw, X } from 'lucide-react';
+import { ChevronRight, Search, Info, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
@@ -206,6 +207,8 @@ function NeutralMarketList({ records, onOpen }: { records: AppetiteRecord[]; onO
 }
 
 export function MarketFinderPage() {
+  const navigate = useNavigate();
+  const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   const effectiveAppetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const loadEffectiveAppetiteRecords = useAccountsStore((s) => s.loadEffectiveAppetiteRecords);
   useEffect(() => {
@@ -276,7 +279,15 @@ export function MarketFinderPage() {
       */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr] lg:items-start">
         <div className="lg:col-start-2 lg:row-start-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">Market Finder</h1>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">Market Finder</h1>
+            {/* Agency admins maintain the carrier appetite Market Finder matches against (the database enforces who can). */}
+            {isAgencyAdmin && (
+              <Button variant="secondary" icon={<SlidersHorizontal size={15} />} onClick={() => navigate('/market-finder/appetite')}>
+                Manage Appetite
+              </Button>
+            )}
+          </div>
           <p className="mt-2 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
             <Info size={13} className="mt-0.5 shrink-0" />
             Carrier appetite changes frequently. RenewalIQ recommendations are based on the latest information available and should be confirmed with the market before binding.

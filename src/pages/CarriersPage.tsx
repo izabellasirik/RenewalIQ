@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Archive as ArchiveIcon, ArchiveRestore, Building2, Pencil, Plus, Search } from 'lucide-react';
+import { Archive as ArchiveIcon, ArchiveRestore, ArrowLeft, Building2, Pencil, Plus, Search } from 'lucide-react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, ConfirmDialog, Drawer, EmptyState, Tabs } from '../components/ui';
 import { inputClass, labelClass, linkButtonClass } from '../components/workspace/formStyles';
@@ -52,7 +53,9 @@ function summary(r: AppetiteRecord): string {
  * (0023_agency_carriers.sql), this page just doesn't offer it to anyone else.
  */
 export function CarriersPage() {
+  const navigate = useNavigate();
   const access = useAccountsStore((s) => s.agencyAccess);
+  const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
   const records = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const carriers = useAccountsStore((s) => s.agencyCarriers);
   const reload = useAccountsStore((s) => s.reloadCarrierAppetite);
@@ -81,12 +84,9 @@ export function CarriersPage() {
   }, [records, carriers]);
 
   const isAdmin = access?.role === 'admin';
+  // Brokers only see the Market Finder itself; agency data isn't known until roles have loaded.
   if (!access || !isAdmin) {
-    return (
-      <PageContainer title="Carrier Appetite">
-        <EmptyState icon={<Building2 size={26} strokeWidth={1.5} />} title="Only agency admins can change carrier appetite" description="Market Finder already uses your agency's carriers — ask your agency admin to add or update one." />
-      </PageContainer>
-    );
+    return access || cloudHydratedFor ? <Navigate to="/market-finder" replace /> : null;
   }
 
   const q = search.trim().toLowerCase();
@@ -111,12 +111,17 @@ export function CarriersPage() {
 
   return (
     <PageContainer
-      title="Carrier Appetite"
+      title="Manage Carrier Appetite"
       description="Your agency's carriers and what they write. Market Finder matches every account against this list as soon as you save."
       actions={
-        <Button icon={<Plus size={15} />} onClick={() => setEditing('new')}>
-          Add carrier
-        </Button>
+        <>
+          <Button variant="secondary" icon={<ArrowLeft size={15} />} onClick={() => navigate('/market-finder')}>
+            Market Finder
+          </Button>
+          <Button icon={<Plus size={15} />} onClick={() => setEditing('new')}>
+            Add carrier
+          </Button>
+        </>
       }
     >
       {loadError && <p className="rounded-lg border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-3 py-2 text-sm text-[var(--color-danger-700)]">{loadError}</p>}

@@ -52,7 +52,9 @@ export const router = createBrowserRouter([
       { path: '/analytics', element: <AnalyticsComingSoonPage /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },
       { path: '/team', element: <TeamPage /> },
-      { path: '/carriers', element: <CarriersPage /> },
+      // Carrier appetite management lives inside Market Finder (admins reach it from there).
+      { path: '/market-finder/appetite', element: <CarriersPage /> },
+      { path: '/carriers', element: <Navigate to="/market-finder/appetite" replace /> },
       { path: '/accounts/new', element: <NewAccountPage /> },
       { path: '/accounts/:accountId', element: <AccountWorkspacePage /> },
       { path: '/accounts/:accountId/upload', element: <UploadPage /> },
