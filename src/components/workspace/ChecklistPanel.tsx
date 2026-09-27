@@ -287,7 +287,7 @@ function ItemRow({
                   )}
                 </div>
                 <div className="mt-1 flex flex-col gap-0.5 text-xs text-[var(--color-ink-500)]">
-                  {item.instructions && <span className="text-[var(--color-ink-600)]">{item.instructions}</span>}
+                  {item.instructions && <span className="text-[var(--color-ink-600)] first-letter:uppercase">{item.instructions}</span>}
                   {item.status === 'requested' && (
                     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                       Requested{contactName ? ` from ${contactName}` : ''}

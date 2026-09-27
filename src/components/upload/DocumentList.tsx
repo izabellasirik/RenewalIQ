@@ -7,6 +7,7 @@ import { previewDocumentRemovalImpact } from '../../services/extraction';
 import { Badge, ConfirmDialog } from '../ui';
 import { DocumentPreviewModal } from './DocumentPreviewModal';
 import { DocumentExtractionDetail } from './DocumentExtractionDetail';
+import { licenseReadIssue } from '../../services/extraction/licenseReadability';
 
 function fileIcon(doc: UploadedDocument) {
   if (doc.fileType === 'image') return ImageIcon;
@@ -82,11 +83,24 @@ export function DocumentList({
                 <p className="text-xs text-[var(--color-ink-400)]">
                   {DOCUMENT_CATEGORY_LABELS[doc.category]} · {formatSize(doc.sizeBytes)}
                 </p>
-                {doc.warnings && doc.warnings.length > 0 && (
-                  <p className={`mt-1 flex items-start gap-1 text-xs ${doc.status === 'error' ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-warning-600)]'}`}>
-                    <TriangleAlert size={12} className="mt-0.5 shrink-0" />
-                    {doc.warnings.join(' ')}
-                  </p>
+                {licenseReadIssue(doc) ? (
+                  // An unreadable license: what's wrong and what happens next — never blank fields without a word.
+                  <div className="mt-1.5 rounded-md border border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/40 px-2.5 py-1.5 text-xs text-[var(--color-ink-700)]">
+                    <p className="flex items-center gap-1 font-semibold text-[var(--color-warning-600)]">
+                      <TriangleAlert size={12} className="shrink-0" />
+                      {licenseReadIssue(doc)!.title}
+                    </p>
+                    {licenseReadIssue(doc)!.reason && <p className="mt-0.5">Reason: {licenseReadIssue(doc)!.reason}</p>}
+                    <p className="mt-0.5 text-[var(--color-ink-500)]">Nothing was guessed from it. “Clearer driver license” is on the checklist — request it from the client there.</p>
+                  </div>
+                ) : (
+                  doc.warnings &&
+                  doc.warnings.length > 0 && (
+                    <p className={`mt-1 flex items-start gap-1 text-xs ${doc.status === 'error' ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-warning-600)]'}`}>
+                      <TriangleAlert size={12} className="mt-0.5 shrink-0" />
+                      {doc.warnings.join(' ')}
+                    </p>
+                  )
                 )}
                 {doc.sourceUrl && (
                   <p className="mt-0.5 truncate text-xs text-[var(--color-ink-400)]" title={doc.sourceUrl}>

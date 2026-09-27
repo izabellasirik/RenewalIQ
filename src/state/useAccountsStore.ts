@@ -52,6 +52,7 @@ import { matchAllMarkets } from '../services/appetite';
 import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
 import { fetchAppetiteOverrides } from '../services/appetiteUpdates/appetiteUpdateService';
 import { sampleAppetiteRecords } from '../data/carriers';
+import { licenseReadReasons, licenseWarnings } from '../services/extraction/licenseReadability';
 import { layerAgencyCarriers, type AgencyCarrier } from '../services/appetite/agencyCarriers';
 import { fetchAgencyCarriers } from '../services/supabase/carriersRepo';
 import { sampleAccount } from '../data/sampleAccounts';
@@ -217,7 +218,7 @@ interface AccountsState {
   updateContact: (accountId: string, contactId: string, patch: Partial<Omit<Contact, 'id'>>) => void;
   deleteContact: (accountId: string, contactId: string) => void;
   addMissingItems: (accountId: string, seeds: MissingItemSeed[]) => string[];
-  updateMissingItem: (accountId: string, itemId: string, patch: Partial<Pick<MissingItem, 'label' | 'type' | 'notes' | 'followUpDate' | 'documentId'>>) => void;
+  updateMissingItem: (accountId: string, itemId: string, patch: Partial<Pick<MissingItem, 'label' | 'type' | 'notes' | 'instructions' | 'followUpDate' | 'documentId'>>) => void;
   /** The broker sent the client a request (the email itself is sent outside Renewal IQ). */
   /** `requestedOn` (YYYY-MM-DD) records when the request went out when it wasn't today; `instructions` updates the client-facing note. */
   markItemsRequested: (accountId: string, itemIds: string[], opts: { contactId?: string; followUpDate?: string; requestedOn?: string; instructions?: string }) => void;
@@ -631,6 +632,17 @@ export const useAccountsStore = create<AccountsState>()(
         if (attachment.storagePath && isSupabaseConfigured && get().currentUserId) void cloudRepo.deleteDocumentFile(attachment.storagePath);
       }
 
+      /** An unreadable driver license → "Clearer driver license — <who>" on the checklist, saying why, for the normal client request. */
+      function requestClearerLicense(accountId: string, docName: string, reasons: string[], driverName: string | null): void {
+        const who = driverName?.trim() || docName;
+        const [itemId] = get().addMissingItems(accountId, [{ label: `Clearer driver license — ${who}`, type: 'document', newCopyOfReceived: true }]);
+        if (!itemId) return;
+        get().updateMissingItem(accountId, itemId, {
+          instructions: `the copy we have couldn't be read clearly (${reasons.join('; ')}) — please send a clear, well-lit photo of the front`,
+          notes: `Needed because ${docName} could not be read clearly.`,
+        });
+      }
+
       async function syncDocumentToCloud(accountId: string, documentId: string, file: File) {
         const s = get();
         if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
@@ -826,6 +838,11 @@ export const useAccountsStore = create<AccountsState>()(
               // the primary source — only surfaced when OCR is what the final result actually rests on.
               const warnings = isImageSource && visionResult && fieldsExtracted > 0 ? [] : raw.warnings;
               const contentCategory = documentCategory ?? (isImageSource && raw.text ? inferCategoryFromText(raw.text) : null);
+              // A driver's license that couldn't be read well enough: say why (never guess the values)
+              // and, below, put "Clearer driver license" on the checklist for the normal client request.
+              const licenseDriver = results.find((r) => r.fieldPath === 'drivers')?.value as (Record<string, unknown> & { fieldConfidence?: Partial<Record<string, string>> }) | undefined;
+              const licenseReasons = licenseReadReasons({ category: contentCategory ?? doc.category, readFailed, driver: licenseDriver });
+              const docWarnings = licenseReasons.length ? [...licenseWarnings(licenseReasons), ...warnings] : warnings;
 
               if (import.meta.env.DEV) {
                 // Counts and metadata only — never the OCR'd/vision text or any extracted field
@@ -853,7 +870,7 @@ export const useAccountsStore = create<AccountsState>()(
                         ...d,
                         status: readFailed ? ('error' as const) : ('processed' as const),
                         fieldsExtracted,
-                        warnings: warnings.length > 0 ? warnings : undefined,
+                        warnings: docWarnings.length > 0 ? docWarnings : undefined,
                         previewDataUrl: raw.imagePreviewDataUrl,
                         category: contentCategory ?? d.category,
                         extractedFields: results.map((r) => ({ fieldPath: r.fieldPath, value: r.value, confidence: r.confidence, extractionMethod: r.extractionMethod })),
@@ -877,6 +894,7 @@ export const useAccountsStore = create<AccountsState>()(
                   ),
                 };
               });
+              if (licenseReasons.length) requestClearerLicense(accountId, doc.name, licenseReasons, typeof licenseDriver?.name === 'string' ? licenseDriver.name : null);
               get().runMatching(accountId);
               // A link was downloaded: keep the real document (for preview and the cloud copy), not the shortcut.
               if (raw.linkedFile) void saveLocalFile(doc.id, raw.linkedFile, raw.linkedFile.name);
@@ -886,13 +904,18 @@ export const useAccountsStore = create<AccountsState>()(
               const message = err instanceof Error ? err.message : 'Could not process this file.';
               // A link that couldn't be opened: say so plainly and keep the URL — nothing is extracted.
               const sourceUrl = err instanceof DocumentLinkError ? err.sourceUrl : undefined;
+              // A license photo that couldn't be processed at all still gets the "clearer copy" path.
+              const licenseReasons = sourceUrl ? [] : licenseReadReasons({ category: doc.category, readFailed: true });
               set((s) => ({
                 documents: {
                   ...s.documents,
-                  [accountId]: (s.documents[accountId] ?? []).map((d) => (d.id === doc.id ? { ...d, status: 'error' as const, warnings: [message], ...(sourceUrl ? { sourceUrl } : {}) } : d)),
+                  [accountId]: (s.documents[accountId] ?? []).map((d) =>
+                    d.id === doc.id ? { ...d, status: 'error' as const, warnings: [...licenseWarnings(licenseReasons), message], ...(sourceUrl ? { sourceUrl } : {}) } : d
+                  ),
                 },
                 activityLog: appendEvent(s.activityLog, accountId, 'document_processed', sourceUrl ? `Could not access the document linked in ${doc.name}.` : `Could not read ${doc.name}.`),
               }));
+              if (licenseReasons.length) requestClearerLicense(accountId, doc.name, licenseReasons, null);
               syncDocumentToCloud(accountId, doc.id, file);
             });
         });

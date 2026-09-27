@@ -19,6 +19,8 @@ export function inferCategory(fileName: string): DocumentCategory {
   const n = fileName.toLowerCase();
   if (n.includes('loss')) return 'loss_run';
   if (n.includes('vehicle')) return 'vehicle_schedule';
+  // "John_Smith_drivers_license.jpg" is one license, not a driver schedule/list.
+  if (/licen[cs]e/.test(n) && !/schedule|list|roster/.test(n)) return 'driver_license';
   if (n.includes('driver')) return 'driver_schedule';
   if (n.includes('application') || n.includes('acord')) return 'application';
   if (n.includes('financ')) return 'financials';
