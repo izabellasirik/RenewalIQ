@@ -1,7 +1,7 @@
 import { supabase } from './client';
+import { driverFromRow, driverToRow, lossFromRow, lossToRow, vehicleFromRow, vehicleToRow, withoutDetails } from './recordRows';
 import type { Account, AccountNote, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
-import { isDuration, toMonths } from '../../utils/duration';
 import { createEmptyRiskProfile } from '../extraction/emptyRiskProfile';
 
 export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
@@ -282,50 +282,10 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
           requestedLimit: coverageLimits[c.coverage_type]?.requestedLimit ?? emptyField<string>(),
         }));
 
-      const vehicles: VehicleEntry[] = (vehRes.data ?? [])
-        .filter((v) => v.submission_id === sub.id)
-        .map((v) => ({
-          id: v.id,
-          vin: v.vin ?? undefined,
-          make: v.make ?? undefined,
-          model: v.model ?? undefined,
-          year: v.year ?? undefined,
-          value: v.value ?? undefined,
-          bodyType: v.body_type ?? undefined,
-          isManual: v.is_manual,
-          lastUpdatedAt: v.last_updated_at ?? undefined,
-          source: v.source_document_id ? { documentId: v.source_document_id, documentName: '', page: v.source_page ?? undefined, excerpt: v.source_excerpt ?? undefined } : undefined,
-        }));
-
-      const drivers: DriverEntry[] = (drvRes.data ?? [])
-        .filter((d) => d.submission_id === sub.id)
-        .map((d) => ({
-          id: d.id,
-          name: d.name ?? undefined,
-          dob: d.dob ?? undefined,
-          licenseState: d.license_state ?? undefined,
-          // 0010's experience_months (exact) when present; otherwise the legacy whole-years int.
-          yearsExperience: d.experience_months != null ? (d.experience_or_more ? { months: d.experience_months, orMore: true } : { months: d.experience_months }) : (d.years_experience ?? undefined),
-          violations: d.violations ?? undefined,
-          isManual: d.is_manual,
-          lastUpdatedAt: d.last_updated_at ?? undefined,
-          source: d.source_document_id ? { documentId: d.source_document_id, documentName: '', page: d.source_page ?? undefined, excerpt: d.source_excerpt ?? undefined } : undefined,
-        }));
-
-      const lossHistory: LossEntry[] = (lossRes.data ?? [])
-        .filter((l) => l.submission_id === sub.id)
-        .map((l) => ({
-          id: l.id,
-          lossDate: l.loss_date,
-          claimType: l.claim_type,
-          paid: Number(l.paid),
-          reserved: Number(l.reserved),
-          incurred: Number(l.incurred),
-          status: l.status,
-          isManual: l.is_manual,
-          lastUpdatedAt: l.last_updated_at ?? undefined,
-          source: l.source_document_id ? { documentId: l.source_document_id, documentName: '', page: l.source_page ?? undefined, excerpt: l.source_excerpt ?? undefined } : undefined,
-        }));
+      // Every field — including ones without their own column — comes back via recordRows (0024 `details`).
+      const vehicles: VehicleEntry[] = (vehRes.data ?? []).filter((v) => v.submission_id === sub.id).map(vehicleFromRow);
+      const drivers: DriverEntry[] = (drvRes.data ?? []).filter((d) => d.submission_id === sub.id).map(driverFromRow);
+      const lossHistory: LossEntry[] = (lossRes.data ?? []).filter((l) => l.submission_id === sub.id).map(lossFromRow);
 
       const documents: UploadedDocument[] = (docRes.data ?? [])
         .filter((d) => d.submission_id === sub.id)
@@ -468,6 +428,7 @@ export async function saveSubmissionSnapshot(
 
     const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
     let driverMonthsNotSaved = false;
+    let detailsNotSaved = false;
     // field_alternates are only writable once their parent field_values row exists (their RLS
     // check looks the parent up), so they go in right after it — never in parallel with it, which
     // intermittently failed with a row-level-security error when the child request won the race.
@@ -485,82 +446,26 @@ export async function saveSubmissionSnapshot(
         supabase.from('coverage_lines').insert(profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type })))
       );
     }
-    if (profile.vehicles.length) {
-      inserts.push(
-        supabase.from('vehicles').insert(
-          profile.vehicles.map((v) => ({
-            id: v.id,
-            submission_id: account.id,
-            user_id: userId,
-            vin: v.vin ?? null,
-            make: v.make ?? null,
-            model: v.model ?? null,
-            year: v.year ?? null,
-            value: v.value ?? null,
-            body_type: v.bodyType ?? null,
-            is_manual: !!v.isManual,
-            source_document_id: v.source?.documentId ?? null,
-            source_page: v.source?.page ?? null,
-            source_excerpt: v.source?.excerpt ?? null,
-            last_updated_at: v.lastUpdatedAt ?? null,
-          }))
-        )
-      );
-    }
-    if (profile.drivers.length) {
-      const driverRows = profile.drivers.map((d) => {
-        const months = toMonths(d.yearsExperience);
-        return {
-          id: d.id,
-          submission_id: account.id,
-          user_id: userId,
-          name: d.name ?? null,
-          dob: d.dob ?? null,
-          license_state: d.licenseState ?? null,
-          // int column: whole years for older readers; the exact months go in 0010's columns.
-          years_experience: months === null ? null : Math.floor(months / 12),
-          experience_months: months,
-          experience_or_more: months === null ? null : isDuration(d.yearsExperience) ? !!d.yearsExperience.orMore : false,
-          violations: d.violations ?? null,
-          is_manual: !!d.isManual,
-          source_document_id: d.source?.documentId ?? null,
-          source_page: d.source?.page ?? null,
-          source_excerpt: d.source?.excerpt ?? null,
-          last_updated_at: d.lastUpdatedAt ?? null,
-        };
-      });
-      inserts.push(
-        (async () => {
-          const res = await supabase.from('drivers').insert(driverRows);
-          if (!res.error || !isMissingColumnError(res.error, ['experience_months', 'experience_or_more'])) return res;
+    // Inserts a table's rows with every field; if 0024's `details` column isn't there yet, saves the
+    // columns it does have and says the rest wasn't kept (instead of failing the whole save).
+    const insertRows = (table: 'vehicles' | 'drivers' | 'losses', rows: Record<string, unknown>[]) =>
+      (async () => {
+        let res = await supabase!.from(table).insert(rows);
+        if (res.error && isMissingColumnError(res.error, ['details'])) {
+          detailsNotSaved = true;
+          rows = rows.map(withoutDetails);
+          res = await supabase!.from(table).insert(rows);
+        }
+        if (res.error && table === 'drivers' && isMissingColumnError(res.error, ['experience_months', 'experience_or_more'])) {
           // 0010 not applied: save whole years like before, and say months weren't kept.
           driverMonthsNotSaved = true;
-          return supabase.from('drivers').insert(driverRows.map(({ experience_months: _m, experience_or_more: _o, ...rest }) => rest));
-        })()
-      );
-    }
-    if (profile.lossHistory.length) {
-      inserts.push(
-        supabase.from('losses').insert(
-          profile.lossHistory.map((l) => ({
-            id: l.id,
-            submission_id: account.id,
-            user_id: userId,
-            loss_date: l.lossDate,
-            claim_type: l.claimType,
-            paid: l.paid,
-            reserved: l.reserved,
-            incurred: l.incurred,
-            status: l.status,
-            is_manual: !!l.isManual,
-            source_document_id: l.source?.documentId ?? null,
-            source_page: l.source?.page ?? null,
-            source_excerpt: l.source?.excerpt ?? null,
-            last_updated_at: l.lastUpdatedAt ?? null,
-          }))
-        )
-      );
-    }
+          res = await supabase!.from(table).insert(rows.map(({ experience_months: _m, experience_or_more: _o, ...rest }) => rest));
+        }
+        return res;
+      })();
+    if (profile.vehicles.length) inserts.push(insertRows('vehicles', profile.vehicles.map((v) => vehicleToRow(v, account.id, userId))));
+    if (profile.drivers.length) inserts.push(insertRows('drivers', profile.drivers.map((d) => driverToRow(d, account.id, userId))));
+    if (profile.lossHistory.length) inserts.push(insertRows('losses', profile.lossHistory.map((l) => lossToRow(l, account.id, userId))));
 
     const insRes = await Promise.all(inserts);
     const insErr = insRes.find((r) => r.error);
@@ -568,6 +473,7 @@ export async function saveSubmissionSnapshot(
     coreSaved = true;
 
     if (notSavedMessage) return { ...fail(notSavedMessage), headerSaved, coreSaved };
+    if (detailsNotSaved) return { ...fail('Some driver, vehicle and loss details were not saved — the database needs migration 0024_record_details.sql.'), headerSaved, coreSaved };
     if (driverMonthsNotSaved) return { ...fail('Driver experience was saved as whole years only — the database needs migration 0010_driver_experience_months.sql to keep months.'), headerSaved, coreSaved };
     return { ok: true, data: undefined, headerSaved, coreSaved };
   } catch (err) {
