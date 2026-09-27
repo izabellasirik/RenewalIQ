@@ -212,7 +212,7 @@ function CopyLinkButton({ token }: { token: string }) {
         }
       }}
     >
-      {copied ? 'Copied' : 'Copy link'}
+      {copied ? 'Copied' : 'Copy invite link'}
     </Button>
   );
 }

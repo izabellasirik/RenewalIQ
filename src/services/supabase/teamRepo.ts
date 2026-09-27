@@ -134,7 +134,7 @@ export async function removeMember(userId: string, reassignTo: string | null): P
 export type InvitationEmailResult = { status: 'sent' } | { status: 'notConfigured'; message: string } | { status: 'failed'; message: string };
 
 export async function sendInvitationEmail(invitationId: string): Promise<InvitationEmailResult> {
-  const notConfigured: InvitationEmailResult = { status: 'notConfigured', message: 'Invitation emails aren’t set up for this app yet — copy the link and send it yourself.' };
+  const notConfigured: InvitationEmailResult = { status: 'notConfigured', message: 'Invitation emails aren’t set up for this app yet. Copy the invitation link and send it to the new user.' };
   if (!supabase) return notConfigured;
   let token: string | undefined;
   try {
@@ -147,7 +147,7 @@ export async function sendInvitationEmail(invitationId: string): Promise<Invitat
   try {
     res = await fetch('/api/send-invitation', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ invitationId }) });
   } catch {
-    return { status: 'failed', message: 'Could not reach the email service — copy the link and send it yourself.' };
+    return { status: 'failed', message: 'Could not reach the email service. Copy the invitation link and send it to the new user.' };
   }
   // Anything that isn't the server's own JSON answer (e.g. the app page itself, where the server
   // isn't deployed) means no email went out.
@@ -155,7 +155,7 @@ export async function sendInvitationEmail(invitationId: string): Promise<Invitat
   if (!body) return notConfigured;
   if (res.ok && body.sent === true) return { status: 'sent' };
   if (body.notConfigured) return notConfigured;
-  return { status: 'failed', message: body.error ?? 'The invitation email could not be sent — copy the link and send it yourself.' };
+  return { status: 'failed', message: body.error ?? 'The invitation email could not be sent. Copy the invitation link and send it to the new user.' };
 }
 
 /** What an invitation link is for — callable signed out. null = no such invitation. */

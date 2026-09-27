@@ -334,7 +334,7 @@ Supabase sends the sign-up confirmation and password-reset emails (section 6). *
 emails are sent by Renewal IQ's own server** (`api/send-invitation.ts`) through
 [Resend](https://resend.com), because Supabase's built-in email can't send a custom invitation to
 join an existing agency. Until it's configured, creating an invitation says *"Invitation emails
-aren't set up for this app yet — copy the link and send it yourself"*; the link and **Copy link**
+aren't set up for this app yet. Copy the invitation link and send it to the new user."*; the link and **Copy invite link**
 always work, and the app never says an email was sent unless Resend accepted it.
 
 To turn it on:

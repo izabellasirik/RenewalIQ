@@ -80,10 +80,10 @@ export async function POST(request: Request): Promise<Response> {
     });
     if (!sendRes.ok) {
       const detail = ((await sendRes.json().catch(() => null)) as { message?: string } | null)?.message;
-      return json(502, { error: `The email service refused the message${detail ? `: ${detail}` : ''}. Copy the link and send it yourself.` });
+      return json(502, { error: `The email service refused the message${detail ? `: ${detail}` : ''}. Copy the invitation link and send it to the new user.` });
     }
     return json(200, { sent: true });
   } catch {
-    return json(502, { error: 'The invitation email could not be sent — copy the link and send it yourself.' });
+    return json(502, { error: 'The invitation email could not be sent. Copy the invitation link and send it to the new user.' });
   }
 }
