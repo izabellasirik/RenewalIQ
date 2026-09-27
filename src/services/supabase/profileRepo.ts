@@ -79,3 +79,25 @@ export async function saveMyProfile(input: MyProfile): Promise<RepoResult<MyProf
     return { ok: false, message: err instanceof Error ? err.message : 'Could not save your profile.' };
   }
 }
+
+/** The agency name the broker shows on new submission links, kept in their Auth user metadata so it's filled in on every device. */
+export async function fetchIntakeAgencyName(): Promise<string> {
+  if (!supabase) return '';
+  try {
+    const { data } = await supabase.auth.getUser();
+    return clean((data.user?.user_metadata as Record<string, unknown> | undefined)?.intake_agency_name);
+  } catch {
+    return '';
+  }
+}
+
+export async function saveIntakeAgencyName(name: string): Promise<RepoResult> {
+  if (!supabase) return { ok: false, message: 'Cloud sync is not configured in this environment.' };
+  try {
+    const { error } = await supabase.auth.updateUser({ data: { intake_agency_name: name.trim() || null } });
+    if (error) return { ok: false, message: error.message };
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'Could not save the agency name.' };
+  }
+}

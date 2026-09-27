@@ -13,6 +13,7 @@ import { inferFileType } from '../utils/documents';
 import { importIntakeSubmission } from '../services/intake/importIntakeSubmission';
 import { findLikelyDuplicateAccount, type DuplicateMatch } from '../services/intake/duplicateDetection';
 import { useAccountsStore } from '../state/useAccountsStore';
+import { fetchIntakeAgencyName, saveIntakeAgencyName } from '../services/supabase/profileRepo';
 import { formatDate } from '../utils/dates';
 
 const inputClass =
@@ -72,9 +73,39 @@ function LinksSection({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState('');
-  // The agency name clients see on the form — pre-filled from the most recent link that has one.
+  // The agency name clients see on the form — pre-filled from the broker's saved default, else the
+  // most recent link that has one, else their agency's name.
   const [orgName, setOrgName] = useState('');
   const [orgNameTouched, setOrgNameTouched] = useState(false);
+  const [savedOrgName, setSavedOrgName] = useState<string | null>(null);
+  const [savingOrgName, setSavingOrgName] = useState(false);
+  const [orgNameNote, setOrgNameNote] = useState<string | null>(null);
+  const agencyName = useAccountsStore((s) => s.agencyAccess?.agencyName ?? null);
+
+  useEffect(() => {
+    fetchIntakeAgencyName().then((saved) => {
+      setSavedOrgName(saved);
+      if (saved) setOrgName((cur) => cur || saved);
+    });
+  }, []);
+  useEffect(() => {
+    if (agencyName && savedOrgName !== null && !savedOrgName) setOrgName((cur) => cur || agencyName);
+  }, [agencyName, savedOrgName]);
+
+  async function rememberOrgName(name: string) {
+    const trimmed = name.trim();
+    if (trimmed === (savedOrgName ?? '')) return true;
+    const res = await saveIntakeAgencyName(trimmed);
+    if (res.ok) setSavedOrgName(trimmed);
+    return res.ok;
+  }
+
+  async function handleSaveOrgName() {
+    setSavingOrgName(true);
+    const ok = await rememberOrgName(orgName);
+    setSavingOrgName(false);
+    setOrgNameNote(ok ? 'Saved — new links will use this name.' : "Couldn't save the agency name — try again.");
+  }
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -111,6 +142,8 @@ function LinksSection({ userId }: { userId: string }) {
     }
     setLabel('');
     setOrgNameTouched(false);
+    // The name used for a link becomes the default for the next one.
+    if (orgName.trim()) void rememberOrgName(orgName);
     load();
   }
 
@@ -134,6 +167,7 @@ function LinksSection({ userId }: { userId: string }) {
             onChange={(e) => {
               setOrgName(e.target.value);
               setOrgNameTouched(true);
+              setOrgNameNote(null);
             }}
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
           />
@@ -143,6 +177,16 @@ function LinksSection({ userId }: { userId: string }) {
         </Button>
       </div>
       {!orgName.trim() && !orgNameTouched && <p className="-mt-2 text-xs text-[var(--color-ink-400)]">Without an agency name, the form says “your insurance broker”.</p>}
+      {savedOrgName !== null && orgName.trim() && orgName.trim() !== savedOrgName ? (
+        <p className="-mt-2 text-xs text-[var(--color-ink-500)]">
+          <button onClick={handleSaveOrgName} disabled={savingOrgName} className="font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60 cursor-pointer">
+            {savingOrgName ? 'Saving…' : 'Save as default'}
+          </button>{' '}
+          so you don't have to type it next time.
+        </p>
+      ) : (
+        orgNameNote && <p className="-mt-2 text-xs text-[var(--color-ink-500)]">{orgNameNote}</p>
+      )}
       {createError && <p className="text-xs text-[var(--color-danger-600)]">{createError}</p>}
       {loading ? (
         <Skeleton variant="block" className="h-16 w-full" />
