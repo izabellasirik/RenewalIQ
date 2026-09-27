@@ -121,3 +121,23 @@ C7 other agency admin sees=0
 C7 other agency admin update affected=0
 C8 newbie (agent) sees=2
 C9 names intact: Blue Ridge Mutual,Built-in edited
+K0 roman sees acct_r2 before=0
+K1 roman (collaborator) sees acct_r2=1 children=0
+K1 roman notified: assigned:You were assigned to Roman Freight,collaborator_added:You were added as a collaborator on Roman Freight
+K2 collaborator edits account affected=1
+K2 collaborator adds collaborator denied: Only an agency admin or the assigned broker can change collaborators.
+K2 collaborator reassign denied: Only an agency admin can reassign an account.
+K2 collaborator deletes affected=0
+K3 primary broker adds newbie: 2
+K4 other-agency collaborator denied: A collaborator must be a member of this agency.
+K4 agentB reads roman's notifications=0
+K5 roman marks own read=3
+K5 message unchanged after edit attempt=true
+K5 forge notification denied
+K6 original stays roman (first assignee) after two reassignments: true now newbie=true
+K6 newbie notified of assignment: You were assigned to Roman New (by Denis)
+K7 other agency admin sees anyone else's notifications=0
+K7 other agency admin sees acct_r2=0
+K8 agent sees teammate names (own agency only): agent,admin,admin,agent,agent count=5
+K8 other agency admin sees Agency names=0
+K8 signed out sees names=0

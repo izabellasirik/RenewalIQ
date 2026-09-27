@@ -124,6 +124,8 @@ interface AccountsState {
   agencyMembers: cloudRepo.AgencyMember[];
   /** Admin only: gives an account to another agent in the agency (null = unassigned). The database rejects it for anyone else. */
   assignAccountToAgent: (accountId: string, userId: string | null) => Promise<{ ok: true } | { ok: false; message: string }>;
+  /** Replace the account's collaborators (agency admin or its primary broker — the database decides); logs who was added/removed. */
+  setCollaborators: (accountId: string, userIds: string[]) => Promise<{ ok: true } | { ok: false; message: string }>;
   /** The signed-in user whose cloud accounts have finished loading this session (ephemeral) — until then a cloud account's local copy may be stale. */
   cloudHydratedFor: string | null;
   /**
@@ -2370,6 +2372,34 @@ export const useAccountsStore = create<AccountsState>()(
           activityLog: appendEvent(st.activityLog, accountId, 'item_added', 'Started the submission checklist.'),
         }));
         syncNow(accountId);
+      },
+
+      setCollaborators: async (accountId, userIds) => {
+        const s = get();
+        const account = s.accounts.find((a) => a.id === accountId);
+        if (!account || !isSupabaseConfigured || !s.currentUserId) return { ok: false, message: 'Collaborators are for accounts saved to your agency.' };
+        const before = account.collaboratorIds ?? [];
+        const next = [...new Set(userIds.filter((id) => id && id !== account.assignedUserId))];
+        const added = next.filter((id) => !before.includes(id));
+        const removed = before.filter((id) => !next.includes(id));
+        if (added.length === 0 && removed.length === 0) return { ok: true };
+        const res = await cloudRepo.setSubmissionCollaborators(accountId, next);
+        if (!res.ok) return res;
+        const nameOf = (id: string) => get().agencyMembers.find((m) => m.userId === id)?.name ?? 'a team member';
+        set((st) => {
+          let log = st.activityLog;
+          for (const id of added) log = appendEvent(log, accountId, 'broker_assigned', `Added ${nameOf(id)} as a collaborator${actorSuffix(st.currentUserEmail)}.`);
+          for (const id of removed) log = appendEvent(log, accountId, 'broker_assigned', `Removed ${nameOf(id)} as a collaborator${actorSuffix(st.currentUserEmail)}.`);
+          return {
+            accounts: touchAccount(
+              st.accounts.map((a) => (a.id === accountId ? { ...a, collaboratorIds: next } : a)),
+              accountId
+            ),
+            activityLog: log,
+          };
+        });
+        syncNow(accountId);
+        return { ok: true };
       },
 
       assignAccountToAgent: async (accountId, userId) => {

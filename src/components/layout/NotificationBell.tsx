@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, Inbox } from 'lucide-react';
+import { Bell, Inbox, UserPlus } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { fetchIntakeLinks, fetchIntakeSubmissions } from '../../services/supabase/intakeRepo';
+import { fetchNotifications, markNotificationsRead, type AppNotification } from '../../services/supabase/submissionsRepo';
 import type { IntakeSubmission } from '../../types';
 import { relativeTime } from '../../utils/dates';
 import { cn } from '../../utils/cn';
@@ -20,7 +21,8 @@ function readSeen(userId: string): string {
 }
 
 /**
- * Notifications: every submission that came in through one of the broker's intake links and hasn't
+ * Notifications: accounts assigned to you / that you were added to as a collaborator (0026 — written
+ * by the database, unread until opened), and every submission that came in through one of the broker's intake links and hasn't
  * been imported or dismissed yet. The red count is the ones that arrived since the bell was last
  * opened (remembered in this browser); each one opens Submission Intake to review and import it.
  */
@@ -30,6 +32,7 @@ export function NotificationBell() {
   const { pathname } = useLocation();
   const userId = session.status === 'signed_in' ? session.userId : null;
   const [pending, setPending] = useState<IntakeSubmission[]>([]);
+  const [team, setTeam] = useState<AppNotification[]>([]);
   const setPendingIntakeCount = useAccountsStore((s) => s.setPendingIntakeCount);
   const [linkNames, setLinkNames] = useState<Record<string, string>>({});
   const [seen, setSeen] = useState('');
@@ -40,7 +43,8 @@ export function NotificationBell() {
 
   const load = useCallback(async () => {
     if (!userId) return;
-    const [subs, links] = await Promise.all([fetchIntakeSubmissions(userId), fetchIntakeLinks(userId)]);
+    const [subs, links, notes] = await Promise.all([fetchIntakeSubmissions(userId), fetchIntakeLinks(userId), fetchNotifications()]);
+    if (notes.ok) setTeam(notes.data);
     if (subs.ok) {
       const open = subs.data.filter((s) => s.status === 'pending');
       setPending(open);
@@ -76,7 +80,28 @@ export function NotificationBell() {
 
   if (!userId) return null;
 
-  const unread = pending.filter((s) => s.createdAt > seen).length;
+  const unreadTeam = team.filter((n) => !n.readAt);
+  const unread = pending.filter((s) => s.createdAt > seen).length + unreadTeam.length;
+
+  async function openAccount(n: AppNotification) {
+    setOpen(false);
+    if (!n.readAt) {
+      setTeam((cur) => cur.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x)));
+      void markNotificationsRead([n.id]);
+    }
+    if (!n.submissionId) return;
+    // Just assigned: the account may not be on this device yet.
+    const store = useAccountsStore.getState();
+    if (!store.accounts.some((a) => a.id === n.submissionId)) await store.hydrateCloudSubmissions();
+    navigate(`/accounts/${n.submissionId}`);
+  }
+
+  function markAllRead() {
+    if (unreadTeam.length === 0) return;
+    const now = new Date().toISOString();
+    setTeam((cur) => cur.map((x) => (x.readAt ? x : { ...x, readAt: now })));
+    void markNotificationsRead(unreadTeam.map((n) => n.id));
+  }
 
   function toggle() {
     const next = !open;
@@ -114,10 +139,34 @@ export function NotificationBell() {
       </button>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-white [box-shadow:var(--shadow-popover)]">
-          <div className="border-b border-[var(--color-ink-100)] px-3 py-2">
+          <div className="flex items-center justify-between border-b border-[var(--color-ink-100)] px-3 py-2">
             <p className="text-sm font-semibold text-[var(--color-ink-900)]">Notifications</p>
+            {unreadTeam.length > 0 && (
+              <button onClick={markAllRead} className="text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
+                Mark all read
+              </button>
+            )}
           </div>
-          {pending.length === 0 ? (
+          {team.length > 0 && (
+            <ul className="max-h-60 overflow-y-auto border-b border-[var(--color-ink-100)]">
+              {team.slice(0, 15).map((n) => (
+                <li key={n.id}>
+                  <button onClick={() => openAccount(n)} className="flex w-full gap-2.5 px-3 py-2.5 text-left hover:bg-[var(--color-ink-50)] cursor-pointer">
+                    <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', n.readAt ? 'bg-transparent' : 'bg-[var(--color-danger-600)]')} />
+                    <UserPlus size={14} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />
+                    <span className="min-w-0">
+                      <span className={cn('block text-sm', n.readAt ? 'text-[var(--color-ink-700)]' : 'font-medium text-[var(--color-ink-900)]')}>{n.message}</span>
+                      <span className="block truncate text-xs text-[var(--color-ink-500)]">
+                        {n.actorName ? `by ${n.actorName} · ` : ''}
+                        {relativeTime(n.createdAt)}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {pending.length === 0 && team.length > 0 ? null : pending.length === 0 ? (
             <div className="flex flex-col items-center gap-1.5 px-3 py-6 text-center">
               <Inbox size={20} className="text-[var(--color-ink-300)]" />
               <p className="text-sm text-[var(--color-ink-500)]">No new submissions from your intake links.</p>

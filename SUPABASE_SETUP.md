@@ -166,6 +166,12 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   with the account's existing permissions. Claims link to their report via `losses.details`
   (0024). Additive, safe to re-run. Until it's applied, saving says so and loss-run reports stay in
   the browser.
+- **`supabase/migrations/0026_collaborators_notifications.sql`** — collaborators on an account
+  (besides its primary assigned broker; only an agency admin or the primary broker can change them,
+  only to members of the same agency), the original assignee kept once, and in-app notifications
+  written by the database when someone is assigned an account or added as a collaborator. Each
+  person reads and marks read only their own. Additive, safe to re-run. Email for assignments is
+  not part of it — it needs a transactional email provider (see "Email" below).
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -235,6 +241,7 @@ from (values
   ('0023_agency_carriers',            to_regclass('public.agency_carriers') is not null),
   ('0024_record_details',             exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'drivers' and column_name = 'details')),
   ('0025_loss_runs',                  exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'loss_runs')),
+  ('0026_collaborators_notifications', to_regclass('public.notifications') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

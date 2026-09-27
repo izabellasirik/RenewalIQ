@@ -24,6 +24,10 @@ export interface Account {
   agencyId?: string;
   /** Supabase Auth user id of the agent the account belongs to — what grants access (RLS). Set by the database; only an agency admin can change it (assignAccountToAgent). */
   assignedUserId?: string | null;
+  /** Team members helping on the account besides the primary assigned broker (0026) — set by the database. */
+  collaboratorIds?: string[];
+  /** Who the account was first assigned to (0026) — kept when it's reassigned. */
+  originalAssignedUserId?: string | null;
   /** Derived tasks the broker marked done: task key (see actionDoneKey) → when. */
   doneActions?: Record<string, string>;
   /** Human-written account notes (Workspace → Notes), newest last. Not part of Activity. */

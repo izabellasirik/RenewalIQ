@@ -258,6 +258,8 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         // Set by the database (0011) — never sent back on save, so the app can't grant itself access.
         ...(sub.organization_id ? { agencyId: sub.organization_id as string } : {}),
         ...(sub.assigned_user_id !== undefined ? { assignedUserId: (sub.assigned_user_id as string | null) ?? null } : {}),
+        ...(Array.isArray(sub.collaborator_ids) ? { collaboratorIds: sub.collaborator_ids as string[] } : {}),
+        ...(sub.original_assigned_user_id !== undefined ? { originalAssignedUserId: (sub.original_assigned_user_id as string | null) ?? null } : {}),
       };
 
       const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
@@ -644,10 +646,23 @@ export async function fetchAgencyAccess(userId: string): Promise<RepoResult<{ ac
     const mine = rows.find((r) => r.user_id === userId);
     if (!mine) return { ok: true, data: { access: null, members: [] } };
     const { data: agency } = await supabase.from('agencies').select('name').eq('id', mine.agency_id).maybeSingle();
-    const members: AgencyMember[] = rows
+    let members: AgencyMember[] = rows
       .filter((r) => r.agency_id === mine.agency_id)
       .map((r) => ({ userId: r.user_id, role: r.role, name: (r.display_name as string | null) || (r.email as string | null) || 'Unnamed', email: r.email ?? null }))
       .sort((a, b) => a.name.localeCompare(b.name));
+    // An agent reads only their own profile; teammates' names come from 0026's agency_member_names()
+    // (names and roles only) so collaborators and assignees show by name. Without 0026: self only.
+    if (mine.role !== 'admin') {
+      const { data: names, error: namesErr } = await supabase.rpc('agency_member_names');
+      if (!namesErr && Array.isArray(names)) {
+        members = (names as { user_id: string; name: string; role: 'agent' | 'admin' }[]).map((n) => ({
+          userId: n.user_id,
+          role: n.role,
+          name: n.name,
+          email: n.user_id === userId ? (mine.email ?? null) : null,
+        }));
+      }
+    }
     return { ok: true, data: { access: { agencyId: mine.agency_id, agencyName: agency?.name ?? null, role: mine.role }, members } };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not load agency access.');
@@ -664,6 +679,59 @@ export async function assignSubmission(submissionId: string, userId: string | nu
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not reassign this account.');
+  }
+}
+
+/** Replace an account's collaborators — the database allows it only for an agency admin or the account's primary broker (0026). */
+export async function setSubmissionCollaborators(submissionId: string, userIds: string[]): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('submissions').update({ collaborator_ids: userIds }).eq('id', submissionId).select('id');
+    if (error) {
+      if (/collaborator_ids/.test(error.message) && /column|schema cache/i.test(error.message)) return fail('Collaborators need database migration 0026_collaborators_notifications.sql.');
+      return fail(error.message);
+    }
+    if (!data || data.length === 0) return fail('This account could not be updated — it may not be saved to the cloud yet, or you no longer have access to it.');
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not update collaborators.');
+  }
+}
+
+export interface AppNotification {
+  id: string;
+  type: 'assigned' | 'collaborator_added';
+  submissionId: string | null;
+  message: string;
+  actorName: string | null;
+  createdAt: string;
+  readAt: string | null;
+}
+
+/** The signed-in person's own notifications (RLS returns only theirs), newest first. Empty when 0026 isn't applied. */
+export async function fetchNotifications(): Promise<RepoResult<AppNotification[]>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(50);
+    if (error) return fail(error.message);
+    return {
+      ok: true,
+      data: (data ?? []).map((n) => ({ id: n.id, type: n.type, submissionId: n.submission_id, message: n.message, actorName: n.actor_name, createdAt: n.created_at, readAt: n.read_at })),
+    };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not load notifications.');
+  }
+}
+
+export async function markNotificationsRead(ids: string[]): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  if (ids.length === 0) return { ok: true, data: undefined };
+  try {
+    const { error } = await supabase.from('notifications').update({ read_at: new Date().toISOString() }).in('id', ids);
+    if (error) return fail(error.message);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not update notifications.');
   }
 }
 
