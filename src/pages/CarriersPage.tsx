@@ -23,12 +23,18 @@ import type { AppetiteRecord, MarketType } from '../types';
 const BUILT_IN = new Map(sampleAppetiteRecords.map((r) => [r.id, r]));
 
 /** One row on the page: a carrier Market Finder uses now (a built-in, the agency's version of one, or the agency's own). */
-interface Row {
+export interface Row {
   key: string;
   name: string;
   record?: AppetiteRecord;
   carrier?: AgencyCarrier;
   builtIn?: AppetiteRecord;
+}
+
+/** The editable row for a market as Market Finder shows it — what the carrier form (CarrierDrawer) opens with. */
+export function carrierRowFor(record: AppetiteRecord, carriers: AgencyCarrier[]): Row {
+  const carrier = record.agencyCarrier ? carriers.find((c) => c.id === record.agencyCarrier!.carrierId) : undefined;
+  return { key: record.id, name: record.marketName, record, carrier, builtIn: BUILT_IN.get(carrier?.baseRecordId ?? record.id) };
 }
 
 function summary(r: AppetiteRecord): string {
@@ -72,11 +78,7 @@ export function CarriersPage() {
   }, [reload]);
 
   const rows = useMemo(() => {
-    const byCarrier = new Map(carriers.map((c) => [c.id, c]));
-    const active: Row[] = records.map((r) => {
-      const carrier = r.agencyCarrier ? byCarrier.get(r.agencyCarrier.carrierId) : undefined;
-      return { key: r.id, name: r.marketName, record: r, carrier, builtIn: BUILT_IN.get(carrier?.baseRecordId ?? r.id) };
-    });
+    const active: Row[] = records.map((r) => carrierRowFor(r, carriers));
     const archived: Row[] = carriers
       .filter((c) => c.archivedAt)
       .map((c) => ({ key: c.id, name: c.name, carrier: c, builtIn: c.baseRecordId ? BUILT_IN.get(c.baseRecordId) : undefined }));
@@ -94,14 +96,7 @@ export function CarriersPage() {
 
   async function archive(row: Row, archived: boolean) {
     setBusy(true);
-    let res: { ok: boolean; message?: string };
-    if (row.carrier) {
-      res = await setAgencyCarrierArchived(row.carrier.id, archived);
-    } else {
-      // A built-in the agency hasn't edited: record the agency's (unchanged) version, then archive it.
-      const created = await saveAgencyCarrier({ baseRecordId: row.key, name: row.name, marketType: row.record!.marketType, availableThrough: null, website: null, contactName: null, contactEmail: null, contactPhone: null, criteria: {}, strictness: 'hard', notes: null });
-      res = created.ok ? await setAgencyCarrierArchived(created.data.id, true) : created;
-    }
+    const res = await setRowArchived(row, archived);
     const after = await reload();
     setBusy(false);
     setArchiving(null);
@@ -237,7 +232,16 @@ function initialForm(row: Row | 'new'): FormState {
   };
 }
 
-function CarrierDrawer({ row, onClose, onSaved }: { row: Row | 'new' | null; onClose: () => void; onSaved: (name: string) => void }) {
+/** Archive (hidden from Market Finder) or restore a market for the agency — the database only lets an admin. */
+export async function setRowArchived(row: Row, archived: boolean): Promise<{ ok: boolean; message?: string }> {
+  if (row.carrier) return setAgencyCarrierArchived(row.carrier.id, archived);
+  // A built-in the agency hasn't edited: record the agency's (unchanged) version, then archive it.
+  const created = await saveAgencyCarrier({ baseRecordId: row.key, name: row.name, marketType: row.record!.marketType, availableThrough: null, website: null, contactName: null, contactEmail: null, contactPhone: null, criteria: {}, strictness: 'hard', notes: null });
+  return created.ok ? setAgencyCarrierArchived(created.data.id, true) : created;
+}
+
+export function CarrierDrawer({ row, onClose, onSaved, onArchived }: { row: Row | 'new' | null; onClose: () => void; onSaved: (name: string) => void; /** When given, an existing market can be archived from the form. */ onArchived?: (name: string) => void }) {
+  const [confirmArchive, setConfirmArchive] = useState(false);
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -358,6 +362,11 @@ function CarrierDrawer({ row, onClose, onSaved }: { row: Row | 'new' | null; onC
 
         {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
         <div className="mt-2 flex justify-end gap-2">
+          {onArchived && row !== 'new' && (
+            <Button type="button" variant="ghost" icon={<ArchiveIcon size={14} />} onClick={() => setConfirmArchive(true)} className="mr-auto">
+              Archive market
+            </Button>
+          )}
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
@@ -366,6 +375,25 @@ function CarrierDrawer({ row, onClose, onSaved }: { row: Row | 'new' | null; onC
           </Button>
         </div>
       </form>
+      {onArchived && row !== 'new' && (
+        <ConfirmDialog
+          open={confirmArchive}
+          onCancel={() => setConfirmArchive(false)}
+          onConfirm={async () => {
+            setSaving(true);
+            const res = await setRowArchived(row, true);
+            setSaving(false);
+            setConfirmArchive(false);
+            if (!res.ok) return setError(res.message ?? "Couldn't archive the market.");
+            onArchived(row.name);
+          }}
+          title={`Archive ${row.name}?`}
+          description="Market Finder stops suggesting it for your agency. Quotes already on accounts keep it."
+          confirmLabel="Archive market"
+          confirming={saving}
+          variant="default"
+        />
+      )}
     </Drawer>
   );
 }

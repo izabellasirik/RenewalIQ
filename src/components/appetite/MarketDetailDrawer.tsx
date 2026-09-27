@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus, Link2 } from 'lucide-react';
+import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus, Link2, Pencil } from 'lucide-react';
 import type { AppetiteCriterion, AppetiteRecord, MatchReason, MatchResult, ReasonGroup, RuleType } from '../../types';
 import { SOURCE_TYPE_LABELS } from '../../types';
 import { Drawer, VerdictBadge, Badge, Button } from '../ui';
@@ -234,6 +234,7 @@ export function MarketDetailDrawer({
   record,
   result,
   actions,
+  onEdit,
 }: {
   open: boolean;
   onClose: () => void;
@@ -242,6 +243,8 @@ export function MarketDetailDrawer({
   result: MatchResult | null;
   /** Optional workflow actions (e.g. "Add to Quotes") rendered under the verdict. */
   actions?: (record: AppetiteRecord) => ReactNode;
+  /** Agency admins: edit this market's appetite in place (only passed when the user may). */
+  onEdit?: (record: AppetiteRecord) => void;
 }) {
   const [updateFormOpen, setUpdateFormOpen] = useState(false);
   if (!record) return null;
@@ -273,9 +276,16 @@ export function MarketDetailDrawer({
         {updateFormOpen ? (
           <RequestAppetiteUpdateForm record={record} onClose={() => setUpdateFormOpen(false)} />
         ) : (
-          <Button variant="accent" size="sm" icon={<MessageSquarePlus size={14} />} onClick={() => setUpdateFormOpen(true)} className="self-start">
-            Request Appetite Update
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {onEdit && (
+              <Button size="sm" icon={<Pencil size={14} />} onClick={() => onEdit(record)}>
+                Edit market
+              </Button>
+            )}
+            <Button variant="accent" size="sm" icon={<MessageSquarePlus size={14} />} onClick={() => setUpdateFormOpen(true)}>
+              Request Appetite Update
+            </Button>
+          </div>
         )}
 
         {result && (

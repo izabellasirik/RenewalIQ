@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Search, Info, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { ChevronRight, Search, Info, Plus, RotateCcw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
 import { AddToQuotesAction } from '../components/appetite/AddToQuotesAction';
 import { StateListInput } from '../components/appetite/StateListInput';
+import { CarrierDrawer, carrierRowFor, type Row as CarrierRow } from './CarriersPage';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { matchAllMarkets, VERDICT_RANK } from '../services/appetite/matchingEngine';
 import {
@@ -208,7 +208,6 @@ function NeutralMarketList({ records, onOpen }: { records: AppetiteRecord[]; onO
 }
 
 export function MarketFinderPage() {
-  const navigate = useNavigate();
   const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   const effectiveAppetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const loadEffectiveAppetiteRecords = useAccountsStore((s) => s.loadEffectiveAppetiteRecords);
@@ -221,6 +220,8 @@ export function MarketFinderPage() {
   /** A market opened from All Markets (no filters yet) — shown without a match verdict. */
   const [browsedRecordId, setBrowsedRecordId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editRow, setEditRow] = useState<CarrierRow | 'new' | null>(null);
+  const reloadCarrierAppetite = useAccountsStore((s) => s.reloadCarrierAppetite);
 
   function update<K extends keyof MarketFinderFilters>(key: K, value: MarketFinderFilters[K]) {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -247,6 +248,11 @@ export function MarketFinderPage() {
 
     return [...results].sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.verifiedMatchCount - a.verifiedMatchCount);
   }, [filters, filtersActive, effectiveAppetiteRecords]);
+
+  // After an edit (or any appetite change) the open market shows its recalculated verdict.
+  useEffect(() => {
+    setSelected((cur) => (cur ? (visibleResults.find((r) => r.appetiteRecordId === cur.appetiteRecordId) ?? cur) : cur));
+  }, [visibleResults]);
 
   const countsByVerdict = useMemo(() => {
     const counts: Record<Verdict, number> = { likely_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
@@ -282,10 +288,10 @@ export function MarketFinderPage() {
         <div className="lg:col-start-2 lg:row-start-1">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">Market Finder</h1>
-            {/* Agency admins maintain the carrier appetite Market Finder matches against (the database enforces who can). */}
+            {/* Agency admins add a market here, and edit one by opening it (the database enforces who can). */}
             {isAgencyAdmin && (
-              <Button variant="secondary" icon={<SlidersHorizontal size={15} />} onClick={() => navigate('/market-finder/appetite')}>
-                Manage Appetite
+              <Button icon={<Plus size={15} />} onClick={() => setEditRow('new')}>
+                Add Market
               </Button>
             )}
           </div>
@@ -457,6 +463,35 @@ export function MarketFinderPage() {
         record={selectedRecord}
         result={selected}
         actions={(record) => <AddToQuotesAction key={record.id} record={record} />}
+        onEdit={
+          isAgencyAdmin
+            ? (record) => {
+                setDrawerOpen(false);
+                setEditRow(carrierRowFor(record, useAccountsStore.getState().agencyCarriers));
+              }
+            : undefined
+        }
+      />
+      {/* The same carrier form as Manage Appetite; saving updates matching at once and reopens the market. */}
+      <CarrierDrawer
+        row={editRow}
+        onClose={() => {
+          // Back to the market it was opened from (not after "Add Market").
+          if (editRow !== 'new') setDrawerOpen(true);
+          setEditRow(null);
+        }}
+        onSaved={async () => {
+          const wasNew = editRow === 'new';
+          setEditRow(null);
+          await reloadCarrierAppetite();
+          if (!wasNew) setDrawerOpen(true);
+        }}
+        onArchived={async () => {
+          setEditRow(null);
+          setSelected(null);
+          setBrowsedRecordId(null);
+          await reloadCarrierAppetite();
+        }}
       />
     </PageContainer>
   );
