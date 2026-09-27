@@ -283,7 +283,8 @@ function deriveAllAccountActions(input: AccountWorkflowInput, today: string): De
         detail: days === 0 ? 'Effective today — not bound yet' : `${days} day${days === 1 ? '' : 's'} out · not bound yet`,
         dueDate: effectiveDate,
         overdue: false,
-        tab: 'overview',
+        // Getting it quoted and bound happens on Markets & Quotes.
+        tab: 'quotes',
       });
     }
   }

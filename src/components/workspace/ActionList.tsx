@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, CalendarClock, Check, ListChecks, Mail, PackageCheck, Send } from 'lucide-react';
 import type { ActionItem } from '../../services/workflow/nextActions';
 import { ACTION_KIND_META, workspaceHref } from './actionMeta';
@@ -57,13 +57,18 @@ function ActionRow({
   const markActionDone = useAccountsStore((s) => s.markActionDone);
   const isGroup = (action.itemIds?.length ?? 0) > 1;
   const navigate = useNavigate();
+  const location = useLocation();
+  // Already on the page this task opens (e.g. a follow-up on the account's Overview): no dead "Open".
+  const href = workspaceHref(action);
+  const onTarget = location.pathname === `/accounts/${action.accountId}` && (new URLSearchParams(location.search).get('tab') ?? 'overview') === action.tab && !action.quoteId;
+  const opens = isGroup || !onTarget;
 
   // The whole row opens the task — a grouped request opens its details, anything else its account at
   // the right tab. Clicks on the row's own buttons/inputs keep doing just their own thing.
   function openTask(e: React.MouseEvent) {
     if ((e.target as HTMLElement).closest('button, a, input, select, label')) return;
     if (isGroup) onOpenGroup({ accountId: action.accountId, itemIds: action.itemIds! });
-    else navigate(workspaceHref(action));
+    else if (opens) navigate(href);
   }
   const markItemSentToCarrier = useAccountsStore((s) => s.markItemSentToCarrier);
   const updateMissingItem = useAccountsStore((s) => s.updateMissingItem);
@@ -88,8 +93,8 @@ function ActionRow({
   return (
     <li
       onClick={openTask}
-      title={isGroup ? 'Open details' : 'Open'}
-      className={cn('flex cursor-pointer flex-col gap-2 rounded-lg border bg-white px-3 py-2.5 transition-colors hover:border-[var(--color-brand-500)]/50 hover:bg-[var(--color-ink-50)] sm:flex-row sm:items-center', action.overdue ? 'border-[var(--color-danger-100)]' : 'border-[var(--color-ink-100)]')}>
+      title={isGroup ? 'Open details' : opens ? 'Open' : undefined}
+      className={cn('flex flex-col gap-2 rounded-lg border bg-white px-3 py-2.5 transition-colors sm:flex-row sm:items-center', opens && 'cursor-pointer hover:border-[var(--color-brand-500)]/50 hover:bg-[var(--color-ink-50)]', action.overdue ? 'border-[var(--color-danger-100)]' : 'border-[var(--color-ink-100)]')}>
       <div className="flex min-w-0 flex-1 gap-2.5">
         <span className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full', meta.color)}>
           <Icon size={14} />
@@ -146,9 +151,11 @@ function ActionRow({
               {action.dueDate ? 'Reschedule' : 'Set follow-up'}
             </Button>
           ))}
-        <Link to={workspaceHref(action)} className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8">
-          Open <ArrowRight size={12} />
-        </Link>
+        {opens && (
+          <Link to={href} className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8">
+            Open <ArrowRight size={12} />
+          </Link>
+        )}
       </div>
     </li>
   );
