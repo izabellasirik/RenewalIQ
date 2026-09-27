@@ -378,3 +378,23 @@ describe('driver notes', () => {
     expect(back.hireDate).toBe('2024-05-01');
   });
 });
+
+describe('loss runs', () => {
+  it('a report holds its claims; totals come from them, or from the report when not itemized; removing it keeps the claims', async () => {
+    const { lossRunTotals } = await import('../../../components/riskProfile/LossRunsPanel');
+    const id = store().createAccount('ABC Trucking', 'TX');
+    const runId = store().addLossRun(id, { carrier: 'Progressive', policyNumber: 'PGR-1', reportDate: '2026-09-20', coverageStart: '2025-10-01', coverageEnd: '2026-10-01', claimCount: 2, totalIncurred: 30000 });
+    let run = store().accounts.find((a) => a.id === id)!.lossRuns![0];
+    expect(lossRunTotals(run, [])).toMatchObject({ claims: 2, incurred: 30000, itemized: false });
+    store().addLoss(id, { lossDate: '2026-01-10', claimType: 'Auto Liability', paid: 5000, reserved: 2000, incurred: 7000, status: 'open', lossRunId: runId, claimNumber: 'C-1' });
+    const claims = store().riskProfiles[id].lossHistory.filter((l) => l.lossRunId === runId);
+    expect(lossRunTotals(run, claims)).toMatchObject({ claims: 1, incurred: 7000, paid: 5000, reserve: 2000, itemized: true });
+    store().updateLossRun(id, runId, { reportDate: '2026-09-25' });
+    run = store().accounts.find((a) => a.id === id)!.lossRuns![0];
+    expect(run.reportDate).toBe('2026-09-25');
+    store().deleteLossRun(id, runId);
+    expect(store().accounts.find((a) => a.id === id)!.lossRuns).toEqual([]);
+    expect(store().riskProfiles[id].lossHistory).toHaveLength(1);
+    expect(store().riskProfiles[id].lossHistory[0].lossRunId).toBeUndefined();
+  });
+});

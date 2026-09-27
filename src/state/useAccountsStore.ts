@@ -13,6 +13,7 @@ import type {
   CoverageType,
   DriverEntry,
   DriverNote,
+  LossRun,
   LossEntry,
   MarketQuote,
   QuoteOption,
@@ -193,6 +194,11 @@ interface AccountsState {
   addDriverNote: (accountId: string, driverId: string, text: string) => void;
   updateDriverNote: (accountId: string, driverId: string, noteId: string, text: string) => void;
   addLoss: (accountId: string, entry: Omit<LossEntry, 'id'>) => void;
+  /** Loss-run reports (carrier, policy #, report date, coverage period, totals); claims link to one via LossEntry.lossRunId. */
+  addLossRun: (accountId: string, input: Omit<LossRun, 'id' | 'createdAt' | 'updatedAt'>) => string;
+  updateLossRun: (accountId: string, lossRunId: string, patch: Partial<Omit<LossRun, 'id' | 'createdAt' | 'updatedAt'>>) => void;
+  /** Removes the report; its claims stay (unlinked), so no claim data is lost. */
+  deleteLossRun: (accountId: string, lossRunId: string) => void;
   updateLoss: (accountId: string, lossId: string, patch: Partial<LossEntry>) => void;
   deleteLoss: (accountId: string, lossId: string) => void;
   runMatching: (accountId: string) => void;
@@ -501,7 +507,11 @@ export const useAccountsStore = create<AccountsState>()(
           const merge = <T extends { id: string; createdAt?: string; updatedAt?: string }>(l: T[] | undefined, c: T[]) => mergeWorkflowList(l ?? [], c, seen);
           return {
             riskProfiles: { ...st.riskProfiles, [accountId]: mergeNewerFields(profile, bundle.profile) },
-            accounts: st.accounts.map((a) => (a.id === accountId ? { ...a, notes: mergeById(a.notes ?? [], bundle.account.notes ?? [], noteChangedAt) } : a)),
+            accounts: st.accounts.map((a) =>
+              a.id === accountId
+                ? { ...a, notes: mergeById(a.notes ?? [], bundle.account.notes ?? [], noteChangedAt), lossRuns: merge(a.lossRuns, bundle.account.lossRuns ?? []) }
+                : a
+            ),
             ...(bundle.quotes ? { quotes: { ...st.quotes, [accountId]: merge(st.quotes[accountId], bundle.quotes) } } : {}),
             ...(bundle.missingItems ? { missingItems: { ...st.missingItems, [accountId]: merge(st.missingItems[accountId], bundle.missingItems) } } : {}),
             ...(bundle.followUps ? { followUps: { ...st.followUps, [accountId]: merge(st.followUps[accountId], bundle.followUps) } } : {}),
@@ -1196,6 +1206,62 @@ export const useAccountsStore = create<AccountsState>()(
             d.id === driverId ? { ...d, notes: (d.notes ?? []).map((n) => (n.id === noteId ? { ...n, text: body, updatedAt: now, updatedByName: actorName(s) } : n)) } : d
           );
           return { riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: now } }, accounts: touchAccount(s.accounts, accountId) };
+        });
+        syncNow(accountId);
+      },
+
+      addLossRun: (accountId, input) => {
+        const now = new Date().toISOString();
+        const run: LossRun = { ...input, carrier: input.carrier.trim(), id: generateId('lrun'), createdAt: now, updatedAt: now };
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, lossRuns: [...(a.lossRuns ?? []), run] } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'record_added',
+            `Added loss run from ${run.carrier}${run.policyNumber ? ` (policy ${run.policyNumber})` : ''}${run.reportDate ? `, report dated ${formatShortDate(run.reportDate)}` : ''}${actorSuffix(s.currentUserEmail)}.`
+          ),
+        }));
+        syncNow(accountId);
+        return run.id;
+      },
+
+      updateLossRun: (accountId, lossRunId, patch) => {
+        const run = get().accounts.find((a) => a.id === accountId)?.lossRuns?.find((r) => r.id === lossRunId);
+        if (!run) return;
+        const now = new Date().toISOString();
+        const next: LossRun = { ...run, ...patch, updatedAt: now };
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, lossRuns: (a.lossRuns ?? []).map((r) => (r.id === lossRunId ? next : r)) } : a)),
+            accountId
+          ),
+          activityLog:
+            patch.reportDate !== undefined && patch.reportDate !== run.reportDate
+              ? appendEvent(s.activityLog, accountId, 'record_edited', `Loss run from ${next.carrier}: report date ${next.reportDate ? formatShortDate(next.reportDate) : 'cleared'}${actorSuffix(s.currentUserEmail)}.`)
+              : appendEvent(s.activityLog, accountId, 'record_edited', `Edited loss run from ${next.carrier}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      deleteLossRun: (accountId, lossRunId) => {
+        const run = get().accounts.find((a) => a.id === accountId)?.lossRuns?.find((r) => r.id === lossRunId);
+        if (!run) return;
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          return {
+            accounts: touchAccount(
+              s.accounts.map((a) => (a.id === accountId ? { ...a, lossRuns: (a.lossRuns ?? []).filter((r) => r.id !== lossRunId) } : a)),
+              accountId
+            ),
+            ...(profile
+              ? { riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, lossHistory: profile.lossHistory.map((l) => (l.lossRunId === lossRunId ? { ...l, lossRunId: undefined } : l)) } } }
+              : {}),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_deleted', `Removed loss run from ${run.carrier} (its claims were kept).`),
+          };
         });
         syncNow(accountId);
       },
@@ -2358,6 +2424,7 @@ export const useAccountsStore = create<AccountsState>()(
               ...(!bundle.hasStageColumn && local ? { stage: local.stage } : {}),
               ...(!bundle.hasDoneColumn && local?.doneActions ? { doneActions: local.doneActions } : {}),
               ...(!bundle.hasNotesColumn && local?.notes ? { notes: local.notes } : {}),
+              ...(!bundle.hasLossRunsColumn && local?.lossRuns ? { lossRuns: local.lossRuns } : {}),
             };
             if (idx === -1) accounts.push(merged);
             else accounts[idx] = merged;

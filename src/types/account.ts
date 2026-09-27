@@ -28,6 +28,8 @@ export interface Account {
   doneActions?: Record<string, string>;
   /** Human-written account notes (Workspace → Notes), newest last. Not part of Activity. */
   notes?: AccountNote[];
+  /** Loss-run reports on file (0025) — claims link to them via LossEntry.lossRunId. */
+  lossRuns?: import('./loss').LossRun[];
 }
 
 export interface AccountNote {

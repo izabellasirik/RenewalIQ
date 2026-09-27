@@ -13,7 +13,7 @@ import { InsightStrip } from '../components/riskProfile/InsightStrip';
 import { AccountSummary } from '../components/riskProfile/AccountSummary';
 import { VehiclesTable } from '../components/riskProfile/VehiclesTable';
 import { DriversTable } from '../components/riskProfile/DriversTable';
-import { LossHistoryTable } from '../components/riskProfile/LossHistoryTable';
+import { LossRunsPanel } from '../components/riskProfile/LossRunsPanel';
 import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
 import { archiveConfirmText } from '../components/dashboard/AccountCard';
@@ -258,7 +258,7 @@ export function RiskProfilePage() {
       )}
 
       {tab === 'loss-history' && (
-        <SectionCard title="Loss History" description="Consolidated from uploaded loss run documents — add, edit, or remove claims directly.">
+        <SectionCard title="Loss History" description="Each loss run report with its claims — add, edit, or remove reports and claims directly.">
           {profile.lossHistory.length === 0 && lossRunDocs.length > 0 && (
             <div className="px-2 pb-4 pt-2 text-center">
               <p className="text-sm font-medium text-[var(--color-warning-600)]">
@@ -298,11 +298,12 @@ export function RiskProfilePage() {
               }
             />
           )}
-          <LossHistoryTable
+          <LossRunsPanel
+            accountId={accountId}
             losses={profile.lossHistory}
-            onAdd={(entry) => addLoss(accountId, entry)}
-            onUpdate={(id, patch) => updateLoss(accountId, id, patch)}
-            onDelete={(id) => deleteLoss(accountId, id)}
+            onAddLoss={(entry) => addLoss(accountId, entry)}
+            onUpdateLoss={(id, patch) => updateLoss(accountId, id, patch)}
+            onDeleteLoss={(id) => deleteLoss(accountId, id)}
           />
         </SectionCard>
       )}

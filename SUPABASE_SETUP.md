@@ -161,6 +161,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   field that has no column of its own (license number, class, dates, address, plate…). Additive,
   safe to re-run. Until it's applied, saving says the migration is needed and those fields stay in
   the browser only.
+- **`supabase/migrations/0025_loss_runs.sql`** — loss runs as records (carrier, policy number,
+  report date, coverage period, claim count, totals) in a `loss_runs` jsonb column on submissions,
+  with the account's existing permissions. Claims link to their report via `losses.details`
+  (0024). Additive, safe to re-run. Until it's applied, saving says so and loss-run reports stay in
+  the browser.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -229,6 +234,7 @@ from (values
   ('0022_assign_own_personal',        exists (select 1 from pg_proc where proname = 'submissions_before_update' and prosrc like '%A personal account%')),
   ('0023_agency_carriers',            to_regclass('public.agency_carriers') is not null),
   ('0024_record_details',             exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'drivers' and column_name = 'details')),
+  ('0025_loss_runs',                  exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'loss_runs')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);
