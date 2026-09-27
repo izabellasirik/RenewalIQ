@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CircleCheck, CircleAlert, TriangleAlert, CircleX, Info, Pencil, Check, X } from 'lucide-react';
-import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType } from '../../types';
+import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType, CoverageField } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { Drawer, Badge, type BadgeTone } from '../ui';
 import { fieldPathLabel, fieldPathValueType, DRIVER_FIELD_LABELS, VEHICLE_FIELD_LABELS, LOSS_FIELD_LABELS } from '../../utils/fieldLabels';
@@ -64,7 +64,7 @@ function sectionFor(fieldPath: string): (typeof SECTION_ORDER)[number] {
 
 interface UpdateHandlers {
   onUpdateField?: (section: 'business' | 'transportation', key: string, value: unknown) => void;
-  onUpdateCoverage?: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
+  onUpdateCoverage?: (coverageType: CoverageType, field: CoverageField, value: string) => void;
   onUpdateVehicle?: (id: string, patch: Partial<VehicleEntry>) => void;
   onUpdateDriver?: (id: string, patch: Partial<DriverEntry>) => void;
   onUpdateLoss?: (id: string, patch: Partial<LossEntry>) => void;

@@ -7,11 +7,11 @@ import { ValueInput, parseDraft, isValidDraft, singleLineEditKeyDown } from '../
 import { fieldPathValueType } from '../../utils/fieldLabels';
 import { parseRiskProfilePath } from '../../utils/riskProfilePath';
 import { normalizeCurrencyText } from '../../utils/currency';
-import type { CoverageType } from '../../types';
+import type { CoverageField, CoverageType } from '../../types';
 
 export interface WhatsMissingUpdateHandlers {
   onUpdateField: (section: 'business' | 'transportation', key: string, value: unknown) => void;
-  onUpdateCoverage: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
+  onUpdateCoverage: (coverageType: CoverageType, field: CoverageField, value: string) => void;
 }
 
 /** Opens the page where this item is fixed, scrolled to it — null when there's nowhere specific. */

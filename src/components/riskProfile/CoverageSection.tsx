@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import type { CoverageLine, CoverageType } from '../../types';
-import { COVERAGE_LABELS } from '../../types';
+import type { CoverageField, CoverageLine, CoverageType } from '../../types';
+import { COVERAGE_LABELS, DEDUCTIBLE_COVERAGES } from '../../types';
 import type { FieldResolution } from '../../services/extraction';
 import { Button, ConfirmDialog } from '../ui';
 import { FieldRow } from './FieldRow';
@@ -20,8 +20,8 @@ export function CoverageSection({
   /** Ring + scroll target for a deep link (e.g. from What's Missing). */
   highlightType?: CoverageType | null;
   coverage: CoverageLine[];
-  onSave: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
-  onResolve: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', resolution: FieldResolution<string>) => void;
+  onSave: (coverageType: CoverageType, field: CoverageField, value: string) => void;
+  onResolve: (coverageType: CoverageType, field: CoverageField, resolution: FieldResolution<string>) => void;
   onAdd: (coverageType: CoverageType) => void;
   onDelete: (coverageType: CoverageType) => void;
 }) {
@@ -78,7 +78,7 @@ export function CoverageSection({
               <Trash2 size={13} />
             </button>
           </div>
-          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+          <div className={`grid grid-cols-1 gap-2 ${DEDUCTIBLE_COVERAGES.includes(line.type) ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
             <FieldRow
               label="Current Limit"
               valueType="text"
@@ -93,6 +93,15 @@ export function CoverageSection({
               onSave={(value) => onSave(line.type, 'requestedLimit', normalizeCurrencyText(value))}
               onResolve={(resolution) => onResolve(line.type, 'requestedLimit', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
             />
+            {DEDUCTIBLE_COVERAGES.includes(line.type) && (
+              <FieldRow
+                label="Deductible"
+                valueType="text"
+                field={line.deductible ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false }}
+                onSave={(value) => onSave(line.type, 'deductible', normalizeCurrencyText(value))}
+                onResolve={(resolution) => onResolve(line.type, 'deductible', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
+              />
+            )}
           </div>
         </div>
       ))}

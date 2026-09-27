@@ -6,6 +6,7 @@ import type {
   LossEntry,
   VehicleEntry,
   DriverEntry,
+  CoverageField,
 } from '../../types';
 import { emptyField } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
@@ -255,7 +256,7 @@ export function applyFieldResolution<T>(
 export function applyCoverageFieldResolution(
   profile: RiskProfile,
   coverageType: CoverageType,
-  field: 'currentLimit' | 'requestedLimit',
+  field: CoverageField,
   resolution: FieldResolution<string>
 ): RiskProfile {
   const line = profile.coverage.find((c) => c.type === coverageType);

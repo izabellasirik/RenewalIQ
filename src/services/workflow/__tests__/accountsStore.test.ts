@@ -423,3 +423,21 @@ describe('outdated MVRs and loss runs on the checklist', () => {
     expect(labels()).toEqual([]);
   });
 });
+
+describe('deductibles per coverage', () => {
+  it('sit on the coverage line (Physical Damage, Cargo — not Auto Liability) and read back by path', async () => {
+    const { getFieldValueByPath } = await import('../../../utils/riskProfilePath');
+    const { DEDUCTIBLE_COVERAGES } = await import('../../../types');
+    const id = store().createAccount('ABC Trucking', 'TX');
+    store().addCoverageLine(id, 'physical_damage');
+    store().updateCoverage(id, 'physical_damage', 'requestedLimit', '$150,000');
+    store().updateCoverage(id, 'physical_damage', 'deductible', '$2,500');
+    const line = store().riskProfiles[id].coverage.find((c) => c.type === 'physical_damage')!;
+    expect(line.deductible?.value).toBe('$2,500');
+    expect(line.requestedLimit.value).toBe('$150,000');
+    expect(getFieldValueByPath(store().riskProfiles[id], 'coverage.physical_damage.deductible')?.value).toBe('$2,500');
+    expect(DEDUCTIBLE_COVERAGES).toContain('motor_truck_cargo');
+    expect(DEDUCTIBLE_COVERAGES).not.toContain('auto_liability');
+    expect(store().activityLog[id].map((e) => e.message)).toContain('Updated deductible for physical damage.');
+  });
+});

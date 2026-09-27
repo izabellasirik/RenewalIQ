@@ -134,6 +134,7 @@ function collectFieldValueRows(userId: string, submissionId: string, profile: Ri
   for (const key of Object.keys(profile.transportation)) push('transportation', key, transportationFields[key]);
   for (const line of profile.coverage) {
     if (line.currentLimit) push('coverage', `${line.type}.currentLimit`, line.currentLimit);
+    if (line.deductible) push('coverage', `${line.type}.deductible`, line.deductible);
     push('coverage', `${line.type}.requestedLimit`, line.requestedLimit);
   }
 
@@ -262,7 +263,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
       const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
       const business: Record<string, FieldValue<unknown>> = {};
       const transportation: Record<string, FieldValue<unknown>> = {};
-      const coverageLimits: Record<string, { currentLimit?: FieldValue<string>; requestedLimit?: FieldValue<string> }> = {};
+      const coverageLimits: Record<string, { currentLimit?: FieldValue<string>; requestedLimit?: FieldValue<string>; deductible?: FieldValue<string> }> = {};
 
       for (const row of fvRowsForSub) {
         const alts = (faRes.data ?? []).filter((a) => a.field_value_id === row.id);
@@ -273,6 +274,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
           const [type, sub2] = row.field_key.split('.');
           coverageLimits[type] ??= {};
           if (sub2 === 'currentLimit') coverageLimits[type].currentLimit = fv as FieldValue<string>;
+          else if (sub2 === 'deductible') coverageLimits[type].deductible = fv as FieldValue<string>;
           else coverageLimits[type].requestedLimit = fv as FieldValue<string>;
         }
       }
@@ -283,6 +285,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
           type: c.coverage_type as CoverageType,
           currentLimit: coverageLimits[c.coverage_type]?.currentLimit,
           requestedLimit: coverageLimits[c.coverage_type]?.requestedLimit ?? emptyField<string>(),
+          ...(coverageLimits[c.coverage_type]?.deductible ? { deductible: coverageLimits[c.coverage_type].deductible } : {}),
         }));
 
       // Every field — including ones without their own column — comes back via recordRows (0024 `details`).

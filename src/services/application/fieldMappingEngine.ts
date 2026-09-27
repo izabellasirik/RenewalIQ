@@ -64,7 +64,7 @@ function coverageRequestedOverride(profile: RiskProfile, path: string, base: Map
  * coverageRequestedOverride or the generic mapper below) or the path isn't a coverage path at all.
  */
 function coverageNotApplicableOverride(profile: RiskProfile, path: string, base: MappedFieldBase): MappedField | null {
-  const match = path.match(/^coverage\.([a-z_]+)\.(currentLimit|requestedLimit)$/);
+  const match = path.match(/^coverage\.([a-z_]+)\.(currentLimit|requestedLimit|deductible)$/);
   if (!match) return null;
   const line = profile.coverage.find((c) => c.type === (match[1] as CoverageType));
   if (line) return null;

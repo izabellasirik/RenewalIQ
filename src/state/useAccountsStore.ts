@@ -11,6 +11,7 @@ import type {
   Contact,
   CoverageLine,
   CoverageType,
+  CoverageField,
   DriverEntry,
   DriverNote,
   LossRun,
@@ -187,8 +188,8 @@ interface AccountsState {
   deleteDocument: (accountId: string, documentId: string) => void;
   updateField: (accountId: string, section: 'business' | 'transportation', key: string, value: unknown) => void;
   resolveField: (accountId: string, section: 'business' | 'transportation', key: string, resolution: FieldResolution<unknown>) => void;
-  updateCoverage: (accountId: string, coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
-  resolveCoverageConflict: (accountId: string, coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', resolution: FieldResolution<string>) => void;
+  updateCoverage: (accountId: string, coverageType: CoverageType, field: CoverageField, value: string) => void;
+  resolveCoverageConflict: (accountId: string, coverageType: CoverageType, field: CoverageField, resolution: FieldResolution<string>) => void;
   addCoverageLine: (accountId: string, coverageType: CoverageType) => void;
   deleteCoverageLine: (accountId: string, coverageType: CoverageType) => void;
   addVehicle: (accountId: string, entry: Omit<VehicleEntry, 'id'>) => void;
@@ -1049,7 +1050,7 @@ export const useAccountsStore = create<AccountsState>()(
           return {
             riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, coverage, updatedAt: new Date().toISOString() } },
             accounts: touchAccount(s.accounts, accountId),
-            activityLog: appendEvent(s.activityLog, accountId, 'coverage_edited', `Updated ${field === 'currentLimit' ? 'current' : 'requested'} limit for ${coverageType.replace(/_/g, ' ')}.`),
+            activityLog: appendEvent(s.activityLog, accountId, 'coverage_edited', `Updated ${field === 'deductible' ? 'deductible' : `${field === 'currentLimit' ? 'current' : 'requested'} limit`} for ${coverageType.replace(/_/g, ' ')}.`),
           };
         });
         get().runMatching(accountId);
@@ -1064,7 +1065,7 @@ export const useAccountsStore = create<AccountsState>()(
           return {
             riskProfiles: { ...s.riskProfiles, [accountId]: updated },
             accounts: touchAccount(s.accounts, accountId),
-            activityLog: appendEvent(s.activityLog, accountId, 'conflict_resolved', `Resolved a conflicting ${field === 'currentLimit' ? 'current' : 'requested'} limit for ${coverageType.replace(/_/g, ' ')}.`),
+            activityLog: appendEvent(s.activityLog, accountId, 'conflict_resolved', `Resolved a conflicting ${field === 'deductible' ? 'deductible' : `${field === 'currentLimit' ? 'current' : 'requested'} limit`} for ${coverageType.replace(/_/g, ' ')}.`),
           };
         });
         get().runMatching(accountId);

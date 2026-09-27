@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2, Eye } from 'lucide-react';
 import { motion } from 'framer-motion';
-import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType } from '../../types';
+import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType, CoverageField } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { previewDocumentRemovalImpact } from '../../services/extraction';
 import { Badge, ConfirmDialog } from '../ui';
@@ -33,7 +33,7 @@ export function DocumentList({
   profile?: RiskProfile;
   onDelete?: (documentId: string) => void;
   onUpdateField?: (section: 'business' | 'transportation', key: string, value: unknown) => void;
-  onUpdateCoverage?: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
+  onUpdateCoverage?: (coverageType: CoverageType, field: CoverageField, value: string) => void;
   onUpdateVehicle?: (id: string, patch: Partial<VehicleEntry>) => void;
   onUpdateDriver?: (id: string, patch: Partial<DriverEntry>) => void;
   onUpdateLoss?: (id: string, patch: Partial<LossEntry>) => void;

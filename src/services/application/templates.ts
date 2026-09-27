@@ -1,6 +1,6 @@
 import { driverExperience } from '../../utils/driverExperience';
 import type { ApplicationTemplate, DriverEntry, LossEntry, VehicleEntry } from '../../types';
-import { COVERAGE_LABELS } from '../../types';
+import { COVERAGE_LABELS, DEDUCTIBLE_COVERAGES } from '../../types';
 import { formatCurrency, formatDateMDY, formatNewVenture, formatStatus } from './formatters';
 import { formatDuration } from '../../utils/duration';
 
@@ -83,6 +83,17 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           targetFieldId: `coverage_${type}`,
           targetLabel: `${COVERAGE_LABELS[type]} (Requested Limit)`,
           riskProfilePath: `coverage.${type}.requestedLimit`,
+        })),
+      },
+      {
+        title: 'Deductibles',
+        fields: DEDUCTIBLE_COVERAGES.map((type) => ({
+          targetFieldId: `deductible_${type}`,
+          targetLabel: `${COVERAGE_LABELS[type]} (Deductible)`,
+          riskProfilePath: `coverage.${type}.deductible`,
+          required: false,
+          // Informational — a blank deductible is never a completeness gap.
+          neverFlagMissing: true,
         })),
       },
     ],
