@@ -20,6 +20,14 @@ export interface DriverEntry {
   endorsements?: string;
   /** Legacy number = years; new edits store a Duration in months (utils/duration.ts). */
   yearsExperience?: DurationValue;
+  /** True when experience is counted from issueDate (kept current — see utils/driverExperience.ts); false/absent when entered or corrected by hand, or read from a document. */
+  experienceFromIssueDate?: boolean;
+  /** Date of hire with this company, YYYY-MM-DD. */
+  hireDate?: string;
+  /** Date of this driver's current MVR report, YYYY-MM-DD — used for the freshness check. */
+  mvrReportDate?: string;
+  /** Driver-specific notes (not account notes): dated, with author; editable. */
+  notes?: DriverNote[];
   violations?: string;
   /**
    * Per-field confidence for values read off a document (a license photo, most commonly) where
@@ -36,4 +44,13 @@ export interface DriverEntry {
   /** True for a row the broker added or edited directly, rather than one extracted from a document. Deleting a document never removes or alters a manual row. */
   isManual?: boolean;
   lastUpdatedAt?: string;
+}
+
+export interface DriverNote {
+  id: string;
+  text: string;
+  createdAt: string;
+  authorName?: string;
+  updatedAt?: string;
+  updatedByName?: string;
 }

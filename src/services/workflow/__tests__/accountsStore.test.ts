@@ -359,3 +359,22 @@ describe('requesting a document that is not on the checklist yet', () => {
     expect(store().activityLog[id].map((e) => e.message)).toContain('Requested Updated MVR from John Smith.');
   });
 });
+
+describe('driver notes', () => {
+  it('are dated, carry the author, are editable, and are saved with the driver', async () => {
+    const { driverFromRow, driverToRow } = await import('../../supabase/recordRows');
+    const id = store().createAccount('ABC Trucking', 'TX');
+    store().setCurrentUserId('u1', 'denis@agency.com');
+    store().addDriver(id, { name: 'John Smith', hireDate: '2024-05-01' });
+    const driverId = store().riskProfiles[id].drivers[0].id;
+    store().addDriverNote(id, driverId, 'Two speeding tickets in 2023');
+    const note = store().riskProfiles[id].drivers[0].notes![0];
+    expect(note).toMatchObject({ text: 'Two speeding tickets in 2023', authorName: 'denis@agency.com' });
+    store().updateDriverNote(id, driverId, note.id, 'One speeding ticket in 2023');
+    const driver = store().riskProfiles[id].drivers[0];
+    expect(driver.notes![0]).toMatchObject({ text: 'One speeding ticket in 2023', createdAt: note.createdAt, updatedByName: 'denis@agency.com' });
+    const back = driverFromRow(JSON.parse(JSON.stringify(driverToRow(driver, id, 'u1'))));
+    expect(back.notes).toEqual(driver.notes);
+    expect(back.hireDate).toBe('2024-05-01');
+  });
+});

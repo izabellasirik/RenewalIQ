@@ -1,3 +1,4 @@
+import { driverExperience } from '../../utils/driverExperience';
 import type { ApplicationTemplate, DriverEntry, LossEntry, VehicleEntry } from '../../types';
 import { COVERAGE_LABELS } from '../../types';
 import { formatCurrency, formatDateMDY, formatNewVenture, formatStatus } from './formatters';
@@ -93,7 +94,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           { key: 'name', label: 'Driver Name' },
           { key: 'dob', label: 'DOB', format: (e) => ((e as DriverEntry).dob ? formatDateMDY((e as DriverEntry).dob) : '') },
           { key: 'licenseState', label: 'License State' },
-          { key: 'yearsExperience', label: 'Experience', format: (e) => formatDuration((e as DriverEntry).yearsExperience) },
+          { key: 'yearsExperience', label: 'Experience', format: (e) => formatDuration(driverExperience(e as DriverEntry)) },
           { key: 'violations', label: 'Violations' },
         ],
       },

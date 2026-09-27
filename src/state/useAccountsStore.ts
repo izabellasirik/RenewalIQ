@@ -12,6 +12,7 @@ import type {
   CoverageLine,
   CoverageType,
   DriverEntry,
+  DriverNote,
   LossEntry,
   MarketQuote,
   QuoteOption,
@@ -188,6 +189,9 @@ interface AccountsState {
   addDriver: (accountId: string, entry: Omit<DriverEntry, 'id'>) => void;
   updateDriver: (accountId: string, driverId: string, patch: Partial<DriverEntry>) => void;
   deleteDriver: (accountId: string, driverId: string) => void;
+  /** Driver-specific notes: dated, with author; editing keeps the date and records who edited. Not written to Activity (like account notes). */
+  addDriverNote: (accountId: string, driverId: string, text: string) => void;
+  updateDriverNote: (accountId: string, driverId: string, noteId: string, text: string) => void;
   addLoss: (accountId: string, entry: Omit<LossEntry, 'id'>) => void;
   updateLoss: (accountId: string, lossId: string, patch: Partial<LossEntry>) => void;
   deleteLoss: (accountId: string, lossId: string) => void;
@@ -1162,6 +1166,37 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        syncNow(accountId);
+      },
+
+      addDriverNote: (accountId, driverId, text) => {
+        const body = text.trim();
+        if (!body) return;
+        const now = new Date().toISOString();
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile?.drivers.some((d) => d.id === driverId)) return {};
+          const note: DriverNote = { id: generateId('dnote'), text: body, createdAt: now, authorName: actorName(s) };
+          // Not a change to the driver's data, so the row keeps its source (isManual isn't set).
+          const drivers = profile.drivers.map((d) => (d.id === driverId ? { ...d, notes: [...(d.notes ?? []), note] } : d));
+          return { riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: now } }, accounts: touchAccount(s.accounts, accountId) };
+        });
+        syncNow(accountId);
+      },
+
+      updateDriverNote: (accountId, driverId, noteId, text) => {
+        const body = text.trim();
+        if (!body) return;
+        const now = new Date().toISOString();
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          const note = profile?.drivers.find((d) => d.id === driverId)?.notes?.find((n) => n.id === noteId);
+          if (!profile || !note || note.text === body) return {};
+          const drivers = profile.drivers.map((d) =>
+            d.id === driverId ? { ...d, notes: (d.notes ?? []).map((n) => (n.id === noteId ? { ...n, text: body, updatedAt: now, updatedByName: actorName(s) } : n)) } : d
+          );
+          return { riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: now } }, accounts: touchAccount(s.accounts, accountId) };
+        });
         syncNow(accountId);
       },
 

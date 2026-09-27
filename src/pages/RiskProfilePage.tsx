@@ -248,6 +248,7 @@ export function RiskProfilePage() {
             />
           )}
           <DriversTable
+            accountId={accountId}
             drivers={profile.drivers}
             onAdd={(entry) => addDriver(accountId, entry)}
             onUpdate={(id, patch) => updateDriver(accountId, id, patch)}
