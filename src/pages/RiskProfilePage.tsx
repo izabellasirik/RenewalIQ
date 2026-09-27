@@ -20,7 +20,7 @@ import { archiveConfirmText } from '../components/dashboard/AccountCard';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { computeSubmissionCompleteness } from '../services/application';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
-import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
+import { RISK_PROFILE_GROUPS, isFieldShown } from './riskProfileFieldConfig';
 import { formatDate } from '../utils/dates';
 import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
@@ -159,7 +159,7 @@ export function RiskProfilePage() {
           {RISK_PROFILE_GROUPS.map((group, gi) => (
             <motion.div key={group.key} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: gi * 0.05, duration: 0.25 }}>
               <SectionCard title={group.title}>
-                {group.fields.map((f) => (
+                {group.fields.filter((f) => isFieldShown(f, profile)).map((f) => (
                   <div
                     key={f.key}
                     id={`field-${f.section}-${f.key}`}

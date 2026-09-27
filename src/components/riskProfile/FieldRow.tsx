@@ -94,6 +94,8 @@ export function isValidDraft(valueType: FieldValueType, raw: string): boolean {
   if (valueType === 'duration' && raw.trim() !== '') {
     return raw.includes('|') ? isValidDurationDraft(decodeDurationDraft(raw)) : parseDurationText(raw) !== null;
   }
+  // Yes/No must actually be picked — a blank draft never saves as "No".
+  if (valueType === 'boolean') return raw === 'Yes' || raw === 'No';
   // Picker values are always complete; the year guard stops a half-typed "0002-…" from saving.
   if (valueType === 'date' && raw.trim() !== '') {
     const key = normalizeDateKey(raw);
@@ -174,6 +176,8 @@ export function ValueInput({
   if (valueType === 'boolean') {
     return (
       <select autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} className="rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none">
+        {/* A blank draft shows as blank — not as a "Yes" that would silently save as No. */}
+        {value !== 'Yes' && value !== 'No' && <option value="">Select…</option>}
         <option value="Yes">Yes</option>
         <option value="No">No</option>
       </select>

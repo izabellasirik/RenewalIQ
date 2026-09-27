@@ -13,6 +13,9 @@ for (const group of RISK_PROFILE_GROUPS) {
 // Derived fields not in the editable form config but still real scalar paths.
 SCALAR_LABELS['business.city'] = 'City';
 SCALAR_LABELS['business.zip'] = 'ZIP';
+// Kept in the data (extraction, matching) but no longer shown on the Risk Profile.
+SCALAR_LABELS['transportation.statesOfOperation'] = 'States of Operation';
+SCALAR_LABELS['transportation.minDriverAge'] = 'Minimum Driver Age';
 
 /** Human-readable label for any ExtractedFieldResult.fieldPath — the same vocabulary the Risk Profile page itself uses, so "View extracted data" never shows a raw dotted path to a broker. */
 export function fieldPathLabel(fieldPath: string): string {

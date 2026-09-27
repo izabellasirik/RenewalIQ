@@ -14,5 +14,9 @@ export interface TransportationInfo {
   /** Key name kept for compatibility; value is a legacy number of years or a Duration in months (utils/duration.ts). */
   minDriverExperienceYears: FieldValue<DurationValue>;
   telematics: FieldValue<boolean>;
+  /** Who provides the fleet's telematics — asked only when telematics is Yes. */
+  telematicsProvider?: FieldValue<string>;
   dashcams: FieldValue<boolean>;
+  /** Who provides the dashcams — asked only when dashcams is Yes. */
+  dashcamProvider?: FieldValue<string>;
 }

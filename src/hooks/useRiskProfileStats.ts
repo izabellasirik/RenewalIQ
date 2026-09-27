@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { FieldValue, RiskProfile } from '../types';
 import { emptyField } from '../types';
-import { RISK_PROFILE_GROUPS, type RiskFieldConfig } from '../pages/riskProfileFieldConfig';
+import { RISK_PROFILE_GROUPS, isFieldShown, type RiskFieldConfig } from '../pages/riskProfileFieldConfig';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
 
 export interface FieldStatEntry {
@@ -35,6 +35,7 @@ export function computeRiskProfileStats(profile: RiskProfile | undefined): RiskP
 
   for (const group of RISK_PROFILE_GROUPS) {
     for (const field of group.fields) {
+      if (!isFieldShown(field, profile)) continue;
       total++;
       const value = getField(profile, field);
       const entry = { field, groupTitle: group.title, value };
