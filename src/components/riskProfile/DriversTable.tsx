@@ -10,6 +10,8 @@ import { useAccountsStore } from '../../state/useAccountsStore';
 import { formatShortDate, normalizeDateKey } from '../../services/workflow/dates';
 import { formatTimestampShort } from '../workspace/time';
 import { inputClass, labelClass } from '../workspace/formStyles';
+import { FreshnessBadge } from './FreshnessBadge';
+import { reportAge } from '../../services/workflow/freshness';
 
 type Draft = {
   name: string;
@@ -246,6 +248,7 @@ export function DriversTable({
                           <AlertTriangle size={12} />
                         </span>
                       )}
+                      {reportAge('mvr', d.mvrReportDate)?.outdated && <FreshnessBadge kind="mvr" reportDate={d.mvrReportDate} />}
                       {(d.notes?.length ?? 0) > 0 && (
                         <span className="inline-flex items-center gap-0.5 text-xs text-[var(--color-ink-400)]" title="Driver notes">
                           <StickyNote size={11} />
@@ -328,7 +331,6 @@ function DriverDetails({ accountId, driver }: { accountId: string; driver: Drive
     ['Address', driver.address],
     ['Restrictions', driver.restrictions],
     ['Endorsements', driver.endorsements],
-    ['MVR report date', driver.mvrReportDate ? formatShortDate(driver.mvrReportDate) : undefined],
   ];
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.4fr]">
@@ -339,6 +341,13 @@ function DriverDetails({ accountId, driver }: { accountId: string; driver: Drive
             <dd className={v ? 'text-[var(--color-ink-800)]' : 'italic text-[var(--color-ink-400)]'}>{v || 'Not on file'}</dd>
           </div>
         ))}
+        <div>
+          <dt className="text-[var(--color-ink-500)]">MVR report date</dt>
+          <dd className={driver.mvrReportDate ? 'flex flex-wrap items-center gap-1.5 text-[var(--color-ink-800)]' : 'italic text-[var(--color-ink-400)]'}>
+            {driver.mvrReportDate ? formatShortDate(driver.mvrReportDate) : 'Not on file'}
+            <FreshnessBadge kind="mvr" reportDate={driver.mvrReportDate} />
+          </dd>
+        </div>
       </dl>
       <div>
         <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Driver notes</p>

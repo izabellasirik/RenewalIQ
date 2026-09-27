@@ -46,6 +46,13 @@ export function AccountWorkspacePage() {
   useEffect(() => {
     ensureChecklist(accountId);
   }, [accountId, cloudHydratedFor, ensureChecklist]);
+  // Outdated MVRs / loss runs → "Updated …" checklist items (and cleared again once current).
+  const ensureFreshnessItems = useAccountsStore((s) => s.ensureFreshnessItems);
+  const lossRuns = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId)?.lossRuns);
+  const drivers = useAccountsStore((s) => s.riskProfiles[accountId]?.drivers);
+  useEffect(() => {
+    ensureFreshnessItems(accountId);
+  }, [accountId, cloudHydratedFor, lossRuns, drivers, ensureFreshnessItems]);
   const activity = useAccountsStore((s) => s.activityLog[accountId]) ?? EMPTY_ACTIVITY_EVENTS;
   const addFiles = useAccountsStore((s) => s.addFiles);
   const deleteDocument = useAccountsStore((s) => s.deleteDocument);

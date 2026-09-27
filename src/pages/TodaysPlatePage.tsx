@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, CheckCircle2, Hourglass, LayoutGrid, Plus, RotateCcw, Sparkles, Building2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -42,6 +42,12 @@ export function TodaysPlatePage() {
   // An agent only ever has their own accounts (RLS), so the toggle only means something outside an agency or for an admin.
 
   const today = todayKey();
+  // Outdated MVRs / loss runs show up here too, even for accounts not opened today.
+  const ensureFreshnessItems = useAccountsStore((s) => s.ensureFreshnessItems);
+  const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
+  useEffect(() => {
+    for (const a of useAccountsStore.getState().accounts) ensureFreshnessItems(a.id);
+  }, [cloudHydratedFor, today, ensureFreshnessItems]);
 
   const { now, upcoming, waiting, doneToday } = useMemo(() => {
     const allNow: ActionItem[] = [];

@@ -14,6 +14,7 @@ import { AccountSummary } from '../components/riskProfile/AccountSummary';
 import { VehiclesTable } from '../components/riskProfile/VehiclesTable';
 import { DriversTable } from '../components/riskProfile/DriversTable';
 import { LossRunsPanel } from '../components/riskProfile/LossRunsPanel';
+import { FreshnessBadge } from '../components/riskProfile/FreshnessBadge';
 import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
 import { archiveConfirmText } from '../components/dashboard/AccountCard';
@@ -61,6 +62,12 @@ export function RiskProfilePage() {
   const deleteLoss = useAccountsStore((s) => s.deleteLoss);
   const archiveAccount = useAccountsStore((s) => s.archiveAccount);
   const canManageArchive = useAccountsStore(selectCanManageArchive);
+  const ensureFreshnessItems = useAccountsStore((s) => s.ensureFreshnessItems);
+  const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
+  // A report date entered here immediately adds / clears the "Updated MVR / loss run" checklist item.
+  useEffect(() => {
+    ensureFreshnessItems(accountId);
+  }, [accountId, cloudHydratedFor, account?.lossRuns, profile?.drivers, ensureFreshnessItems]);
   const [tab, setTab] = useState<TabKey>('details');
   const [highlightFieldId, setHighlightFieldId] = useState<string | null>(null);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
@@ -304,6 +311,7 @@ export function RiskProfilePage() {
             onAddLoss={(entry) => addLoss(accountId, entry)}
             onUpdateLoss={(id, patch) => updateLoss(accountId, id, patch)}
             onDeleteLoss={(id) => deleteLoss(accountId, id)}
+            freshness={(run) => <FreshnessBadge kind="loss_run" reportDate={run.reportDate} />}
           />
         </SectionCard>
       )}

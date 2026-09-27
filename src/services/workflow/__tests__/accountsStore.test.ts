@@ -398,3 +398,28 @@ describe('loss runs', () => {
     expect(store().riskProfiles[id].lossHistory[0].lossRunId).toBeUndefined();
   });
 });
+
+describe('outdated MVRs and loss runs on the checklist', () => {
+  it('adds an "Updated …" item once, clears it when a current report is recorded, skips bound accounts', async () => {
+    const { todayKey, addDays } = await import('../dates');
+    const id = store().createAccount('ABC Trucking', 'TX');
+    const old = addDays(todayKey(), -30);
+    const runId = store().addLossRun(id, { carrier: 'Progressive', reportDate: old });
+    store().addDriver(id, { name: 'John Smith', mvrReportDate: old });
+    store().ensureFreshnessItems(id);
+    store().ensureFreshnessItems(id); // idempotent
+    const labels = () => store().missingItems[id].filter((i) => i.templateKey?.startsWith('refresh:')).map((i) => i.label).sort();
+    expect(labels()).toEqual(['Updated MVR — John Smith', 'Updated loss run — Progressive']);
+    const lr = store().missingItems[id].find((i) => i.label === 'Updated loss run — Progressive')!;
+    expect(lr.instructions).toMatch(/30 days old\) — we need one run within the last 14 days/);
+
+    store().updateLossRun(id, runId, { reportDate: todayKey() });
+    store().ensureFreshnessItems(id);
+    expect(labels()).toEqual(['Updated MVR — John Smith']);
+
+    const q = store().addQuote(id, { marketName: 'Canal', status: 'bound' });
+    expect(q).toBeTruthy();
+    store().ensureFreshnessItems(id);
+    expect(labels()).toEqual([]);
+  });
+});
