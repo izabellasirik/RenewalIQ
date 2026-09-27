@@ -141,3 +141,25 @@ K7 other agency admin sees acct_r2=0
 K8 agent sees teammate names (own agency only): agent,admin,admin,agent,agent count=5
 K8 other agency admin sees Agency names=0
 K8 signed out sees names=0
+M1 agent change role denied: Only an agency admin can change roles.
+M1 agent remove denied: Only an agency admin can remove team members.
+M2 other agency admin denied: That person is not a member of your agency.
+M2 other agency admin remove denied: That person is not a member of your agency.
+M3 roman promoted: is admin=true sees=4
+M3 roman demoted: is admin=false
+M4 last admin denied: The agency needs at least one admin — make someone else an admin first.
+M4 unknown role denied: Unknown role.
+M5 remove self denied: You can't remove yourself from the agency.
+M5 remove without reassign denied: Choose who takes over their 3 account(s) before removing them.
+M5 reassign outside agency denied: The person taking over is not a member of your agency.
+M5 agentB still a member=1
+M6 remove agentB → roman, moved=3
+M6 accounts now: acct_r2→00000000-0000-0000-0000-00000000000a collab=1
+M6 activity: Reassigned from Agent B to Roman Smith — Agent B was removed from the agency by Denis. | Reassigned from Agent B to Roman Smith — Agent B was removed from the agency by Denis. | Reassigned from Agent B to Roman Smith — Agent B was removed from the agency by Denis.
+M6 agentB profile rows=0
+M7 removed agentB: agency=none sees agency accounts=0
+M7 roman sees taken-over accounts: acct_d_old,acct_r1,acct_r2
+M8 remove newbie (collaborator + 1 account) → denis, moved=1
+M8 acct_r2 collaborators=0 acct_r3 → denis=true
+M8 removed newbie keeps personal accounts: acct_n2
+M9 member without accounts removed, moved=0

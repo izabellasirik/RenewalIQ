@@ -96,6 +96,68 @@ export async function revokeInvitation(id: string): Promise<RepoResult> {
   return error ? fail(error, 'Could not cancel the invitation.') : { ok: true, data: undefined };
 }
 
+/** 0027 not applied yet → a clear message instead of PostgREST's "function not found". */
+const needs0027 = (error: { code?: string; message?: string }) =>
+  error.code === 'PGRST202' || /set_agency_member_role|remove_agency_member/.test(error.message ?? '') ? { message: 'Team management needs migration 0027_team_management.sql in Supabase.' } : error;
+
+/** Admin only (the database checks): makes a member an agent or an admin. The agency always keeps an admin. */
+export async function setMemberRole(userId: string, role: TeamRole): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { error } = await supabase.rpc('set_agency_member_role', { p_user_id: userId, p_role: role });
+    return error ? fail(needs0027(error), 'Could not change the role.') : { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err, 'Could not change the role.');
+  }
+}
+
+/**
+ * Admin only (the database checks): removes someone from the agency. Their agency accounts go to
+ * `reassignTo` (required when they have any) and they're taken off every account's collaborators.
+ * Returns how many accounts moved.
+ */
+export async function removeMember(userId: string, reassignTo: string | null): Promise<RepoResult<number>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('remove_agency_member', { p_user_id: userId, p_reassign_to: reassignTo });
+    return error ? fail(needs0027(error), 'Could not remove this team member.') : { ok: true, data: Number(data) || 0 };
+  } catch (err) {
+    return fail(err, 'Could not remove this team member.');
+  }
+}
+
+/**
+ * Asks RenewalIQ's server (api/send-invitation.ts) to email an invitation. `sent` only when the
+ * email provider accepted the message; `notConfigured` when no provider is set up for this
+ * deployment (the link still works — copy it and send it yourself).
+ */
+export type InvitationEmailResult = { status: 'sent' } | { status: 'notConfigured'; message: string } | { status: 'failed'; message: string };
+
+export async function sendInvitationEmail(invitationId: string): Promise<InvitationEmailResult> {
+  const notConfigured: InvitationEmailResult = { status: 'notConfigured', message: 'Invitation emails aren’t set up for this app yet — copy the link and send it yourself.' };
+  if (!supabase) return notConfigured;
+  let token: string | undefined;
+  try {
+    token = (await supabase.auth.getSession()).data.session?.access_token;
+  } catch {
+    token = undefined;
+  }
+  if (!token) return { status: 'failed', message: 'Sign in again to send the invitation email.' };
+  let res: Response;
+  try {
+    res = await fetch('/api/send-invitation', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ invitationId }) });
+  } catch {
+    return { status: 'failed', message: 'Could not reach the email service — copy the link and send it yourself.' };
+  }
+  // Anything that isn't the server's own JSON answer (e.g. the app page itself, where the server
+  // isn't deployed) means no email went out.
+  const body = (res.headers.get('content-type') ?? '').includes('application/json') ? ((await res.json().catch(() => null)) as { sent?: boolean; notConfigured?: boolean; error?: string } | null) : null;
+  if (!body) return notConfigured;
+  if (res.ok && body.sent === true) return { status: 'sent' };
+  if (body.notConfigured) return notConfigured;
+  return { status: 'failed', message: body.error ?? 'The invitation email could not be sent — copy the link and send it yourself.' };
+}
+
 /** What an invitation link is for — callable signed out. null = no such invitation. */
 export async function getInvitation(token: string): Promise<RepoResult<InvitationInfo | null>> {
   if (!supabase) return NOT_CONFIGURED;

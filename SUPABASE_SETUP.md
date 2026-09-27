@@ -171,7 +171,13 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   only to members of the same agency), the original assignee kept once, and in-app notifications
   written by the database when someone is assigned an account or added as a collaborator. Each
   person reads and marks read only their own. Additive, safe to re-run. Email for assignments is
-  not part of it — it needs a transactional email provider (see "Email" below).
+  not part of it — see section 6b.
+- **`supabase/migrations/0027_team_management.sql`** — lets an agency admin change a member's role
+  (the agency always keeps at least one admin) and remove a member. Removing requires choosing who
+  takes over their accounts; the database reassigns them in the same step (with an Activity entry
+  on each), takes the person off every collaborator list, then removes their membership. Their
+  login and personal accounts stay. Additive, safe to re-run. Until it's applied, the Team page
+  says the migration is needed.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -242,6 +248,7 @@ from (values
   ('0024_record_details',             exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'drivers' and column_name = 'details')),
   ('0025_loss_runs',                  exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'loss_runs')),
   ('0026_collaborators_notifications', to_regclass('public.notifications') is not null),
+  ('0027_team_management',            to_regprocedure('public.remove_agency_member(uuid,uuid)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);
@@ -320,6 +327,35 @@ In the Supabase dashboard → **Authentication → URL Configuration**:
 The `/**` covers `/login`, `/admin` and `/invite/…`. After a reset link opens the app, the person
 sees **Set a new password**, saves it, and continues signed in; next time they sign in with the new
 password. An expired or already-used link shows "That email link has expired or was already used".
+
+## 6b. Email from Renewal IQ itself — team invitations (optional, Vercel environment variables)
+
+Supabase sends the sign-up confirmation and password-reset emails (section 6). **Team invitation
+emails are sent by Renewal IQ's own server** (`api/send-invitation.ts`) through
+[Resend](https://resend.com), because Supabase's built-in email can't send a custom invitation to
+join an existing agency. Until it's configured, creating an invitation says *"Invitation emails
+aren't set up for this app yet — copy the link and send it yourself"*; the link and **Copy link**
+always work, and the app never says an email was sent unless Resend accepted it.
+
+To turn it on:
+
+1. Create a Resend account, add and **verify your sending domain** (DNS records Resend gives you).
+2. Create an API key.
+3. In Vercel → Project → Settings → Environment Variables, add (server-side, **not** `VITE_`):
+   - `RESEND_API_KEY` = the key
+   - `INVITE_EMAIL_FROM` = e.g. `Renewal IQ <team@your-domain.com>` (must be on the verified domain)
+   - optional `APP_URL` = e.g. `https://your-production-domain.com` for the link in the email
+     (defaults to the address of the deployment that sent it)
+4. Redeploy so the function picks them up. The Team page's **Send email** button re-sends any open
+   invitation.
+
+The server only emails an invitation that the signed-in admin can read under RLS (their own
+agency's, still open), and only to the address it was created for.
+
+**Assignment emails are not sent yet.** Assignments and new collaborators create in-app
+notifications (the bell, 0026). Emailing them needs the same provider plus a server-side sender
+with the service-role key (a Supabase Database Webhook or Edge Function on `notifications`),
+because the person doing the assigning can't read a teammate's email under RLS.
 
 ## 7. Managing broker appetite-update requests and product feedback
 

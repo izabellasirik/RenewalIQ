@@ -1,18 +1,33 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Check, Copy, Mail, UserPlus, Users, X } from 'lucide-react';
+import { Check, Copy, Mail, Send, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, EmptyState, Modal, Skeleton } from '../components/ui';
 import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { formatShortDate } from '../services/workflow/dates';
-import { createInvitation, fetchOpenInvitations, fetchTeam, invitationLink, revokeInvitation, type Invitation, type TeamMember, type TeamRole } from '../services/supabase/teamRepo';
+import {
+  createInvitation,
+  fetchOpenInvitations,
+  fetchTeam,
+  invitationLink,
+  removeMember,
+  revokeInvitation,
+  sendInvitationEmail,
+  setMemberRole,
+  type Invitation,
+  type InvitationEmailResult,
+  type TeamMember,
+  type TeamRole,
+} from '../services/supabase/teamRepo';
 
 const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
 
 /**
  * The agency's team, for its admin: who's on it (name, work email/phone, job title, role, how many
  * accounts each has) and invitations. Invite someone by work email + role; they get a link to join
- * this agency with that role. Everything here is enforced by the database, not this page.
+ * this agency with that role (emailed when the app's email is set up). An admin can change a
+ * member's role or remove them — their accounts are handed to someone else first, never orphaned.
+ * Everything here is enforced by the database, not this page.
  */
 export function TeamPage() {
   const access = useAccountsStore((s) => s.agencyAccess);
@@ -22,6 +37,9 @@ export function TeamPage() {
   const [invites, setInvites] = useState<Invitation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [removing, setRemoving] = useState<TeamMember | null>(null);
+  const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const hydrate = useAccountsStore((s) => s.hydrateCloudSubmissions);
 
   const load = useCallback(async () => {
     if (!access || access.role !== 'admin') return;
@@ -40,6 +58,16 @@ export function TeamPage() {
     for (const a of accounts) if (a.assignedUserId && !a.archived) counts.set(a.assignedUserId, (counts.get(a.assignedUserId) ?? 0) + 1);
     return counts;
   }, [accounts]);
+
+  async function changeRole(m: TeamMember, role: TeamRole) {
+    setRoleBusy(m.userId);
+    setError(null);
+    const res = await setMemberRole(m.userId, role);
+    setRoleBusy(null);
+    if (!res.ok) setError(res.message);
+    await load();
+    if (res.ok) hydrate();
+  }
 
   if (!access || access.role !== 'admin') {
     return (
@@ -80,10 +108,30 @@ export function TeamPage() {
                     {m.email && <p className="truncate">{m.email}</p>}
                     {m.phone && <p className="text-xs text-[var(--color-ink-500)]">{m.phone}</p>}
                   </div>
-                  <Badge tone={m.role === 'admin' ? 'brand' : 'neutral'}>{ROLE_LABEL[m.role]}</Badge>
+                  {m.userId === currentUserId ? (
+                    <Badge tone={m.role === 'admin' ? 'brand' : 'neutral'}>{ROLE_LABEL[m.role]}</Badge>
+                  ) : (
+                    <select
+                      value={m.role}
+                      disabled={roleBusy === m.userId}
+                      onChange={(e) => changeRole(m, e.target.value as TeamRole)}
+                      className="rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-xs font-medium text-[var(--color-ink-800)] cursor-pointer disabled:opacity-60"
+                      aria-label={`Role for ${m.name ?? m.email ?? 'team member'}`}
+                    >
+                      <option value="agent">Agent</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  )}
                   <p className="w-32 text-right text-sm text-[var(--color-ink-600)]">
                     <span className="font-semibold text-[var(--color-ink-900)]">{assignedCount.get(m.userId) ?? 0}</span> account{(assignedCount.get(m.userId) ?? 0) === 1 ? '' : 's'}
                   </p>
+                  <span className="w-24 text-right">
+                    {m.userId !== currentUserId && (
+                      <Button size="sm" variant="ghost" icon={<UserMinus size={13} />} onClick={() => setRemoving(m)} aria-label={`Remove ${m.name ?? m.email ?? 'team member'}`}>
+                        Remove
+                      </Button>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -102,6 +150,7 @@ export function TeamPage() {
                   <Badge tone="neutral">{ROLE_LABEL[inv.role]}</Badge>
                   <span className="text-xs text-[var(--color-ink-500)]">{new Date(inv.expiresAt) < new Date() ? 'Expired' : `Expires ${formatShortDate(inv.expiresAt)}`}</span>
                   <CopyLinkButton token={inv.token} />
+                  <ResendEmailButton invitationId={inv.id} />
                   <Button
                     size="sm"
                     variant="ghost"
@@ -127,6 +176,21 @@ export function TeamPage() {
         onClose={() => setInviteOpen(false)}
         onCreated={load}
       />
+
+      {members && (
+        <RemoveMemberDialog
+          member={removing}
+          members={members}
+          currentUserId={currentUserId}
+          accountCount={removing ? accounts.filter((a) => a.assignedUserId === removing.userId).length : 0}
+          onClose={() => setRemoving(null)}
+          onRemoved={async () => {
+            setRemoving(null);
+            await load();
+            hydrate();
+          }}
+        />
+      )}
     </PageContainer>
   );
 }
@@ -153,12 +217,129 @@ function CopyLinkButton({ token }: { token: string }) {
   );
 }
 
+const memberLabel = (m: TeamMember) => m.name ?? m.email ?? 'Unnamed';
+
+/**
+ * Remove someone from the agency. Their accounts go to the person picked here (the database
+ * requires it and moves them in one step, with an Activity entry on each), so nothing is orphaned.
+ */
+function RemoveMemberDialog({
+  member,
+  members,
+  currentUserId,
+  accountCount,
+  onClose,
+  onRemoved,
+}: {
+  member: TeamMember | null;
+  members: TeamMember[];
+  currentUserId: string | null;
+  accountCount: number;
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const others = members.filter((m) => m.userId !== member?.userId);
+  const [to, setTo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!member) return;
+    setTo(currentUserId && currentUserId !== member.userId ? currentUserId : (others[0]?.userId ?? ''));
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [member]);
+
+  if (!member) return null;
+  const name = memberLabel(member);
+  const target = others.find((m) => m.userId === to);
+
+  async function confirm() {
+    if (!member || busy) return;
+    setBusy(true);
+    setError(null);
+    const res = await removeMember(member.userId, to || null);
+    setBusy(false);
+    if (!res.ok) return setError(res.message);
+    onRemoved();
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Remove ${name} from the team?`}>
+      <div className="flex flex-col gap-3 text-sm text-[var(--color-ink-700)]">
+        <p>
+          {name} will lose access to the agency’s accounts right away. Their login and any personal accounts of their own stay; you can invite them back later.
+        </p>
+        <div>
+          <label className={labelClass} htmlFor="reassign-to">
+            {accountCount > 0 ? `Reassign their ${accountCount} account${accountCount === 1 ? '' : 's'} to` : 'Reassign any accounts they have to'}
+          </label>
+          <select id="reassign-to" value={to} onChange={(e) => setTo(e.target.value)} className={inputClass}>
+            {others.map((m) => (
+              <option key={m.userId} value={m.userId}>
+                {memberLabel(m)}
+                {m.userId === currentUserId ? ' (you)' : ''} — {ROLE_LABEL[m.role]}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-[var(--color-ink-500)]">
+            Each account’s Activity will say it was reassigned{target ? ` to ${memberLabel(target)}` : ''}. They’re also taken off any accounts they were collaborating on.
+          </p>
+        </div>
+        {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" size="sm" icon={<UserMinus size={13} />} onClick={confirm} disabled={busy || !to}>
+            {busy ? 'Removing…' : 'Remove from team'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** One-line outcome of an email attempt — "sent" only when the email service accepted it. */
+function EmailStatus({ result }: { result: InvitationEmailResult | 'sending' | null }) {
+  if (!result) return null;
+  if (result === 'sending') return <p className="text-xs text-[var(--color-ink-500)]">Sending the invitation email…</p>;
+  if (result.status === 'sent') return <p className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-success-600)]"><Check size={13} /> Invitation email sent.</p>;
+  return <p className={`text-xs ${result.status === 'notConfigured' ? 'text-[var(--color-ink-600)]' : 'text-[var(--color-danger-600)]'}`}>{result.message}</p>;
+}
+
+function ResendEmailButton({ invitationId }: { invitationId: string }) {
+  const [result, setResult] = useState<InvitationEmailResult | 'sending' | null>(null);
+  return (
+    <span className="inline-flex items-center gap-2">
+      <Button
+        size="sm"
+        variant="secondary"
+        icon={<Send size={13} />}
+        disabled={result === 'sending'}
+        onClick={async () => {
+          setResult('sending');
+          setResult(await sendInvitationEmail(invitationId));
+        }}
+      >
+        Send email
+      </Button>
+      {result && result !== 'sending' && (
+        <span className={result.status === 'sent' ? 'text-xs font-medium text-[var(--color-success-600)]' : 'max-w-56 text-xs text-[var(--color-ink-500)]'}>
+          {result.status === 'sent' ? 'Sent' : result.message}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function InviteDialog({ open, agencyName, onClose, onCreated }: { open: boolean; agencyName: string; onClose: () => void; onCreated: () => void }) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<TeamRole>('agent');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<Invitation | null>(null);
+  const [emailResult, setEmailResult] = useState<InvitationEmailResult | 'sending' | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -166,6 +347,7 @@ function InviteDialog({ open, agencyName, onClose, onCreated }: { open: boolean;
     setRole('agent');
     setError(null);
     setCreated(null);
+    setEmailResult(null);
   }, [open]);
 
   async function submit(e: FormEvent) {
@@ -178,6 +360,8 @@ function InviteDialog({ open, agencyName, onClose, onCreated }: { open: boolean;
     if (!res.ok) return setError(res.message);
     setCreated(res.data);
     onCreated();
+    setEmailResult('sending');
+    setEmailResult(await sendInvitationEmail(res.data.id));
   }
 
   const link = created ? invitationLink(created.token) : '';
@@ -192,13 +376,23 @@ function InviteDialog({ open, agencyName, onClose, onCreated }: { open: boolean;
       {created ? (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-[var(--color-ink-700)]">
-            Send this link to <span className="font-medium">{created.email}</span>. They’ll join {agencyName} as {ROLE_LABEL[created.role]} after signing up or signing in with that email.
+            {emailResult && emailResult !== 'sending' && emailResult.status === 'sent' ? (
+              <>
+                We emailed the invitation to <span className="font-medium">{created.email}</span>.
+              </>
+            ) : (
+              <>
+                Send this link to <span className="font-medium">{created.email}</span>.
+              </>
+            )}{' '}
+            They’ll join {agencyName} as {ROLE_LABEL[created.role]} after signing up or signing in with that email.
           </p>
+          <EmailStatus result={emailResult} />
           <input readOnly value={link} className={`${inputClass} bg-[var(--color-ink-50)] text-xs`} onFocus={(e) => e.target.select()} aria-label="Invitation link" />
           <div className="flex flex-wrap justify-end gap-2">
             <CopyLinkButton token={created.token} />
             <a href={mailto} className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-brand-800)] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-brand-700)]">
-              <Mail size={13} /> Email the invitation
+              <Mail size={13} /> Open in my email app
             </a>
           </div>
         </div>
