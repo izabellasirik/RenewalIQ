@@ -184,6 +184,16 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   between (tab closed, connection dropped, a refused row) could leave the account's drivers,
   vehicles or losses deleted in the database. With it, a save lands completely or changes nothing.
   Row-level security applies exactly as before. Needs 0010 and 0024 first. Additive, safe to re-run.
+- **`supabase/migrations/0029_intake_reliability.sql`** — makes the public Submission Intake form
+  fail-safe. A submission starts as *being sent*; each file is uploaded and linked through database
+  functions; the client only sees "Submitted successfully" with a reference number (e.g.
+  `RIQ-001042`) after the server has verified the answers and that every file is both linked and in
+  storage. A repeated submit can't create a duplicate; a client can finish an interrupted
+  submission from the same browser; one that stops for 2 hours shows as *Incomplete* to the broker;
+  a submission still being sent can't be imported. Adds `intake_events` (each submission's audit
+  trail, readable by the broker) and restricts anonymous uploads to an open submission's folder.
+  Additive, safe to re-run. Until it's applied, the form uses the old path (and never shows success
+  when a file failed).
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -256,6 +266,7 @@ from (values
   ('0026_collaborators_notifications', to_regclass('public.notifications') is not null),
   ('0027_team_management',            to_regprocedure('public.remove_agency_member(uuid,uuid)') is not null),
   ('0028_atomic_account_save',        to_regprocedure('public.replace_submission_children(text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)') is not null),
+  ('0029_intake_reliability',         to_regclass('public.intake_events') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

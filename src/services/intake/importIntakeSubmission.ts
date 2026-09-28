@@ -73,7 +73,21 @@ export interface ImportResult {
  * OCR/vision extraction pipeline runs on them exactly as if the broker had just uploaded them
  * directly. Adds no new account-creation or extraction logic of its own.
  */
+/** Waits until each document's file has reached the account's cloud storage (it gets a storagePath), or the time is up. Returns the names still not there. */
+async function waitForUploads(accountId: string, documentIds: string[], timeoutMs: number): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const docs = useAccountsStore.getState().documents[accountId] ?? [];
+    const pending = documentIds.map((id) => docs.find((d) => d.id === id)).filter((d) => !d || !d.storagePath);
+    if (pending.length === 0) return [];
+    if (Date.now() > deadline) return pending.map((d) => d?.name ?? 'a document');
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
 export async function importIntakeSubmission(submission: IntakeSubmission): Promise<ImportResult> {
+  // Still being sent: its remaining files would be refused after an import and lost (the database refuses it too).
+  if (submission.status === 'uploading') return { ok: false, message: 'The client is still sending this submission — it can be imported once they finish.' };
   const docsResult = await fetchIntakeDocuments(submission.id);
   if (!docsResult.ok) return { ok: false, message: docsResult.message };
 
@@ -119,10 +133,15 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
     return { ok: false, message: `Couldn't save this submission to your account, so nothing was imported — please try again.${saved.message ? ` (${saved.message})` : ''}` };
   }
 
-  if (files.length > 0) addFiles(accountId, files);
+  // Marked imported only once the documents are in the account's cloud storage (the originals stay in
+  // intake storage either way, so a slow upload is never a lost file).
+  const notYetUploaded = files.length > 0 ? await waitForUploads(accountId, addFiles(accountId, files), 120_000) : [];
 
   const markResult = await markIntakeSubmissionImported(submission.id, accountId);
   const warnings = [
+    notYetUploaded.length > 0
+      ? `${notYetUploaded.length} document${notYetUploaded.length === 1 ? ' is' : 's are'} still uploading to the account (${notYetUploaded.join(', ')}) — keep this tab open for a moment; the originals stay in the submission, so Reimport is always possible.`
+      : null,
     missing.length > 0 ? `${missing.length} document${missing.length === 1 ? '' : 's'} couldn't be downloaded (${missing.join(', ')}) — use Reimport, or download ${missing.length === 1 ? 'it' : 'them'} here and upload to the account.` : null,
     markResult.ok ? null : `The account was created, but the submission couldn't be marked imported: ${markResult.message}`,
   ].filter(Boolean);

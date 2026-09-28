@@ -9,7 +9,8 @@ import type { CoverageType } from './coverage';
  * exact same createAccountFromExtraction/addFiles pipeline any other submission uses.
  */
 
-export type IntakeSubmissionStatus = 'pending' | 'imported' | 'dismissed';
+/** uploading = the client is still sending it (not importable); incomplete = they stopped before finishing (0029). */
+export type IntakeSubmissionStatus = 'uploading' | 'pending' | 'imported' | 'dismissed' | 'incomplete';
 
 export interface IntakeLink {
   id: string;
@@ -55,6 +56,21 @@ export interface IntakeSubmission {
   createdAt: string;
   importedAt: string | null;
   importedAccountId: string | null;
+  /** The confirmation number the client was given (0029). */
+  reference?: string | null;
+  /** How many files the client was sending (0029). */
+  expectedFiles?: number | null;
+  /** When the server verified the submission complete (0029). */
+  completedAt?: string | null;
+  lastActivityAt?: string | null;
+}
+
+/** One entry of a submission's history (0029 intake_events). */
+export interface IntakeEvent {
+  id: number;
+  event: 'started' | 'resumed' | 'file_uploaded' | 'file_failed' | 'file_retry' | 'file_removed' | 'verification_failed' | 'completed' | 'abandoned' | 'imported' | 'dismissed';
+  detail: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface IntakeDocument {

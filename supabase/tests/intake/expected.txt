@@ -1,0 +1,39 @@
+Q1 inactive link denied: This submission link isn't valid or is no longer active.
+Q2 started: status=uploading ref=true id=true
+Q3 same key again returns the same submission: true
+Q4 same key other link denied: This submission belongs to a different link.
+Q5 upload into the open submission: ok
+Q5 upload outside a submission denied
+Q6 wrong browser key denied: Unknown submission.
+Q6 wrong browser key denied: Unknown submission.
+Q6 attach a file not in storage denied: The file isn't in storage.
+Q6 path of another submission denied: The file path doesn't belong to this submission.
+Q6 attach: true
+Q6 attach again (a retry) keeps one row: true
+Q6 rows for the file: 1
+Q7 finalize with a missing file: {"ok": false, "missing": ["key-bbbb-2222"], "problems": []}
+Q7 still uploading: uploading
+Q8 import while uploading denied: This submission is still being sent by the client — it can be imported once it's complete.
+Q8 broker sees it as: uploading 2 expected
+Q9 attach second: true
+Q9 finalize: ok=true files=2 ref matches=true
+Q10 finalize again: ok=true alreadyComplete=true
+Q11 attach after completion denied: This submission is no longer accepting files.
+Q11 upload after completion denied
+Q9 status=pending completed=true answers: Blue Ridge LLC|123456|7|null|auto_liability
+Q12 finalize without email: {"ok": false, "missing": [], "problems": ["Email"]}
+Q13 forged or foreign event denied
+Q13 finalize with only a.pdf: ok=true
+Q13 documents kept: a.pdf
+Q14 another broker marks stale: 0
+Q14 owner marks stale: 1
+Q14 status: incomplete
+Q15 resumed: uploading
+Q15 finalize after resume: ok=true
+Q16 anon reads submissions: 0
+Q16 anon reads events denied
+Q16 owner events for the first submission: started,file_uploaded,file_uploaded,verification_failed,file_uploaded,completed
+Q16 owner events for the resumed one: started,abandoned,resumed,completed
+Q16 import recorded: imported
+Q16 another broker reads events: 0
+Q17 legacy client upload + attach: ok

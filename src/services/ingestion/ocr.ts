@@ -54,10 +54,13 @@ export function prepareForOcr(source: CanvasImageSource & { width: number; heigh
       hist[g]++;
     }
     const total = d.length / 4;
+    // The gray levels below which / above which 1% of the pixels sit.
     let lo = 0;
+    let below = hist[0];
+    while (lo < 255 && below < total * 0.01) below += hist[++lo];
     let hi = 255;
-    for (let acc = 0; lo < 255 && (acc += hist[lo]) < total * 0.01; lo++);
-    for (let acc = 0; hi > 0 && (acc += hist[hi]) < total * 0.01; hi--);
+    let above = hist[255];
+    while (hi > 0 && above < total * 0.01) above += hist[--hi];
     if (hi - lo > 30) {
       const k = 255 / (hi - lo);
       for (let i = 0; i < d.length; i += 4) {

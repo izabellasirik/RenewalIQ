@@ -4,9 +4,19 @@ import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWa
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, ConfirmDialog, EmptyState, Skeleton, Tabs } from '../components/ui';
 import { COVERAGE_LABELS } from '../types';
-import type { IntakeDocument, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
+import type { IntakeDocument, IntakeEvent, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
 import { useBrokerSession } from '../hooks/useBrokerSession';
-import { createIntakeLink, dismissIntakeSubmission, downloadIntakeDocumentFile, fetchIntakeDocuments, fetchIntakeLinks, fetchIntakeSubmissions, setIntakeLinkActive } from '../services/supabase/intakeRepo';
+import {
+  createIntakeLink,
+  dismissIntakeSubmission,
+  downloadIntakeDocumentFile,
+  fetchIntakeDocuments,
+  fetchIntakeEvents,
+  fetchIntakeLinks,
+  fetchIntakeSubmissions,
+  markStaleIntakeSubmissions,
+  setIntakeLinkActive,
+} from '../services/supabase/intakeRepo';
 import { DocumentPreviewModal, type PreviewableFile } from '../components/upload/DocumentPreviewModal';
 import { saveBlobAs } from '../services/documents/fileAccess';
 import { inferFileType } from '../utils/documents';
@@ -205,8 +215,55 @@ function LinksSection({ userId }: { userId: string }) {
   );
 }
 
-const FILTER_ORDER: IntakeSubmissionStatus[] = ['pending', 'imported', 'dismissed'];
-const FILTER_LABELS: Record<IntakeSubmissionStatus, string> = { pending: 'Pending', imported: 'Imported', dismissed: 'Dismissed' };
+const FILTER_ORDER: IntakeSubmissionStatus[] = ['pending', 'uploading', 'incomplete', 'imported', 'dismissed'];
+const FILTER_LABELS: Record<IntakeSubmissionStatus, string> = { pending: 'Pending', uploading: 'Being sent', incomplete: 'Incomplete', imported: 'Imported', dismissed: 'Dismissed' };
+
+const EVENT_LABELS: Record<IntakeEvent['event'], string> = {
+  started: 'Client started sending',
+  resumed: 'Client came back to finish',
+  file_uploaded: 'File received',
+  file_failed: 'File failed to upload',
+  file_retry: 'Upload retried',
+  file_removed: 'File removed by the client',
+  verification_failed: 'Verification found something missing',
+  completed: 'Verified complete — reference given to the client',
+  abandoned: 'Client stopped before finishing',
+  imported: 'Imported',
+  dismissed: 'Dismissed',
+};
+
+/** Who did what, when — the submission's audit trail (0029). */
+function SubmissionHistory({ submissionId }: { submissionId: string }) {
+  const [events, setEvents] = useState<IntakeEvent[] | null>(null);
+  useEffect(() => {
+    fetchIntakeEvents(submissionId).then((r) => setEvents(r.ok ? r.data : []));
+  }, [submissionId]);
+  if (!events) return <p className="text-xs text-[var(--color-ink-400)]">Loading…</p>;
+  if (events.length === 0) return <p className="text-xs italic text-[var(--color-ink-400)]">No history recorded for this submission.</p>;
+  return (
+    <ol className="flex flex-col gap-1 text-xs" aria-label="Submission history">
+      {events.map((e) => {
+        const d = e.detail as { file?: string; files?: unknown; error?: string; missing?: string[]; attempt?: number };
+        const extra = [
+          typeof d.file === 'string' ? d.file : null,
+          Array.isArray(d.files) ? (d.files as string[]).join(', ') : null,
+          typeof d.attempt === 'number' ? `attempt ${d.attempt}` : null,
+          typeof d.error === 'string' ? d.error : null,
+          Array.isArray(d.missing) && d.missing.length ? `${d.missing.length} file${d.missing.length === 1 ? '' : 's'} not confirmed` : null,
+        ].filter(Boolean);
+        return (
+          <li key={e.id} className="flex gap-2">
+            <span className="w-32 shrink-0 text-[var(--color-ink-400)]">{formatDate(e.createdAt)}</span>
+            <span className={e.event === 'file_failed' || e.event === 'verification_failed' || e.event === 'abandoned' ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-700)]'}>
+              {EVENT_LABELS[e.event] ?? e.event}
+              {extra.length > 0 && <span className="text-[var(--color-ink-500)]"> — {extra.join(' · ')}</span>}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 /** Which submission cards are collapsed — remembered in this browser only (a view preference). */
 function useCollapsedSubmissions(): [Set<string>, (id: string) => void] {
@@ -353,8 +410,24 @@ function SubmissionCard({
             </p>
           </div>
         </div>
-        <p className="text-xs text-[var(--color-ink-400)]">Submitted {formatDate(submission.createdAt)}</p>
+        <div className="text-right text-xs text-[var(--color-ink-400)]">
+          <p>{submission.status === 'uploading' ? 'Started' : 'Submitted'} {formatDate(submission.completedAt ?? submission.createdAt)}</p>
+          {submission.reference && <p className="font-mono text-[var(--color-ink-600)]">{submission.reference}</p>}
+        </div>
       </div>
+      {(submission.status === 'uploading' || submission.status === 'incomplete') && (
+        <div
+          className={`mt-2 flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${submission.status === 'uploading' ? 'bg-[var(--color-ink-50)] text-[var(--color-ink-700)]' : 'bg-[var(--color-warning-100)]/50 text-[var(--color-ink-800)]'}`}
+          role="status"
+        >
+          {submission.status === 'uploading' ? <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin" /> : <FileWarning size={13} className="mt-0.5 shrink-0 text-[var(--color-warning-600)]" />}
+          <p>
+            {submission.status === 'uploading'
+              ? `The client is still sending this${documents ? ` — ${documents.length}${submission.expectedFiles ? ` of ${submission.expectedFiles}` : ''} file${(submission.expectedFiles ?? documents.length) === 1 ? '' : 's'} so far` : ''}. It can be imported once they finish.`
+              : `The client stopped before finishing${documents ? ` — ${documents.length}${submission.expectedFiles ? ` of ${submission.expectedFiles}` : ''} file${(submission.expectedFiles ?? documents.length) === 1 ? '' : 's'} arrived` : ''}. They can still finish it from the same browser, or you can import what arrived.`}
+          </p>
+        </div>
+      )}
 
       {!collapsed && (
         <>
@@ -414,10 +487,17 @@ function SubmissionCard({
 
       {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]">{error}</p>}
 
-      {submission.status === 'pending' && (
+      <details className="mt-3">
+        <summary className="cursor-pointer text-xs font-medium text-[var(--color-ink-500)] hover:text-[var(--color-ink-700)]">History</summary>
+        <div className="mt-2">
+          <SubmissionHistory submissionId={submission.id} />
+        </div>
+      </details>
+
+      {(submission.status === 'pending' || submission.status === 'incomplete') && (
         <div className="mt-4 flex gap-2 border-t border-[var(--color-ink-100)] pt-3">
           <Button size="sm" disabled={busy !== null} onClick={handleImportClick}>
-            {busy === 'import' ? 'Importing…' : 'Import'}
+            {busy === 'import' ? 'Importing…' : submission.status === 'incomplete' ? 'Import what arrived' : 'Import'}
           </Button>
           <Button size="sm" variant="ghost" icon={<X size={13} />} disabled={busy !== null} onClick={handleDismiss}>
             Dismiss
@@ -438,7 +518,7 @@ function SubmissionCard({
         cancelLabel="Don't import"
         variant="default"
       />
-      {submission.status !== 'pending' && (
+      {(submission.status === 'imported' || submission.status === 'dismissed') && (
         <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-ink-100)] pt-3">
           {submission.status === 'imported' && submission.importedAccountId && (
             <Button size="sm" variant="secondary" onClick={() => navigate(`/accounts/${submission.importedAccountId}/risk-profile`)}>
@@ -473,6 +553,8 @@ function SubmissionsSection({ userId }: { userId: string }) {
     fetchIntakeLinks(userId).then((links) => {
       if (links.ok) setLinkLabels(Object.fromEntries(links.data.map((l) => [l.id, l.label])));
     });
+    // Submissions a client stopped sending (2 hours without activity) show as incomplete.
+    await markStaleIntakeSubmissions();
     const result = await fetchIntakeSubmissions(userId);
     setLoading(false);
     if (!result.ok) {
@@ -490,7 +572,7 @@ function SubmissionsSection({ userId }: { userId: string }) {
   }, [load]);
 
   const counts = useMemo(() => {
-    const c: Record<IntakeSubmissionStatus, number> = { pending: 0, imported: 0, dismissed: 0 };
+    const c: Record<IntakeSubmissionStatus, number> = { pending: 0, uploading: 0, incomplete: 0, imported: 0, dismissed: 0 };
     for (const s of submissions) c[s.status]++;
     return c;
   }, [submissions]);
@@ -508,7 +590,8 @@ function SubmissionsSection({ userId }: { userId: string }) {
           </button>
         </div>
       )}
-      <Tabs items={FILTER_ORDER.map((key) => ({ key, label: FILTER_LABELS[key], count: counts[key] }))} active={filter} onChange={(k) => setFilter(k as IntakeSubmissionStatus)} />
+      <Tabs
+        items={FILTER_ORDER.filter((key) => (key !== 'uploading' && key !== 'incomplete') || counts[key] > 0 || filter === key).map((key) => ({ key, label: FILTER_LABELS[key], count: counts[key] }))} active={filter} onChange={(k) => setFilter(k as IntakeSubmissionStatus)} />
       {loading ? (
         <Skeleton variant="block" className="h-32 w-full" />
       ) : loadError ? (

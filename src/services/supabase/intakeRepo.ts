@@ -1,5 +1,6 @@
 import { supabase } from './client';
-import type { CoverageType, IntakeDocument, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../../types';
+import type { CoverageType, IntakeDocument, IntakeEvent, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../../types';
+import { errorMessage, errorStatus, isTransientError, withRetry, withTimeout } from '../intake/retry';
 import { generateId } from '../../utils/id';
 
 /**
@@ -16,7 +17,8 @@ import { generateId } from '../../utils/id';
 
 export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
 
-const NOT_CONFIGURED: RepoResult<never> = { ok: false, message: 'This isn’t available in this environment. See SUPABASE_SETUP.md.' };
+const NOT_CONFIGURED_MESSAGE = 'This isn’t available in this environment. See SUPABASE_SETUP.md.';
+const NOT_CONFIGURED: RepoResult<never> = { ok: false, message: NOT_CONFIGURED_MESSAGE };
 const BUCKET = 'intake-uploads';
 
 function fail(message: string): RepoResult<never> {
@@ -63,6 +65,10 @@ interface IntakeSubmissionRow {
   created_at: string;
   imported_at: string | null;
   imported_account_id: string | null;
+  reference?: string | null;
+  expected_files?: number | null;
+  completed_at?: string | null;
+  last_activity_at?: string | null;
 }
 
 function rowToSubmission(row: IntakeSubmissionRow): IntakeSubmission {
@@ -91,6 +97,10 @@ function rowToSubmission(row: IntakeSubmissionRow): IntakeSubmission {
     createdAt: row.created_at,
     importedAt: row.imported_at,
     importedAccountId: row.imported_account_id,
+    reference: row.reference ?? null,
+    expectedFiles: row.expected_files ?? null,
+    completedAt: row.completed_at ?? null,
+    lastActivityAt: row.last_activity_at ?? null,
   };
 }
 
@@ -158,7 +168,131 @@ export function storageSafeName(name: string): string {
   return safe || 'file';
 }
 
+// ---------------------------------------------------------------------------------------------
+// Verified submission (0029): start → upload + attach each file → finalize (server verifies)
+// ---------------------------------------------------------------------------------------------
+
+/** This browser's handle on its submission — the random client token proves it's the same sender. */
+export interface IntakeSession {
+  submissionId: string;
+  reference: string;
+  clientToken: string;
+}
+
+/** 0029 isn't applied yet (the functions don't exist) — the form falls back to the old way of sending. */
+export class IntakeNotUpgradedError extends Error {
+  constructor() {
+    super('Verified intake needs migration 0029_intake_reliability.sql.');
+    this.name = 'IntakeNotUpgradedError';
+  }
+}
+
+function rpcError(error: { message: string; code?: string; status?: number }): Error {
+  if (error.code === 'PGRST202' || /Could not find the function/i.test(error.message)) return new IntakeNotUpgradedError();
+  return Object.assign(new Error(error.message), { code: error.code, status: (error as { status?: number }).status });
+}
+
+const RPC_TIMEOUT_MS = 30_000;
+
 /**
+ * Creates the submission (or returns the one this browser already started — same client token), with
+ * the answers saved on the server. Retries temporary failures; a retried request can't make a duplicate.
+ */
+export async function startIntakeSubmission(linkToken: string, clientToken: string, answers: IntakeAnswers, expectedFiles: number): Promise<IntakeSession> {
+  if (!supabase) throw new Error(NOT_CONFIGURED_MESSAGE);
+  return withRetry(async () => {
+    const { data, error } = await withTimeout(
+      Promise.resolve(supabase!.rpc('start_intake_submission', { p_link_token: linkToken, p_client_token: clientToken, p_answers: answers, p_expected_files: expectedFiles })),
+      RPC_TIMEOUT_MS,
+      'Starting the submission'
+    );
+    if (error) throw rpcError(error);
+    const row = (Array.isArray(data) ? data[0] : data) as { submission_id: string; reference: string; status: string } | undefined;
+    if (!row?.submission_id) throw new Error('The server did not confirm the submission.');
+    return { submissionId: row.submission_id, reference: row.reference, clientToken };
+  });
+}
+
+/** Where a file goes in storage: the submission's folder, the file's own key, then its name. Stable across retries. */
+export function intakeFilePath(submissionId: string, fileKey: string, fileName: string): string {
+  return `${submissionId}/${fileKey}/${storageSafeName(fileName)}`;
+}
+
+const isAlreadyThere = (error: unknown) => errorStatus(error) === 409 || /already exists|duplicate/i.test(errorMessage(error));
+
+/**
+ * Uploads one file and links it to the submission, retrying temporary failures (1s, 2s, 4s…). Always
+ * the same path, so a retry after an upload whose answer was lost finds the file already there
+ * instead of leaving an unlinked copy; the server then checks the file really is in storage before
+ * linking it. Throws with a readable reason once it gives up.
+ */
+export async function uploadIntakeFile(session: IntakeSession, fileKey: string, file: File, onRetry?: (attempt: number, reason: string) => void): Promise<void> {
+  if (!supabase) throw new Error(NOT_CONFIGURED_MESSAGE);
+  const path = intakeFilePath(session.submissionId, fileKey, file.name);
+  // Generous for a slow phone connection: a minute plus ~50 KB/s.
+  const timeout = 60_000 + Math.ceil(file.size / 50_000) * 1000;
+  await withRetry(
+    async () => {
+      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined })), timeout, `Uploading ${file.name}`);
+      if (up.error && !isAlreadyThere(up.error)) {
+        if (errorStatus(up.error) === 413 || /too large|exceeded the maximum/i.test(up.error.message)) throw Object.assign(new Error(`${file.name} is too large to upload.`), { status: 413 });
+        throw up.error;
+      }
+      const { error } = await withTimeout(
+        Promise.resolve(
+          supabase!.rpc('attach_intake_document', {
+            p_submission_id: session.submissionId,
+            p_client_token: session.clientToken,
+            p_file_key: fileKey,
+            p_file_name: file.name,
+            p_storage_path: path,
+            p_size: file.size,
+          })
+        ),
+        RPC_TIMEOUT_MS,
+        `Confirming ${file.name}`
+      );
+      if (error) {
+        // Not in storage after an "uploaded" answer: worth another try; anything else is final.
+        if (error.code === 'P0002') throw Object.assign(new Error(error.message), { status: 503 });
+        throw rpcError(error);
+      }
+    },
+    { onRetry: (attempt, err) => onRetry?.(attempt, errorMessage(err)) }
+  );
+}
+
+export type FinalizeResult = { ok: true; reference: string; files: number } | { ok: false; missing: string[]; problems: string[] };
+
+/** Asks the server to verify everything (answers + every file linked and in storage) and complete the submission. */
+export async function finalizeIntakeSubmission(session: IntakeSession, fileKeys: string[]): Promise<FinalizeResult> {
+  if (!supabase) throw new Error(NOT_CONFIGURED_MESSAGE);
+  return withRetry(async () => {
+    const { data, error } = await withTimeout(
+      Promise.resolve(supabase!.rpc('finalize_intake_submission', { p_submission_id: session.submissionId, p_client_token: session.clientToken, p_file_keys: fileKeys })),
+      RPC_TIMEOUT_MS,
+      'Verifying the submission'
+    );
+    if (error) throw rpcError(error);
+    const r = data as { ok: boolean; reference?: string; files?: number; missing?: string[]; problems?: string[] };
+    return r.ok ? { ok: true, reference: r.reference ?? session.reference, files: r.files ?? fileKeys.length } : { ok: false, missing: r.missing ?? [], problems: r.problems ?? [] };
+  });
+}
+
+/** Best effort — an audit entry never blocks or fails the submission itself. */
+export async function logIntakeEvent(session: IntakeSession, event: 'file_failed' | 'file_retry' | 'file_removed', detail: Record<string, unknown>): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.rpc('log_intake_event', { p_submission_id: session.submissionId, p_client_token: session.clientToken, p_event: event, p_detail: detail });
+  } catch {
+    // audit only
+  }
+}
+
+export { isTransientError };
+
+/**
+ * BEFORE 0029 — kept only as the fallback while the migration isn't applied.
  * Inserts one submission and uploads its files, in that order — the submission row must exist
  * first, since intake_documents' RLS insert policy requires a matching pending intake_submissions
  * row (see the migration). `link` is the already-fetched, already-validated intake_links row; its
@@ -325,4 +459,26 @@ export async function dismissIntakeSubmission(id: string): Promise<RepoResult> {
   const { error } = await supabase.from('intake_submissions').update({ status: 'dismissed' }).eq('id', id);
   if (error) return fail(error.message);
   return { ok: true, data: undefined };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Broker — submission history (0029)
+// ---------------------------------------------------------------------------------------------
+
+/** Marks the broker's submissions that stopped mid-send (2 hours without activity) as incomplete. No-op before 0029. */
+export async function markStaleIntakeSubmissions(): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.rpc('mark_stale_intake_submissions');
+  } catch {
+    // best effort
+  }
+}
+
+/** A submission's history, oldest first. Empty before 0029. */
+export async function fetchIntakeEvents(intakeSubmissionId: string): Promise<RepoResult<IntakeEvent[]>> {
+  if (!supabase) return NOT_CONFIGURED;
+  const { data, error } = await supabase.from('intake_events').select('id, event, detail, created_at').eq('intake_submission_id', intakeSubmissionId).order('id', { ascending: true });
+  if (error) return error.code === '42P01' || error.code === 'PGRST205' ? { ok: true, data: [] } : fail(error.message);
+  return { ok: true, data: (data ?? []).map((r) => ({ id: r.id as number, event: r.event as IntakeEvent['event'], detail: (r.detail ?? {}) as Record<string, unknown>, createdAt: r.created_at as string })) };
 }
