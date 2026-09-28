@@ -355,3 +355,25 @@ select 'M8 removed newbie keeps personal accounts: ' || coalesce(string_agg(id, 
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
 select 'M9 member without accounts removed, moved=' || remove_agency_member('00000000-0000-0000-0000-00000000000f', null);
 reset role;
+
+\echo '== 0028: atomic account save'
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select replace_submission_children('acct_r1',
+  '[{"id":"acct_r1::fv::x","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000a","section":"business","field_key":"namedInsured","value":"R One","confidence":"manual","status":"manual","is_manual":true}]',
+  '[]', '[]', '[]',
+  '[{"id":"drv_a1","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000a","name":"Ann","details":{"licenseNumber":"X1"}},{"id":"drv_a2","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000a","name":"Bob"}]',
+  '[{"id":"loss_a1","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000a","loss_date":"2024-01-02","claim_type":"Collision","paid":100,"reserved":0,"incurred":100,"status":"closed"}]');
+select 'R1 saved: drivers=' || (select count(*) from drivers where submission_id = 'acct_r1') || ' details=' || (select details->>'licenseNumber' from drivers where id = 'drv_a1') || ' losses=' || (select count(*) from losses where submission_id = 'acct_r1') || ' created_at set=' || (select bool_and(created_at is not null) from drivers where submission_id = 'acct_r1');
+do $$ begin perform replace_submission_children('acct_r1', '[]', '[]', '[]', '[]',
+  '[{"id":"drv_a3","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000a","name":"Cy"}]',
+  '[{"id":"loss_bad","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000a","loss_date":"2024-01-02","claim_type":"x","status":"weird"}]');
+  raise notice 'R2 bad row accepted (BAD)'; exception when others then raise notice 'R2 refused save rolled back'; end $$;
+select 'R2 previous rows intact: drivers=' || string_agg(name, ',' order by name) || ' losses=' || (select count(*) from losses where submission_id = 'acct_r1') || ' fields=' || (select count(*) from field_values where submission_id = 'acct_r1') from drivers where submission_id = 'acct_r1';
+do $$ begin perform replace_submission_children('acct_r1', '[]', '[]', '[]', '[]', '[{"id":"drv_x","submission_id":"acct_b1","user_id":"00000000-0000-0000-0000-00000000000a","name":"Sneak"}]', '[]'); raise notice 'R3 row for another account: ALLOWED (BAD)'; exception when others then raise notice 'R3 row for another account denied: %', sqlerrm; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform replace_submission_children('acct_r1', '[]', '[]', '[]', '[]', '[]', '[]'); raise notice 'R4 other agency wipes account: ALLOWED (BAD)'; exception when others then raise notice 'R4 other agency denied: %', sqlerrm; end $$;
+do $$ begin perform insert_submission_rows('drivers', '[{"id":"drv_y","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000c","name":"Sneak"}]'); raise notice 'R4 direct insert helper: ALLOWED (BAD)'; exception when others then raise notice 'R4 insert helper still RLS-checked'; end $$;
+do $$ begin perform insert_submission_rows('submissions', '[]'); raise notice 'R4 other table: ALLOWED (BAD)'; exception when others then raise notice 'R4 other table refused'; end $$;
+reset role;
+select 'R5 after all: acct_r1 drivers=' || count(*) from drivers where submission_id = 'acct_r1';

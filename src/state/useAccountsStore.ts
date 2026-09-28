@@ -1377,8 +1377,24 @@ export const useAccountsStore = create<AccountsState>()(
         // A copy is a new, local-only account — it doesn't inherit the source's cloud agency assignment.
         const { agencyId: _agencyId, assignedUserId: _assignedUserId, ...sourceFields } = source;
         const clonedAccount: Account = { ...sourceFields, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false };
-        const clonedProfile: RiskProfile = { ...sourceProfile, id: generateId('risk'), accountId: newId, updatedAt: now };
         const clonedDocs = (s.documents[accountId] ?? []).map((d) => ({ ...d, id: generateId('doc'), accountId: newId }));
+        // Rows need their own ids (a row id is unique across all accounts in the database), and
+        // their sources point at the copy's documents.
+        const docIdMap = new Map((s.documents[accountId] ?? []).map((d, i) => [d.id, clonedDocs[i].id]));
+        const reKey = <T extends { id: string; source?: { documentId: string } }>(row: T, prefix: string): T => ({
+          ...row,
+          id: generateId(prefix),
+          ...(row.source && docIdMap.has(row.source.documentId) ? { source: { ...row.source, documentId: docIdMap.get(row.source.documentId)! } } : {}),
+        });
+        const clonedProfile: RiskProfile = {
+          ...sourceProfile,
+          id: generateId('risk'),
+          accountId: newId,
+          updatedAt: now,
+          vehicles: sourceProfile.vehicles.map((v) => reKey(v, 'veh')),
+          drivers: sourceProfile.drivers.map((d) => reKey(d, 'drv')),
+          lossHistory: sourceProfile.lossHistory.map((l) => reKey(l, 'loss')),
+        };
         (s.documents[accountId] ?? []).forEach((d, i) => void copyLocalFile(d.id, clonedDocs[i].id));
 
         set((state) => ({

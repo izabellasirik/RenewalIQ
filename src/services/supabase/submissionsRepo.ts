@@ -178,6 +178,11 @@ function isMissingWorkflowColumnError(error: { message: string; code?: string })
   return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
 }
 
+/** The database function isn't there yet (its migration not applied) — PostgREST's "not found in the schema cache". */
+function isMissingFunctionError(error: { message: string; code?: string }): boolean {
+  return error.code === 'PGRST202' || error.code === '42883' || /replace_submission_children/.test(error.message);
+}
+
 function isMissingColumnError(error: { message: string; code?: string }, columns: string[]): boolean {
   return error.code === 'PGRST204' || error.code === '42703' || columns.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
 }
@@ -291,9 +296,13 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         }));
 
       // Every field — including ones without their own column — comes back via recordRows (0024 `details`).
-      const vehicles: VehicleEntry[] = (vehRes.data ?? []).filter((v) => v.submission_id === sub.id).map(vehicleFromRow);
-      const drivers: DriverEntry[] = (drvRes.data ?? []).filter((d) => d.submission_id === sub.id).map(driverFromRow);
-      const lossHistory: LossEntry[] = (lossRes.data ?? []).filter((l) => l.submission_id === sub.id).map(lossFromRow);
+      // Rows store only the source document's id; put its file name back so "Source" isn't blank.
+      const docNames = new Map<string, string>((docRes.data ?? []).filter((d) => d.submission_id === sub.id).map((d) => [d.id as string, d.name as string]));
+      const withDocName = <T extends { source?: { documentId: string; documentName: string } }>(r: T): T =>
+        r.source && !r.source.documentName && docNames.has(r.source.documentId) ? { ...r, source: { ...r.source, documentName: docNames.get(r.source.documentId)! } } : r;
+      const vehicles: VehicleEntry[] = (vehRes.data ?? []).filter((v) => v.submission_id === sub.id).map(vehicleFromRow).map(withDocName);
+      const drivers: DriverEntry[] = (drvRes.data ?? []).filter((d) => d.submission_id === sub.id).map(driverFromRow).map(withDocName);
+      const lossHistory: LossEntry[] = (lossRes.data ?? []).filter((l) => l.submission_id === sub.id).map(lossFromRow).map(withDocName);
 
       const documents: UploadedDocument[] = (docRes.data ?? [])
         .filter((d) => d.submission_id === sub.id)
@@ -424,8 +433,30 @@ export async function saveSubmissionSnapshot(
     headerSaved = true;
 
     const { values, alternates } = collectFieldValueRows(userId, account.id, profile);
+    const coverageRows = profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type }));
+    const vehicleRows = profile.vehicles.map((v) => vehicleToRow(v, account.id, userId));
+    const driverRows = profile.drivers.map((d) => driverToRow(d, account.id, userId));
+    const lossRows = profile.lossHistory.map((l) => lossToRow(l, account.id, userId));
 
-    // Delete-then-reinsert for the itemized/child tables — see file header for why this is an
+    // 0028: replace every child row in ONE database transaction — a save that's interrupted or
+    // refused changes nothing, instead of leaving the account's drivers/vehicles/losses deleted.
+    const atomic = await supabase.rpc('replace_submission_children', {
+      p_submission_id: account.id,
+      p_field_values: values,
+      p_field_alternates: alternates,
+      p_coverage_lines: coverageRows,
+      p_vehicles: vehicleRows,
+      p_drivers: driverRows,
+      p_losses: lossRows,
+    });
+    if (!atomic.error) {
+      coreSaved = true;
+      if (notSavedMessage) return { ...fail(notSavedMessage), headerSaved, coreSaved };
+      return { ok: true, data: undefined, headerSaved, coreSaved };
+    }
+    if (!isMissingFunctionError(atomic.error)) return { ...fail(atomic.error.message), headerSaved, coreSaved };
+
+    // Before 0028: delete-then-reinsert for the itemized/child tables — see file header for why this is an
     // acceptable trade-off at this app's scale.
     const del = await Promise.all([
       supabase.from('field_values').delete().eq('submission_id', account.id),
@@ -452,11 +483,7 @@ export async function saveSubmissionSnapshot(
         })()
       );
     }
-    if (profile.coverage.length) {
-      inserts.push(
-        supabase.from('coverage_lines').insert(profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type })))
-      );
-    }
+    if (coverageRows.length) inserts.push(supabase.from('coverage_lines').insert(coverageRows));
     // Inserts a table's rows with every field; if 0024's `details` column isn't there yet, saves the
     // columns it does have and says the rest wasn't kept (instead of failing the whole save).
     const insertRows = (table: 'vehicles' | 'drivers' | 'losses', rows: Record<string, unknown>[]) =>
@@ -474,9 +501,9 @@ export async function saveSubmissionSnapshot(
         }
         return res;
       })();
-    if (profile.vehicles.length) inserts.push(insertRows('vehicles', profile.vehicles.map((v) => vehicleToRow(v, account.id, userId))));
-    if (profile.drivers.length) inserts.push(insertRows('drivers', profile.drivers.map((d) => driverToRow(d, account.id, userId))));
-    if (profile.lossHistory.length) inserts.push(insertRows('losses', profile.lossHistory.map((l) => lossToRow(l, account.id, userId))));
+    if (vehicleRows.length) inserts.push(insertRows('vehicles', vehicleRows));
+    if (driverRows.length) inserts.push(insertRows('drivers', driverRows));
+    if (lossRows.length) inserts.push(insertRows('losses', lossRows));
 
     const insRes = await Promise.all(inserts);
     const insErr = insRes.find((r) => r.error);

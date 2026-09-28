@@ -178,6 +178,12 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   on each), takes the person off every collaborator list, then removes their membership. Their
   login and personal accounts stay. Additive, safe to re-run. Until it's applied, the Team page
   says the migration is needed.
+- **`supabase/migrations/0028_atomic_account_save.sql`** — **important for data safety.** Saves an
+  account's fields, coverage, vehicles, drivers and losses in one database transaction. Before it,
+  a save deleted those rows and re-inserted them in separate requests, so a save interrupted in
+  between (tab closed, connection dropped, a refused row) could leave the account's drivers,
+  vehicles or losses deleted in the database. With it, a save lands completely or changes nothing.
+  Row-level security applies exactly as before. Needs 0010 and 0024 first. Additive, safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -249,6 +255,7 @@ from (values
   ('0025_loss_runs',                  exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'submissions' and column_name = 'loss_runs')),
   ('0026_collaborators_notifications', to_regclass('public.notifications') is not null),
   ('0027_team_management',            to_regprocedure('public.remove_agency_member(uuid,uuid)') is not null),
+  ('0028_atomic_account_save',        to_regprocedure('public.replace_submission_children(text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

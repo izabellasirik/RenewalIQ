@@ -252,30 +252,47 @@ export function DriversTable({
                       )}
                       {reportAge('mvr', d.mvrReportDate)?.outdated && <FreshnessBadge kind="mvr" reportDate={d.mvrReportDate} />}
                     </span>
+                    {latestNote(d) && (
+                      <button
+                        onClick={() => {
+                          if (!open) toggle(d.id);
+                        }}
+                        title={latestNote(d)!.text}
+                        className="mt-0.5 flex max-w-[16rem] items-start gap-1 text-left text-xs text-[var(--color-ink-500)] hover:text-[var(--color-ink-700)] cursor-pointer"
+                      >
+                        <StickyNote size={11} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />
+                        <span className="line-clamp-2">
+                          {latestNote(d)!.text}
+                          {(d.notes?.length ?? 0) > 1 && <span className="text-[var(--color-ink-400)]"> · +{d.notes!.length - 1} more</span>}
+                        </span>
+                      </button>
+                    )}
                   </td>
-                  <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.dob)}</td>
+                  <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.dob)}</td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">
-                    <span className="font-mono text-xs">{d.licenseNumber ?? '—'}</span>
+                    {d.licenseNumber ? <span className="font-mono text-xs">{d.licenseNumber}</span> : <span className="whitespace-nowrap text-xs italic text-[var(--color-ink-400)]">No license #</span>}
                     <div className="text-xs text-[var(--color-ink-500)]">
                       {[d.licenseState, d.licenseClass ? `Class ${d.licenseClass}` : null, d.isCDL ? 'CDL' : null].filter(Boolean).join(' · ') || ''}
                     </div>
                   </td>
-                  <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.issueDate)}</td>
-                  <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.expirationDate)}</td>
+                  <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.issueDate)}</td>
+                  <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.expirationDate)}</td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">
                     {exp !== undefined ? formatDuration(exp) || '—' : '—'}
                     {d.experienceFromIssueDate && d.issueDate && <div className="text-[11px] text-[var(--color-ink-400)]">from issue date</div>}
                   </td>
-                  <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.hireDate)}</td>
+                  <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.hireDate)}</td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.violations ?? '—'}</td>
-                  <td className="py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
+                  <td className="max-w-[9rem] py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
                     {d.isManual ? (
                       <span className="inline-flex items-center gap-1">
                         <User size={11} />
-                        Entered by broker
+                        Manual
                       </span>
                     ) : (
-                      (d.source?.documentName ?? '—')
+                      <span className="block truncate" title={d.source?.documentName}>
+                        {d.source?.documentName ?? '—'}
+                      </span>
                     )}
                   </td>
                   <td className="py-2.5">
@@ -327,6 +344,11 @@ export function DriversTable({
       />
     </div>
   );
+}
+
+/** The driver's most recent note, shown under their name in the list. */
+function latestNote(d: DriverEntry): DriverNote | undefined {
+  return [...(d.notes ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
 }
 
 /** Everything else about one driver, and their own notes. */

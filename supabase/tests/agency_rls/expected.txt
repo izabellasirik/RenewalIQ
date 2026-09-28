@@ -163,3 +163,11 @@ M8 remove newbie (collaborator + 1 account) → denis, moved=1
 M8 acct_r2 collaborators=0 acct_r3 → denis=true
 M8 removed newbie keeps personal accounts: acct_n2
 M9 member without accounts removed, moved=0
+R1 saved: drivers=2 details=X1 losses=1 created_at set=true
+R2 refused save rolled back
+R2 previous rows intact: drivers=Ann,Bob losses=1 fields=1
+R3 row for another account denied: Every row must belong to account acct_r1.
+R4 other agency denied: You don't have access to this account.
+R4 insert helper still RLS-checked
+R4 other table refused
+R5 after all: acct_r1 drivers=2
