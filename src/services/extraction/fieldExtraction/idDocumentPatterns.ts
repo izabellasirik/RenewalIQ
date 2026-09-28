@@ -184,7 +184,16 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
   // business's address. Free text (no fixed token shape to validate against), so it's only
   // accepted if it looks address-like (contains a digit, within a sane length) rather than
   // capturing an unrelated sentence.
-  const address = firstMatch(lines, [/^address\s*:?\s*(.+)$/i]);
+  // Also the standard numbered layout: "8 1402 ELM STREET" with "DALLAS, TX 75201" on the next line.
+  const numbered = (() => {
+    const i = lines.findIndex((l) => /^\s*8\s+\d{1,6}\s+[A-Za-z0-9 .#'-]{3,60}$/.test(l.text));
+    if (i === -1) return null;
+    const street = lines[i].text.trim().replace(/^8\s+/, '');
+    const next = lines[i + 1]?.text.trim();
+    const cityLine = next && /^[A-Za-z .'-]+,?\s+[A-Z]{2}\s+\d{5}(?:-\d{4})?$/.test(next) ? next : null;
+    return { raw: cityLine ? `${street}, ${cityLine}` : street, line: lines[i] };
+  })();
+  const address = firstMatch(lines, [/^address\s*:?\s*(.+)$/i]) ?? numbered;
   if (address) {
     attempted++;
     const raw = address.raw.trim().replace(/[.,;]+$/, '');
@@ -211,6 +220,8 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
     lines,
     [
       ...withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}(?:dl|lic(?:ense)?)\\s*#\\s*:?\\s*(\\S+)`, 'i')),
+      // "4d DL 30417729" / "DLN 30417729" / "DL NO 30417729" — the numbered card layout, no "#".
+      new RegExp(`${FIELD_NUM_PREFIX}(?:dln|dl|lic)\\b\\s*(?:no\\.?|number)?\\s*:?\\s*([A-Z0-9-]{5,17})\\b`, 'i'),
       /\blicense\s*(?:no\.?|number)\s*:?\s*(\S+)/i,
       // Real OCR can split "License number:" from its value onto separate lines, leaving a line
       // that just reads "License 123456789" with no "number"/"no" token at all — confirmed against

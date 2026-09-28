@@ -20,6 +20,8 @@ export type LossRunDraft = Omit<LossRun, 'id' | 'createdAt' | 'updatedAt'> & {
 
 const DATE = String.raw`(\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|[A-Z][a-z]{2,8}\.?\s+\d{1,2},?\s+\d{4})`;
 const PERIOD_RE = new RegExp(String.raw`(?:policy\s*)?(?:period|term|dates?|effective|coverage)?\s*(?:from)?\s*[:\-]?\s*${DATE}\s*(?:-|–|—|to|thru|through)\s*${DATE}`, 'i');
+/** "Policy Period: 01/15/2025  01/15/2026" — with the label, two dates are enough (OCR often drops the dash). */
+const PERIOD_LABELED_RE = new RegExp(String.raw`\b(?:policy\s*(?:period|term)|coverage\s*period|term|period)\s*[:\-]?\s*${DATE}\s*(?:-|–|—|to|thru|through)?\s*${DATE}`, 'i');
 const EFFECTIVE_RE = new RegExp(String.raw`\b(?:effective|eff\.?|inception)(?:\s*date)?\s*[:\-]?\s*${DATE}`, 'i');
 const EXPIRATION_RE = new RegExp(String.raw`\b(?:expiration|expiry|exp\.?)(?:\s*date)?\s*[:\-]?\s*${DATE}`, 'i');
 const REPORT_DATE_RE = new RegExp(
@@ -159,7 +161,7 @@ export function extractLossRunDrafts(
   }
   for (const s of sections) {
     for (const l of s.lines) {
-      const period = l.text.match(PERIOD_RE);
+      const period = l.text.match(PERIOD_RE) ?? l.text.match(PERIOD_LABELED_RE);
       if (period && !s.coverageStart) {
         s.coverageStart = iso(period[1]);
         s.coverageEnd = iso(period[2]);

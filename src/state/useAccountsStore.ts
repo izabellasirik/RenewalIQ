@@ -842,7 +842,7 @@ export const useAccountsStore = create<AccountsState>()(
             .then(async ({ parseFile }) => {
               const raw = await parseFile(file);
               const isImageSource = raw.fileType === 'image';
-              const ocrResults = extractInsuranceFields(raw, { documentId: doc.id, documentName: doc.name, isImageSource });
+              const ocrResults = extractInsuranceFields(raw, { documentId: doc.id, documentName: doc.name, isImageSource: isImageSource || raw.ocrConfidence !== undefined });
 
               // Images are the primary case vision extraction exists for — a layout-aware model
               // reads the photo directly instead of relying only on OCR text + regex. Attempted

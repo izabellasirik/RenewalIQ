@@ -770,6 +770,13 @@ export async function markNotificationsRead(ids: string[]): Promise<RepoResult> 
 export async function submissionsRevoked(ids: string[]): Promise<Record<string, boolean>> {
   const out: Record<string, boolean> = {};
   if (!supabase || ids.length === 0) return out;
+  // Revoked = it exists but this user can no longer see it. An account saved just after the list
+  // was fetched (a brand-new one) exists AND is visible — that's not revoked. Without this check a
+  // new account was dropped from the screen (and its local files deleted) right after creation.
+  const visible = await supabase.from('submissions').select('id').in('id', ids);
+  if (visible.error) return out; // unsure — never drop anything on a failed check
+  const stillVisible = new Set((visible.data ?? []).map((r) => r.id as string));
+  ids = ids.filter((id) => !stillVisible.has(id));
   await Promise.all(
     ids.map(async (id) => {
       const { data, error } = await supabase!.rpc('submission_exists', { p_submission_id: id });

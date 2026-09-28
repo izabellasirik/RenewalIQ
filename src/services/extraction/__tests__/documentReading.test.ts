@@ -141,3 +141,44 @@ describe('loss runs', () => {
     expect(second.profile.lossHistory).toHaveLength(3);
   });
 });
+
+describe('more layouts', () => {
+  const txt = (text: string, name = 'doc.txt'): RawDocument => ({ documentName: name, fileType: 'txt', text, warnings: [] });
+
+  it('VINs outside a table: labeled or check-digit-valid only, with year/make/model from the line', async () => {
+    const doc = txt(
+      'COMMERCIAL AUTO DECLARATIONS\nAuto 1: 2019 KENWORTH T680 VIN 1XKYD49X9KJ123456 Stated Amount $98,500\nAuto 2: 2021 Freightliner Cascadia 1M8GDM9AXKP042788\nReference ABCDEFGH123456789\nOrder 3AKJHHDR5MSMA1234'
+    );
+    const vehicles = extractInsuranceFields(doc, { documentId: 'd', documentName: 'dec.txt' })
+      .filter((r) => r.fieldPath === 'vehicles')
+      .map((r) => r.value);
+    expect(vehicles).toEqual([
+      { vin: '1XKYD49X9KJ123456', year: 2019, make: 'Kenworth', model: 'T680' },
+      { vin: '1M8GDM9AXKP042788', year: 2021, make: 'Freightliner', model: 'Cascadia' },
+    ]);
+  });
+
+  it('scanned headers with run-together words or one misread letter still map', () => {
+    const table = { headers: ['DriverName', 'DOB', 'License#', 'Safe', 'Class', 'DaleofHire'], rows: [['John A. Smith', '04/12/1979', 'S530-4471-9921', 'TX', 'A', '02/01/2019']] };
+    expect(classifyTable(table.headers)).toBe('drivers');
+    const [row] = mapDriverTable(table);
+    expect(row.entry).toMatchObject({ name: 'John A. Smith', licenseNumber: 'S530-4471-9921', hireDate: '2019-02-01' });
+    expect(row.entry.licenseState).toBeUndefined(); // "Safe" is not guessed to be "State"
+  });
+
+  it('a license in the numbered card layout: "4d DL" number and the "8" address on two lines', () => {
+    const doc = txt('TEXAS DRIVER LICENSE CLASS A CDL\n4d DL 30417729 9 CLASS A\n4b EXP 04/12/2029 4a ISS 04/12/2021\n1 LN SMITH\n2 FN JOHN\n8 1402 ELM STREET\nDALLAS, TX 75201\n3 DOB 04/12/1979 15 SEX M', 'license.jpg');
+    const driver = extractInsuranceFields(doc, { documentId: 'd', documentName: 'license.jpg', isImageSource: true }).find((r) => r.fieldPath === 'drivers')!.value;
+    expect(driver).toMatchObject({ name: 'John Smith', licenseNumber: '30417729', licenseState: 'TX', licenseClass: 'A', address: '1402 ELM STREET, DALLAS, TX 75201', dob: '04/12/1979' });
+  });
+
+  it('a driver list is not read as one driver license', () => {
+    const lines = page([
+      { y: 570, cells: [[36, 'Driver Name'], [170, 'DOB'], [245, 'License #'], [345, 'State'], [390, 'Class']] },
+      { y: 556, cells: [[36, 'John A. Smith'], [170, '04/12/1979'], [245, 'S530-4471-9921'], [345, 'TX'], [390, 'A']] },
+      { y: 542, cells: [[36, 'Tamika Reed'], [170, '01/19/1975'], [245, 'R300-7713-5402'], [345, 'AR'], [390, 'A']] },
+    ]);
+    const drivers = extractInsuranceFields(pdfDoc(lines), { documentId: 'd', documentName: 'drivers.pdf' }).filter((r) => r.fieldPath === 'drivers');
+    expect(drivers.map((d) => (d.value as { name?: string }).name)).toEqual(['John A. Smith', 'Tamika Reed']);
+  });
+});

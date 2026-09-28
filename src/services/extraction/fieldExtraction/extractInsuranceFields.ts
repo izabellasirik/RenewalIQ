@@ -6,6 +6,7 @@ import { extractBooleanFields } from './booleanPatterns';
 import { extractLossRows, extractLossBlocks } from './lossPatterns';
 import { extractDesiredCoverageLine, extractCurrentPolicyCoverageLines } from './coveragePatterns';
 import { classifyTable, mapVehicleTable, mapDriverTable, mapLossTable, mapCoverageTable, lossColumns, parseAmount } from './tableMappers';
+import { extractVehiclesFromText } from './vinText';
 import { extractLossRunDrafts, labeledTotals, looksLikeLossRun, type StatedTotals } from './lossRunPatterns';
 import { findTables, type LayoutTable } from '../../ingestion/pdfLayout';
 import type { RawTable } from '../../ingestion';
@@ -353,6 +354,21 @@ export function extractInsuranceFields(doc: RawDocument, meta: ExtractionSourceM
 
   const claims: PositionedClaim[] = [];
   const results = [...extractScalarText(doc, meta, textLines, hasDriverTable), ...extractTables(tables, meta, claims)];
+
+  // VINs printed outside a table (declarations pages, emails, questionnaires). A license or
+  // registration card already has its own extractor.
+  if (!detectDriverLicense(doc.text) && !detectVehicleRegistration(doc.text)) {
+    const known = new Set(results.filter((r) => r.fieldPath === 'vehicles').map((r) => (r.value as { vin?: string }).vin).filter((v): v is string => !!v));
+    for (const { entry, line } of extractVehiclesFromText(textLines, known)) {
+      results.push({
+        fieldPath: 'vehicles',
+        value: entry,
+        confidence: capConfidence('medium', meta),
+        source: scalarSource(meta, line.page, line.text),
+        extractionMethod: extractionMethodFor(meta),
+      });
+    }
+  }
 
   // Claims printed as text (one line per claim, or a labeled block per claim).
   const textLossRows = [...extractLossRows(textLines), ...extractLossBlocks(textLines)];

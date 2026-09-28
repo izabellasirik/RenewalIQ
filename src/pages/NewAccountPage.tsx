@@ -85,7 +85,7 @@ export function NewAccountPage() {
       try {
         const raw = await parseFile(file);
         setPhase('Extracting account information…');
-        const results = extractInsuranceFields(raw, { documentId: docId, documentName: file.name, isImageSource });
+        const results = extractInsuranceFields(raw, { documentId: docId, documentName: file.name, isImageSource: isImageSource || raw.ocrConfidence !== undefined });
         // Empty extractable text alongside a warning means nothing was actually read — surface
         // that as a failure rather than a quietly-successful "0 fields extracted".
         if (raw.text.trim().length === 0 && raw.warnings.length > 0) {

@@ -58,16 +58,42 @@ interface ColumnSpec {
   exclude?: RegExp;
 }
 
+/** Levenshtein distance, stopping early once it's over `max`. */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      rowMin = Math.min(rowMin, cur[j]);
+    }
+    if (rowMin > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
 function findColumn(headers: string[], spec: ColumnSpec, taken: number[] = []): number {
   const normalized = headers.map(normalizeHeader);
-  const ok = (i: number) => !taken.includes(i) && !(spec.exclude && spec.exclude.test(normalized[i]));
+  const compact = normalized.map((h) => h.replace(/ /g, ''));
+  const ok = (i: number) => !taken.includes(i) && !(spec.exclude && (spec.exclude.test(normalized[i]) || spec.exclude.test(compact[i])));
   for (const syn of [...spec.synonyms, ...(spec.exact ?? [])]) {
     const i = normalized.findIndex((h, k) => h === syn && ok(k));
     if (i !== -1) return i;
   }
   for (const syn of spec.synonyms) {
-    const re = new RegExp(`(?:^| )${syn.replace(/ /g, ' ')}(?: |$)`);
+    const re = new RegExp(`(?:^| )${syn}(?: |$)`);
     const i = normalized.findIndex((h, k) => re.test(h) && ok(k));
+    if (i !== -1) return i;
+  }
+  // Scanned headers: words run together ("DriverName") or a letter misread ("Dale of Hire").
+  for (const syn of spec.synonyms) {
+    const target = syn.replace(/ /g, '');
+    if (target.length < 5) continue;
+    const allowed = target.length >= 10 ? 2 : 1;
+    const i = compact.findIndex((h, k) => ok(k) && (h === target || editDistance(h, target, allowed) <= allowed));
     if (i !== -1) return i;
   }
   return -1;
