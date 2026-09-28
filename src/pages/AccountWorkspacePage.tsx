@@ -9,6 +9,7 @@ import { AccountStageSelect } from '../components/workspace/AccountStageSelect';
 import { ContactsCard } from '../components/workspace/ContactsCard';
 import { FollowUpsCard } from '../components/workspace/FollowUpsCard';
 import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
+import { ClientRequestsCard } from '../components/workspace/ClientRequestsCard';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
 import { ActionList } from '../components/workspace/ActionList';
 import { DoneTasks } from '../components/workspace/DoneTasks';
@@ -122,6 +123,8 @@ export function AccountWorkspacePage() {
             </Card>
             {/* Follow-ups right under "Action required"; the checklist itself lives on its own tab. */}
             <FollowUpsCard accountId={accountId} />
+            {/* Open client document requests only — the full history is on the Checklist tab. */}
+            <ClientRequestsCard accountId={accountId} compact />
             {/* Markets right under Follow-ups. */}
             <Card>
               <CardBody className="pt-5">
@@ -162,6 +165,7 @@ export function AccountWorkspacePage() {
 
       {tab === 'checklist' && (
         <div className="flex flex-col gap-5">
+          <ClientRequestsCard accountId={accountId} />
           <ChecklistPanel accountId={accountId} />
           <Card>
             <CardBody className="pt-5">

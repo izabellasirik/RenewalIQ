@@ -1,5 +1,5 @@
-import type { Account, Contact, FollowUp, MarketQuote, MissingItem } from '../../types';
-import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS } from '../../types';
+import type { Account, Contact, DocumentRequest, FollowUp, MarketQuote, MissingItem } from '../../types';
+import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, isOpenRequest, outstandingRequestItems } from '../../types';
 import { daysBetween, describeDue, formatShortDate, todayKey } from './dates';
 import { carriersFor, forwardedAt } from './requirementKey';
 
@@ -32,6 +32,8 @@ export interface ActionItem {
   quoteId?: string;
   /** A broker-scheduled follow-up (FollowUp.id). */
   followUpId?: string;
+  /** A client document request (0030) — its follow-up, or an upload waiting for review. */
+  requestId?: string;
 }
 
 export interface AccountWorkflowInput {
@@ -43,6 +45,8 @@ export interface AccountWorkflowInput {
   effectiveDate?: string | null;
   /** Broker-scheduled follow-ups. */
   followUps?: FollowUp[];
+  /** Client document requests (0030) — each open one is one follow-up, listing only what's still outstanding. */
+  documentRequests?: DocumentRequest[];
 }
 
 export interface DerivedActions {
@@ -92,7 +96,7 @@ export function deriveDoneActions(input: AccountWorkflowInput, today = todayKey(
 }
 
 function deriveAllAccountActions(input: AccountWorkflowInput, today: string): DerivedActions {
-  const { account, items, quotes, contacts, effectiveDate, followUps = [] } = input;
+  const { account, items, quotes, contacts, effectiveDate, followUps = [], documentRequests = [] } = input;
   const now: ActionItem[] = [];
   const upcoming: ActionItem[] = [];
   if (account.archived) return { now, upcoming };
@@ -110,7 +114,45 @@ function deriveAllAccountActions(input: AccountWorkflowInput, today: string): De
   let unrequestedChecklist = 0;
   const clientGroups = new Map<string, { item: MissingItem; neededBy: string }[]>();
 
+  // Items an open client request is chasing are followed up through that request (one task, only
+  // what's still outstanding) — never twice.
+  const openRequests = documentRequests.filter(isOpenRequest);
+  const chasedByRequest = new Set(openRequests.flatMap((r) => r.items.filter((i) => i.status !== 'waived').map((i) => i.missingItemId)));
+  for (const r of openRequests) {
+    const outstanding = outstandingRequestItems(r);
+    const who = r.contactName ? ` from ${r.contactName}` : ' from client';
+    const labels = outstanding.map((i) => i.label);
+    if (outstanding.length > 0 && r.nextFollowUp) {
+      placeDated({
+        ...base,
+        id: `docreq-${r.id}`,
+        kind: 'client_follow_up',
+        title: `${outstanding.length} item${outstanding.length === 1 ? '' : 's'} still needed${who}`,
+        detail: `${describeDue(r.nextFollowUp, today)} · Requested ${formatShortDate(r.requestedAt)} · ${labels.slice(0, 2).join(', ')}${labels.length > 2 ? ` +${labels.length - 2} more` : ''}`,
+        dueDate: r.nextFollowUp,
+        tab: 'checklist',
+        requestId: r.id,
+      });
+    }
+  }
+  for (const r of documentRequests) {
+    for (const f of r.files.filter((x) => x.matchStatus === 'needs_review')) {
+      const item = r.items.find((i) => i.id === f.requestItemId);
+      now.push({
+        ...base,
+        id: `docreq-review-${f.id}`,
+        kind: 'action_required',
+        title: `Review ${f.fileName}`,
+        detail: `${r.contactName ?? 'The client'} uploaded it for ${item?.label ?? 'a requested item'}${f.matchNote ? ` · ${f.matchNote}` : ''}`,
+        overdue: false,
+        tab: 'checklist',
+        requestId: r.id,
+      });
+    }
+  }
+
   for (const item of items) {
+    if (item.status === 'requested' && chasedByRequest.has(item.id)) continue;
     // Every carrier still in play that is waiting on this requirement (one row can serve several).
     const openCarriers = carriersFor(item)
       .map((id) => quoteById.get(id))

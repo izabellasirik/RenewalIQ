@@ -32,6 +32,7 @@ export function TodaysPlatePage() {
   const missingItems = useAccountsStore((s) => s.missingItems);
   const quotes = useAccountsStore((s) => s.quotes);
   const followUps = useAccountsStore((s) => s.followUps);
+  const documentRequests = useAccountsStore((s) => s.documentRequests);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
   const session = useBrokerSession();
   const [mineOnly, setMineOnly] = useState(false);
@@ -76,6 +77,7 @@ export function TodaysPlatePage() {
         contacts: getAccountContacts(account),
         effectiveDate: normalizeDateKey((profile?.business?.effectiveDate?.value as string | null | undefined) ?? null),
         followUps: followUps[account.id] ?? [],
+        documentRequests: documentRequests[account.id] ?? [],
       };
       const derived = deriveAccountActions(input, today);
       const base = { accountId: account.id, accountName: account.namedInsured };
@@ -93,7 +95,7 @@ export function TodaysPlatePage() {
     waitingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
     doneRows.sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
     return { now: sortActions(allNow), upcoming: sortActions(allUpcoming), waiting: waitingRows, doneToday: doneRows };
-  }, [accounts, riskProfiles, missingItems, quotes, followUps, mineOnly, session.status, session.userId, session.email, today, agencyAccess, undoActionDone, reopenFollowUp]);
+  }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, session.status, session.userId, session.email, today, agencyAccess, undoActionDone, reopenFollowUp]);
 
   const overdue = now.filter((a) => a.overdue).length;
   const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });

@@ -80,6 +80,9 @@ const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   carrier_declined: XCircle,
   quote_status_changed: ArrowRightLeft,
   policy_bound: ShieldCheck,
+  request_follow_up: Mail,
+  request_completed: CheckCircle2,
+  request_cancelled: Ban,
 };
 
 const EVENT_TONE: Partial<Record<ActivityEventType, string>> = {

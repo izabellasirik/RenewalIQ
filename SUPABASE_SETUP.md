@@ -194,6 +194,19 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   trail, readable by the broker) and restricts anonymous uploads to an open submission's folder.
   Additive, safe to re-run. Until it's applied, the form uses the old path (and never shows success
   when a file failed).
+- **`supabase/migrations/0030_document_requests.sql`** — client document requests. When a broker
+  requests checklist items from a client, Renewal IQ creates a request with its own secure link
+  (`/request/<token>`). The client sees only the insured's name and that request's items, uploads
+  each one, and a file only shows as received once the server has verified it's in storage and
+  linked it. Each request references the existing checklist items (it never creates new ones) and
+  tracks requested/last/next follow-up and Waiting / Partly received / Complete / Cancelled. The
+  broker's app imports uploads into the account, marks an item received only when the document
+  confirms it (otherwise *Needs review*), and a request completes — and stops asking for
+  follow-ups — once every item is satisfied. Adds `document_requests`, `document_request_items`,
+  `document_request_files` (read-only to anyone who can access the account; all changes go through
+  database functions) and lets anonymous uploads go only to an open request's folder in
+  `intake-uploads`. Needs 0026 and 0029 first. Additive, safe to re-run. Until it's applied, requests
+  work as before (email only, no link).
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -267,6 +280,7 @@ from (values
   ('0027_team_management',            to_regprocedure('public.remove_agency_member(uuid,uuid)') is not null),
   ('0028_atomic_account_save',        to_regprocedure('public.replace_submission_children(text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)') is not null),
   ('0029_intake_reliability',         to_regclass('public.intake_events') is not null),
+  ('0030_document_requests',          to_regclass('public.document_requests') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

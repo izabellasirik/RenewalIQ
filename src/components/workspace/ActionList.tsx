@@ -10,6 +10,7 @@ import { ReceiveItemDialog } from './ReceiveItemDialog';
 import { RequestGroupDialog } from './RequestGroupDialog';
 import { smallInputClass } from './formStyles';
 import { DateInput } from './DateInput';
+import { FollowUpRequestDialog } from './FollowUpRequestDialog';
 import { cn } from '../../utils/cn';
 
 /**
@@ -21,6 +22,8 @@ export function ActionList({ actions, showAccount = false, emptyText }: { action
   const [request, setRequest] = useState<{ accountId: string; itemId: string } | null>(null);
   const [receive, setReceive] = useState<{ accountId: string; itemId: string } | null>(null);
   const [group, setGroup] = useState<{ accountId: string; itemIds: string[] } | null>(null);
+  const [followUp, setFollowUp] = useState<{ accountId: string; requestId: string } | null>(null);
+  const followUpRequest = useAccountsStore((s) => (followUp ? s.documentRequests[followUp.accountId]?.find((r) => r.id === followUp.requestId) : undefined));
 
   if (actions.length === 0) return emptyText ? <p className="text-sm text-[var(--color-ink-400)]">{emptyText}</p> : null;
 
@@ -28,11 +31,12 @@ export function ActionList({ actions, showAccount = false, emptyText }: { action
     <>
       <ul className="flex flex-col gap-2">
         {actions.map((a) => (
-          <ActionRow key={a.id} action={a} showAccount={showAccount} onRequest={setRequest} onReceive={setReceive} onOpenGroup={setGroup} />
+          <ActionRow key={a.id} action={a} showAccount={showAccount} onRequest={setRequest} onReceive={setReceive} onOpenGroup={setGroup} onFollowUpRequest={setFollowUp} />
         ))}
       </ul>
       {request && <RequestItemsDialog accountId={request.accountId} itemIds={[request.itemId]} open onClose={() => setRequest(null)} />}
       {receive && <ReceiveItemDialog accountId={receive.accountId} itemId={receive.itemId} open onClose={() => setReceive(null)} />}
+      {followUp && followUpRequest && <FollowUpRequestDialog accountId={followUp.accountId} request={followUpRequest} onClose={() => setFollowUp(null)} />}
       {group && <RequestGroupDialog accountId={group.accountId} itemIds={group.itemIds} open onClose={() => setGroup(null)} />}
     </>
   );
@@ -44,13 +48,16 @@ function ActionRow({
   onRequest,
   onReceive,
   onOpenGroup,
+  onFollowUpRequest,
 }: {
   action: ActionItem;
   showAccount: boolean;
   onRequest: (v: { accountId: string; itemId: string }) => void;
   onReceive: (v: { accountId: string; itemId: string }) => void;
   onOpenGroup: (v: { accountId: string; itemIds: string[] }) => void;
+  onFollowUpRequest: (v: { accountId: string; requestId: string }) => void;
 }) {
+  const rescheduleClientRequest = useAccountsStore((s) => s.rescheduleClientRequest);
   const setItemsFollowUp = useAccountsStore((s) => s.setItemsFollowUp);
   const updateFollowUp = useAccountsStore((s) => s.updateFollowUp);
   const completeFollowUp = useAccountsStore((s) => s.completeFollowUp);
@@ -79,7 +86,8 @@ function ActionRow({
 
   function reschedule(date: string) {
     if (!date) return;
-    if (isGroup) setItemsFollowUp(action.accountId, action.itemIds!, date);
+    if (action.requestId) void rescheduleClientRequest(action.requestId, date);
+    else if (isGroup) setItemsFollowUp(action.accountId, action.itemIds!, date);
     else if (action.followUpId) updateFollowUp(action.accountId, action.followUpId, { dueDate: date });
     else if (action.kind === 'client_follow_up' && action.itemId) updateMissingItem(action.accountId, action.itemId, { followUpDate: date });
     else if (action.quoteId && !action.itemId) updateQuote(action.accountId, action.quoteId, { followUpDate: date });
@@ -87,7 +95,9 @@ function ActionRow({
   }
 
   // Any market-level action (carrier follow-up, unsent submission, quote to present) can be (re)scheduled via the market's follow-up date.
-  const canReschedule = isGroup || !!action.followUpId || (action.kind === 'client_follow_up' && action.itemId) || (!!action.quoteId && !action.itemId && action.kind !== 'ready_to_send');
+  // A client request's follow-up (not its review tasks, which only go away once the file is resolved).
+  const requestFollowUp = !!action.requestId && action.kind === 'client_follow_up';
+  const canReschedule = requestFollowUp || isGroup || !!action.followUpId || (action.kind === 'client_follow_up' && action.itemId) || (!!action.quoteId && !action.itemId && action.kind !== 'ready_to_send');
   const carrierRequestPending = action.kind === 'action_required' && action.itemId && action.id.startsWith('carrier-req-');
 
   return (
@@ -122,6 +132,11 @@ function ActionRow({
             Request from client
           </Button>
         )}
+        {requestFollowUp && (
+          <Button size="sm" icon={<Mail size={13} />} onClick={() => onFollowUpRequest({ accountId: action.accountId, requestId: action.requestId! })}>
+            Follow up
+          </Button>
+        )}
         {isGroup && (
           <Button size="sm" variant="secondary" icon={<ListChecks size={13} />} onClick={() => onOpenGroup({ accountId: action.accountId, itemIds: action.itemIds! })}>
             Details
@@ -133,7 +148,7 @@ function ActionRow({
           </Button>
         )}
         {/* Every other task can be marked done too (it comes back if its date or wording changes). */}
-        {!action.followUpId && action.kind !== 'ready_to_send' && (
+        {!action.followUpId && !action.requestId && action.kind !== 'ready_to_send' && (
           <Button size="sm" variant="secondary" icon={<Check size={13} />} onClick={() => markActionDone(action)} title="Mark this task done">
             Done
           </Button>

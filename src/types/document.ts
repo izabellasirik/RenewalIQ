@@ -62,4 +62,6 @@ export interface UploadedDocument {
   storagePath?: string;
   /** The link this document came from, when it arrived as a URL rather than a file — kept even when the link couldn't be opened. */
   sourceUrl?: string;
+  /** What it evidently is (requirement kinds, people named, quarter) — used to check a client's upload against what was requested. */
+  signals?: import('../services/requests/documentSignals').DocumentSignals;
 }

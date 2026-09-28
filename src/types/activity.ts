@@ -41,7 +41,11 @@ export type ActivityEventType =
   | 'quote_received'
   | 'carrier_declined'
   | 'quote_status_changed'
-  | 'policy_bound';
+  | 'policy_bound'
+  // Client document requests (0030)
+  | 'request_follow_up'
+  | 'request_completed'
+  | 'request_cancelled';
 
 export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<ActivityEventType>([
   'account_created',
@@ -72,6 +76,9 @@ export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<Acti
   'carrier_declined',
   'quote_status_changed',
   'policy_bound',
+  'request_follow_up',
+  'request_completed',
+  'request_cancelled',
 ]);
 
 export interface ActivityEvent {

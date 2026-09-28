@@ -377,3 +377,128 @@ do $$ begin perform insert_submission_rows('drivers', '[{"id":"drv_y","submissio
 do $$ begin perform insert_submission_rows('submissions', '[]'); raise notice 'R4 other table: ALLOWED (BAD)'; exception when others then raise notice 'R4 other table refused'; end $$;
 reset role;
 select 'R5 after all: acct_r1 drivers=' || count(*) from drivers where submission_id = 'acct_r1';
+
+\echo '== 0030: client document requests'
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select r->>'id' as rq1, r->>'token' as tk1 from (select create_document_request('acct_r1', 'aaaaaaaa-0000-0000-0000-000000000001', '{"id":"c1","name":"John Smith","email":"john@x.com"}', 'email',
+  '[{"missingItemId":"mi_mvr","label":"Current MVR — Alex Smith"},{"missingItemId":"mi_ifta","label":"Q2 IFTA"},{"missingItemId":"mi_loss","label":"Updated Loss Runs","instructions":"last 5 years"}]', '2026-10-01') r) x \gset
+select 'D1 created: status=' || status || ' items=' || (select count(*) from document_request_items where request_id = :'rq1') || ' next=' || next_follow_up from document_requests where id = :'rq1';
+select 'D1 same click again, same request: ' || ((create_document_request('acct_r1', 'aaaaaaaa-0000-0000-0000-000000000001', '{}', 'email', '[{"missingItemId":"x","label":"x"}]', null))->>'id' = :'rq1') || ' total=' || (select count(*) from document_requests);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform create_document_request('acct_r1', gen_random_uuid(), '{}', 'email', '[{"missingItemId":"x","label":"x"}]', null); raise notice 'D1 other agency creates: ALLOWED (BAD)'; exception when others then raise notice 'D1 other agency create denied: %', sqlerrm; end $$;
+select 'D1 other agency reads requests=' || count(*) from document_requests;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'D1 agency admin reads requests=' || count(*) from document_requests;
+
+reset role;
+grant usage on schema public, storage to anon; grant all on storage.objects to anon;
+set role anon;
+select pg_temp.as_user('');
+select 'D2 client view: ' || (v->>'accountName') || ' | ' || (select string_agg((i->>'label') || ':' || (i->>'received'), ', ') from jsonb_array_elements(v->'items') i) || ' | status=' || (v->>'status') || ' | keys=' || (select string_agg(k, ',' order by k) from jsonb_object_keys(v) k) from get_document_request(:'tk1') v;
+select 'D2 unknown link: ' || coalesce(get_document_request(gen_random_uuid())::text, 'null');
+do $$ begin perform count(*) from document_requests; raise notice 'D2 client reads tables: ALLOWED (BAD)'; exception when others then raise notice 'D2 client reads tables denied'; end $$;
+select id as it1 from document_request_items limit 0 \gset
+reset role;
+select id as it_mvr from document_request_items where request_id = :'rq1' and missing_item_id = 'mi_mvr' \gset
+select id as it_ifta from document_request_items where request_id = :'rq1' and missing_item_id = 'mi_ifta' \gset
+select id as it_loss from document_request_items where request_id = :'rq1' and missing_item_id = 'mi_loss' \gset
+select set_config('my.tk1', :'tk1', false) is not null as _a \gset
+select set_config('my.itmvr', :'it_mvr', false) is not null as _b \gset
+set role anon;
+select pg_temp.as_user('');
+
+-- Uploading the MVR
+do $$ begin insert into storage.objects (bucket_id, name) values ('intake-uploads', 'not-a-token/key-aaaa-0001/x.pdf'); raise notice 'D3 upload to a random folder: ALLOWED (BAD)'; exception when others then raise notice 'D3 upload outside an open request denied'; end $$;
+do $$ begin perform attach_document_request_file(current_setting('my.tk1')::uuid, current_setting('my.itmvr'), 'key-aaaa-0001', 'mvr.pdf', current_setting('my.tk1') || '/key-aaaa-0001/mvr.pdf', 10); raise notice 'D3 attach without file: ALLOWED (BAD)'; exception when others then raise notice 'D3 attach a file not in storage denied: %', sqlerrm; end $$;
+insert into storage.objects (bucket_id, name) values ('intake-uploads', :'tk1' || '/key-aaaa-0001/mvr.pdf');
+do $$ begin perform attach_document_request_file(current_setting('my.tk1')::uuid, current_setting('my.itmvr'), 'key-aaaa-0001', 'mvr.pdf', 'someone-else/key-aaaa-0001/mvr.pdf', 10); raise notice 'D3 foreign path: ALLOWED (BAD)'; exception when others then raise notice 'D3 path outside this request denied: %', sqlerrm; end $$;
+select 'D3 attach: status=' || (v->>'status') || ' mvr received=' || (select (i->>'received') from jsonb_array_elements(v->'items') i where i->>'id' = :'it_mvr') from attach_document_request_file(:'tk1', :'it_mvr', 'key-aaaa-0001', 'mvr.pdf', :'tk1' || '/key-aaaa-0001/mvr.pdf', 10) v;
+select 'D3 same file again (retry/double click): ' || (v->>'status') from attach_document_request_file(:'tk1', :'it_mvr', 'key-aaaa-0001', 'mvr.pdf', :'tk1' || '/key-aaaa-0001/mvr.pdf', 10) v;
+reset role;
+select 'D3 files=' || count(*) || ' upload activity=' || (select count(*) from activity_events where submission_id = 'acct_r1' and type = 'document_uploaded' and message like '%mvr.pdf%') from document_request_files where request_id = :'rq1';
+select 'D3 activity: ' || message || ' (by ' || actor_name || ')' from activity_events where submission_id = 'acct_r1' and type = 'document_uploaded' and message like '%mvr.pdf%';
+
+-- Another request's link can't reach this one
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select r->>'id' as rq2, r->>'token' as tk2 from (select create_document_request('acct_r1', gen_random_uuid(), '{"name":"Jane"}', 'email', '[{"missingItemId":"mi_app","label":"Application"}]', null) r) x \gset
+select set_config('my.tk2', :'tk2', false) is not null as _c \gset
+set role anon;
+select pg_temp.as_user('');
+insert into storage.objects (bucket_id, name) values ('intake-uploads', :'tk2' || '/key-bbbb-0002/ifta.pdf');
+do $$ begin perform attach_document_request_file(current_setting('my.tk2')::uuid, current_setting('my.itmvr'), 'key-bbbb-0002', 'ifta.pdf', current_setting('my.tk2') || '/key-bbbb-0002/ifta.pdf', 10); raise notice 'D4 cross-request attach: ALLOWED (BAD)'; exception when others then raise notice 'D4 other request''s item denied: %', sqlerrm; end $$;
+select 'D4 request 2 sees only its own: ' || (select string_agg(i->>'label', ',') from jsonb_array_elements(v->'items') i) from get_document_request(:'tk2') v;
+
+-- Broker imports the MVR; review decisions
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select id as f1 from document_request_files where request_id = :'rq1' \gset
+select 'D5 claim=' || claim_document_request_file(:'f1') || ' claim again=' || claim_document_request_file(:'f1');
+select complete_document_request_file(:'f1', 'doc_mvr', 'satisfied', null) is null as _d \gset
+select 'D5 after import: request=' || r.status || ' mvr=' || i.status from document_requests r join document_request_items i on i.request_id = r.id where r.id = :'rq1' and i.id = :'it_mvr';
+select set_config('my.f1', :'f1', false) is not null as _f1 \gset
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform resolve_document_request_file(current_setting('my.f1'), 'reject'); raise notice 'D5 other agency changes a file: ALLOWED (BAD)'; exception when others then raise notice 'D5 other agency change denied: %', sqlerrm; end $$;
+
+-- An ambiguous upload for the IFTA slot → needs review → rejected → asked for again
+set role anon;
+select pg_temp.as_user('');
+insert into storage.objects (bucket_id, name) values ('intake-uploads', :'tk1' || '/key-cccc-0003/scan.pdf');
+select 'D6 client uploads to IFTA: ' || (v->>'status') from attach_document_request_file(:'tk1', :'it_ifta', 'key-cccc-0003', 'scan.pdf', :'tk1' || '/key-cccc-0003/scan.pdf', 10) v;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select id as f2 from document_request_files where client_file_key = 'key-cccc-0003' \gset
+select claim_document_request_file(:'f2') and true as _e \gset
+select complete_document_request_file(:'f2', 'doc_scan', 'needs_review', 'Couldn''t tell what this is') is null as _f \gset
+select 'D6 needs review: ifta=' || status from document_request_items where id = :'it_ifta';
+select resolve_document_request_file(:'f2', 'reject') is null as _g \gset
+select 'D6 rejected → asked again: ifta=' || i.status || ' request=' || r.status from document_request_items i join document_requests r on r.id = i.request_id where i.id = :'it_ifta';
+set role anon;
+select pg_temp.as_user('');
+select 'D6 client sees remaining: ' || (select string_agg(i->>'label', ', ') from jsonb_array_elements(v->'items') i where (i->>'received') = 'false') from get_document_request(:'tk1') v;
+
+-- Follow-up, then the rest arrives → complete
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select record_document_request_follow_up(:'rq1', '2026-10-05') is null as _h \gset
+select 'D7 follow-up: count=' || follow_up_count || ' next=' || next_follow_up || ' last set=' || (last_follow_up_at is not null) from document_requests where id = :'rq1';
+set role anon;
+select pg_temp.as_user('');
+insert into storage.objects (bucket_id, name) values ('intake-uploads', :'tk1' || '/key-dddd-0004/ifta_q2.pdf'), ('intake-uploads', :'tk1' || '/key-eeee-0005/loss.pdf');
+select attach_document_request_file(:'tk1', :'it_ifta', 'key-dddd-0004', 'ifta_q2.pdf', :'tk1' || '/key-dddd-0004/ifta_q2.pdf', 10) is not null as _i \gset
+select 'D8 last upload (still open until verified): ' || (v->>'status') from attach_document_request_file(:'tk1', :'it_loss', 'key-eeee-0005', 'loss.pdf', :'tk1' || '/key-eeee-0005/loss.pdf', 10) v;
+-- The broker's import verifies both → complete
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select count(*) filter (where claim_document_request_file(id) and complete_document_request_file(id, 'doc_' || client_file_key, 'satisfied', null) is null) as _imp
+  from document_request_files where request_id = :'rq1' and imported_at is null \gset
+reset role;
+select 'D8 complete: status=' || status || ' next=' || coalesce(next_follow_up::text, 'none') || ' closed=' || (closed_at is not null) from document_requests where id = :'rq1';
+select 'D8 activity: ' || message from activity_events where submission_id = 'acct_r1' and message like 'Everything requested from John%';
+set role anon;
+select pg_temp.as_user('');
+do $$ begin insert into storage.objects (bucket_id, name) values ('intake-uploads', current_setting('my.tk1') || '/key-ffff-0006/late.pdf'); raise notice 'D9 upload after complete: ALLOWED (BAD)'; exception when others then raise notice 'D9 upload after complete denied'; end $$;
+do $$ begin perform record_document_request_follow_up('x', null); raise notice 'D9 anon follow-up: ALLOWED (BAD)'; exception when others then raise notice 'D9 anon broker functions denied'; end $$;
+
+-- Cancel; expiry; settled another way
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select cancel_document_request(:'rq2') is null as _j \gset
+set role anon;
+select pg_temp.as_user('');
+select 'D10 cancelled link shows: ' || (v->>'status') from get_document_request(:'tk2') v;
+do $$ begin insert into storage.objects (bucket_id, name) values ('intake-uploads', current_setting('my.tk2') || '/key-gggg-0007/a.pdf'); raise notice 'D10 upload to cancelled: ALLOWED (BAD)'; exception when others then raise notice 'D10 upload to cancelled denied'; end $$;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select r->>'id' as rq3, r->>'token' as tk3 from (select create_document_request('acct_r1', gen_random_uuid(), '{"name":"John"}', 'email', '[{"missingItemId":"mi_app","label":"Application"},{"missingItemId":"mi_ifta","label":"Q2 IFTA"}]', '2026-10-09') r) x \gset
+select 'D11 settled another way: ' || settle_document_request_items('acct_r1', array['mi_app'], 'satisfied');
+select 'D11 → ' || status from document_requests where id = :'rq3';
+select settle_document_request_items('acct_r1', array['mi_ifta'], 'waived') is not null as _k \gset
+select 'D11 all settled: ' || status || ' next=' || coalesce(next_follow_up::text, 'none') from document_requests where id = :'rq3';
+reset role;
+update document_requests set expires_at = now() - interval '1 day', status = 'waiting' where id = :'rq3';
+set role anon;
+select pg_temp.as_user('');
+select 'D12 expired link shows: ' || (v->>'status') from get_document_request(:'tk3') v;
+reset role;

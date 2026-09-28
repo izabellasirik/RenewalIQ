@@ -19,6 +19,7 @@ import { AdminAppetiteUpdatesPage } from './pages/AdminAppetiteUpdatesPage';
 import { AdminFeedbackPage } from './pages/AdminFeedbackPage';
 import { IntakeFormPage } from './pages/IntakeFormPage';
 import { IntakeLinksPage } from './pages/IntakeLinksPage';
+import { ClientRequestPage } from './pages/ClientRequestPage';
 import { RequireBrokerAuth } from './components/layout/RequireBrokerAuth';
 import { ProfileGate } from './components/profile/ProfileGate';
 import { InvitePage } from './pages/InvitePage';
@@ -31,6 +32,8 @@ export const router = createBrowserRouter([
   // Deliberately outside AppShell and unauthenticated — an applicant opening this link has no
   // Renewal IQ login at all (see types/intake.ts / supabase/migrations/0004_intake_submissions.sql).
   { path: '/intake/:token', element: <IntakeFormPage /> },
+  // A client document request link (0030) — same idea: no login, only that request's own items.
+  { path: '/request/:token', element: <ClientRequestPage /> },
   // An agency invitation link — works signed out (sign up / sign in from here) and signed in (join).
   { path: '/invite/:token', element: <InvitePage /> },
   {

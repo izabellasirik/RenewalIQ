@@ -72,6 +72,10 @@ import { mergeById, mergeNewerFields, mergeWorkflowList, noteChangedAt, toMs } f
 import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
 import { inferFileType as inferQuoteFileType } from '../utils/documents';
 import { actionDoneKey, type ActionItem } from '../services/workflow/nextActions';
+import * as requestsRepo from '../services/supabase/documentRequestsRepo';
+import { detectDocumentSignals } from '../services/requests/documentSignals';
+import { matchRequestUpload } from '../services/requests/matchUpload';
+import { isOpenRequest, outstandingRequestItems, type DocumentRequest } from '../types';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
 
@@ -186,7 +190,8 @@ interface AccountsState {
   ensureSampleAccount: () => string;
   setActiveAccount: (id: string) => void;
   /** Returns the new document ids, in the same order as `files`, so a caller can link one to a checklist item. */
-  addFiles: (accountId: string, files: File[]) => string[];
+  /** `fromClientRequest`: imported from a client's secure upload link (named) — the client's upload is already in Activity. */
+  addFiles: (accountId: string, files: File[], opts?: { fromClientRequest?: string }) => string[];
   loadSampleDocuments: (accountId: string) => Promise<void>;
   /** Removes an uploaded file and safely retracts any extracted data that depended only on it (see removeDocumentFromRiskProfile) — never leaves stale facts pointing at a source that no longer exists. */
   deleteDocument: (accountId: string, documentId: string) => void;
@@ -245,6 +250,24 @@ interface AccountsState {
   /** `requestedOn` (YYYY-MM-DD) records when the request went out when it wasn't today; `instructions` updates the client-facing note. */
   markItemsRequested: (accountId: string, itemIds: string[], opts: { contactId?: string; followUpDate?: string; requestedOn?: string; instructions?: string }) => void;
   markItemReceived: (accountId: string, itemId: string, opts?: { documentId?: string }) => void;
+
+  // --- Client document requests (0030) — a secure link per request; the checklist item stays the requirement
+  /** Requests for each account, from the server (never persisted locally). */
+  documentRequests: Record<string, DocumentRequest[]>;
+  loadDocumentRequests: (accountIds?: string[]) => Promise<void>;
+  /** Creates the request and its secure link (same clientKey → same request). Cloud accounts only. */
+  createClientRequest: (
+    accountId: string,
+    input: { clientKey: string; itemIds: string[]; contactId?: string; followUpDate?: string; requestedOn?: string }
+  ) => Promise<{ ok: true; requestId: string; link: string } | { ok: false; message: string }>;
+  /** The broker sent a follow-up (outstanding items only) and picked the next date. */
+  followUpClientRequest: (requestId: string, nextFollowUp: string) => Promise<{ ok: boolean; message?: string }>;
+  rescheduleClientRequest: (requestId: string, nextFollowUp: string) => Promise<{ ok: boolean; message?: string }>;
+  cancelClientRequest: (requestId: string) => Promise<{ ok: boolean; message?: string }>;
+  /** The broker's decision on an upload that needed review. */
+  resolveRequestUpload: (requestId: string, fileId: string, action: 'satisfy' | 'reject' | 'reassign', targetRequestItemId?: string) => Promise<{ ok: boolean; message?: string }>;
+  /** Imports the account's new client uploads (each file once, across tabs) and matches them to what was asked. */
+  syncRequestUploads: (accountId: string) => Promise<void>;
   /** Set a checklist item's status directly (the broker's manual override of the request/receive flow). */
   setItemStatus: (accountId: string, itemId: string, status: MissingItemStatus) => void;
   /** Set the account's pipeline status by hand; null returns it to automatic. */
@@ -305,6 +328,8 @@ function touchAccount(accounts: Account[], accountId: string): Account[] {
 
 /** Who's signed in, stamped on every activity event as it's created (kept current by setCurrentUserId / hydrate). */
 let currentActor: { id: string; name: string } | null = null;
+/** Accounts whose client uploads are being imported right now (one import run per account at a time in this tab). */
+const syncingRequestUploads = new Set<string>();
 
 function appendEvent(log: Record<string, ActivityEvent[]>, accountId: string, type: ActivityEventType, message: string): Record<string, ActivityEvent[]> {
   const event: ActivityEvent = {
@@ -688,6 +713,42 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       }
 
+      // A checklist item received or waived any other way: open client requests stop asking for it.
+      function settleOpenRequests(accountId: string, itemIds: string[], status: 'satisfied' | 'waived') {
+        const open = (get().documentRequests[accountId] ?? []).filter(isOpenRequest);
+        const affected = itemIds.filter((id) => open.some((r) => r.items.some((i) => i.missingItemId === id && i.status !== 'satisfied' && i.status !== 'waived')));
+        if (!isSupabaseConfigured || affected.length === 0) return;
+        void requestsRepo.settleRequestItems(accountId, affected, status).then(() => get().loadDocumentRequests([accountId]));
+      }
+
+      function findRequest(requestId: string): DocumentRequest | undefined {
+        for (const list of Object.values(get().documentRequests)) {
+          const r = list.find((x) => x.id === requestId);
+          if (r) return r;
+        }
+        return undefined;
+      }
+
+      /** Sets the follow-up date on the checklist items a request still waits on (so the checklist shows it too). */
+      function setRequestItemsFollowUp(r: DocumentRequest, date: string | undefined) {
+        const ids = new Set(outstandingRequestItems(r).map((i) => i.missingItemId));
+        if (ids.size === 0) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: { ...s.missingItems, [r.accountId]: (s.missingItems[r.accountId] ?? []).map((i) => (ids.has(i.id) && i.status === 'requested' ? { ...i, followUpDate: date, updatedAt: now } : i)) },
+        }));
+        syncNow(r.accountId);
+      }
+
+      async function waitForProcessed(accountId: string, documentId: string, timeoutMs: number): Promise<UploadedDocument | undefined> {
+        const deadline = Date.now() + timeoutMs;
+        for (;;) {
+          const doc = (get().documents[accountId] ?? []).find((d) => d.id === documentId);
+          if (!doc || doc.status !== 'processing' || Date.now() > deadline) return doc;
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
+
       return {
       accounts: [],
       documents: {},
@@ -699,6 +760,7 @@ export const useAccountsStore = create<AccountsState>()(
       currentUserEmail: null,
       myProfile: null,
       pendingIntakeCount: 0,
+      documentRequests: {},
       unsyncedIds: {},
       cloudSeenAt: {},
       setPendingIntakeCount: (n) => set({ pendingIntakeCount: n }),
@@ -808,7 +870,7 @@ export const useAccountsStore = create<AccountsState>()(
 
       setActiveAccount: (id) => set({ activeAccountId: id }),
 
-      addFiles: (accountId, files) => {
+      addFiles: (accountId, files, opts) => {
         const newDocs: UploadedDocument[] = files.map((f) => ({
           id: generateId('doc'),
           accountId,
@@ -822,7 +884,7 @@ export const useAccountsStore = create<AccountsState>()(
 
         set((s) => {
           let log = s.activityLog;
-          for (const doc of newDocs) log = appendEvent(log, accountId, 'document_uploaded', `Uploaded ${doc.name}.`);
+          if (!opts?.fromClientRequest) for (const doc of newDocs) log = appendEvent(log, accountId, 'document_uploaded', `Uploaded ${doc.name}.`);
           return {
             documents: { ...s.documents, [accountId]: [...(s.documents[accountId] ?? []), ...newDocs] },
             accounts: touchAccount(
@@ -908,6 +970,8 @@ export const useAccountsStore = create<AccountsState>()(
                         previewDataUrl: raw.imagePreviewDataUrl,
                         category: contentCategory ?? d.category,
                         extractedFields: results.map((r) => ({ fieldPath: r.fieldPath, value: r.value, confidence: r.confidence, extractionMethod: r.extractionMethod })),
+                        // What it evidently is (kind, names, quarter) — how a client's upload is checked against what was asked.
+                        signals: detectDocumentSignals({ text: raw.text, fileName: doc.name, category: contentCategory ?? d.category, results }),
                         candidateNotes,
                         ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
                         // Downloaded from a link: name/type/category from the real document, not the shortcut.
@@ -1732,6 +1796,7 @@ export const useAccountsStore = create<AccountsState>()(
           ),
         }));
         syncNow(accountId);
+        settleOpenRequests(accountId, [itemId], 'satisfied');
       },
 
       setItemStatus: (accountId, itemId, status) => {
@@ -1780,6 +1845,7 @@ export const useAccountsStore = create<AccountsState>()(
           ),
         }));
         syncNow(accountId);
+        if (status === 'waived') settleOpenRequests(accountId, [itemId], 'waived');
       },
 
       setAccountStage: (accountId, stage) => {
@@ -2485,6 +2551,144 @@ export const useAccountsStore = create<AccountsState>()(
           };
         }),
 
+      loadDocumentRequests: async (accountIds) => {
+        if (!isSupabaseConfigured || !get().currentUserId) return;
+        const res = await requestsRepo.fetchDocumentRequests(accountIds);
+        if (!res.ok) return;
+        const byAccount: Record<string, DocumentRequest[]> = {};
+        for (const r of res.data) (byAccount[r.accountId] ??= []).push(r);
+        set((s) => {
+          if (!accountIds) return { documentRequests: byAccount };
+          const next = { ...s.documentRequests };
+          for (const id of accountIds) next[id] = byAccount[id] ?? [];
+          return { documentRequests: next };
+        });
+      },
+
+      createClientRequest: async (accountId, { clientKey, itemIds, contactId, followUpDate, requestedOn }) => {
+        const s = get();
+        const account = s.accounts.find((a) => a.id === accountId);
+        if (!account) return { ok: false, message: 'Account not found.' };
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return { ok: false, message: 'Secure links need this account to be saved to your cloud account.' };
+        const items = (s.missingItems[accountId] ?? []).filter((i) => itemIds.includes(i.id));
+        if (items.length === 0) return { ok: false, message: 'Choose at least one item.' };
+        const contact = getAccountContacts(account).find((c) => c.id === contactId);
+        const onDate = parseDateKey(requestedOn ?? '');
+        const res = await requestsRepo.createDocumentRequest({
+          accountId,
+          clientKey,
+          contact: contact ? { id: contact.id, name: contact.name, email: contact.email } : undefined,
+          items: items.map((i) => ({ missingItemId: i.id, label: i.label, instructions: i.instructions })),
+          nextFollowUp: followUpDate,
+          requestedAt: requestedOn && requestedOn !== todayKey() && onDate ? new Date(onDate.setHours(12)).toISOString() : undefined,
+        });
+        if (!res.ok) return res;
+        await get().loadDocumentRequests([accountId]);
+        return { ok: true, requestId: res.data.id, link: requestsRepo.requestLink(res.data.token) };
+      },
+
+      followUpClientRequest: async (requestId, nextFollowUp) => {
+        const r = findRequest(requestId);
+        if (!r) return { ok: false, message: 'Request not found.' };
+        const res = await requestsRepo.recordRequestFollowUp(requestId, nextFollowUp || null);
+        if (!res.ok) return res;
+        const outstanding = outstandingRequestItems(r);
+        set((s) => ({
+          activityLog: appendEvent(
+            s.activityLog,
+            r.accountId,
+            'request_follow_up',
+            `Followed up with ${r.contactName ?? 'the client'} — still waiting on ${outstanding.map((i) => i.label).join(', ')}.${nextFollowUp ? ` Next follow-up ${formatShortDate(nextFollowUp)}.` : ''}`
+          ),
+          accounts: touchAccount(s.accounts, r.accountId),
+        }));
+        syncNow(r.accountId);
+        setRequestItemsFollowUp(r, nextFollowUp || undefined);
+        await get().loadDocumentRequests([r.accountId]);
+        return { ok: true };
+      },
+
+      rescheduleClientRequest: async (requestId, nextFollowUp) => {
+        const r = findRequest(requestId);
+        if (!r) return { ok: false, message: 'Request not found.' };
+        const res = await requestsRepo.setRequestNextFollowUp(requestId, nextFollowUp || null);
+        if (!res.ok) return res;
+        setRequestItemsFollowUp(r, nextFollowUp || undefined);
+        await get().loadDocumentRequests([r.accountId]);
+        return { ok: true };
+      },
+
+      cancelClientRequest: async (requestId) => {
+        const r = findRequest(requestId);
+        if (!r) return { ok: false, message: 'Request not found.' };
+        const res = await requestsRepo.cancelDocumentRequest(requestId);
+        if (!res.ok) return res;
+        const outstanding = outstandingRequestItems(r).length;
+        set((s) => ({
+          activityLog: appendEvent(
+            s.activityLog,
+            r.accountId,
+            'request_cancelled',
+            `Cancelled the document request to ${r.contactName ?? 'the client'}${outstanding ? ` — ${outstanding} item${outstanding === 1 ? ' was' : 's were'} still outstanding` : ''}. Its link no longer accepts uploads.`
+          ),
+          accounts: touchAccount(s.accounts, r.accountId),
+        }));
+        syncNow(r.accountId);
+        await get().loadDocumentRequests([r.accountId]);
+        return { ok: true };
+      },
+
+      resolveRequestUpload: async (requestId, fileId, action, targetRequestItemId) => {
+        const r = findRequest(requestId);
+        const f = r?.files.find((x) => x.id === fileId);
+        if (!r || !f) return { ok: false, message: 'Upload not found.' };
+        const res = await requestsRepo.resolveRequestFile(fileId, action, targetRequestItemId);
+        if (!res.ok) return res;
+        // The checklist item it satisfies is received, with this upload as its source.
+        const satisfiedItem = action === 'satisfy' ? r.items.find((i) => i.id === f.requestItemId) : action === 'reassign' ? r.items.find((i) => i.id === targetRequestItemId) : undefined;
+        const missing = satisfiedItem && (get().missingItems[r.accountId] ?? []).find((m) => m.id === satisfiedItem.missingItemId);
+        if (missing && missing.status !== 'received') get().markItemReceived(r.accountId, missing.id, { documentId: f.importedDocumentId });
+        await get().loadDocumentRequests([r.accountId]);
+        return { ok: true };
+      },
+
+      syncRequestUploads: async (accountId) => {
+        if (syncingRequestUploads.has(accountId) || !isSupabaseConfigured || !get().currentUserId) return;
+        syncingRequestUploads.add(accountId);
+        let imported = 0;
+        try {
+          for (const req of get().documentRequests[accountId] ?? []) {
+            for (const f of req.files.filter((x) => !x.importedAt)) {
+              // Claimed on the server first: another tab or teammate importing it at the same time skips it.
+              if (!(await requestsRepo.claimRequestFile(f.id))) continue;
+              const dl = await requestsRepo.downloadRequestFile(f);
+              if (!dl.ok) continue; // the claim lapses after 10 minutes and it's tried again
+              const [documentId] = get().addFiles(accountId, [dl.data], { fromClientRequest: req.contactName ?? 'the client' });
+              const doc = await waitForProcessed(accountId, documentId, 180_000);
+              const item = req.items.find((i) => i.id === f.requestItemId);
+              if (!item) continue;
+              const missing = (get().missingItems[accountId] ?? []).find((m) => m.id === item.missingItemId);
+              const templateOf = (missingItemId: string) => (get().missingItems[accountId] ?? []).find((m) => m.id === missingItemId)?.templateKey;
+              const decision = matchRequestUpload({
+                signals: doc?.signals,
+                slot: { requestItemId: item.id, label: item.label, templateKey: missing?.templateKey },
+                others: req.items.map((i) => ({ requestItemId: i.id, label: i.label, templateKey: templateOf(i.missingItemId) })),
+              });
+              if (decision.outcome === 'satisfied') {
+                const done = await requestsRepo.completeRequestFile(f.id, documentId, 'satisfied');
+                if (done.ok && missing && missing.status !== 'received') get().markItemReceived(accountId, missing.id, { documentId });
+              } else {
+                await requestsRepo.completeRequestFile(f.id, documentId, 'needs_review', decision.note);
+              }
+              imported++;
+            }
+          }
+        } finally {
+          syncingRequestUploads.delete(accountId);
+          if (imported > 0) await get().loadDocumentRequests([accountId]);
+        }
+      },
+
       hydrateCloudSubmissions: async () => {
         const userId = get().currentUserId;
         if (!isSupabaseConfigured || !userId) return;
@@ -2590,6 +2794,14 @@ export const useAccountsStore = create<AccountsState>()(
           }
         }
         if (get().currentUserId === userId) set({ cloudHydratedFor: userId });
+        // Client document requests (0030) — and any files clients uploaded since, imported into their accounts.
+        void get()
+          .loadDocumentRequests()
+          .then(async () => {
+            for (const [accountId, reqs] of Object.entries(get().documentRequests)) {
+              if (reqs.some((r) => r.files.some((f) => !f.importedAt))) await get().syncRequestUploads(accountId);
+            }
+          });
         for (const bundle of result.data) get().runMatching(bundle.account.id);
         // Push back anything this device had that the cloud didn't (e.g. events lost to the old sync bug).
         for (const id of needsPush) syncNow(id);
@@ -2644,6 +2856,7 @@ export const useAccountsStore = create<AccountsState>()(
           agencyMembers: _agencyMembers,
           agencyCarriers: _agencyCarriers,
           cloudHydratedFor: _cloudHydratedFor,
+          documentRequests: _documentRequests,
           ...rest
         } = state;
         return rest;

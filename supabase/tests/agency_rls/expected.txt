@@ -171,3 +171,39 @@ R4 other agency denied: You don't have access to this account.
 R4 insert helper still RLS-checked
 R4 other table refused
 R5 after all: acct_r1 drivers=2
+D1 created: status=waiting items=3 next=2026-10-01
+D1 same click again, same request: true total=1
+D1 other agency create denied: You don't have access to this account.
+D1 other agency reads requests=0
+D1 agency admin reads requests=1
+D2 client view: Roman Trucking LLC | Current MVR — Alex Smith:false, Q2 IFTA:false, Updated Loss Runs:false | status=waiting | keys=accountName,contactFirstName,folder,items,requestId,status
+D2 unknown link: null
+D2 client reads tables denied
+D3 upload outside an open request denied
+D3 attach a file not in storage denied: The file isn't in storage.
+D3 path outside this request denied: The file path doesn't belong to this request.
+D3 attach: status=partial mvr received=true
+D3 same file again (retry/double click): partial
+D3 files=1 upload activity=1
+D3 activity: John Smith uploaded mvr.pdf for Current MVR — Alex Smith (secure request link). (by John Smith)
+D4 other request's item denied: That item isn't part of this request.
+D4 request 2 sees only its own: Application
+D5 claim=true claim again=false
+D5 after import: request=partial mvr=satisfied
+D5 other agency change denied: You don't have access to this request.
+D6 client uploads to IFTA: partial
+D6 needs review: ifta=needs_review
+D6 rejected → asked again: ifta=requested request=partial
+D6 client sees remaining: Q2 IFTA, Updated Loss Runs
+D7 follow-up: count=1 next=2026-10-05 last set=true
+D8 last upload (still open until verified): partial
+D8 complete: status=complete next=none closed=true
+D8 activity: Everything requested from John Smith has been received — request complete.
+D9 upload after complete denied
+D9 anon broker functions denied
+D10 cancelled link shows: cancelled
+D10 upload to cancelled denied
+D11 settled another way: 1
+D11 → partial
+D11 all settled: complete next=none
+D12 expired link shows: expired
