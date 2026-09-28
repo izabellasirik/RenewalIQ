@@ -9,7 +9,7 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { sampleAccount } from '../data/sampleAccounts';
 import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, extractInsuranceFields } from '../services/extraction';
 import { generateId } from '../utils/id';
-import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
+import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { US_STATES } from '../utils/usStates';
 import type { RiskProfile, UploadedDocument } from '../types';
 import { DocumentLinkError } from '../services/ingestion/documentLinks';
@@ -96,7 +96,7 @@ export function NewAccountPage() {
         profile = mergeIntoRiskProfile(profile, results);
         // A link was downloaded: keep the real document for preview/upload, not the shortcut.
         if (raw.linkedFile) keptFiles[files.indexOf(file)] = raw.linkedFile;
-        const contentCategory = isImageSource && raw.text ? inferCategoryFromText(raw.text) : null;
+        const contentCategory = isImageSource && raw.text ? inferCategoryFromText(raw.text) : base.category === 'other' ? inferCategoryFromResults(results) : null;
         docs.push({
           ...base,
           category: contentCategory ?? base.category,

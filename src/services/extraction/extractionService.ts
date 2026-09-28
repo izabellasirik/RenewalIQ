@@ -11,6 +11,7 @@ import type {
 import { emptyField } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { generateId } from '../../utils/id';
+import type { LossRunDraft } from './fieldExtraction/lossRunPatterns';
 
 function isEqualScalar(a: unknown, b: unknown): boolean {
   if (typeof a === 'string' && typeof b === 'string') return a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -157,21 +158,39 @@ function isEqualField(a: unknown, b: unknown): boolean {
  * scalar-field merge already follows, just without a conflict badge since itemized rows don't have one yet.
  */
 function isDuplicateRow<T extends Record<string, unknown>>(existing: T[], entry: T, keyFields: (keyof T)[]): boolean {
+  return findDuplicateRow(existing, entry, keyFields) !== undefined;
+}
+
+/** The existing row `entry` re-states (see isDuplicateRow); `ignore` lists bookkeeping fields that don't make a row different. */
+function findDuplicateRow<T extends Record<string, unknown>>(existing: T[], entry: T, keyFields: (keyof T)[], ignore: string[] = []): T | undefined {
   const hasKey = keyFields.some((k) => entry[k] !== undefined && entry[k] !== '');
-  if (!hasKey) return false;
-  return existing.some((row) => {
+  if (!hasKey) return undefined;
+  return existing.find((row) => {
     const sameKey = keyFields.every((k) => (entry[k] === undefined ? row[k] === undefined : isEqualField(row[k], entry[k])));
     if (!sameKey) return false;
-    const allFields = Object.keys(entry) as (keyof T)[];
+    const allFields = (Object.keys(entry) as (keyof T)[]).filter((k) => !ignore.includes(k as string));
     return allFields.every((k) => isEqualField(row[k], entry[k]));
   });
 }
 
 function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFieldResult): void {
+  if (fieldPath === 'lossRun') {
+    const draft = result.value as LossRunDraft;
+    profile.pendingLossRuns = [...(profile.pendingLossRuns ?? []).filter((d) => d.key !== draft.key), draft];
+    return;
+  }
+
   if (fieldPath === 'lossHistory') {
-    const entry = result.value as Omit<LossEntry, 'id' | 'source'>;
-    if (isDuplicateRow(profile.lossHistory, entry, ['lossDate', 'claimType', 'incurred'])) return;
-    profile.lossHistory.push({ ...entry, id: generateId('loss'), source: result.source });
+    const { lossRunKey, ...entry } = result.value as Omit<LossEntry, 'id' | 'source'>;
+    const duplicateOf = findDuplicateRow(profile.lossHistory as unknown as Record<string, unknown>[], entry as Record<string, unknown>, ['lossDate', 'claimType', 'incurred'], ['lossRunId', 'lossRunKey']);
+    if (duplicateOf) {
+      // The same claim again (e.g. the loss run re-uploaded): keep one, but let it join its loss-run record.
+      if (lossRunKey && !duplicateOf.lossRunId) {
+        profile.lossHistory = profile.lossHistory.map((l) => (l === (duplicateOf as unknown) ? { ...l, lossRunKey } : l));
+      }
+      return;
+    }
+    profile.lossHistory.push({ ...entry, ...(lossRunKey ? { lossRunKey } : {}), id: generateId('loss'), source: result.source });
     return;
   }
 

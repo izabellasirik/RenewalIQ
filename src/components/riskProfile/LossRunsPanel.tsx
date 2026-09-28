@@ -42,7 +42,8 @@ export function LossRunsPanel({
   const runs = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId)?.lossRuns) ?? [];
   const [adding, setAdding] = useState(false);
   const unlinked = losses.filter((l) => !l.lossRunId || !runs.some((r) => r.id === l.lossRunId));
-  const sorted = [...runs].sort((a, b) => ((a.reportDate ?? '') < (b.reportDate ?? '') ? 1 : -1));
+  // Newest report first; for one report covering several terms, the newest term first.
+  const sorted = [...runs].sort((a, b) => (b.reportDate ?? '').localeCompare(a.reportDate ?? '') || (b.coverageStart ?? '').localeCompare(a.coverageStart ?? ''));
 
   return (
     <div className="flex flex-col gap-3">

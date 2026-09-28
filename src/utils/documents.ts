@@ -51,3 +51,16 @@ export function inferCategoryFromText(text: string): DocumentCategory | null {
   if (/\bbalance sheet\b|\bincome statement\b|\bprofit and loss\b/.test(t)) return 'financials';
   return null;
 }
+
+/**
+ * A document's category from what was actually read out of it (PDFs, spreadsheets, Word files):
+ * claims or a loss-run record → loss run; a list of drivers or vehicles → that schedule. Null when
+ * nothing says what it is. Used when the file name doesn't already.
+ */
+export function inferCategoryFromResults(results: { fieldPath: string }[]): DocumentCategory | null {
+  const count = (path: string) => results.filter((r) => r.fieldPath === path).length;
+  if (count('lossRun') > 0 || count('lossHistory') > 0) return 'loss_run';
+  if (count('drivers') >= 2) return 'driver_schedule';
+  if (count('vehicles') >= 2) return 'vehicle_schedule';
+  return null;
+}

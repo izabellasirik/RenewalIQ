@@ -19,6 +19,8 @@ export interface LossEntry {
   lossRunId?: string;
   claimNumber?: string;
   description?: string;
+  /** Transient: the loss-run record (LossRunDraft.key) this claim was read under, until it's settled into lossRunId. */
+  lossRunKey?: string;
 }
 
 /**

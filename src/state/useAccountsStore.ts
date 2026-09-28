@@ -39,6 +39,7 @@ import type { FieldResolution } from '../services/extraction';
 import {
   createEmptyRiskProfile,
   mergeIntoRiskProfile,
+  settleLossRuns,
   applyManualEdit,
   applyFieldResolution,
   applyCoverageFieldResolution,
@@ -63,7 +64,7 @@ import { fetchAgencyCarriers } from '../services/supabase/carriersRepo';
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
-import { inferCategory, inferCategoryFromText, inferFileType } from '../utils/documents';
+import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { isSupabaseConfigured } from '../services/supabase/client';
 import type { MyProfile } from '../services/supabase/profileRepo';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
@@ -745,7 +746,10 @@ export const useAccountsStore = create<AccountsState>()(
             : {}),
         };
         const finalDocs: UploadedDocument[] = documents.map((d) => ({ ...d, accountId: account.id }));
-        const finalProfile: RiskProfile = { ...profile, accountId: account.id };
+        // Loss runs read from the documents become the account's loss-run records, claims linked.
+        const settled = settleLossRuns(account.lossRuns ?? [], { ...profile, accountId: account.id });
+        const finalProfile: RiskProfile = settled.profile;
+        if (settled.lossRuns.length) account.lossRuns = settled.lossRuns;
 
         set((s) => {
           let log = appendEvent(
@@ -862,7 +866,8 @@ export const useAccountsStore = create<AccountsState>()(
               // being an accurate description of the document once a vision read has taken over as
               // the primary source — only surfaced when OCR is what the final result actually rests on.
               const warnings = isImageSource && visionResult && fieldsExtracted > 0 ? [] : raw.warnings;
-              const contentCategory = documentCategory ?? (isImageSource && raw.text ? inferCategoryFromText(raw.text) : null);
+              const contentCategory =
+                documentCategory ?? (isImageSource && raw.text ? inferCategoryFromText(raw.text) : doc.category === 'other' ? inferCategoryFromResults(results) : null);
               // A driver's license that couldn't be read well enough: say why (never guess the values)
               // and, below, put "Clearer driver license" on the checklist for the normal client request.
               const licenseDriver = results.find((r) => r.fieldPath === 'drivers')?.value as (Record<string, unknown> & { fieldConfidence?: Partial<Record<string, string>> }) | undefined;
@@ -888,7 +893,11 @@ export const useAccountsStore = create<AccountsState>()(
               set((s) => {
                 const profile = s.riskProfiles[accountId];
                 if (!profile) return {};
-                const updatedProfile = mergeIntoRiskProfile({ ...profile }, results);
+                const account = s.accounts.find((a) => a.id === accountId);
+                const settled = settleLossRuns(account?.lossRuns ?? [], mergeIntoRiskProfile({ ...profile }, results));
+                const updatedProfile = settled.profile;
+                const accountsWithRuns =
+                  account && settled.lossRuns !== (account.lossRuns ?? []) ? s.accounts.map((a) => (a.id === accountId ? { ...a, lossRuns: settled.lossRuns, updatedAt: new Date().toISOString() } : a)) : s.accounts;
                 const updatedDocs = (s.documents[accountId] ?? []).map((d) =>
                   d.id === doc.id
                     ? {
@@ -909,6 +918,7 @@ export const useAccountsStore = create<AccountsState>()(
                     : d
                 );
                 return {
+                  accounts: accountsWithRuns,
                   riskProfiles: { ...s.riskProfiles, [accountId]: updatedProfile },
                   documents: { ...s.documents, [accountId]: updatedDocs },
                   activityLog: appendEvent(

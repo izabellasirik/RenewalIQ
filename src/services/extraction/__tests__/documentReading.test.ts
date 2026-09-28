@@ -1,0 +1,143 @@
+import { describe, expect, it } from 'vitest';
+import { buildLines, findTables, lineTexts, type PdfTextPiece } from '../../ingestion/pdfLayout';
+import { classifyTable, hasValidVinCheckDigit, mapDriverTable, mapLossTable, mapVehicleTable, normalizeVin } from '../fieldExtraction/tableMappers';
+import { extractInsuranceFields } from '../fieldExtraction/extractInsuranceFields';
+import { mergeIntoRiskProfile } from '../extractionService';
+import { createEmptyRiskProfile } from '../emptyRiskProfile';
+import { settleLossRuns } from '../lossRunRecords';
+import type { RawDocument } from '../../ingestion';
+import type { LossRun } from '../../../types';
+
+/** A PDF page laid out like the real thing: each [x, text] at one baseline. Right-aligned cells use a negative x (right edge). */
+function page(rows: { y: number; cells: [number, string][]; size?: number }[], pageNo = 1) {
+  const pieces: PdfTextPiece[] = [];
+  for (const r of rows) {
+    const size = r.size ?? 9;
+    for (const [x, str] of r.cells) {
+      const width = str.length * size * 0.5;
+      pieces.push({ str, x: x < 0 ? -x - width : x, y: r.y, width, height: size });
+    }
+  }
+  return buildLines(pieces, pageNo);
+}
+
+function pdfDoc(lines: ReturnType<typeof buildLines>, name = 'doc.pdf'): RawDocument {
+  const text = lines.flatMap(lineTexts).join('\n');
+  return { documentName: name, fileType: 'pdf', text, pages: [{ pageNumber: 1, text }], layout: lines, warnings: [] };
+}
+
+const LOSS_RUN = page([
+  { y: 570, cells: [[36, 'PROGRESSIVE COMMERCIAL'], [-756, 'Loss Run Report']], size: 12 },
+  { y: 552, cells: [[36, 'Progressive Casualty Insurance Company'], [-756, 'Valuation Date: 09/15/2026']] },
+  { y: 528, cells: [[36, 'Insured:'], [110, 'ABC TRANSPORTATION LLC'], [420, 'Agent:'], [480, 'Smith Insurance Agency']] },
+  { y: 514, cells: [[36, 'Policy Number:'], [110, 'CA 04471932']] },
+  { y: 500, cells: [[36, 'Policy Period:'], [110, '01/15/2025 - 01/15/2026']] },
+  { y: 476, cells: [[36, 'Claim Number'], [120, 'Date of Loss'], [255, 'Description'], [440, 'Coverage'], [520, 'Status'], [-610, 'Paid'], [-680, 'Reserve'], [-756, 'Total Incurred']] },
+  { y: 460, cells: [[36, '25-1187342'], [120, '03/22/2025'], [255, 'Rear-ended third party'], [440, 'Bodily Injury'], [520, 'Closed'], [-610, '18,450.00'], [-680, '0.00'], [-756, '18,450.00']] },
+  { y: 447, cells: [[36, '25-1203917'], [120, '06/09/2025'], [255, 'Backing into dock, damage to'], [440, 'Collision'], [520, 'Closed'], [-610, '6,210.55'], [-680, '0.00'], [-756, '6,210.55']] },
+  { y: 434, cells: [[255, 'trailer door']] },
+  { y: 421, cells: [[36, '25-1311408'], [120, '11/02/2025'], [255, 'Cargo shifted in transit'], [440, 'Cargo'], [520, 'Open'], [-610, '2,500.00'], [-680, '7,500.00'], [-756, '10,000.00']] },
+  { y: 400, cells: [[36, 'Policy Totals:'], [190, '3 Claims'], [-610, '27,160.55'], [-680, '7,500.00'], [-756, '34,660.55']] },
+  { y: 370, cells: [[36, 'Policy Number:'], [110, 'CA 03982210']] },
+  { y: 356, cells: [[36, 'Policy Period:'], [110, '01/15/2024 - 01/15/2025']] },
+  { y: 336, cells: [[36, 'No losses reported for this policy period.']] },
+]);
+
+describe('PDF layout', () => {
+  it('splits "Label: value   Label: value" printed on one line', () => {
+    const insured = LOSS_RUN.find((l) => l.cells[0].text === 'Insured:')!;
+    expect(lineTexts(insured)).toEqual(['Insured: ABC TRANSPORTATION LLC', 'Agent: Smith Insurance Agency']);
+    const company = LOSS_RUN.find((l) => l.cells[0].text.startsWith('Progressive Casualty'))!;
+    expect(lineTexts(company)).toEqual(['Progressive Casualty Insurance Company', 'Valuation Date: 09/15/2026']);
+  });
+
+  it('rebuilds a table by column, joins a wrapped description, and reads the totals line', () => {
+    const [t] = findTables(LOSS_RUN, (h) => classifyTable(h) !== 'unrecognized');
+    expect(t.headers).toEqual(['Claim Number', 'Date of Loss', 'Description', 'Coverage', 'Status', 'Paid', 'Reserve', 'Total Incurred']);
+    expect(t.rows).toHaveLength(3);
+    expect(t.rows[1]).toEqual(['25-1203917', '06/09/2025', 'Backing into dock, damage to trailer door', 'Collision', 'Closed', '6,210.55', '0.00', '6,210.55']);
+    expect(t.totals?.[7]).toBe('34,660.55');
+  });
+});
+
+describe('column mapping', () => {
+  it('never reads "Years Driving" as a VIN column; first + last name make the driver', () => {
+    const table = { headers: ['First Name', 'Last Name', 'CDL #', 'CDL State', 'Hire Date', 'Years Driving'], rows: [['Luis', 'Ortega', 'D1234567', 'NM', '05/01/2020', '12']] };
+    expect(classifyTable(table.headers)).toBe('drivers');
+    expect(mapDriverTable(table)[0].entry).toEqual({ name: 'Luis Ortega', licenseNumber: 'D1234567', licenseState: 'NM', hireDate: '2020-05-01', yearsExperience: 12 });
+  });
+
+  it('a driver list without DOB is still a driver list; "License #" is the number, "State" the license state', () => {
+    const table = { headers: ['Driver Name', 'License #', 'State', 'Class', 'Date of Hire'], rows: [['John Smith', 's530-4471', 'tx', 'Class A', '2019-02-01'], ['Totals', '', '', '', '']] };
+    expect(classifyTable(table.headers)).toBe('drivers');
+    const rows = mapDriverTable(table);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].entry).toMatchObject({ name: 'John Smith', licenseNumber: 'S530-4471', licenseState: 'TX', licenseClass: 'A', hireDate: '2019-02-01' });
+  });
+
+  it('reads VINs as scanned (O→0, I→1), a Make/Model column, and stated values', () => {
+    expect(normalizeVin('1XKYD49X9KJ12345 6')).toBe('1XKYD49X9KJ123456');
+    expect(normalizeVin('1XKYD49X9KJI23456')).toBe('1XKYD49X9KJ123456');
+    expect(normalizeVin('not a vin')).toBeNull();
+    expect(hasValidVinCheckDigit('1M8GDM9AXKP042788')).toBe(true);
+    expect(hasValidVinCheckDigit('1M8GDM9A1KP042788')).toBe(false);
+    const table = { headers: ['Unit', 'Year', 'Make/Model', 'VIN', 'Stated Amount'], rows: [['101', '2021', 'Freightliner Cascadia', '3AKJHHDR5MSMA1234', '$125,000']] };
+    expect(classifyTable(table.headers)).toBe('vehicles');
+    expect(mapVehicleTable(table)[0].entry).toEqual({ vin: '3AKJHHDR5MSMA1234', make: 'Freightliner', model: 'Cascadia', year: 2021, value: 125000 });
+  });
+
+  it('loss tables: claim number, description, missing amounts derived, status from reserve', () => {
+    const table = { headers: ['Claim #', 'Accident Date', 'Loss Description', 'Paid', 'Outstanding'], rows: [['C-1', '3/22/25', 'Rear-ended', '$1,000', '$500'], ['C-2', '2024-06-09', 'Glass', '250', '0']] };
+    expect(classifyTable(table.headers)).toBe('losses');
+    const [a, b] = mapLossTable(table).map((r) => r.entry);
+    expect(a).toEqual({ lossDate: '2025-03-22', claimType: 'Unspecified', paid: 1000, reserved: 500, incurred: 1500, status: 'open', claimNumber: 'C-1', description: 'Rear-ended' });
+    expect(b).toMatchObject({ lossDate: '2024-06-09', incurred: 250, status: 'closed' });
+  });
+});
+
+describe('loss runs', () => {
+  const results = extractInsuranceFields(pdfDoc(LOSS_RUN, 'Progressive_Loss_Run.pdf'), { documentId: 'doc1', documentName: 'Progressive_Loss_Run.pdf' });
+  const runs = results.filter((r) => r.fieldPath === 'lossRun').map((r) => r.value as Record<string, unknown>);
+  const claims = results.filter((r) => r.fieldPath === 'lossHistory').map((r) => r.value as Record<string, unknown>);
+
+  it('one record per policy term: carrier, policy, period, report date, stated totals; "no losses" terms', () => {
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatchObject({
+      carrier: 'Progressive Casualty Insurance Company',
+      policyNumber: 'CA 04471932',
+      reportDate: '2026-09-15',
+      coverageStart: '2025-01-15',
+      coverageEnd: '2026-01-15',
+      claimCount: 3,
+      totalPaid: 27160.55,
+      totalReserve: 7500,
+      totalIncurred: 34660.55,
+    });
+    expect(runs[1]).toMatchObject({ policyNumber: 'CA 03982210', coverageStart: '2024-01-15', claimCount: 0, totalIncurred: 0 });
+  });
+
+  it('claims belong to the term they are printed under; the insured name is not polluted by the agent', () => {
+    expect(claims).toHaveLength(3);
+    expect(new Set(claims.map((c) => c.lossRunKey))).toEqual(new Set([runs[0].key]));
+    expect(claims[0]).toMatchObject({ claimNumber: '25-1187342', lossDate: '2025-03-22', claimType: 'Bodily Injury', incurred: 18450 });
+    expect(results.find((r) => r.fieldPath === 'business.namedInsured')?.value).toBe('ABC TRANSPORTATION LLC');
+  });
+
+  it('become the account records with claims linked; re-uploading does not duplicate; broker edits stay', () => {
+    const profile = mergeIntoRiskProfile(createEmptyRiskProfile('a1'), results);
+    const first = settleLossRuns([], profile, '2026-09-20T00:00:00Z');
+    expect(first.lossRuns).toHaveLength(2);
+    expect(first.profile.pendingLossRuns).toBeUndefined();
+    const linked = first.profile.lossHistory.filter((l) => l.lossRunId === first.lossRuns.find((r) => r.policyNumber === 'CA 04471932')!.id);
+    expect(linked).toHaveLength(3);
+    expect(first.profile.lossHistory.every((l) => l.lossRunKey === undefined)).toBe(true);
+
+    // The broker corrects the carrier; the same report is uploaded again.
+    const edited: LossRun[] = first.lossRuns.map((r) => ({ ...r, carrier: 'Progressive (edited)' }));
+    const again = extractInsuranceFields(pdfDoc(LOSS_RUN), { documentId: 'doc2', documentName: 'copy.pdf' });
+    const second = settleLossRuns(edited, mergeIntoRiskProfile(first.profile, again));
+    expect(second.lossRuns).toHaveLength(2);
+    expect(second.lossRuns.every((r) => r.carrier === 'Progressive (edited)')).toBe(true);
+    expect(second.profile.lossHistory).toHaveLength(3);
+  });
+});
