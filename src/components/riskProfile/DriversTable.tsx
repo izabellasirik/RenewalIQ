@@ -1,4 +1,4 @@
-import { Fragment, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2, User, AlertTriangle, ChevronDown, ChevronRight, StickyNote } from 'lucide-react';
 import type { DriverEntry, DriverNote } from '../../types';
 import { Button, ConfirmDialog } from '../ui';
@@ -109,6 +109,8 @@ export function DriversTable({
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [experienceTouched, setExperienceTouched] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /** The driver whose note box should take the cursor when their row opens via "Notes". */
+  const [noteFocusId, setNoteFocusId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DriverEntry | null>(null);
 
   function startAdd() {
@@ -249,12 +251,6 @@ export function DriversTable({
                         </span>
                       )}
                       {reportAge('mvr', d.mvrReportDate)?.outdated && <FreshnessBadge kind="mvr" reportDate={d.mvrReportDate} />}
-                      {(d.notes?.length ?? 0) > 0 && (
-                        <span className="inline-flex items-center gap-0.5 text-xs text-[var(--color-ink-400)]" title="Driver notes">
-                          <StickyNote size={11} />
-                          {d.notes!.length}
-                        </span>
-                      )}
                     </span>
                   </td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.dob)}</td>
@@ -284,6 +280,17 @@ export function DriversTable({
                   </td>
                   <td className="py-2.5">
                     <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          if (!open) toggle(d.id);
+                          setNoteFocusId(d.id);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer whitespace-nowrap"
+                        aria-label={`Notes for ${d.name ?? 'driver'}`}
+                      >
+                        <StickyNote size={13} />
+                        {(d.notes?.length ?? 0) > 0 ? `Notes (${d.notes!.length})` : 'Add note'}
+                      </button>
                       <button onClick={() => startEdit(d)} disabled={editingId !== null} className="rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer disabled:opacity-40" aria-label="Edit driver">
                         <Pencil size={13} />
                       </button>
@@ -297,7 +304,7 @@ export function DriversTable({
                   <tr className="border-b border-[var(--color-ink-100)] bg-[var(--color-ink-50)]/60">
                     <td />
                     <td colSpan={COLS - 1} className="py-3 pr-4">
-                      <DriverDetails accountId={accountId} driver={d} />
+                      <DriverDetails accountId={accountId} driver={d} focusNote={noteFocusId === d.id} onNoteFocused={() => setNoteFocusId(null)} />
                     </td>
                   </tr>
                 )}
@@ -323,9 +330,15 @@ export function DriversTable({
 }
 
 /** Everything else about one driver, and their own notes. */
-function DriverDetails({ accountId, driver }: { accountId: string; driver: DriverEntry }) {
+function DriverDetails({ accountId, driver, focusNote, onNoteFocused }: { accountId: string; driver: DriverEntry; focusNote?: boolean; onNoteFocused?: () => void }) {
   const addDriverNote = useAccountsStore((s) => s.addDriverNote);
   const [text, setText] = useState('');
+  const noteInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!focusNote) return;
+    noteInput.current?.focus();
+    onNoteFocused?.();
+  }, [focusNote, onNoteFocused]);
   const notes = [...(driver.notes ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
   const facts: [string, string | undefined][] = [
     ['Address', driver.address],
@@ -359,7 +372,7 @@ function DriverDetails({ accountId, driver }: { accountId: string; driver: Drive
           }}
           className="flex gap-2"
         >
-          <input value={text} onChange={(e) => setText(e.target.value)} className={inputClass} placeholder={`Note about ${driver.name ?? 'this driver'}…`} aria-label="New driver note" />
+          <input ref={noteInput} value={text} onChange={(e) => setText(e.target.value)} className={inputClass} placeholder={`Note about ${driver.name ?? 'this driver'}…`} aria-label="New driver note" />
           <Button type="submit" size="sm" disabled={!text.trim()}>
             Add
           </Button>
