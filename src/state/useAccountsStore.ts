@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import { createSafeStorage } from './safeStorage';
 import type {
   Account,
   AccountNote,
@@ -2585,6 +2586,8 @@ export const useAccountsStore = create<AccountsState>()(
     },
     {
       name: 'renewaliq.state.v1',
+      // Never throws when the browser's storage is full (see safeStorage.ts).
+      storage: createJSONStorage(() => createSafeStorage()),
       // Reconcile checklists saved before requirements were shared across carriers: one row per
       // logical requirement, legacy single-carrier links folded in. Idempotent, runs on every load.
       merge: (persisted, current) => {

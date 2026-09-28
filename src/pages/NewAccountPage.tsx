@@ -14,7 +14,7 @@ import { US_STATES } from '../utils/usStates';
 import type { RiskProfile, UploadedDocument } from '../types';
 import { DocumentLinkError } from '../services/ingestion/documentLinks';
 
-type Mode = 'choice' | 'manual' | 'processing' | 'confirm';
+type Mode = 'choice' | 'manual' | 'processing' | 'confirm' | 'error';
 type DraftDoc = Omit<UploadedDocument, 'accountId'>;
 
 function wait(ms: number) {
@@ -32,6 +32,7 @@ export function NewAccountPage() {
   const [draftProfile, setDraftProfile] = useState<RiskProfile | null>(null);
   const [draftDocs, setDraftDocs] = useState<DraftDoc[]>([]);
   const [failures, setFailures] = useState<{ name: string; message: string }[]>([]);
+  const [fatalError, setFatalError] = useState<string | null>(null);
 
   const [namedInsuredInput, setNamedInsuredInput] = useState('');
   const [stateInput, setStateInput] = useState('');
@@ -43,7 +44,18 @@ export function NewAccountPage() {
     navigate(`/accounts/${id}/risk-profile`);
   }
 
+  // Anything unexpected ends on a message with a way back — never on a spinner that never stops.
   async function handleFiles(files: File[]) {
+    try {
+      await processFiles(files);
+    } catch (err) {
+      console.error('New submission failed', err);
+      setFatalError(err instanceof Error ? err.message : String(err));
+      setMode('error');
+    }
+  }
+
+  async function processFiles(files: File[]) {
     setMode('processing');
     setFailures([]);
     setPhase('Uploading documents…');
@@ -135,7 +147,13 @@ export function NewAccountPage() {
     const ni = draftProfile.business.namedInsured;
     const st = draftProfile.business.state;
     if (ni.isMissing || ni.isConflicting || st.isMissing || st.isConflicting) return;
-    finalizeAccount(ni.value as string, st.value as string, draftDocs, draftProfile, draftFiles);
+    try {
+      finalizeAccount(ni.value as string, st.value as string, draftDocs, draftProfile, draftFiles);
+    } catch (err) {
+      console.error('New submission failed', err);
+      setFatalError(err instanceof Error ? err.message : String(err));
+      setMode('error');
+    }
   }
 
   function handleManualSubmit(e: FormEvent) {
@@ -236,6 +254,25 @@ export function NewAccountPage() {
             <CardBody className="flex flex-col items-center gap-4 py-12 text-center">
               <Loader2 size={28} className="animate-spin text-[var(--color-brand-700)]" />
               <p className="text-sm font-medium text-[var(--color-ink-700)]">{phase}</p>
+            </CardBody>
+          </Card>
+        )}
+
+        {mode === 'error' && (
+          <Card>
+            <CardBody className="flex flex-col items-center gap-3 py-10 text-center">
+              <TriangleAlert size={26} className="text-[var(--color-danger-600)]" />
+              <p className="text-sm font-medium text-[var(--color-ink-900)]">The submission couldn’t be created.</p>
+              {fatalError && <p className="max-w-md text-xs text-[var(--color-ink-500)]">{fatalError}</p>}
+              <Button
+                size="sm"
+                onClick={() => {
+                  setFatalError(null);
+                  setMode('choice');
+                }}
+              >
+                Try again
+              </Button>
             </CardBody>
           </Card>
         )}
