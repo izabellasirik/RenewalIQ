@@ -2,10 +2,8 @@ import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2, User, AlertTriangle, ChevronDown, ChevronRight, StickyNote } from 'lucide-react';
 import type { DriverEntry, DriverNote } from '../../types';
 import { Button, ConfirmDialog } from '../ui';
-import { formatExperience, toMonths } from '../../utils/duration';
-import { driverExperience, driverExperienceWithBasis, usableCdlIssueDate } from '../../utils/driverExperience';
-import { DurationInput } from './DurationInput';
-import { EMPTY_DURATION_DRAFT, draftToDuration, durationToDraft, type DurationDraft } from '../../utils/durationDraft';
+import { formatExperience } from '../../utils/duration';
+import { driverExperience, usableCdlIssueDate } from '../../utils/driverExperience';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { formatShortDate, normalizeDateKey } from '../../services/workflow/dates';
 import { formatTimestampShort } from '../workspace/time';
@@ -25,11 +23,10 @@ type Draft = {
   cdlOriginalIssueDate: string;
   hireDate: string;
   mvrReportDate: string;
-  yearsExperience: DurationDraft;
   violations: string;
 };
 
-const EMPTY_DRAFT: Draft = { name: '', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', issueDate: '', expirationDate: '', cdlOriginalIssueDate: '', hireDate: '', mvrReportDate: '', yearsExperience: EMPTY_DURATION_DRAFT, violations: '' };
+const EMPTY_DRAFT: Draft = { name: '', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', issueDate: '', expirationDate: '', cdlOriginalIssueDate: '', hireDate: '', mvrReportDate: '', violations: '' };
 
 /** A date input wants YYYY-MM-DD; a value read off a document may be "04/02/1980" — normalized when possible, else shown as text. */
 const dateDraft = (v?: string) => (v ? (normalizeDateKey(v) ?? v) : '');
@@ -47,23 +44,17 @@ function toDraft(d: DriverEntry): Draft {
     cdlOriginalIssueDate: dateDraft(d.cdlOriginalIssueDate),
     hireDate: d.hireDate ?? '',
     mvrReportDate: d.mvrReportDate ?? '',
-    yearsExperience: durationToDraft(driverExperience(d)),
     violations: d.violations ?? '',
   };
 }
 
 /**
- * Experience: counted from the original CDL issue date (kept current) unless the broker typed a
- * different figure — then theirs is kept as a manual correction. `experienceTouched`: the broker
- * changed the experience box in this edit. `before`: the row being edited — a CDL date that didn't
- * change keeps the document it was read from.
+ * The driver as saved from the form. Experience isn't a field: it's always today − CDL Since (see
+ * driverExperience). `before`: the row being edited — a CDL Since that didn't change keeps the
+ * document it was read from; a changed or typed one is the broker's.
  */
-export function fromDraft(d: Draft, experienceTouched: boolean, before?: DriverEntry): Omit<DriverEntry, 'id'> {
-  const typed = draftToDuration(d.yearsExperience) ?? undefined;
+export function fromDraft(d: Draft, before?: DriverEntry): Omit<DriverEntry, 'id'> {
   const cdlDate = d.cdlOriginalIssueDate.trim() || undefined;
-  const fromCdl = cdlDate ? (driverExperienceWithBasis({ cdlOriginalIssueDate: cdlDate, dob: d.dob.trim() || undefined })?.value ?? null) : null;
-  const differs = typed !== undefined && (fromCdl === null || toMonths(typed) !== toMonths(fromCdl));
-  const manual = experienceTouched ? differs : !!before?.experienceManual && differs;
   const keepSource = before?.cdlOriginalIssueSource && dateDraft(before.cdlOriginalIssueDate) === cdlDate;
   return {
     name: d.name.trim() || undefined,
@@ -78,12 +69,14 @@ export function fromDraft(d: Draft, experienceTouched: boolean, before?: DriverE
     cdlOriginalIssueSource: keepSource ? before!.cdlOriginalIssueSource : undefined,
     hireDate: d.hireDate || undefined,
     mvrReportDate: d.mvrReportDate || undefined,
-    // With a usable CDL date the figure is calculated (stored value only as a fallback); otherwise it's what was typed.
-    yearsExperience: manual || fromCdl === null ? typed : undefined,
-    experienceManual: manual || undefined,
-    experienceFromIssueDate: false,
     violations: d.violations.trim() || undefined,
   };
+}
+
+/** "13 yrs 1 mo" from a CDL Since date, or null when it can't be used. */
+function experienceFrom(cdlDate: string, dob?: string): string | null {
+  const e = driverExperience({ cdlOriginalIssueDate: cdlDate, dob });
+  return e ? formatExperience(e) : null;
 }
 
 /** True when at least one field on this row was a shakier read than the rest, or when the vision model and OCR disagreed on a field — surfaced as a small inline flag rather than hiding or discarding the row. */
@@ -102,11 +95,65 @@ function reviewTooltip(d: DriverEntry): string {
 /** Where the original CDL date came from, for the hover text. */
 function cdlSourceTitle(d: DriverEntry): string {
   const s = d.cdlOriginalIssueSource;
-  if (!s) return `Original CDL issue date ${d.cdlOriginalIssueDate} — entered in Renewal IQ. Experience is counted from it to today.`;
-  return `Original CDL issue date ${d.cdlOriginalIssueDate} — from ${s.documentName}${s.page ? `, page ${s.page}` : ''}${s.excerpt ? `: “${s.excerpt}”` : ''}. Experience is counted from it to today.`;
+  if (!s) return `CDL Since ${d.cdlOriginalIssueDate} — entered in Renewal IQ. Experience is counted from it to today.`;
+  return `CDL Since ${d.cdlOriginalIssueDate} — from ${s.documentName}${s.page ? `, page ${s.page}` : ''}${s.excerpt ? `: “${s.excerpt}”` : ''}. Experience is counted from it to today.`;
 }
 
-const COLS = 11;
+/**
+ * CDL Since, straight in the table: the date (with where it was read, on hover) and a quick way to
+ * enter or change it — Experience updates as soon as it's saved.
+ */
+function CdlSinceCell({ driver, onSave }: { driver: DriverEntry; onSave: (date: string | undefined) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  if (editing) {
+    return (
+      <form
+        className="flex items-center gap-1"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave(value || undefined);
+          setEditing(false);
+        }}
+      >
+        <input type="date" value={value} onChange={(e) => setValue(e.target.value)} className="rounded-md border border-[var(--color-brand-500)] px-1.5 py-0.5 text-xs outline-none" aria-label="CDL Since" autoFocus />
+        <button type="submit" className="rounded-md bg-[var(--color-brand-800)] px-1.5 py-0.5 text-xs font-medium text-white cursor-pointer">
+          Save
+        </button>
+        <button type="button" onClick={() => setEditing(false)} className="rounded-md px-1 py-0.5 text-xs text-[var(--color-ink-500)] hover:bg-[var(--color-ink-100)] cursor-pointer">
+          Cancel
+        </button>
+      </form>
+    );
+  }
+  const unusable = !!driver.cdlOriginalIssueDate && !usableCdlIssueDate(driver);
+  return (
+    <span className="inline-flex items-center gap-1">
+      {driver.cdlOriginalIssueDate ? (
+        <span title={cdlSourceTitle(driver)} className={unusable ? 'text-[var(--color-warning-600)]' : ''}>
+          {dateCell(driver.cdlOriginalIssueDate)}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => {
+          setValue(dateDraft(driver.cdlOriginalIssueDate));
+          setEditing(true);
+        }}
+        className={
+          driver.cdlOriginalIssueDate
+            ? 'rounded p-0.5 text-[var(--color-ink-300)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-600)] cursor-pointer'
+            : 'rounded-md px-1 py-0.5 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer'
+        }
+        aria-label={`${driver.cdlOriginalIssueDate ? 'Change' : 'Add'} CDL Since for ${driver.name ?? 'driver'}`}
+      >
+        {driver.cdlOriginalIssueDate ? <Pencil size={11} /> : 'Add'}
+      </button>
+    </span>
+  );
+}
+
+const COLS = 12;
 const dateCell = (v?: string) => (v ? (normalizeDateKey(v) ? formatShortDate(v) : v) : '—');
 
 export function DriversTable({
@@ -124,7 +171,6 @@ export function DriversTable({
 }) {
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  const [experienceTouched, setExperienceTouched] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /** The driver whose note box should take the cursor when their row opens via "Notes". */
   const [noteFocusId, setNoteFocusId] = useState<string | null>(null);
@@ -132,18 +178,16 @@ export function DriversTable({
 
   function startAdd() {
     setDraft(EMPTY_DRAFT);
-    setExperienceTouched(false);
     setEditingId('new');
   }
   function startEdit(d: DriverEntry) {
     setDraft(toDraft(d));
-    setExperienceTouched(false);
     setEditingId(d.id);
   }
   function save(e: FormEvent) {
     e.preventDefault();
-    if (editingId === 'new') onAdd(fromDraft(draft, experienceTouched));
-    else if (editingId) onUpdate(editingId, fromDraft(draft, experienceTouched, drivers.find((x) => x.id === editingId)));
+    if (editingId === 'new') onAdd(fromDraft(draft));
+    else if (editingId) onUpdate(editingId, fromDraft(draft, drivers.find((x) => x.id === editingId)));
     setEditingId(null);
   }
   const toggle = (id: string) =>
@@ -154,11 +198,10 @@ export function DriversTable({
       return next;
     });
 
-  const fromCdl = draft.cdlOriginalIssueDate ? (driverExperienceWithBasis({ cdlOriginalIssueDate: draft.cdlOriginalIssueDate, dob: draft.dob || undefined })?.value ?? null) : null;
-  const cdlUnusable = !!draft.cdlOriginalIssueDate && fromCdl === null;
+  const draftExperience = draft.cdlOriginalIssueDate ? experienceFrom(draft.cdlOriginalIssueDate, draft.dob || undefined) : null;
 
   function editor(isNew: boolean) {
-    const field = (label: string, key: keyof Omit<Draft, 'yearsExperience'>, type: 'text' | 'date' = 'text', placeholder?: string) => (
+    const field = (label: string, key: keyof Draft, type: 'text' | 'date' = 'text', placeholder?: string) => (
       <label className="block">
         <span className={labelClass}>{label}</span>
         <input type={type} className={inputClass} value={draft[key]} placeholder={placeholder} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} aria-label={label} />
@@ -176,40 +219,18 @@ export function DriversTable({
             {field('Class', 'licenseClass', 'text', 'e.g. A')}
             {field('License issue date', 'issueDate', 'date')}
             {field('License expiration', 'expirationDate', 'date')}
-            {field('Original CDL issue date', 'cdlOriginalIssueDate', 'date')}
+            <div>
+              {field('CDL Since (original CDL issue date)', 'cdlOriginalIssueDate', 'date')}
+              <p className="mt-1 text-xs text-[var(--color-ink-500)]" data-testid="draft-experience">
+                {draftExperience
+                  ? `Experience: ${draftExperience}`
+                  : draft.cdlOriginalIssueDate
+                    ? 'That date can’t be right (in the future, or before the driver turned 18) — experience stays —.'
+                    : 'Experience is calculated from this date.'}
+              </p>
+            </div>
             {field('Date of hire', 'hireDate', 'date')}
             {field('MVR report date', 'mvrReportDate', 'date')}
-            <div className="col-span-2">
-              <span className={labelClass}>CDL experience</span>
-              <DurationInput
-                value={draft.yearsExperience}
-                onChange={(v) => {
-                  setExperienceTouched(true);
-                  setDraft({ ...draft, yearsExperience: v });
-                }}
-                inputClassName={inputClass}
-                label="Driver experience"
-              />
-              {fromCdl !== null && (
-                <p className="mt-1 text-xs text-[var(--color-ink-500)]">
-                  From the original CDL issue date: {formatExperience(fromCdl)}
-                  {experienceTouched && toMonths(draftToDuration(draft.yearsExperience) ?? undefined) !== toMonths(fromCdl) ? ' — your figure will be kept as a correction.' : ' — kept up to date automatically.'}
-                  {experienceTouched && (
-                    <button
-                      type="button"
-                      className="ml-1 font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"
-                      onClick={() => {
-                        setExperienceTouched(false);
-                        setDraft({ ...draft, yearsExperience: durationToDraft(fromCdl) });
-                      }}
-                    >
-                      Use CDL date
-                    </button>
-                  )}
-                </p>
-              )}
-              {cdlUnusable && <p className="mt-1 text-xs text-[var(--color-warning-600)]">That CDL date can’t be right (in the future, or before the driver turned 18) — experience isn’t calculated from it.</p>}
-            </div>
             <div className="col-span-2">{field('Violations', 'violations', 'text', 'None')}</div>
             <div className="col-span-2 flex items-end justify-end gap-2 sm:col-span-4">
               <Button type="button" size="sm" variant="ghost" onClick={() => setEditingId(null)}>
@@ -236,15 +257,16 @@ export function DriversTable({
         <thead>
           <tr className="border-b border-[var(--color-ink-100)] text-xs text-[var(--color-ink-500)]">
             <th className="w-6 py-2" />
-            <th className="py-2 pr-4 font-medium">Name</th>
-            <th className="py-2 pr-4 font-medium">DOB</th>
-            <th className="py-2 pr-4 font-medium">License</th>
-            <th className="py-2 pr-4 font-medium">Issued</th>
-            <th className="py-2 pr-4 font-medium">Expires</th>
-            <th className="py-2 pr-4 font-medium">Experience</th>
-            <th className="py-2 pr-4 font-medium">Hired</th>
-            <th className="py-2 pr-4 font-medium">Violations</th>
-            <th className="py-2 pr-4 font-medium">Source</th>
+            <th className="py-2 pr-3 font-medium">Name</th>
+            <th className="py-2 pr-3 font-medium">DOB</th>
+            <th className="py-2 pr-3 font-medium">License</th>
+            <th className="py-2 pr-3 font-medium">Issued</th>
+            <th className="py-2 pr-3 font-medium">Expires</th>
+            <th className="py-2 pr-3 font-medium">CDL Since</th>
+            <th className="py-2 pr-3 font-medium">Experience</th>
+            <th className="py-2 pr-3 font-medium">Hired</th>
+            <th className="py-2 pr-3 font-medium">Violations</th>
+            <th className="py-2 pr-3 font-medium">Source</th>
             <th className="py-2 font-medium" />
           </tr>
         </thead>
@@ -253,7 +275,7 @@ export function DriversTable({
           {drivers.map((d) => {
             if (editingId === d.id) return editor(false);
             const open = expanded.has(d.id);
-            const exp = driverExperienceWithBasis(d);
+            const exp = driverExperience(d);
             return (
               <Fragment key={d.id}>
                 <tr className="border-b border-[var(--color-ink-100)] last:border-0">
@@ -262,7 +284,7 @@ export function DriversTable({
                       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
                   </td>
-                  <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">
+                  <td className="py-2.5 pr-3 text-[var(--color-ink-800)]">
                     <span className="inline-flex items-center gap-1.5">
                       {d.name ?? '—'}
                       {needsReview(d) && (
@@ -288,27 +310,24 @@ export function DriversTable({
                       </button>
                     )}
                   </td>
-                  <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.dob)}</td>
-                  <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">
+                  <td className="whitespace-nowrap py-2.5 pr-3 text-[var(--color-ink-800)]">{dateCell(d.dob)}</td>
+                  <td className="py-2.5 pr-3 text-[var(--color-ink-800)]">
                     {d.licenseNumber ? <span className="font-mono text-xs">{d.licenseNumber}</span> : <span className="whitespace-nowrap text-xs italic text-[var(--color-ink-400)]">No license #</span>}
                     <div className="text-xs text-[var(--color-ink-500)]">
                       {[d.licenseState, d.licenseClass ? `Class ${d.licenseClass}` : null, d.isCDL ? 'CDL' : null].filter(Boolean).join(' · ') || ''}
                     </div>
                   </td>
-                  <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.issueDate)}</td>
-                  <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.expirationDate)}</td>
-                  <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">
-                    <span data-testid="driver-experience">{exp ? formatExperience(exp.value) || '—' : '—'}</span>
-                    {exp?.basis === 'cdl' && (
-                      <div className="text-[11px] text-[var(--color-ink-400)]" title={cdlSourceTitle(d)}>
-                        CDL since {formatShortDate(usableCdlIssueDate(d) ?? '')}
-                      </div>
-                    )}
-                    {exp?.basis === 'manual' && <div className="text-[11px] text-[var(--color-ink-400)]">entered</div>}
+                  <td className="whitespace-nowrap py-2.5 pr-3 text-[var(--color-ink-800)]">{dateCell(d.issueDate)}</td>
+                  <td className="whitespace-nowrap py-2.5 pr-3 text-[var(--color-ink-800)]">{dateCell(d.expirationDate)}</td>
+                  <td className="whitespace-nowrap py-2.5 pr-3 text-[var(--color-ink-800)]">
+                    <CdlSinceCell driver={d} onSave={(date) => onUpdate(d.id, { cdlOriginalIssueDate: date, cdlOriginalIssueSource: undefined })} />
                   </td>
-                  <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.hireDate)}</td>
-                  <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.violations ?? '—'}</td>
-                  <td className="max-w-[9rem] py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
+                  <td className="whitespace-nowrap py-2.5 pr-3 text-[var(--color-ink-800)]" data-testid="driver-experience">
+                    {exp ? formatExperience(exp) : '—'}
+                  </td>
+                  <td className="whitespace-nowrap py-2.5 pr-3 text-[var(--color-ink-800)]">{dateCell(d.hireDate)}</td>
+                  <td className="py-2.5 pr-3 text-[var(--color-ink-800)]">{d.violations ?? '—'}</td>
+                  <td className="max-w-[6rem] py-2.5 pr-3 text-xs text-[var(--color-ink-400)]">
                     {d.isManual ? (
                       <span className="inline-flex items-center gap-1">
                         <User size={11} />
@@ -332,7 +351,7 @@ export function DriversTable({
                         aria-label={`Notes for ${d.name ?? 'driver'}`}
                       >
                         <StickyNote size={13} />
-                        {(d.notes?.length ?? 0) > 0 ? `Notes (${d.notes!.length})` : 'Add a note'}
+                        {(d.notes?.length ?? 0) > 0 ? `Notes (${d.notes!.length})` : 'Add note'}
                       </button>
                       <button onClick={() => startEdit(d)} disabled={editingId !== null} className="rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer disabled:opacity-40" aria-label="Edit driver">
                         <Pencil size={13} />

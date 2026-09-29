@@ -47,7 +47,7 @@ export const DRIVER_FIELD_LABELS: Record<string, string> = {
   isCDL: 'CDL',
   issueDate: 'Issue Date',
   expirationDate: 'Expiration Date',
-  cdlOriginalIssueDate: 'Original CDL Issue Date',
+  cdlOriginalIssueDate: 'CDL Since (original CDL issue date)',
   restrictions: 'Restrictions',
   endorsements: 'Endorsements',
   yearsExperience: 'Experience',

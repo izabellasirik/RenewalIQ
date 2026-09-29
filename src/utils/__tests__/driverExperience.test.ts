@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { driverExperience, driverExperienceWithBasis, monthsSince, usableCdlIssueDate } from '../driverExperience';
+import { driverExperience, monthsSince, usableCdlIssueDate } from '../driverExperience';
 import { formatExperience } from '../duration';
 import { fromDraft } from '../../components/riskProfile/DriversTable';
-import { EMPTY_DURATION_DRAFT } from '../durationDraft';
 import { extractDriverLicenseFields } from '../../services/extraction/fieldExtraction/idDocumentPatterns';
 import { extractInsuranceFields } from '../../services/extraction/fieldExtraction/extractInsuranceFields';
 import { mapDriverTable } from '../../services/extraction/fieldExtraction/tableMappers';
@@ -11,51 +10,52 @@ import { createEmptyRiskProfile } from '../../services/extraction/emptyRiskProfi
 import type { AppetiteRecord, DriverEntry } from '../../types';
 
 const draft = (patch: Record<string, unknown>) => ({
-  name: 'John Smith', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', issueDate: '', expirationDate: '', cdlOriginalIssueDate: '', hireDate: '', mvrReportDate: '', yearsExperience: EMPTY_DURATION_DRAFT, violations: '',
+  name: 'John Smith', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', issueDate: '', expirationDate: '', cdlOriginalIssueDate: '', hireDate: '', mvrReportDate: '', violations: '',
   ...patch,
 });
 const lines = (text: string) => text.split('\n').map((t) => ({ text: t }));
 
 describe('driver experience from the original CDL issue date', () => {
-  it('counts whole months to today and reads "13 yrs 1 mo"', () => {
-    expect(monthsSince('2013-08-15', '2026-09-29')).toBe(157);
-    expect(formatExperience(driverExperience({ cdlOriginalIssueDate: '08/15/2013' }, '2026-09-29'))).toBe('13 yrs 1 mo');
+  it('Experience = today − CDL Since, "X yrs Y mos" — the Issued date plays no part', () => {
+    // Issued: May 23, 2022 · CDL Since: Aug 16, 2013 · Experience: 13 yrs 1 mo
+    const d = { issueDate: '05/23/2022', cdlOriginalIssueDate: '08/16/2013', dob: '07/24/1985' };
+    expect(formatExperience(driverExperience(d, '2026-09-29'))).toBe('13 yrs 1 mo');
+    expect(formatExperience(driverExperience({ cdlOriginalIssueDate: '2013-07-16' }, '2026-09-29'))).toBe('13 yrs 2 mos');
     expect(formatExperience(driverExperience({ cdlOriginalIssueDate: '2025-09-29' }, '2026-09-29'))).toBe('1 yr');
-    expect(formatExperience(driverExperience({ cdlOriginalIssueDate: '2026-01-15' }, '2026-09-29'))).toBe('8 mo');
-    // Recalculated as time passes, never stored as a snapshot.
-    expect(formatExperience(driverExperience({ cdlOriginalIssueDate: '08/15/2013' }, '2027-08-15'))).toBe('14 yrs');
+    expect(formatExperience(driverExperience({ cdlOriginalIssueDate: '2026-01-15' }, '2026-09-29'))).toBe('8 mos');
+    expect(monthsSince('2013-08-16', '2026-09-29')).toBe(157);
   });
 
-  it('never from the DOB or the current license’s issue/renewal date — "—" instead', () => {
-    expect(driverExperience({ dob: '1985-07-24' } as DriverEntry, '2026-09-29')).toBeUndefined();
-    // Legacy rows counted from the current license's issue date: that was a renewal date, not experience.
-    expect(driverExperience({ experienceFromIssueDate: true, yearsExperience: { months: 52 } } as DriverEntry)).toBeUndefined();
+  it('recalculates as time passes (never a stored snapshot)', () => {
+    const d = { cdlOriginalIssueDate: '08/16/2013' };
+    expect(formatExperience(driverExperience(d, '2026-09-29'))).toBe('13 yrs 1 mo');
+    expect(formatExperience(driverExperience(d, '2027-08-16'))).toBe('14 yrs');
+    expect(formatExperience(driverExperience(d, '2027-10-20'))).toBe('14 yrs 2 mos');
   });
 
-  it('a CDL date that can’t be right is not used: invalid, future, before 18, or read two ways', () => {
+  it('no CDL Since → "—": not from Issued, DOB, or a figure typed/stated before', () => {
+    expect(driverExperience({ issueDate: '2022-05-23', dob: '1985-07-24' } as DriverEntry, '2026-09-29')).toBeUndefined();
+    expect(driverExperience({ yearsExperience: 15 } as DriverEntry, '2026-09-29')).toBeUndefined();
+    expect(driverExperience({ experienceFromIssueDate: true, yearsExperience: { months: 52 }, issueDate: '2022-05-23' } as DriverEntry)).toBeUndefined();
+  });
+
+  it('a CDL Since that can’t be right is not used: invalid, future, before 18, 2-digit year, or read two ways', () => {
     expect(usableCdlIssueDate({ cdlOriginalIssueDate: '13/45/2013' }, '2026-09-29')).toBeNull();
     expect(usableCdlIssueDate({ cdlOriginalIssueDate: '2027-01-01' }, '2026-09-29')).toBeNull();
     expect(usableCdlIssueDate({ cdlOriginalIssueDate: '2000-01-01', dob: '1985-07-24' }, '2026-09-29')).toBeNull();
-    expect(usableCdlIssueDate({ cdlOriginalIssueDate: '08/15/13' }, '2026-09-29')).toBeNull(); // a 2-digit year is ambiguous
+    expect(usableCdlIssueDate({ cdlOriginalIssueDate: '08/15/13' }, '2026-09-29')).toBeNull();
     expect(usableCdlIssueDate({ cdlOriginalIssueDate: '2013-08-15', conflicts: { cdlOriginalIssueDate: [{ value: '2018-08-15', extractionMethod: 'image_ocr' }] } }, '2026-09-29')).toBeNull();
     expect(usableCdlIssueDate({ cdlOriginalIssueDate: '2013-08-15', dob: '1985-07-24' }, '2026-09-29')).toBe('2013-08-15');
   });
 
-  it('a stated figure is used as stated; a broker correction wins over the calculation', () => {
-    expect(driverExperienceWithBasis({ yearsExperience: 15 })).toEqual({ value: 15, basis: 'stated' });
-    expect(driverExperienceWithBasis({ cdlOriginalIssueDate: '2013-08-15', yearsExperience: { months: 60 }, experienceManual: true }, '2026-09-29')).toEqual({ value: { months: 60 }, basis: 'manual' });
-    expect(driverExperienceWithBasis({ cdlOriginalIssueDate: '2013-08-15', yearsExperience: { months: 60 } }, '2026-09-29')?.basis).toBe('cdl');
-  });
-
-  it('saving: a CDL date → calculated; a different typed figure → the broker’s correction; the source is kept while the date is unchanged', () => {
-    const auto = fromDraft(draft({ cdlOriginalIssueDate: '2013-08-15', hireDate: '2024-05-01' }), false);
-    expect(auto).toMatchObject({ cdlOriginalIssueDate: '2013-08-15', experienceManual: undefined, yearsExperience: undefined, hireDate: '2024-05-01' });
-    const corrected = fromDraft(draft({ cdlOriginalIssueDate: '2013-08-15', yearsExperience: { years: '3', months: '0', orMore: false } }), true);
-    expect(corrected).toMatchObject({ experienceManual: true, yearsExperience: { months: 36 } });
-    const source = { documentId: 'd1', documentName: 'MVR.pdf', page: 1, excerpt: 'CDL Original Issue Date: 08/15/2013' };
-    const before = { id: 'x', cdlOriginalIssueDate: '08/15/2013', cdlOriginalIssueSource: source } as DriverEntry;
-    expect(fromDraft(draft({ cdlOriginalIssueDate: '2013-08-15' }), false, before).cdlOriginalIssueSource).toEqual(source);
-    expect(fromDraft(draft({ cdlOriginalIssueDate: '2014-01-01' }), false, before).cdlOriginalIssueSource).toBeUndefined();
+  it('entering CDL Since by hand: Issued stays separate, experience follows at once; a document’s source is kept only while the date is unchanged', () => {
+    const typed = fromDraft(draft({ issueDate: '2022-05-23', cdlOriginalIssueDate: '2013-08-16' }));
+    expect(typed).toMatchObject({ issueDate: '2022-05-23', cdlOriginalIssueDate: '2013-08-16', cdlOriginalIssueSource: undefined });
+    expect(formatExperience(driverExperience(typed, '2026-09-29'))).toBe('13 yrs 1 mo');
+    const source = { documentId: 'd1', documentName: 'MVR.pdf', page: 1, excerpt: 'CDL Original Issue Date: 08/16/2013' };
+    const before = { id: 'x', cdlOriginalIssueDate: '08/16/2013', cdlOriginalIssueSource: source } as DriverEntry;
+    expect(fromDraft(draft({ cdlOriginalIssueDate: '2013-08-16' }), before).cdlOriginalIssueSource).toEqual(source);
+    expect(fromDraft(draft({ cdlOriginalIssueDate: '2014-01-01' }), before).cdlOriginalIssueSource).toBeUndefined();
   });
 });
 
@@ -124,6 +124,12 @@ describe('carrier appetite uses the calculated experience', () => {
     expect(evaluateDriverRequirements(record, withDrivers([{ cdlOriginalIssueDate: cdlMonthsAgo(157) }, { cdlOriginalIssueDate: cdlMonthsAgo(40) }])).status).toBe('pass');
   });
 
+  it('no CDL Since on file → unconfirmed, never matched on a stated figure', () => {
+    const p = withDrivers([{ name: 'A', yearsExperience: 20 }]);
+    expect(minDriverExperienceMonths(p)).toEqual({ months: null, complete: false });
+    expect(evaluateDriverRequirements(record, p).status).toBe('warning');
+  });
+
   it('a driver with unknown experience keeps it from passing outright', () => {
     const p = withDrivers([{ cdlOriginalIssueDate: cdlMonthsAgo(157) }, { name: 'Unknown CDL date' }]);
     expect(minDriverExperienceMonths(p)).toEqual({ months: 157, complete: false });
@@ -148,6 +154,7 @@ describe('the MVR fills in the driver read from their license photo', () => {
     expect(merged.drivers).toHaveLength(1);
     expect(merged.drivers[0]).toMatchObject({ cdlOriginalIssueDate: '08/15/2013', cdlOriginalIssueSource: { documentId: 'mvr' }, support: [{ documentId: 'mvr' }] });
     expect(formatExperience(driverExperience(merged.drivers[0], '2026-09-29'))).toBe('13 yrs 1 mo');
+    expect(merged.drivers[0].issueDate).toBe('05/23/2022'); // Issued stays its own field
   });
 
   it('a different license number or DOB is another person — never merged', async () => {

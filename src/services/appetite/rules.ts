@@ -249,15 +249,14 @@ export function evaluateCommodities(record: AppetiteRecord, profile: RiskProfile
 }
 
 /**
- * The account's least-experienced driver, in months, for appetite matching — from each driver's
- * current experience (counted from their original CDL issue date to today, or as stated/entered;
- * see driverExperience). `complete`: every driver's experience is known. With no drivers on file,
- * the Minimum Driver Experience field is used as before.
+ * The account's least-experienced driver, in months, for appetite matching — each driver's
+ * experience is today − CDL Since (see driverExperience). `complete`: every driver has it. With
+ * no drivers on file (Market Finder's own filters), the Minimum Driver Experience field is used.
  */
 export function minDriverExperienceMonths(profile: RiskProfile, asOf?: string): { months: number | null; complete: boolean } {
   if (profile.drivers.length > 0) {
     const known = profile.drivers.map((d) => toMonths(driverExperience(d, asOf))).filter((m): m is number => m !== null);
-    if (known.length > 0) return { months: Math.min(...known), complete: known.length === profile.drivers.length };
+    return { months: known.length ? Math.min(...known) : null, complete: known.length === profile.drivers.length };
   }
   const field = toMonths(profile.transportation.minDriverExperienceYears.value);
   return { months: field, complete: field !== null };

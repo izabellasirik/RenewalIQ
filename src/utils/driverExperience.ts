@@ -42,33 +42,14 @@ export function usableCdlIssueDate(d: Pick<DriverEntry, 'cdlOriginalIssueDate' |
   return key;
 }
 
-export type ExperienceBasis = 'cdl' | 'stated' | 'manual';
-
 /**
- * A driver's experience as it reads today, and what it rests on:
- *
- *  - 'manual' — the broker corrected it by hand;
- *  - 'cdl'    — counted from the original CDL issue date to today (keeps growing);
- *  - 'stated' — a figure a document or the broker gave outright ("Years Experience: 15").
- *
- * Undefined — shown as "—" — when none of those is known. Never counted from the date of birth or
- * the current license's issue/renewal date.
+ * A driver's experience: today − CDL Since (their original CDL issue date), in whole months, so it
+ * grows on its own. Undefined — shown as "—" — when CDL Since is missing or can't be right. Never
+ * from the date of birth, the current license's issue/renewal date ("Issued"), or a typed figure.
  */
-export function driverExperienceWithBasis(
-  d: Pick<DriverEntry, 'yearsExperience' | 'experienceFromIssueDate' | 'experienceManual' | 'cdlOriginalIssueDate' | 'dob' | 'conflicts'>,
-  asOf?: string
-): { value: DurationValue; basis: ExperienceBasis } | undefined {
-  if (d.experienceManual && d.yearsExperience !== undefined) return { value: d.yearsExperience, basis: 'manual' };
+export function driverExperience(d: Pick<DriverEntry, 'cdlOriginalIssueDate' | 'dob' | 'conflicts'>, asOf?: string): DurationValue | undefined {
   const cdl = usableCdlIssueDate(d, asOf);
-  if (cdl) {
-    const months = monthsSince(cdl, asOf);
-    if (months !== null) return { value: { months }, basis: 'cdl' };
-  }
-  // A figure counted from the current license's issue date (the old behavior) was a renewal date, not experience.
-  if (!d.experienceFromIssueDate && d.yearsExperience !== undefined) return { value: d.yearsExperience, basis: 'stated' };
-  return undefined;
-}
-
-export function driverExperience(d: Parameters<typeof driverExperienceWithBasis>[0], asOf?: string): DurationValue | undefined {
-  return driverExperienceWithBasis(d, asOf)?.value;
+  if (!cdl) return undefined;
+  const months = monthsSince(cdl, asOf);
+  return months === null ? undefined : { months };
 }

@@ -45,15 +45,15 @@ export function toParts(v: unknown): { years: number; months: number; orMore: bo
   return { years: Math.floor(m / 12), months: m % 12, orMore: isDuration(v) ? !!v.orMore : false };
 }
 
-/** Driving experience, compact: "13 yrs 1 mo", "1 yr", "8 mo", "0 mo"; "16+ yrs" for an open-ended figure. Empty when unknown. */
+/** Driving experience, compact: "13 yrs 1 mo", "13 yrs 2 mos", "1 yr", "8 mos", "0 mos". Empty when unknown. */
 export function formatExperience(v: unknown): string {
   const parts = toParts(v);
   if (!parts) return '';
   const { years, months, orMore } = parts;
-  const y = `${years} ${years === 1 ? 'yr' : 'yrs'}`;
-  if (years === 0) return `${months}${orMore ? '+' : ''} mo`;
-  if (months === 0) return orMore ? `${years}+ ${years === 1 ? 'yr' : 'yrs'}` : y;
-  return `${y} ${months} mo${orMore ? '+' : ''}`;
+  const y = `${years}${orMore && months === 0 ? '+' : ''} ${years === 1 ? 'yr' : 'yrs'}`;
+  const m = `${months} ${months === 1 ? 'mo' : 'mos'}`;
+  if (years === 0) return m;
+  return months === 0 ? y : `${y} ${m}`;
 }
 
 /** "8 months", "1 year", "1 year 6 months", "16+ years", "1 year 6 months or more". */
