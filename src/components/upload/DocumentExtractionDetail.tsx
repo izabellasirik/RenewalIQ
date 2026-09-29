@@ -9,6 +9,9 @@ import { displayReadValue, parseDraft, ValueInput } from '../riskProfile/FieldRo
 import { encodeDurationDraft } from '../../utils/durationDraft';
 import { formatDuration, parseDurationText } from '../../utils/duration';
 import { countExtractedFields } from '../../utils/fieldCount';
+import { assessDriver, assessScalar, assessVehicle } from '../../services/extraction/validation';
+import { useAccountsStore } from '../../state/useAccountsStore';
+import type { ReviewCandidate } from '../../types';
 
 /**
  * The broker-facing status for one document's contribution to a field — deliberately reduced to
@@ -17,6 +20,26 @@ import { countExtractedFields } from '../../utils/fieldCount';
  * DocumentExtractedField.confidence) and still drives merge/conflict logic in
  * services/extraction — this is purely a display simplification for this panel.
  */
+/**
+ * Values already in the account that wouldn't pass today's checks (read before they existed): shown
+ * as "Needs review" with why — never as a green "Applied". Nothing is changed or removed.
+ */
+function storedValueProblem(summary: DocumentFieldSummary, profile: RiskProfile): string | null {
+  const ctx = { origin: summary.extractionMethod === 'deterministic_import' ? ('table' as const) : ('card' as const), scanned: false, uncertainDocument: false };
+  if (summary.fieldPath === 'drivers' || summary.fieldPath === 'vehicles') {
+    const rows = summary.fieldPath === 'drivers' ? profile.drivers : profile.vehicles;
+    const row = (summary.rowId ? rows.find((r) => r.id === summary.rowId) : undefined) ?? (summary.value as DriverEntry & VehicleEntry);
+    if (row.isManual) return null;
+    const verdict = summary.fieldPath === 'drivers' ? assessDriver(row as DriverEntry, ctx) : assessVehicle(row as VehicleEntry, ctx);
+    return verdict.verdict === 'apply' ? null : verdict.reason;
+  }
+  if (summary.fieldPath === 'lossHistory' || summary.fieldPath === 'coverageLine') return null;
+  const current = scalarFieldValue(profile, summary.fieldPath);
+  if (current?.extractionMethod === 'manual_entry' || current?.confirmedByBroker) return null;
+  const verdict = assessScalar({ fieldPath: summary.fieldPath, value: current && !current.isMissing ? current.value : summary.value, confidence: 'high' });
+  return verdict.verdict === 'apply' ? null : verdict.reason;
+}
+
 function simplifiedStatus(summary: DocumentFieldSummary, profile: RiskProfile): { label: string; tone: BadgeTone } | null {
   if (summary.fieldPath === 'drivers' || summary.fieldPath === 'vehicles' || summary.fieldPath === 'lossHistory') {
     const rows = summary.fieldPath === 'drivers' ? profile.drivers : summary.fieldPath === 'vehicles' ? profile.vehicles : profile.lossHistory;
@@ -27,6 +50,7 @@ function simplifiedStatus(summary: DocumentFieldSummary, profile: RiskProfile): 
     if (current?.extractionMethod === 'manual_entry') return { label: 'Broker Edited', tone: 'brand' };
   }
   if (summary.disposition === 'conflict') return { label: 'Conflict', tone: 'danger' };
+  if (summary.disposition === 'applied' && storedValueProblem(summary, profile)) return { label: 'Needs Review', tone: 'warning' };
   if (summary.disposition === 'needs_review') return { label: 'Needs Review', tone: 'warning' };
   if (summary.disposition === 'applied') return { label: 'Applied', tone: 'success' };
   // 'superseded' / 'not_applied': not one of the four statuses worth a badge here — the scalar row
@@ -42,6 +66,124 @@ function StatusBadge({ status }: { status: { label: string; tone: BadgeTone } })
       <Icon size={12} />
       {status.label}
     </Badge>
+  );
+}
+
+function ProblemNote({ text }: { text: string | null }) {
+  if (!text) return null;
+  return <p className="mt-1 text-xs text-[var(--color-warning-600)]" data-testid="review-reason">{text}</p>;
+}
+
+const ROW_LABELS: Record<string, Record<string, string>> = { drivers: DRIVER_FIELD_LABELS, vehicles: VEHICLE_FIELD_LABELS, lossHistory: LOSS_FIELD_LABELS };
+
+/**
+ * One thing the document read but Renewal IQ did not apply, with why. Apply (as read), Edit & apply
+ * (corrected), or Ignore — nothing reaches the Risk Profile or any count until the broker applies it.
+ */
+function ReviewCandidateCard({ candidate, accountId, documentId }: { candidate: ReviewCandidate; accountId: string; documentId: string }) {
+  const resolve = useAccountsStore((s) => s.resolveReviewCandidate);
+  const [editing, setEditing] = useState(false);
+  const labels = ROW_LABELS[candidate.fieldPath];
+  const isRow = !!labels;
+  const entry = (isRow ? candidate.value : {}) as Record<string, unknown>;
+  const valueType = isRow ? 'text' : fieldPathValueType(candidate.fieldPath);
+  const [rowDraft, setRowDraft] = useState<Record<string, string>>({});
+  const [draft, setDraft] = useState('');
+  const shownKeys = isRow ? Object.keys(labels).filter((k) => entry[k] !== undefined && entry[k] !== null && entry[k] !== '') : [];
+  const editKeys = isRow ? Object.keys(labels).filter((k) => k !== 'isCDL' && k !== 'yearsExperience') : [];
+
+  function startEdit() {
+    if (isRow) setRowDraft(Object.fromEntries(editKeys.map((k) => [k, entry[k] === undefined || entry[k] === null ? '' : String(entry[k])])));
+    else setDraft(valueType === 'duration' ? encodeDurationDraft(candidate.value) : displayReadValue(candidate.value));
+    setEditing(true);
+  }
+
+  function applyEdited() {
+    if (isRow) {
+      const next: Record<string, unknown> = { ...entry };
+      for (const k of editKeys) {
+        const raw = (rowDraft[k] ?? '').trim();
+        if (!raw) delete next[k];
+        else if (NUMERIC_ROW_KEYS[candidate.fieldPath as 'drivers' | 'vehicles' | 'lossHistory']?.includes(k)) {
+          const n = Number(raw.replace(/[$,]/g, ''));
+          if (Number.isFinite(n)) next[k] = n;
+        } else next[k] = raw;
+      }
+      delete next.conflicts;
+      delete next.fieldConfidence;
+      resolve(accountId, documentId, candidate.id, 'apply', next);
+    } else resolve(accountId, documentId, candidate.id, 'apply', parseDraft(valueType, draft));
+    setEditing(false);
+  }
+
+  const where = [candidate.source?.page ? `page ${candidate.source.page}` : null, candidate.source?.excerpt ? `“${candidate.source.excerpt}”` : null].filter(Boolean).join(' · ');
+  return (
+    <div className="rounded-lg border border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/20 px-3 py-2.5" data-testid="review-candidate">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="text-xs font-medium text-[var(--color-ink-500)]">{fieldPathLabel(candidate.fieldPath)}</p>
+        <Badge tone="warning">
+          <CircleAlert size={12} />
+          Needs review
+        </Badge>
+      </div>
+      <p className="mt-1 text-xs text-[var(--color-warning-600)]" data-testid="review-reason">{candidate.reason}</p>
+      {!editing ? (
+        isRow ? (
+          <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            {shownKeys.map((k) => (
+              <div key={k}>
+                <p className="text-xs text-[var(--color-ink-400)]">{labels[k]}</p>
+                <p className="mt-0.5 text-sm font-medium text-[var(--color-ink-900)] [overflow-wrap:anywhere]">{displayReadValue(entry[k])}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-1 text-sm font-medium text-[var(--color-ink-900)] [overflow-wrap:anywhere]">{displayReadValue(candidate.value) || '—'}</p>
+        )
+      ) : isRow ? (
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+          {editKeys.map((k) => (
+            <label key={k} className="block">
+              <span className="text-xs text-[var(--color-ink-400)]">{labels[k]}</span>
+              <input
+                className="mt-0.5 w-full rounded-md border border-[var(--color-brand-500)] px-1.5 py-1 text-sm outline-none"
+                value={rowDraft[k] ?? ''}
+                onChange={(e) => setRowDraft((d) => ({ ...d, [k]: e.target.value }))}
+              />
+            </label>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-1">
+          <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus />
+        </div>
+      )}
+      {where && !editing && <p className="mt-1.5 text-xs text-[var(--color-ink-400)] [overflow-wrap:anywhere]">From {where}</p>}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {!editing ? (
+          <>
+            <button onClick={() => resolve(accountId, documentId, candidate.id, 'apply')} className="rounded-md bg-[var(--color-brand-800)] px-2.5 py-1 text-xs font-medium text-white cursor-pointer">
+              Apply
+            </button>
+            <button onClick={startEdit} className="rounded-md border border-[var(--color-ink-200)] px-2.5 py-1 text-xs font-medium text-[var(--color-ink-700)] cursor-pointer">
+              Edit &amp; apply
+            </button>
+            <button onClick={() => resolve(accountId, documentId, candidate.id, 'ignore')} className="rounded-md px-2.5 py-1 text-xs font-medium text-[var(--color-ink-500)] hover:bg-[var(--color-ink-100)] cursor-pointer">
+              Ignore
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={applyEdited} className="rounded-md bg-[var(--color-brand-800)] px-2.5 py-1 text-xs font-medium text-white cursor-pointer">
+              Apply
+            </button>
+            <button onClick={() => setEditing(false)} className="rounded-md px-2.5 py-1 text-xs font-medium text-[var(--color-ink-500)] hover:bg-[var(--color-ink-100)] cursor-pointer">
+              Cancel
+            </button>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -108,7 +250,10 @@ function ScalarFieldRow({ summary, profile, onUpdateField, onUpdateCoverage }: {
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium text-[var(--color-ink-500)]">{fieldPathLabel(summary.fieldPath)}</p>
           {!isEditing ? (
-            <p className="mt-0.5 text-sm font-medium text-[var(--color-ink-900)]">{displayReadValue(displayValue) || '—'}</p>
+            <>
+              <p className="mt-0.5 text-sm font-medium text-[var(--color-ink-900)] [overflow-wrap:anywhere]">{displayReadValue(displayValue) || '—'}</p>
+              {status?.label === 'Needs Review' && <ProblemNote text={storedValueProblem(summary, profile)} />}
+            </>
           ) : (
             <div className="mt-1">
               <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus />
@@ -244,6 +389,7 @@ function RowEntryCard({
           )}
         </div>
       </div>
+      {status?.label === 'Needs Review' && <ProblemNote text={storedValueProblem(summary, profile)} />}
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
         {subFields.map(([key, value]) => (
           <div key={key}>
@@ -289,6 +435,7 @@ export function DocumentExtractionDetail({
   if (!document) return <Drawer open={open} onClose={onClose} title="Extracted Data"><></></Drawer>;
 
   const summaries = summarizeDocumentExtraction(document, profile);
+  const pending = (document.reviewCandidates ?? []).filter((c) => !c.ignored);
   // Always derived from the SAME list rendered below, never from document.fieldsExtracted (a
   // separately-persisted number computed at upload time) — those two going out of sync for any
   // document processed before extractedFields existed on UploadedDocument is exactly what
@@ -314,7 +461,11 @@ export function DocumentExtractionDetail({
               Could not read this document
             </Badge>
           )}
-          <span className="text-xs text-[var(--color-ink-400)]">{visibleFieldCount} field{visibleFieldCount === 1 ? '' : 's'} extracted</span>
+          <span className="text-xs text-[var(--color-ink-400)]">
+            {visibleFieldCount} field{visibleFieldCount === 1 ? '' : 's'} applied
+            {pending.length > 0 ? ` · ${pending.length} to review` : ''}
+            {document.rejectedCount ? ` · ${document.rejectedCount} unreadable fragment${document.rejectedCount === 1 ? '' : 's'} ignored` : ''}
+          </span>
         </div>
 
         {document.warnings && document.warnings.length > 0 && (
@@ -325,7 +476,19 @@ export function DocumentExtractionDetail({
           </div>
         )}
 
-        {summaries.length === 0 && document.status !== 'error' && (
+        {pending.length > 0 && (
+          <div data-testid="needs-review-section">
+            <h3 className="mb-1 text-sm font-semibold text-[var(--color-ink-800)]">Needs review</h3>
+            <p className="mb-2 text-xs text-[var(--color-ink-500)]">Read from this document but not added to the account — Renewal IQ wasn’t sure. Nothing here counts until you apply it.</p>
+            <div className="space-y-2">
+              {pending.map((c) => (
+                <ReviewCandidateCard key={c.id} candidate={c} accountId={document.accountId} documentId={document.id} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {summaries.length === 0 && pending.length === 0 && document.status !== 'error' && (
           <p className="text-sm italic text-[var(--color-ink-400)]">No fields were extracted from this document.</p>
         )}
 

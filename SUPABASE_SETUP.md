@@ -230,6 +230,12 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   for review ("It's for…"). The client page also shows the agency's name (the account's agency,
   else the organization name on the broker's intake link). Needs 0031 first. Additive, safe to
   re-run.
+- **`supabase/migrations/0034_document_review_candidates.sql`** — extraction integrity: what a
+  document read but did NOT apply on its own (uncertain, or at odds with the document type — e.g.
+  a second "driver" on an MVR) is held "for review" on the document instead of going into the Risk
+  Profile. Two nullable columns on `documents` (`review_candidates`, `rejected_count`) keep that
+  list with the document so it survives a reload and shows on every device. No RLS change. Until
+  it's applied, review items stay on the device that read the document. Additive, safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -307,6 +313,7 @@ from (values
   ('0031_upload_review_and_provenance', to_regprocedure('public.withdraw_document_request_file(uuid,text)') is not null),
   ('0032_share_personal_accounts',    to_regprocedure('public.share_account_with_agency(text)') is not null),
   ('0033_request_multi_upload',       to_regprocedure('public.complete_document_request_file(text,text,text,text,text)') is not null),
+  ('0034_document_review_candidates', exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'review_candidates')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

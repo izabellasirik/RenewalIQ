@@ -8,6 +8,9 @@ export type DocumentCategory =
   | 'vehicle_registration'
   | 'insurance_id_card'
   | 'insurance_declarations'
+  | 'mvr'
+  | 'vehicle_title'
+  | 'ifta'
   | 'other';
 
 export const DOCUMENT_CATEGORY_LABELS: Record<DocumentCategory, string> = {
@@ -20,6 +23,9 @@ export const DOCUMENT_CATEGORY_LABELS: Record<DocumentCategory, string> = {
   vehicle_registration: 'Vehicle Registration',
   insurance_id_card: 'Insurance ID Card',
   insurance_declarations: 'Insurance Declarations Page',
+  mvr: 'MVR (Driving Record)',
+  vehicle_title: 'Vehicle Title',
+  ifta: 'IFTA',
   other: 'Other',
 };
 
@@ -33,6 +39,25 @@ export interface DocumentExtractedField {
   value: unknown;
   confidence: import('./common').Confidence;
   extractionMethod?: import('./common').ExtractionMethod;
+}
+
+/**
+ * Something a document seems to say that Renewal IQ did NOT apply on its own — uncertain, or at
+ * odds with what the document is (a second "vehicle" on a vehicle title). It stays here, off the
+ * Risk Profile and out of every count, until the broker applies (as read, or corrected) or ignores it.
+ */
+export interface ReviewCandidate {
+  id: string;
+  fieldPath: string;
+  value: unknown;
+  confidence: import('./common').Confidence;
+  extractionMethod?: import('./common').ExtractionMethod;
+  /** The document, page (when the reader knows it) and text it was read from. */
+  source: import('./common').FieldSource;
+  /** Why it wasn't applied, in plain words ("VIN could not be read confidently"). */
+  reason: string;
+  /** Ignored by the broker — kept as a record, no longer shown. */
+  ignored?: boolean;
 }
 
 export interface UploadedDocument {
@@ -49,6 +74,10 @@ export interface UploadedDocument {
   warnings?: string[];
   /** Every field this document produced at extraction time — the "View extracted data" panel's source of truth for what THIS document contributed (its current disposition in the Risk Profile — applied/needs review/conflict — is looked up live against the current profile, not stored here, since later documents/edits can change it). */
   extractedFields?: DocumentExtractedField[];
+  /** What it read but did not apply — see ReviewCandidate. */
+  reviewCandidates?: ReviewCandidate[];
+  /** How many fragments were thrown away as unreadable or as form labels (never shown as values). */
+  rejectedCount?: number;
   /** Vision's free-text fallback for anything readable that didn't map to a known field — never silently discarded, shown in the detail panel instead. */
   candidateNotes?: string;
   /**

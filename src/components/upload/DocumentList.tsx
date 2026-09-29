@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2, Eye, Download } from 'lucide-react';
+import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleAlert, CircleX, TriangleAlert, Trash2, Eye, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType, CoverageField } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
@@ -18,6 +18,9 @@ function fileIcon(doc: UploadedDocument) {
 function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(0)} KB`;
 }
+
+/** Read but not applied — waiting for the broker. */
+const pendingReview = (doc: UploadedDocument) => (doc.reviewCandidates ?? []).filter((c) => !c.ignored).length;
 
 export function DocumentList({
   documents,
@@ -129,10 +132,17 @@ export function DocumentList({
                   className="cursor-pointer"
                   aria-label={`View extracted data for ${doc.name}`}
                 >
-                  <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'} className="hover:opacity-80">
-                    <CircleCheck size={12} />
-                    {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted · View
-                  </Badge>
+                  {pendingReview(doc) > 0 ? (
+                    <Badge tone="warning" className="hover:opacity-80">
+                      <CircleAlert size={12} />
+                      {pendingReview(doc)} to review · View
+                    </Badge>
+                  ) : (
+                    <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'} className="hover:opacity-80">
+                      <CircleCheck size={12} />
+                      {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted · View
+                    </Badge>
+                  )}
                 </button>
               ) : (
                 <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'}>
@@ -176,7 +186,7 @@ export function DocumentList({
         <DocumentExtractionDetail
           open={!!detailDoc}
           onClose={() => setDetailDoc(null)}
-          document={detailDoc}
+          document={detailDoc ? (documents.find((d) => d.id === detailDoc.id) ?? detailDoc) : null}
           profile={profile}
           onUpdateField={onUpdateField}
           onUpdateCoverage={onUpdateCoverage}

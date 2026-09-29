@@ -1,6 +1,6 @@
 import { supabase } from './client';
 import { driverFromRow, driverToRow, lossFromRow, lossToRow, vehicleFromRow, vehicleToRow, withoutDetails } from './recordRows';
-import type { Account, AccountNote, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, LossRun, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
+import type { Account, AccountNote, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, LossRun, ReviewCandidate, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
 import { createEmptyRiskProfile } from '../extraction/emptyRiskProfile';
 
@@ -339,6 +339,8 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
           // Needed to fetch the original file for preview — dropping it made every cloud-loaded document unpreviewable.
           storagePath: d.storage_path ?? undefined,
           ...(d.source_url ? { sourceUrl: d.source_url as string } : {}),
+          ...(Array.isArray(d.review_candidates) && d.review_candidates.length ? { reviewCandidates: d.review_candidates as ReviewCandidate[] } : {}),
+          ...(typeof d.rejected_count === 'number' && d.rejected_count > 0 ? { rejectedCount: d.rejected_count } : {}),
           uploadedAt: d.uploaded_at,
         }));
 
@@ -576,7 +578,12 @@ export async function upsertDocumentMetadata(userId: string, accountId: string, 
       preview_data_url: doc.previewDataUrl ?? null,
       uploaded_at: doc.uploadedAt,
     };
-    let { error } = await supabase.from('documents').upsert(doc.sourceUrl ? { ...row, source_url: doc.sourceUrl } : row);
+    const withLink = doc.sourceUrl ? { ...row, source_url: doc.sourceUrl } : row;
+    // 0034: what it read but held for review.
+    const full = { ...withLink, review_candidates: doc.reviewCandidates ?? null, rejected_count: doc.rejectedCount ?? null };
+    let { error } = await supabase.from('documents').upsert(full);
+    // 0034 not applied yet: save without the review list (it stays on this device).
+    if (error && isMissingColumnError(error, ['review_candidates', 'rejected_count'])) ({ error } = await supabase.from('documents').upsert(withLink));
     // 0015 not applied yet: save the document without its link.
     if (error && doc.sourceUrl && isMissingColumnError(error, ['source_url'])) ({ error } = await supabase.from('documents').upsert(row));
     if (error) return fail(error.message);

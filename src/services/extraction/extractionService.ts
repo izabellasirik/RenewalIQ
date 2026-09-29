@@ -10,6 +10,7 @@ import type {
   FieldSource,
   LossRun,
   ReviewFlag,
+  ReviewCandidate,
 } from '../../types';
 import { emptyField } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
@@ -208,7 +209,7 @@ function findDuplicateRow<T extends Record<string, unknown>>(existing: T[], entr
 }
 
 /** Row fields that are bookkeeping, not content — a re-statement differing only in these is the same row. */
-const ROW_BOOKKEEPING = ['support', 'reviewFlag', 'isManual', 'lastUpdatedAt', 'notes'];
+const ROW_BOOKKEEPING = ['support', 'reviewFlag', 'isManual', 'lastUpdatedAt', 'notes', 'fieldConfidence', 'conflicts'];
 
 /**
  * The coverage line for `type`, created if missing. A line a document creates records that
@@ -582,4 +583,39 @@ export function removeDocumentFromRiskProfile(profile: RiskProfile, documentId: 
 export function previewDocumentRemovalImpact(profile: RiskProfile, documentId: string, lossRuns: LossRun[] = []): { fields: number; vehicles: number; drivers: number; losses: number; flagged: number } {
   const { removed, flagged } = rollbackDocument(profile, lossRuns, documentId, '').report;
   return { fields: removed.fields, vehicles: removed.vehicles, drivers: removed.drivers, losses: removed.losses, flagged: flagged.length };
+}
+
+/**
+ * The broker applies something that was held for review (see gateExtraction): as read, or as they
+ * corrected it. It goes in credited to its document, like any other read value — and as confirmed
+ * by the broker. A corrected row is the broker's (isManual), so removing the document later keeps it
+ * and asks; a corrected field is a manual entry. Pure.
+ */
+export function applyReviewCandidate(profile: RiskProfile, candidate: ReviewCandidate, corrected?: unknown): RiskProfile {
+  const edited = corrected !== undefined;
+  const result: ExtractedFieldResult = {
+    fieldPath: candidate.fieldPath,
+    value: edited ? corrected : candidate.value,
+    confidence: 'high',
+    source: candidate.source,
+    extractionMethod: candidate.extractionMethod,
+  };
+  if (candidate.fieldPath === 'drivers' || candidate.fieldPath === 'vehicles' || candidate.fieldPath === 'lossHistory') {
+    const key = candidate.fieldPath;
+    const before = new Set((profile[key] as { id: string }[]).map((r) => r.id));
+    const next = mergeIntoRiskProfile({ ...profile }, [result]);
+    if (!edited) return next;
+    const now = new Date().toISOString();
+    return { ...next, [key]: (next[key] as { id: string }[]).map((r) => (before.has(r.id) ? r : { ...r, isManual: true, lastUpdatedAt: now })) } as RiskProfile;
+  }
+  const [section, key] = candidate.fieldPath.split('.');
+  if (edited && (section === 'business' || section === 'transportation')) return applyManualEdit({ ...profile }, section, key, corrected);
+  const next = mergeIntoRiskProfile({ ...profile }, [result]);
+  // Applying it is the broker vouching for it.
+  if (section === 'business' || section === 'transportation') {
+    const bucket = next[section] as unknown as Record<string, FieldValue<unknown>>;
+    const f = bucket[key];
+    if (f && isEqualValue(f.value, result.value)) bucket[key] = { ...f, confirmedByBroker: true };
+  }
+  return next;
 }

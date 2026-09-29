@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2, Sparkles, TriangleAlert, UploadCloud } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Dropzone } from '../components/upload/Dropzone';
-import { IdentityResolutionStep } from '../components/newSubmission/IdentityResolutionStep';
+import { IdentityResolutionStep, type IdentitySuggestion } from '../components/newSubmission/IdentityResolutionStep';
 import { Button, Card, CardBody } from '../components/ui';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { sampleAccount } from '../data/sampleAccounts';
-import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, extractInsuranceFields } from '../services/extraction';
+import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, extractInsuranceFields, gateExtraction } from '../services/extraction';
 import { generateId } from '../utils/id';
 import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { US_STATES } from '../utils/usStates';
@@ -16,6 +16,28 @@ import { DocumentLinkError } from '../services/ingestion/documentLinks';
 
 type Mode = 'choice' | 'manual' | 'processing' | 'confirm' | 'error';
 type DraftDoc = Omit<UploadedDocument, 'accountId'>;
+
+/**
+ * Name and state the documents suggest but that weren't applied on their own (held for review), and
+ * — for the state — the state on a driver's license, which is the driver's, not necessarily the
+ * business's. Offered with where they're from; the broker decides.
+ */
+function identitySuggestions(docs: DraftDoc[], profile: RiskProfile): { nameSuggestions: IdentitySuggestion[]; stateSuggestions: IdentitySuggestion[] } {
+  const nameSuggestions: IdentitySuggestion[] = [];
+  const stateSuggestions: IdentitySuggestion[] = [];
+  for (const d of docs) {
+    for (const c of d.reviewCandidates ?? []) {
+      if (c.fieldPath === 'business.namedInsured' && typeof c.value === 'string') nameSuggestions.push({ value: c.value, note: `${d.name} — ${c.reason}` });
+      if (c.fieldPath === 'business.state' && typeof c.value === 'string') stateSuggestions.push({ value: c.value, note: `${d.name} — ${c.reason}` });
+      const drv = c.fieldPath === 'drivers' ? (c.value as { licenseState?: string; name?: string }) : null;
+      if (drv?.licenseState) stateSuggestions.push({ value: drv.licenseState, note: `${d.name} — the driver’s license state${drv.name ? ` (${drv.name})` : ''}` });
+    }
+  }
+  for (const drv of profile.drivers) {
+    if (drv.licenseState) stateSuggestions.push({ value: drv.licenseState, note: `${drv.source?.documentName ?? 'A document'} — the driver’s license state${drv.name ? ` (${drv.name})` : ''}` });
+  }
+  return { nameSuggestions, stateSuggestions };
+}
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -85,7 +107,10 @@ export function NewAccountPage() {
       try {
         const raw = await parseFile(file);
         setPhase('Extracting account information…');
-        const results = extractInsuranceFields(raw, { documentId: docId, documentName: file.name, isImageSource: isImageSource || raw.ocrConfidence !== undefined });
+        const scanned = isImageSource || raw.ocrConfidence !== undefined;
+        // Same gate as every other upload: only validated values go into the new account.
+        const gate = gateExtraction({ results: extractInsuranceFields(raw, { documentId: docId, documentName: file.name, isImageSource: scanned }), text: raw.text, fileName: file.name, scanned });
+        const results = gate.applied;
         // Empty extractable text alongside a warning means nothing was actually read — surface
         // that as a failure rather than a quietly-successful "0 fields extracted".
         if (raw.text.trim().length === 0 && raw.warnings.length > 0) {
@@ -96,12 +121,16 @@ export function NewAccountPage() {
         profile = mergeIntoRiskProfile(profile, results);
         // A link was downloaded: keep the real document for preview/upload, not the shortcut.
         if (raw.linkedFile) keptFiles[files.indexOf(file)] = raw.linkedFile;
-        const contentCategory = isImageSource && raw.text ? inferCategoryFromText(raw.text) : base.category === 'other' ? inferCategoryFromResults(results) : null;
+        const contentCategory =
+          gate.classification.certainty !== 'low' ? gate.classification.category : isImageSource && raw.text ? inferCategoryFromText(raw.text) : base.category === 'other' ? inferCategoryFromResults(results) : null;
         docs.push({
           ...base,
           category: contentCategory ?? base.category,
           status: 'processed',
           fieldsExtracted: results.length,
+          extractedFields: results.map((r) => ({ fieldPath: r.fieldPath, value: r.value, confidence: r.confidence, extractionMethod: r.extractionMethod })),
+          ...(gate.review.length ? { reviewCandidates: gate.review } : {}),
+          ...(gate.rejected ? { rejectedCount: gate.rejected } : {}),
           warnings: raw.warnings.length > 0 ? raw.warnings : undefined,
           previewDataUrl: raw.imagePreviewDataUrl,
           ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
@@ -305,6 +334,7 @@ export function NewAccountPage() {
               domicileState={draftProfile.business.state}
               onResolveNamedInsured={(value) => resolveIdentityField('namedInsured', value)}
               onResolveState={(value) => resolveIdentityField('state', value)}
+              {...identitySuggestions(draftDocs, draftProfile)}
             />
 
             <div className="flex items-center justify-between">

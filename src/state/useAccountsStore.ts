@@ -40,6 +40,7 @@ import type { FieldResolution } from '../services/extraction';
 import {
   createEmptyRiskProfile,
   mergeIntoRiskProfile,
+  applyReviewCandidate,
   settleLossRuns,
   applyManualEdit,
   applyFieldResolution,
@@ -195,6 +196,8 @@ interface AccountsState {
   loadSampleDocuments: (accountId: string) => Promise<void>;
   /** Removes an uploaded file and safely retracts any extracted data that depended only on it (see removeDocumentFromRiskProfile) — never leaves stale facts pointing at a source that no longer exists. */
   deleteDocument: (accountId: string, documentId: string, opts?: { activityMessage?: string }) => RollbackReport | null;
+  /** Something a document read but held for review: apply it (as read, or `corrected`) or ignore it. */
+  resolveReviewCandidate: (accountId: string, documentId: string, candidateId: string, action: 'apply' | 'ignore', corrected?: unknown) => void;
   updateField: (accountId: string, section: 'business' | 'transportation', key: string, value: unknown) => void;
   resolveField: (accountId: string, section: 'business' | 'transportation', key: string, resolution: FieldResolution<unknown>) => void;
   updateCoverage: (accountId: string, coverageType: CoverageType, field: CoverageField, value: string) => void;
@@ -759,7 +762,7 @@ export const useAccountsStore = create<AccountsState>()(
           read.documentCategory ??
           (read.isImageSource && read.raw.text ? inferCategoryFromText(read.raw.text) : inferCategory(name) === 'other' ? inferCategoryFromResults(read.results) : null) ??
           inferCategory(name);
-        return detectDocumentSignals({ text: read.raw.text, fileName: name, category, results: read.results });
+        return detectDocumentSignals({ text: read.raw.text, fileName: name, category, results: [...read.results, ...read.review] });
       }
 
       /** One sign-in load (see hydrateCloudSubmissions). */
@@ -1060,14 +1063,14 @@ export const useAccountsStore = create<AccountsState>()(
           // Already read (a client upload checked before import): reuse that read, re-keyed to this document.
           const preRead = opts?.preRead?.[i];
           (preRead ? Promise.resolve(rekeyRead(preRead, doc.id, doc.name)) : readDocumentFile(file, doc.id, doc.name, get().currentUserId))
-            .then(async ({ raw, results, documentCategory, candidateNotes, visionResult, isImageSource }) => {
+            .then(async ({ raw, results, review, rejectedCount, documentCategory, candidateNotes, visionResult, isImageSource }) => {
 
               const fieldsExtracted = countExtractedFields(results);
               // "Unreadable" now means BOTH extraction paths came up empty — vision succeeding on a
               // photo OCR's own confidence gate rejected (a common phone-photo-quality case) is a
               // real success, not a failure, even though raw.text is empty in that case.
               const ocrFoundNothing = raw.text.trim().length === 0 && raw.warnings.length > 0;
-              const readFailed = ocrFoundNothing && fieldsExtracted === 0;
+              const readFailed = ocrFoundNothing && fieldsExtracted === 0 && review.length === 0;
               // The "partially readable" warning describes Tesseract's own confidence, which stops
               // being an accurate description of the document once a vision read has taken over as
               // the primary source — only surfaced when OCR is what the final result actually rests on.
@@ -1076,7 +1079,7 @@ export const useAccountsStore = create<AccountsState>()(
                 documentCategory ?? (isImageSource && raw.text ? inferCategoryFromText(raw.text) : doc.category === 'other' ? inferCategoryFromResults(results) : null);
               // A driver's license that couldn't be read well enough: say why (never guess the values)
               // and, below, put "Clearer driver license" on the checklist for the normal client request.
-              const licenseDriver = results.find((r) => r.fieldPath === 'drivers')?.value as (Record<string, unknown> & { fieldConfidence?: Partial<Record<string, string>> }) | undefined;
+              const licenseDriver = (results.find((r) => r.fieldPath === 'drivers') ?? review.find((r) => r.fieldPath === 'drivers'))?.value as (Record<string, unknown> & { fieldConfidence?: Partial<Record<string, string>> }) | undefined;
               const licenseReasons = licenseReadReasons({ category: contentCategory ?? doc.category, readFailed, driver: licenseDriver });
               const docWarnings = licenseReasons.length ? [...licenseWarnings(licenseReasons), ...warnings] : warnings;
 
@@ -1114,8 +1117,12 @@ export const useAccountsStore = create<AccountsState>()(
                         previewDataUrl: raw.imagePreviewDataUrl,
                         category: contentCategory ?? d.category,
                         extractedFields: results.map((r) => ({ fieldPath: r.fieldPath, value: r.value, confidence: r.confidence, extractionMethod: r.extractionMethod })),
+                        // Read but not applied — the broker decides (never in the profile or any count meanwhile).
+                        reviewCandidates: review.length ? review : undefined,
+                        rejectedCount: rejectedCount || undefined,
                         // What it evidently is (kind, names, quarter) — how a client's upload is checked against what was asked.
-                        signals: detectDocumentSignals({ text: raw.text, fileName: doc.name, category: contentCategory ?? d.category, results }),
+                        // Held candidates count here: a name held for review still says whose MVR it is.
+                        signals: detectDocumentSignals({ text: raw.text, fileName: doc.name, category: contentCategory ?? d.category, results: [...results, ...review] }),
                         candidateNotes,
                         ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
                         // Downloaded from a link: name/type/category from the real document, not the shortcut.
@@ -1133,7 +1140,9 @@ export const useAccountsStore = create<AccountsState>()(
                     s.activityLog,
                     accountId,
                     'document_processed',
-                    readFailed ? `Could not read ${doc.name}.` : `Extracted ${fieldsExtracted} field${fieldsExtracted === 1 ? '' : 's'} from ${doc.name}.`
+                    readFailed
+                      ? `Could not read ${doc.name}.`
+                      : `Extracted ${fieldsExtracted} field${fieldsExtracted === 1 ? '' : 's'} from ${doc.name}${review.length ? ` — ${review.length} held for review` : ''}.`
                   ),
                 };
               });
@@ -1221,6 +1230,42 @@ export const useAccountsStore = create<AccountsState>()(
           );
         }
         return report;
+      },
+
+      resolveReviewCandidate: (accountId, documentId, candidateId, action, corrected) => {
+        const doc = (get().documents[accountId] ?? []).find((d) => d.id === documentId);
+        const candidate = doc?.reviewCandidates?.find((c) => c.id === candidateId && !c.ignored);
+        if (!doc || !candidate) return;
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const docs = (s.documents[accountId] ?? []).map((d) => {
+            if (d.id !== documentId) return d;
+            if (action === 'ignore') return { ...d, reviewCandidates: d.reviewCandidates?.map((c) => (c.id === candidateId ? { ...c, ignored: true } : c)) };
+            const rest = (d.reviewCandidates ?? []).filter((c) => c.id !== candidateId);
+            return {
+              ...d,
+              reviewCandidates: rest.length ? rest : undefined,
+              extractedFields: [...(d.extractedFields ?? []), { fieldPath: candidate.fieldPath, value: corrected ?? candidate.value, confidence: 'high' as const, extractionMethod: candidate.extractionMethod }],
+            };
+          });
+          const what = candidate.fieldPath === 'drivers' ? 'a driver' : candidate.fieldPath === 'vehicles' ? 'a vehicle' : `"${candidate.fieldPath.split('.').pop()}"`;
+          return {
+            documents: { ...s.documents, [accountId]: docs },
+            ...(action === 'apply'
+              ? {
+                  riskProfiles: { ...s.riskProfiles, [accountId]: applyReviewCandidate(profile, candidate, corrected) },
+                  accounts: touchAccount(s.accounts, accountId),
+                  activityLog: appendEvent(s.activityLog, accountId, 'field_completed', `${corrected !== undefined ? 'Corrected and applied' : 'Applied'} ${what} from ${doc.name} after review.`),
+                }
+              : {}),
+          };
+        });
+        if (action === 'apply') get().runMatching(accountId);
+        const st = get();
+        const updated = (st.documents[accountId] ?? []).find((d) => d.id === documentId);
+        if (isSupabaseConfigured && st.currentUserId && st.cloudAccountIds[accountId] && updated) void cloudRepo.upsertDocumentMetadata(st.currentUserId, accountId, updated, updated.storagePath ?? null);
+        syncNow(accountId);
       },
 
       updateField: (accountId, section, key, value) => {

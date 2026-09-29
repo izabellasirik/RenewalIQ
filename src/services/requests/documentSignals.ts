@@ -81,6 +81,8 @@ const CATEGORY_KIND: Partial<Record<DocumentCategory, RequirementKind>> = {
   driver_license: 'driver_license',
   vehicle_registration: 'vehicle_registration',
   application: 'application',
+  mvr: 'mvr',
+  ifta: 'ifta',
 };
 
 const TEXT_KINDS: { kind: RequirementKind; re: RegExp }[] = [
