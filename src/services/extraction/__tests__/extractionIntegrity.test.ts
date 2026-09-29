@@ -184,3 +184,37 @@ describe('auto-apply precision', () => {
     expect(precision).toBe(1);
   });
 });
+
+describe('an application that mentions licenses, CDLs and MVRs is still an application', () => {
+  it('its business fields are read and applied — not held as a license’s or an MVR’s', () => {
+    const text = [
+      'COMMERCIAL AUTO APPLICATION',
+      'Named Insured: ATCO SERVICES LLC',
+      'Legal Entity: LLC',
+      'FEIN: 12-3456789',
+      'Mailing Address: 100 W Main St, Chicago, IL 60601',
+      'Years in Business: 7',
+      'DOT Number: 1234567',
+      'DRIVER INFORMATION',
+      'Driver Name   DOB   Driver License #   State   CDL Class',
+      'Do you obtain MVRs on all drivers? Yes',
+    ].join('\n');
+    const f: Fixture = { id: 'app', scanned: false, doc: { documentName: 'ATCO application.pdf', fileType: 'txt', text, warnings: [] }, expected: { drivers: [], vehicles: [], fields: {} } };
+    const g = run(f);
+    expect(g.classification.category).toBe('application');
+    const applied = Object.fromEntries(g.applied.map((r) => [r.fieldPath, r.value]));
+    expect(applied).toMatchObject({
+      'business.namedInsured': 'ATCO SERVICES LLC',
+      'business.fein': '12-3456789',
+      'business.address': '100 W Main St, Chicago, IL 60601',
+      'business.state': 'IL',
+      'transportation.dotNumber': '1234567',
+    });
+    expect(drivers(g.applied)).toEqual([]); // no bogus "driver" from the license reader
+  });
+
+  it('a real license or MVR is unaffected', () => {
+    expect(run(LICENSE).classification.category).toBe('driver_license');
+    expect(run(MVR).classification.category).toBe('mvr');
+  });
+});

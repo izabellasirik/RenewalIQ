@@ -1,5 +1,5 @@
 import type { DocumentCategory, ExtractedFieldResult } from '../../../types';
-import { detectDriverLicense, detectVehicleRegistration, detectDeclarationsPage, detectInsuranceIdCard } from '../fieldExtraction/idDocumentPatterns';
+import { detectApplication, detectDriverLicense, detectVehicleRegistration, detectDeclarationsPage, detectInsuranceIdCard } from '../fieldExtraction/idDocumentPatterns';
 import { inferCategory, inferCategoryFromText } from '../../../utils/documents';
 
 /**
@@ -32,7 +32,10 @@ function tableRows(results: ExtractedFieldResult[], fieldPath: 'drivers' | 'vehi
 
 export function classifyDocument(input: { text: string; fileName: string; visionCategory?: DocumentCategory | null; results: ExtractedFieldResult[] }): DocumentClassification {
   const { text, fileName, visionCategory, results } = input;
-  // Single-subject documents first: their text also mentions licenses, VINs, makes and dates, which
+  // An application first: its driver section says "Driver License #", "CDL" and "MVR" — read as a
+  // license or an MVR, its business fields would all be held back.
+  if (detectApplication(text)) return { category: 'application', certainty: 'high', signal: 'text: application' };
+  // Single-subject documents next: their text also mentions licenses, VINs, makes and dates, which
   // is exactly what makes them look like schedules to a table reader.
   if (MVR.test(text)) return { category: 'mvr', certainty: 'high', signal: 'text: driving record' };
   if (detectDriverLicense(text) && MEDICAL_SECTION.test(text)) return { category: 'mvr', certainty: 'high', signal: 'text: driver license record with a medical certificate' };

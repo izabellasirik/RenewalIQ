@@ -20,6 +20,7 @@ import {
   detectDriverLicense,
   detectVehicleRegistration,
   findCdlOriginalIssue,
+  detectApplication,
 } from './idDocumentPatterns';
 import { toMonths, type DurationValue } from '../../../utils/duration';
 
@@ -116,7 +117,8 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLin
   // patterns below. Skipping the business/transportation prose patterns entirely for a
   // detected ID-card document is what keeps a driver's personal details out of the applicant's
   // business section, rather than trying to out-guess which label "wins".
-  const isIdCardDocument = detectDriverLicense(doc.text) || detectVehicleRegistration(doc.text);
+  // An application mentions licenses, CDLs and VINs too — it's never read as a card.
+  const isIdCardDocument = !detectApplication(doc.text) && (detectDriverLicense(doc.text) || detectVehicleRegistration(doc.text));
 
   if (!isIdCardDocument) {
     for (const field of SCALAR_FIELD_PATTERNS) {
@@ -201,7 +203,8 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLin
   // idDocumentPatterns.ts for why this exists and how it avoids hallucinating a value from a
   // partially-unreadable field.
   // A driver list (a table of drivers) is not a license, even though it says "License #", "DOB" and "Class".
-  const licenseMatch = hasDriverTable ? null : extractDriverLicenseFields(subjectLines(lines), doc.text);
+  const isApplication = detectApplication(doc.text);
+  const licenseMatch = hasDriverTable || isApplication ? null : extractDriverLicenseFields(subjectLines(lines), doc.text);
   if (licenseMatch) {
     const cdlLine = licenseMatch.cdlOriginalIssueLine;
     results.push({
@@ -213,7 +216,7 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLin
     });
   }
 
-  const registrationMatch = extractVehicleRegistrationFields(lines, doc.text);
+  const registrationMatch = isApplication ? null : extractVehicleRegistrationFields(lines, doc.text);
   if (registrationMatch) {
     results.push({
       fieldPath: 'vehicles',
@@ -400,7 +403,7 @@ export function extractInsuranceFields(doc: RawDocument, meta: ExtractionSourceM
 
   // VINs printed outside a table (declarations pages, emails, questionnaires). A license or
   // registration card already has its own extractor.
-  if (!detectDriverLicense(doc.text) && !detectVehicleRegistration(doc.text)) {
+  if (detectApplication(doc.text) || (!detectDriverLicense(doc.text) && !detectVehicleRegistration(doc.text))) {
     const known = new Set(results.filter((r) => r.fieldPath === 'vehicles').map((r) => (r.value as { vin?: string }).vin).filter((v): v is string => !!v));
     for (const { entry, line } of extractVehiclesFromText(textLines, known)) {
       results.push({

@@ -28,6 +28,12 @@ import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
 import { emptyField } from '../types';
 import { cn } from '../utils/cn';
+
+/** Yes/No fields that also keep typed details (saved as `<key>Details`), with the box's hint. */
+const DETAIL_FIELDS: Record<string, string> = {
+  telematics: 'Provider / details, e.g. Samsara on all power units',
+  dashcams: 'Provider / details, e.g. road- and driver-facing, all trucks',
+};
 import { formatExperience } from '../utils/duration';
 import { AssignedAgent } from '../components/workspace/AssignedAgent';
 
@@ -187,6 +193,13 @@ export function RiskProfilePage() {
                       onSave={(value) => updateField(accountId, f.section, f.key, value)}
                       onResolve={(resolution) => resolveField(accountId, f.section, f.key, resolution)}
                       autoExpand={highlightFieldId === `field-${f.section}-${f.key}`}
+                      {...(DETAIL_FIELDS[f.key]
+                        ? {
+                            details: (getFieldValueByPath(profile, `transportation.${f.key}Details`)?.value as string | null | undefined) ?? null,
+                            onSaveDetails: (text: string) => updateField(accountId, 'transportation', `${f.key}Details`, text || null),
+                            detailsPlaceholder: DETAIL_FIELDS[f.key],
+                          }
+                        : {})}
                     />
                   </div>
                 ))}

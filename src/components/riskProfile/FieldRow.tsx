@@ -45,6 +45,10 @@ interface FieldRowProps<T> {
   pending?: boolean;
   /** Auto-opens the source/conflict detail panel — used when another page deep-links straight to this field. */
   autoExpand?: boolean;
+  /** Free text kept next to the value (Telematics/Dashcams: provider, which units). With onSaveDetails, editing shows a text box beside the Yes/No. */
+  details?: string | null;
+  onSaveDetails?: (text: string) => void;
+  detailsPlaceholder?: string;
 }
 
 export function displayReadValue(value: unknown): string {
@@ -292,9 +296,10 @@ function ConflictResolver<T>({
   );
 }
 
-export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOnly, pending, autoExpand }: FieldRowProps<T>) {
+export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOnly, pending, autoExpand, details, onSaveDetails, detailsPlaceholder }: FieldRowProps<T>) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<string>(displayReadValue(field.value));
+  const [detailsDraft, setDetailsDraft] = useState(details ?? '');
   const [showDetail, setShowDetail] = useState(false);
 
   useEffect(() => {
@@ -302,8 +307,11 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
   }, [autoExpand]);
 
   function commit() {
-    if (!isValidDraft(valueType, draft)) return;
-    onSave(parseDraft(valueType, draft) as T);
+    const detailsChanged = !!onSaveDetails && detailsDraft.trim() !== (details ?? '').trim();
+    // Details can be saved on their own (the Yes/No left as it is).
+    if (!isValidDraft(valueType, draft) && !detailsChanged) return;
+    if (isValidDraft(valueType, draft)) onSave(parseDraft(valueType, draft) as T);
+    if (detailsChanged) onSaveDetails!(detailsDraft.trim());
     setIsEditing(false);
   }
 
@@ -329,8 +337,10 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
             <div className="mt-1 flex items-center gap-2">
               {field.isMissing && pending ? (
                 <Skeleton width="60%" />
-              ) : field.isMissing ? (
+              ) : field.isMissing && !details ? (
                 <span className="text-sm italic text-[var(--color-ink-400)]">Not documented</span>
+              ) : field.isMissing ? (
+                <span className="text-sm text-[var(--color-ink-900)]" data-testid="field-details">{details}</span>
               ) : valueType === 'boolean' ? (
                 <button
                   onClick={() => setShowDetail((v) => !v)}
@@ -344,6 +354,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
               ) : (
                 <p className="text-sm text-[var(--color-ink-900)]">{displayTypedValue(valueType, field.value)}</p>
               )}
+              {!field.isMissing && details && <span className="min-w-0 text-sm text-[var(--color-ink-700)] [overflow-wrap:anywhere]" data-testid="field-details">{details}</span>}
             </div>
           ) : (
             <div className="mt-1.5 flex items-center gap-2">
@@ -358,6 +369,16 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                 />
               ) : (
                 <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus onKeyDown={singleLineEditKeyDown(commit, cancelEdit)} />
+              )}
+              {onSaveDetails && (
+                <input
+                  value={detailsDraft}
+                  onChange={(e) => setDetailsDraft(e.target.value)}
+                  onKeyDown={singleLineEditKeyDown(commit, cancelEdit)}
+                  placeholder={detailsPlaceholder ?? 'Details (optional)'}
+                  aria-label={`${label} details`}
+                  className="min-w-0 flex-1 rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
+                />
               )}
               <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
                 <Check size={14} />
@@ -419,6 +440,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
               <button
                 onClick={() => {
                   setDraft('');
+                  setDetailsDraft(details ?? '');
                   setIsEditing(true);
                 }}
                 className="inline-flex items-center gap-1 rounded-md bg-[var(--color-brand-800)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--color-brand-700)] cursor-pointer"
@@ -433,6 +455,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                   // easy to backspace/retype, exactly like typing it in fresh. Formatting only ever
                   // happens for display, never inside the editable input.
                   setDraft(draftFor(valueType, field.value));
+                  setDetailsDraft(details ?? '');
                   setIsEditing(true);
                 }}
                 className="rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer"

@@ -119,6 +119,36 @@ export function normalizePlainName(raw: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Insurance application — checked BEFORE the card detectors below
+// ---------------------------------------------------------------------------
+
+/** Labels an application's business section carries; a license, MVR, title or registration never has several. */
+const APPLICATION_LABELS = [
+  /named\s+insured/i,
+  /\bf\.?e\.?i\.?n\b|federal\s+(?:employer|tax)\s+id/i,
+  /\b(?:us)?dot\s*(?:#|no\.?|number)/i,
+  /\bmc\s*(?:#|no\.?|number)/i,
+  /years?\s+in\s+business/i,
+  /(?:radius|operating\s+radius|radius\s+of\s+operation)/i,
+  /commodit(?:y|ies)/i,
+  /legal\s+entity|type\s+of\s+(?:business|entity)/i,
+  /(?:mailing|business|garaging)\s+address/i,
+  /annual\s+(?:revenue|gross\s+receipts)/i,
+  /(?:requested\s+)?effective\s+date/i,
+  /description\s+of\s+operations/i,
+];
+
+/**
+ * An insurance application (ACORD or a carrier's trucking application). It usually mentions
+ * "Driver License #", "CDL" and "MVR" in its driver section — which is why it must be recognized
+ * first: read as a license card or an MVR, its business fields were never read at all.
+ */
+export function detectApplication(text: string): boolean {
+  if (/\bacord\b|insurance\s+application|(?:commercial\s+auto|trucking|motor\s+carrier|transportation)\s+(?:insurance\s+)?application|applicant\s+information/i.test(text)) return true;
+  return APPLICATION_LABELS.filter((re) => re.test(text)).length >= 3;
+}
+
+// ---------------------------------------------------------------------------
 // Driver's license
 // ---------------------------------------------------------------------------
 
