@@ -215,3 +215,32 @@ describe('isReadableText', () => {
     for (const bad of ['|||||', '{=a', 'IIIII', 'lllll', '—', '-----', '', '  ', '|I|l|']) expect(isReadableText(bad), bad).toBe(false);
   });
 });
+
+describe('domicile state', () => {
+  const read = (text: string) => {
+    const doc: RawDocument = { documentName: 'app.pdf', fileType: 'txt', text, warnings: [] };
+    return extractInsuranceFields(doc, { documentId: 'd', documentName: 'app.pdf' }).find((r) => r.fieldPath === 'business.state')?.value;
+  };
+
+  it('comes from the business address when no state is labeled', () => {
+    expect(read('Named Insured: Sergey Gaponov\nMailing Address: 1200 W Lake St, Chicago, IL 60607')).toBe('IL');
+    expect(read('Named Insured: Sergey Gaponov\nAddress: 1200 W Lake St, Chicago IL 60607-1234')).toBe('IL');
+    expect(read('Insured Address: 45 Oak Ave, Springfield, Illinois 62701')).toBe('IL');
+    expect(read('Principal Place of Business: 9 Elm Rd, Dallas, TX 75201, USA')).toBe('TX');
+  });
+
+  it('comes from a two-line address and from "City, State, Zip"', () => {
+    expect(read('Address: 1200 W Lake St\nChicago, IL 60607-1234')).toBe('IL');
+    expect(read('City, State, Zip: Chicago, IL 60607')).toBe('IL');
+    expect(read('Base Jurisdiction: IL')).toBe('IL');
+  });
+
+  it('a labeled state wins over the address', () => {
+    expect(read('Domicile State: Indiana\nMailing Address: 1200 W Lake St, Chicago, IL 60607')).toBe('IN');
+  });
+
+  it('never reads a word as a state', () => {
+    expect(read('Address: 12 Walk In Way')).toBeUndefined();
+    expect(read('Address: 55 Main St or nearby')).toBeUndefined();
+  });
+});

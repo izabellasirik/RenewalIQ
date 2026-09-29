@@ -10,7 +10,7 @@ import { extractVehiclesFromText } from './vinText';
 import { extractLossRunDrafts, labeledTotals, looksLikeLossRun, type StatedTotals } from './lossRunPatterns';
 import { findTables, type LayoutTable } from '../../ingestion/pdfLayout';
 import type { RawTable } from '../../ingestion';
-import { parseAddressComponents } from './addressPatterns';
+import { parseAddressComponents, stateFromAddress } from './addressPatterns';
 import { isReadableText } from './textQuality';
 import {
   extractDriverLicenseFields,
@@ -154,13 +154,18 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLin
   }
 
   // A "Street, City, ST 12345"-shaped address also yields city/state/ZIP as their own fields —
-  // never invented, only ever read off the same matched address line.
+  // never invented, only ever read off the same matched address line. The state is the
+  // domicile unless the document states one explicitly.
   const addressResult = results.find((r) => r.fieldPath === 'business.address');
   if (addressResult && typeof addressResult.value === 'string') {
     const components = parseAddressComponents(addressResult.value);
     if (components) {
       results.push({ fieldPath: 'business.city', value: components.city, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
       results.push({ fieldPath: 'business.zip', value: components.zip, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
+    }
+    const state = components?.state ?? stateFromAddress(addressResult.value);
+    if (state && !results.some((r) => r.fieldPath === 'business.state')) {
+      results.push({ fieldPath: 'business.state', value: state, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
     }
   }
 

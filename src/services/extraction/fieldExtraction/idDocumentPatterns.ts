@@ -446,7 +446,7 @@ export function findGenericBusinessName(lines: TextLine[]): LineMatch | null {
   );
 }
 
-const CITY_STATE_LINE = /^([A-Z][A-Za-z.\- ]{1,40}?),?\s+([A-Z]{2})\s*\d{0,5}$/;
+const CITY_STATE_LINE = /^([A-Z][A-Za-z.\- ]{1,40}?),?\s+([A-Z]{2})\.?,?\s*(?:\d{5}(?:-\d{4})?)?$/;
 
 export interface CityStateMatch {
   city: string;
