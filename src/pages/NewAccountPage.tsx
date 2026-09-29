@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Sparkles, TriangleAlert, UploadCloud } from 'lucide-react';
+import { CircleCheck, Clock, Loader2, Sparkles, TriangleAlert, UploadCloud } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Dropzone } from '../components/upload/Dropzone';
 import { IdentityResolutionStep, type IdentitySuggestion } from '../components/newSubmission/IdentityResolutionStep';
@@ -16,6 +16,32 @@ import { DocumentLinkError } from '../services/ingestion/documentLinks';
 
 type Mode = 'choice' | 'manual' | 'processing' | 'confirm' | 'error';
 type DraftDoc = Omit<UploadedDocument, 'accountId'>;
+
+/** The files being read into the new submission, each with where it's at. */
+function FileQueue({ items }: { items: { key: string; name: string; status: 'waiting' | 'reading' | 'done' | 'failed' }[] }) {
+  if (!items.length) return null;
+  return (
+    <ul className="flex flex-col gap-1 text-sm" data-testid="file-queue">
+      {items.map((i) => (
+        <li key={i.key} className="flex items-center gap-2" data-status={i.status}>
+          {i.status === 'reading' ? (
+            <Loader2 size={14} className="shrink-0 animate-spin text-[var(--color-brand-700)]" />
+          ) : i.status === 'done' ? (
+            <CircleCheck size={14} className="shrink-0 text-[var(--color-success-600)]" />
+          ) : i.status === 'failed' ? (
+            <TriangleAlert size={14} className="shrink-0 text-[var(--color-warning-600)]" />
+          ) : (
+            <Clock size={14} className="shrink-0 text-[var(--color-ink-400)]" />
+          )}
+          <span className="min-w-0 text-[var(--color-ink-700)] [overflow-wrap:anywhere]">{i.name}</span>
+          <span className="ml-auto shrink-0 text-xs text-[var(--color-ink-400)]">
+            {i.status === 'reading' ? 'Reading…' : i.status === 'done' ? 'Read' : i.status === 'failed' ? 'Couldn’t read' : 'Waiting'}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 /**
  * Name and state the documents suggest but that weren't applied on their own (held for review), and
@@ -66,32 +92,56 @@ export function NewAccountPage() {
     navigate(`/accounts/${id}/risk-profile`);
   }
 
-  // Anything unexpected ends on a message with a way back — never on a spinner that never stops.
-  async function handleFiles(files: File[]) {
-    try {
-      await processFiles(files);
-    } catch (err) {
-      console.error('New submission failed', err);
-      setFatalError(err instanceof Error ? err.message : String(err));
-      setMode('error');
-    }
+  // Files are read one after another from a queue; more can be added at any time (while others
+  // are still being read, or at the confirm step) and are read into the same new submission.
+  const queue = useRef<File[]>([]);
+  const running = useRef(false);
+  const draft = useRef<{ profile: RiskProfile; docs: DraftDoc[]; files: File[]; failures: { name: string; message: string }[] } | null>(null);
+  const [items, setItems] = useState<{ key: string; name: string; status: 'waiting' | 'reading' | 'done' | 'failed' }[]>([]);
+  const markItem = (key: string, status: 'reading' | 'done' | 'failed') => setItems((all) => all.map((i) => (i.key === key ? { ...i, status } : i)));
+  const keys = useRef(new WeakMap<File, string>());
+
+  function startOver() {
+    queue.current = [];
+    draft.current = null;
+    setItems([]);
+    setDraftDocs([]);
+    setDraftProfile(null);
+    setDraftFiles([]);
+    setFailures([]);
+    setMode('choice');
   }
 
-  async function processFiles(files: File[]) {
+  // Anything unexpected ends on a message with a way back — never on a spinner that never stops.
+  function handleFiles(files: File[]) {
+    if (!files.length) return;
+    for (const f of files) keys.current.set(f, generateId('q'));
+    queue.current.push(...files);
+    setItems((all) => [...all, ...files.map((f) => ({ key: keys.current.get(f)!, name: f.name, status: 'waiting' as const }))]);
+    if (running.current) return;
+    running.current = true;
+    processQueue()
+      .catch((err) => {
+        console.error('New submission failed', err);
+        setFatalError(err instanceof Error ? err.message : String(err));
+        setMode('error');
+      })
+      .finally(() => {
+        running.current = false;
+      });
+  }
+
+  async function processQueue() {
     setMode('processing');
-    setFailures([]);
-    setPhase('Uploading documents…');
-    await wait(200);
-
-    const { parseFile } = await import('../services/ingestion');
-
     setPhase('Reading files…');
-    let profile = createEmptyRiskProfile('pending');
-    const docs: DraftDoc[] = [];
-    const newFailures: { name: string; message: string }[] = [];
+    const { parseFile } = await import('../services/ingestion');
+    if (!draft.current) draft.current = { profile: createEmptyRiskProfile('pending'), docs: [], files: [], failures: [] };
+    const d = draft.current;
 
-    const keptFiles = [...files];
-    for (const file of files) {
+    let file: File | undefined;
+    while ((file = queue.current.shift())) {
+      const key = keys.current.get(file) ?? '';
+      markItem(key, 'reading');
       const docId = generateId('doc');
       const fileType = inferFileType(file.name);
       const isImageSource = fileType === 'image';
@@ -103,10 +153,9 @@ export function NewAccountPage() {
         uploadedAt: new Date().toISOString(),
         sizeBytes: file.size,
       };
-      if (isImageSource) setPhase('Reading image…');
+      setPhase(isImageSource ? `Reading image ${file.name}…` : `Reading ${file.name}…`);
       try {
         const raw = await parseFile(file);
-        setPhase('Extracting account information…');
         const scanned = isImageSource || raw.ocrConfidence !== undefined;
         // Same gate as every other upload: only validated values go into the new account.
         const gate = gateExtraction({ results: extractInsuranceFields(raw, { documentId: docId, documentName: file.name, isImageSource: scanned }), text: raw.text, fileName: file.name, scanned });
@@ -114,16 +163,18 @@ export function NewAccountPage() {
         // Empty extractable text alongside a warning means nothing was actually read — surface
         // that as a failure rather than a quietly-successful "0 fields extracted".
         if (raw.text.trim().length === 0 && raw.warnings.length > 0) {
-          newFailures.push({ name: file.name, message: raw.warnings.join(' ') });
-          docs.push({ ...base, status: 'error', warnings: raw.warnings, previewDataUrl: raw.imagePreviewDataUrl });
+          d.failures.push({ name: file.name, message: raw.warnings.join(' ') });
+          d.docs.push({ ...base, status: 'error', warnings: raw.warnings, previewDataUrl: raw.imagePreviewDataUrl });
+          d.files.push(file);
+          markItem(key, 'failed');
           continue;
         }
-        profile = mergeIntoRiskProfile(profile, results);
+        d.profile = mergeIntoRiskProfile(d.profile, results);
         // A link was downloaded: keep the real document for preview/upload, not the shortcut.
-        if (raw.linkedFile) keptFiles[files.indexOf(file)] = raw.linkedFile;
+        d.files.push(raw.linkedFile ?? file);
         const contentCategory =
           gate.classification.certainty !== 'low' ? gate.classification.category : isImageSource && raw.text ? inferCategoryFromText(raw.text) : base.category === 'other' ? inferCategoryFromResults(results) : null;
-        docs.push({
+        d.docs.push({
           ...base,
           category: contentCategory ?? base.category,
           status: 'processed',
@@ -138,28 +189,33 @@ export function NewAccountPage() {
             ? { name: raw.linkedFile.name, fileType: inferFileType(raw.linkedFile.name), category: contentCategory ?? inferCategory(raw.linkedFile.name), sizeBytes: raw.linkedFile.size }
             : {}),
         });
+        markItem(key, 'done');
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Could not process this file.';
-        newFailures.push({ name: file.name, message });
+        d.failures.push({ name: file.name, message });
         const sourceUrl = err instanceof DocumentLinkError ? err.sourceUrl : undefined;
-        docs.push({ ...base, status: 'error', warnings: [message], ...(sourceUrl ? { sourceUrl } : {}) });
+        d.docs.push({ ...base, status: 'error', warnings: [message], ...(sourceUrl ? { sourceUrl } : {}) });
+        d.files.push(file);
+        markItem(key, 'failed');
       }
     }
 
     setPhase('Creating Risk Profile…');
     await wait(250);
+    // Something added in the last moment: read it too before deciding.
+    if (queue.current.length) return processQueue();
 
-    setDraftDocs(docs);
-    setDraftProfile(profile);
-    setDraftFiles(keptFiles);
-    setFailures(newFailures);
+    setDraftDocs([...d.docs]);
+    setDraftProfile(d.profile);
+    setDraftFiles([...d.files]);
+    setFailures([...d.failures]);
 
-    const ni = profile.business.namedInsured;
-    const st = profile.business.state;
+    const ni = d.profile.business.namedInsured;
+    const st = d.profile.business.state;
     const identityResolved = !ni.isMissing && !ni.isConflicting && !st.isMissing && !st.isConflicting;
 
-    if (identityResolved && newFailures.length === 0) {
-      finalizeAccount(ni.value as string, st.value as string, docs, profile, keptFiles);
+    if (identityResolved && d.failures.length === 0) {
+      finalizeAccount(ni.value as string, st.value as string, d.docs, d.profile, d.files);
     } else {
       setMode('confirm');
     }
@@ -175,9 +231,12 @@ export function NewAccountPage() {
     if (!draftProfile) return;
     const ni = draftProfile.business.namedInsured;
     const st = draftProfile.business.state;
-    if (ni.isMissing || ni.isConflicting || st.isMissing || st.isConflicting) return;
+    if (ni.isMissing || ni.isConflicting) return;
+    // The state is optional here — it can be filled in on the Risk Profile later. A conflicting
+    // state stays a conflict there to resolve; the account starts without one.
+    const state = !st.isMissing && !st.isConflicting ? (st.value as string) : '';
     try {
-      finalizeAccount(ni.value as string, st.value as string, draftDocs, draftProfile, draftFiles);
+      finalizeAccount(ni.value as string, state, draftDocs, draftProfile, draftFiles);
     } catch (err) {
       console.error('New submission failed', err);
       setFatalError(err instanceof Error ? err.message : String(err));
@@ -201,8 +260,7 @@ export function NewAccountPage() {
     !!draftProfile &&
     !draftProfile.business.namedInsured.isMissing &&
     !draftProfile.business.namedInsured.isConflicting &&
-    !draftProfile.business.state.isMissing &&
-    !draftProfile.business.state.isConflicting;
+    !running.current;
 
   return (
     <PageContainer
@@ -280,9 +338,19 @@ export function NewAccountPage() {
 
         {mode === 'processing' && (
           <Card>
-            <CardBody className="flex flex-col items-center gap-4 py-12 text-center">
-              <Loader2 size={28} className="animate-spin text-[var(--color-brand-700)]" />
-              <p className="text-sm font-medium text-[var(--color-ink-700)]">{phase}</p>
+            <CardBody className="flex flex-col gap-4 py-6">
+              <div className="flex items-center gap-3">
+                <Loader2 size={20} className="shrink-0 animate-spin text-[var(--color-brand-700)]" />
+                <p className="min-w-0 text-sm font-medium text-[var(--color-ink-700)] [overflow-wrap:anywhere]">{phase}</p>
+                <span className="ml-auto shrink-0 text-xs text-[var(--color-ink-500)]" data-testid="queue-progress">
+                  {items.filter((i) => i.status === 'done' || i.status === 'failed').length} of {items.length} read
+                </span>
+              </div>
+              <FileQueue items={items} />
+              <div data-testid="add-more">
+                <p className="mb-1.5 text-xs font-medium text-[var(--color-ink-500)]">Add more documents — they'll be read into the same submission.</p>
+                <Dropzone onFiles={handleFiles} allowLinkPaste={false} />
+              </div>
             </CardBody>
           </Card>
         )}
@@ -297,7 +365,7 @@ export function NewAccountPage() {
                 size="sm"
                 onClick={() => {
                   setFatalError(null);
-                  setMode('choice');
+                  startOver();
                 }}
               >
                 Try again
@@ -329,6 +397,12 @@ export function NewAccountPage() {
               </div>
             )}
 
+            <FileQueue items={items} />
+            <div data-testid="add-more">
+              <p className="mb-1.5 text-xs font-medium text-[var(--color-ink-500)]">Forgot something? Add more documents to this submission.</p>
+              <Dropzone onFiles={handleFiles} allowLinkPaste={false} />
+            </div>
+
             <IdentityResolutionStep
               namedInsured={draftProfile.business.namedInsured}
               domicileState={draftProfile.business.state}
@@ -338,7 +412,7 @@ export function NewAccountPage() {
             />
 
             <div className="flex items-center justify-between">
-              <button onClick={() => setMode('choice')} className="text-xs font-medium text-[var(--color-ink-500)] hover:text-[var(--color-ink-700)] cursor-pointer">
+              <button onClick={startOver} className="text-xs font-medium text-[var(--color-ink-500)] hover:text-[var(--color-ink-700)] cursor-pointer">
                 Cancel and start over
               </button>
               <Button disabled={!canContinue} onClick={handleContinue}>
