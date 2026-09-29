@@ -27,7 +27,16 @@ export function Collaborators({ account }: { account: Account }) {
     return () => document.removeEventListener('mousedown', close);
   }, [open]);
 
-  if (!agencyAccess || !account.agencyId) return null;
+  if (!agencyAccess) return null;
+  // Accounts from before this broker's agency (0011/0022) stay personal until assigned — say so
+  // rather than hiding the row, so it doesn't look like it's missing on some accounts.
+  if (!account.agencyId)
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-[var(--color-ink-600)]" title="Created before your agency was set up, so only you can see it. Assigning it to a team member moves it into the agency; then you can add collaborators.">
+        <Users size={13} className="text-[var(--color-ink-400)]" />
+        Collaborators: <span className="italic text-[var(--color-ink-400)]">personal account — not shared with your agency</span>
+      </span>
+    );
   const ids = account.collaboratorIds ?? [];
   const nameOf = (id: string) => (id === currentUserId ? 'You' : (members.find((m) => m.userId === id)?.name ?? 'Team member'));
   const canEdit = agencyAccess.role === 'admin' || (!!currentUserId && account.assignedUserId === currentUserId);

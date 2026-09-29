@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Check, ChevronRight, Copy, History, Pencil, Trash2, X, ArchiveRestore, Archive as ArchiveIcon } from 'lucide-react';
+import { Check, ChevronRight, Users, Copy, History, Pencil, Trash2, X, ArchiveRestore, Archive as ArchiveIcon } from 'lucide-react';
 import type { Account } from '../../types';
 import { Card, CardBody, Badge, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../ui';
 import { selectCanManageArchive, useAccountsStore } from '../../state/useAccountsStore';
@@ -24,6 +24,8 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   const canManageArchive = useAccountsStore(selectCanManageArchive);
   const agencyMembers = useAccountsStore((s) => s.agencyMembers);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
+  // Team members helping on the account (0026), shown to everyone who can see the card.
+  const collaborators = (account.collaboratorIds ?? []).map((id) => (id === currentUserId ? 'You' : (agencyMembers.find((m) => m.userId === id)?.name ?? 'Team member')));
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(account.namedInsured);
@@ -132,6 +134,12 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
                 <p className="truncate text-lg font-semibold text-[var(--color-ink-900)]">{account.namedInsured}</p>
               )}
               {isAgencyAdmin && <p className="mt-0.5 truncate text-xs text-[var(--color-ink-500)]">Agent: {agentLabel(account, agencyMembers, currentUserId) ?? 'Unassigned'}</p>}
+              {collaborators.length > 0 && (
+                <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-[var(--color-ink-500)]" data-testid="card-collaborators">
+                  <Users size={12} className="shrink-0 text-[var(--color-ink-400)]" />
+                  <span className="truncate">Collaborators: {collaborators.join(', ')}</span>
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-0.5">
               {menuItems.length > 0 && <OverflowMenu items={menuItems} />}

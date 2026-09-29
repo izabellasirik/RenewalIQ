@@ -1448,9 +1448,10 @@ export const useAccountsStore = create<AccountsState>()(
 
         const newId = generateId('acct');
         const now = new Date().toISOString();
-        // A copy is a new, local-only account — it doesn't inherit the source's cloud agency assignment.
-        const { agencyId: _agencyId, assignedUserId: _assignedUserId, ...sourceFields } = source;
-        const clonedAccount: Account = { ...sourceFields, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false };
+        // A copy is a new account owned by whoever made it — in an agency it lands in that agency
+        // (the database's insert trigger does the same), never the source's assignment.
+        const { agencyId: _agencyId, assignedUserId: _assignedUserId, collaboratorIds: _collaborators, originalAssignedUserId: _original, ...sourceFields } = source;
+        const clonedAccount: Account = ownedByMe({ ...sourceFields, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false });
         const clonedDocs = (s.documents[accountId] ?? []).map((d) => ({ ...d, id: generateId('doc'), accountId: newId }));
         // Rows need their own ids (a row id is unique across all accounts in the database), and
         // their sources point at the copy's documents.
@@ -2730,6 +2731,9 @@ export const useAccountsStore = create<AccountsState>()(
                 ...local,
                 agencyId: bundle.account.agencyId ?? local.agencyId,
                 assignedUserId: bundle.account.assignedUserId !== undefined ? bundle.account.assignedUserId : local.assignedUserId,
+                // Who's on the account is set on the server (0026), never by this device's pending save.
+                ...(bundle.account.collaboratorIds !== undefined ? { collaboratorIds: bundle.account.collaboratorIds } : {}),
+                ...(bundle.account.originalAssignedUserId !== undefined ? { originalAssignedUserId: bundle.account.originalAssignedUserId } : {}),
                 notes: mergeById(local.notes ?? [], bundle.account.notes ?? [], noteChangedAt),
               };
               riskProfiles[id] = mergeNewerFields(s.riskProfiles[id], bundle.profile);
