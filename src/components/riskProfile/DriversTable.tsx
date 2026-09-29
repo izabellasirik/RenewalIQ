@@ -300,13 +300,14 @@ export function DriversTable({
                       <button
                         onClick={() => {
                           if (!open) toggle(d.id);
-                          setNoteFocusId(d.id);
+                          // With no notes yet, go straight to writing one; otherwise show them.
+                          if (!d.notes?.length) setNoteFocusId(d.id);
                         }}
                         className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer whitespace-nowrap"
                         aria-label={`Notes for ${d.name ?? 'driver'}`}
                       >
                         <StickyNote size={13} />
-                        {(d.notes?.length ?? 0) > 0 ? `Notes (${d.notes!.length})` : 'Add note'}
+                        {(d.notes?.length ?? 0) > 0 ? `Notes (${d.notes!.length})` : 'Add a note'}
                       </button>
                       <button onClick={() => startEdit(d)} disabled={editingId !== null} className="rounded-md p-1 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer disabled:opacity-40" aria-label="Edit driver">
                         <Pencil size={13} />
@@ -355,13 +356,23 @@ function latestNote(d: DriverEntry): DriverNote | undefined {
 function DriverDetails({ accountId, driver, focusNote, onNoteFocused }: { accountId: string; driver: DriverEntry; focusNote?: boolean; onNoteFocused?: () => void }) {
   const addDriverNote = useAccountsStore((s) => s.addDriverNote);
   const [text, setText] = useState('');
+  // The note box is only there while writing one: "Add a note" opens it, Cancel or Add closes it.
+  const [composing, setComposing] = useState(!!focusNote);
   const noteInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!focusNote) return;
-    noteInput.current?.focus();
+    setComposing(true);
     onNoteFocused?.();
   }, [focusNote, onNoteFocused]);
-  const notes = [...(driver.notes ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  useEffect(() => {
+    if (composing) noteInput.current?.focus();
+  }, [composing]);
+  // Oldest first: a new note lands where the box was, and "Add a note" moves below it.
+  const notes = [...(driver.notes ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  const cancel = () => {
+    setText('');
+    setComposing(false);
+  };
   const facts: [string, string | undefined][] = [
     ['Address', driver.address],
     ['Restrictions', driver.restrictions],
@@ -386,25 +397,48 @@ function DriverDetails({ accountId, driver, focusNote, onNoteFocused }: { accoun
       </dl>
       <div>
         <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Driver notes</p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            addDriverNote(accountId, driver.id, text);
-            setText('');
-          }}
-          className="flex gap-2"
-        >
-          <input ref={noteInput} value={text} onChange={(e) => setText(e.target.value)} className={inputClass} placeholder={`Note about ${driver.name ?? 'this driver'}…`} aria-label="New driver note" />
-          <Button type="submit" size="sm" disabled={!text.trim()}>
-            Add
-          </Button>
-        </form>
         {notes.length > 0 && (
-          <ul className="mt-2 flex flex-col gap-1.5">
+          <ul className="mb-2 flex flex-col gap-1.5" data-testid="driver-notes">
             {notes.map((n) => (
               <DriverNoteRow key={n.id} accountId={accountId} driverId={driver.id} note={n} />
             ))}
           </ul>
+        )}
+        {composing ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!text.trim()) return;
+              addDriverNote(accountId, driver.id, text);
+              cancel();
+            }}
+            className="flex gap-2"
+          >
+            <input
+              ref={noteInput}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Escape' && cancel()}
+              className={inputClass}
+              placeholder={`Note about ${driver.name ?? 'this driver'}…`}
+              aria-label="New driver note"
+            />
+            <Button type="submit" size="sm" disabled={!text.trim()}>
+              Add
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={cancel}>
+              Cancel
+            </Button>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setComposing(true)}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer"
+          >
+            <StickyNote size={13} />
+            Add a note
+          </button>
         )}
       </div>
     </div>
