@@ -347,7 +347,7 @@ export function DriversTable({
                   <tr className="border-b border-[var(--color-ink-100)] bg-[var(--color-ink-50)]/60">
                     <td />
                     <td colSpan={COLS - 1} className="py-3 pr-4">
-                      <DriverDetails accountId={accountId} driver={d} focusNote={noteFocusId === d.id} onNoteFocused={() => setNoteFocusId(null)} />
+                      <DriverDetails accountId={accountId} driver={d} focusNote={noteFocusId === d.id} onNoteFocused={() => setNoteFocusId(null)} onCancelNote={() => toggle(d.id)} />
                     </td>
                   </tr>
                 )}
@@ -378,7 +378,20 @@ function latestNote(d: DriverEntry): DriverNote | undefined {
 }
 
 /** Everything else about one driver, and their own notes. */
-function DriverDetails({ accountId, driver, focusNote, onNoteFocused }: { accountId: string; driver: DriverEntry; focusNote?: boolean; onNoteFocused?: () => void }) {
+function DriverDetails({
+  accountId,
+  driver,
+  focusNote,
+  onNoteFocused,
+  onCancelNote,
+}: {
+  accountId: string;
+  driver: DriverEntry;
+  focusNote?: boolean;
+  onNoteFocused?: () => void;
+  /** Cancel on the note box closes the driver's details again. */
+  onCancelNote?: () => void;
+}) {
   const addDriverNote = useAccountsStore((s) => s.addDriverNote);
   const [text, setText] = useState('');
   // The note box is only there while writing one: "Add a note" opens it, Cancel or Add closes it.
@@ -394,9 +407,13 @@ function DriverDetails({ accountId, driver, focusNote, onNoteFocused }: { accoun
   }, [composing]);
   // Oldest first: a new note lands where the box was, and "Add a note" moves below it.
   const notes = [...(driver.notes ?? [])].sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
-  const cancel = () => {
+  const reset = () => {
     setText('');
     setComposing(false);
+  };
+  const cancel = () => {
+    reset();
+    onCancelNote?.();
   };
   const facts: [string, string | undefined][] = [
     ['Address', driver.address],
@@ -435,7 +452,7 @@ function DriverDetails({ accountId, driver, focusNote, onNoteFocused }: { accoun
               e.preventDefault();
               if (!text.trim()) return;
               addDriverNote(accountId, driver.id, text);
-              cancel();
+              reset();
             }}
             className="flex gap-2"
           >

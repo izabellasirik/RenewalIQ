@@ -15,6 +15,7 @@ import type {
 import { emptyField } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { generateId } from '../../utils/id';
+import { normalizeDateKey } from '../workflow/dates';
 import type { LossRunDraft } from './fieldExtraction/lossRunPatterns';
 
 function isEqualScalar(a: unknown, b: unknown): boolean {
@@ -208,6 +209,28 @@ function findDuplicateRow<T extends Record<string, unknown>>(existing: T[], entr
   });
 }
 
+const nameTokens = (n: string | undefined) => (n ?? '').toLowerCase().replace(/[^a-z\s,]/g, ' ').replace(/,/g, ' ').split(/\s+/).filter((w) => w.length > 1);
+const sameDateKey = (a: string | undefined, b: string | undefined) => !!a && !!b && (normalizeDateKey(a) ?? a) === (normalizeDateKey(b) ?? b);
+/** Same first and last name (ignoring middle initials, order "Last, First", and case). */
+function sameName(a: string | undefined, b: string | undefined): boolean {
+  const x = nameTokens(a);
+  const y = nameTokens(b);
+  if (x.length < 2 || y.length < 2) return false;
+  const [xf, xl] = [x[0], x[x.length - 1]];
+  const [yf, yl] = [y[0], y[y.length - 1]];
+  return (xf === yf && xl === yl) || (xf === yl && xl === yf);
+}
+/**
+ * Two reads of the same driver: the same license number (and names that don't disagree), or the
+ * same name and date of birth. Different license numbers or DOBs are never the same driver.
+ */
+export function isSameDriver(a: Pick<DriverEntry, 'name' | 'dob' | 'licenseNumber'>, b: Pick<DriverEntry, 'name' | 'dob' | 'licenseNumber'>): boolean {
+  const lic = (v?: string) => (v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (a.dob && b.dob && !sameDateKey(a.dob, b.dob)) return false;
+  if (lic(a.licenseNumber) && lic(b.licenseNumber)) return lic(a.licenseNumber) === lic(b.licenseNumber) && (!a.name || !b.name || sameName(a.name, b.name));
+  return sameName(a.name, b.name) && sameDateKey(a.dob, b.dob);
+}
+
 /** Row fields that are bookkeeping, not content — a re-statement differing only in these is the same row. */
 const ROW_BOOKKEEPING = ['support', 'reviewFlag', 'isManual', 'lastUpdatedAt', 'notes', 'fieldConfidence', 'conflicts'];
 
@@ -266,6 +289,25 @@ function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFie
     const dup = findDuplicateRow(profile.drivers as unknown as Record<string, unknown>[], entry as Record<string, unknown>, ['name', 'dob'], ROW_BOOKKEEPING);
     if (dup) {
       profile.drivers = profile.drivers.map((d) => (d === (dup as unknown) ? { ...d, support: withSupport(d.support, result.source, d.source) } : d));
+      return;
+    }
+    // The same person from another document (a license photo, then their MVR): the MVR's original
+    // CDL issue date fills in that driver instead of starting a second row. Nothing else is
+    // overwritten; two different CDL dates are kept as a conflict (so experience reads "—").
+    const same = profile.drivers.find((d) => isSameDriver(d, entry));
+    if (same && entry.cdlOriginalIssueDate) {
+      const cdlSource = entry.cdlOriginalIssueSource ?? result.source;
+      profile.drivers = profile.drivers.map((d) => {
+        if (d !== same) return d;
+        const support = withSupport(d.support, result.source, d.source);
+        if (!d.cdlOriginalIssueDate) return { ...d, cdlOriginalIssueDate: entry.cdlOriginalIssueDate, cdlOriginalIssueSource: cdlSource, support };
+        if (sameDateKey(d.cdlOriginalIssueDate, entry.cdlOriginalIssueDate)) return { ...d, support };
+        return {
+          ...d,
+          support,
+          conflicts: { ...(d.conflicts ?? {}), cdlOriginalIssueDate: [...(d.conflicts?.cdlOriginalIssueDate ?? []), { value: entry.cdlOriginalIssueDate, extractionMethod: result.extractionMethod ?? 'ai_extraction' }] },
+        };
+      });
       return;
     }
     profile.drivers = [...profile.drivers, { ...entry, id: generateId('drv'), source: result.source }];
@@ -506,7 +548,13 @@ export function rollbackDocument(
     return [{ ...next, sources }];
   });
 
-  const drivers = rows(profile.drivers, 'driver', (d) => `Driver ${d.name ?? '(no name)'}`);
+  const drivers = rows(profile.drivers, 'driver', (d) => `Driver ${d.name ?? '(no name)'}`).map((d) => {
+    // An original CDL date this document filled in on a driver from another document goes with it.
+    if (d.cdlOriginalIssueSource?.documentId !== documentId) return d;
+    const { cdlOriginalIssueDate: _date, cdlOriginalIssueSource: _src, ...rest } = d;
+    report.removed.fields++;
+    return { ...rest, lastUpdatedAt: now } as DriverEntry;
+  });
   const vehicles = rows(profile.vehicles, 'vehicle', (v) => `Vehicle ${[v.year, v.make, v.model].filter(Boolean).join(' ') || v.vin || '(no VIN)'}`);
   const lossHistory = rows(profile.lossHistory, 'loss', (l) => `Claim ${l.lossDate || ''} ${l.claimType || ''}`.trim());
 

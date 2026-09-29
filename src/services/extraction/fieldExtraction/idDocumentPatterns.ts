@@ -161,7 +161,37 @@ export const CDL_ORIGINAL_ISSUE_PATTERNS = [
   new RegExp(`${COMMERCIAL}\\s+${ISSUED}\\s+\\(?${ORIGINAL}\\)?${DATE_CAPTURE}`, 'i'),
   new RegExp(`date\\s+${COMMERCIAL}\\s+(?:was\\s+)?${ORIGINAL}\\s+issued${DATE_CAPTURE}`, 'i'),
   new RegExp(`${COMMERCIAL}\\s+(?:holder\\s+)?since${DATE_CAPTURE}`, 'i'),
+  // "CDL   Class A   Original Issue: 08/15/2013" — one row of a license table.
+  new RegExp(`\\b${COMMERCIAL}\\b[^\\n]{0,40}?${ORIGINAL}\\s+${ISSUED}${DATE_CAPTURE}`, 'i'),
 ];
+
+/** A bare "Original Issue Date: …" — taken as the CDL's only inside a CDL/commercial section. */
+const BARE_ORIGINAL_ISSUE = new RegExp(`^\\s*${ORIGINAL}\\s+${ISSUED}${DATE_CAPTURE}`, 'i');
+const CDL_SECTION_HEADING = /^\s*(?:cdl|commercial(?:\s+driver'?s?)?\s+licen[cs]e|commercial)\b[^:]*$|^\s*(?:cdl|commercial)\s+(?:information|details|status|data)\b/i;
+const OTHER_SECTION_HEADING = /^\s*(?:medical|examiner|non[-\s]?commercial|regular|class\s+[cde]\b|identification|id\s+card|violations?|convictions?|accidents?|suspensions?)\b/i;
+
+/** The original CDL/commercial issue date printed on a document, and the line it's on — see CDL_ORIGINAL_ISSUE_PATTERNS. */
+export function findCdlOriginalIssue(lines: TextLine[]): { value: string; line: TextLine } | null {
+  return firstValidMatch(lines, CDL_ORIGINAL_ISSUE_PATTERNS, normalizeDate) ?? originalIssueInCdlSection(lines);
+}
+
+/** "Original Issue Date" lines under a CDL heading (before any other section starts). */
+function originalIssueInCdlSection(lines: TextLine[]): { value: string; line: TextLine } | null {
+  let inCdl = false;
+  for (const line of lines) {
+    const t = line.text.trim();
+    if (CDL_SECTION_HEADING.test(t) && !/\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/.test(t)) {
+      inCdl = true;
+      continue;
+    }
+    if (OTHER_SECTION_HEADING.test(t)) inCdl = false;
+    if (!inCdl) continue;
+    const m = t.match(BARE_ORIGINAL_ISSUE);
+    const value = m ? normalizeDate(m[1]) : null;
+    if (value) return { value, line };
+  }
+  return null;
+}
 
 export function extractDriverLicenseFields(lines: TextLine[], fullText: string): DriverLicenseExtraction | null {
   if (!detectDriverLicense(fullText)) return null;
@@ -318,7 +348,7 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
   // a label that says so ("Original CDL Issue Date", "CDL Orig Iss", "Commercial License Originally
   // Issued", "CDL Since"): a bare "Original Issue Date" may be their first (non-commercial) license
   // and is left alone rather than guessed at.
-  const cdlOrig = firstValidMatch(lines, CDL_ORIGINAL_ISSUE_PATTERNS, normalizeDate);
+  const cdlOrig = findCdlOriginalIssue(lines);
   if (cdlOrig) {
     attempted++;
     entry.cdlOriginalIssueDate = cdlOrig.value;

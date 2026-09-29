@@ -19,6 +19,7 @@ import {
   findGenericCityState,
   detectDriverLicense,
   detectVehicleRegistration,
+  findCdlOriginalIssue,
 } from './idDocumentPatterns';
 import { toMonths, type DurationValue } from '../../../utils/duration';
 
@@ -410,6 +411,14 @@ export function extractInsuranceFields(doc: RawDocument, meta: ExtractionSourceM
         extractionMethod: extractionMethodFor(meta),
       });
     }
+  }
+
+  // A document about one driver (an MVR read as a grid, a one-row list) with its original CDL issue
+  // date printed outside that row: the date is that driver's. With several drivers it's anyone's — left alone.
+  const driverResults = results.filter((r) => r.fieldPath === 'drivers');
+  if (driverResults.length === 1 && !(driverResults[0].value as { cdlOriginalIssueDate?: string }).cdlOriginalIssueDate) {
+    const cdl = findCdlOriginalIssue(subjectLines(textLines));
+    if (cdl) driverResults[0].value = { ...(driverResults[0].value as object), cdlOriginalIssueDate: cdl.value, cdlOriginalIssueSource: scalarSource(meta, cdl.line.page, cdl.line.text) };
   }
 
   // Claims printed as text (one line per claim, or a labeled block per claim).

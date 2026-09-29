@@ -130,3 +130,66 @@ describe('carrier appetite uses the calculated experience', () => {
     expect(evaluateDriverRequirements(record, p).status).toBe('warning');
   });
 });
+
+describe('the MVR fills in the driver read from their license photo', () => {
+  const photoRow = (): DriverEntry => ({ id: 'drv1', name: 'Sergey A Gaponov', dob: '07/24/1985', licenseNumber: 'G151-781-85-264-0', licenseState: 'FL', licenseClass: 'A', issueDate: '05/23/2022', source: { documentId: 'photo', documentName: 'license.jpg' } });
+  const mvrResult = (patch: Partial<DriverEntry> = {}) => ({
+    fieldPath: 'drivers' as const,
+    value: { name: 'SERGEY GAPONOV', dob: '07/24/1985', licenseNumber: 'G151-781-85-264-0', cdlOriginalIssueDate: '08/15/2013', cdlOriginalIssueSource: { documentId: 'mvr', documentName: 'MVR.pdf', excerpt: 'CDL Original Issue Date: 08/15/2013' }, ...patch },
+    confidence: 'medium' as const,
+    source: { documentId: 'mvr', documentName: 'MVR.pdf' },
+  });
+
+  it('same license number → one driver, with the CDL date and where it came from; experience appears', async () => {
+    const { mergeIntoRiskProfile } = await import('../../services/extraction/extractionService');
+    const p = createEmptyRiskProfile('a');
+    p.drivers = [photoRow()];
+    const merged = mergeIntoRiskProfile(p, [mvrResult()]);
+    expect(merged.drivers).toHaveLength(1);
+    expect(merged.drivers[0]).toMatchObject({ cdlOriginalIssueDate: '08/15/2013', cdlOriginalIssueSource: { documentId: 'mvr' }, support: [{ documentId: 'mvr' }] });
+    expect(formatExperience(driverExperience(merged.drivers[0], '2026-09-29'))).toBe('13 yrs 1 mo');
+  });
+
+  it('a different license number or DOB is another person — never merged', async () => {
+    const { mergeIntoRiskProfile } = await import('../../services/extraction/extractionService');
+    const p = createEmptyRiskProfile('a');
+    p.drivers = [photoRow()];
+    expect(mergeIntoRiskProfile(p, [mvrResult({ licenseNumber: 'X999-000-00-000-0' })]).drivers).toHaveLength(2);
+    const q = createEmptyRiskProfile('b');
+    q.drivers = [photoRow()];
+    expect(mergeIntoRiskProfile(q, [mvrResult({ dob: '01/01/1990' })]).drivers).toHaveLength(2);
+  });
+
+  it('two documents with different CDL dates → a conflict, experience "—"', async () => {
+    const { mergeIntoRiskProfile } = await import('../../services/extraction/extractionService');
+    const p = createEmptyRiskProfile('a');
+    p.drivers = [{ ...photoRow(), cdlOriginalIssueDate: '2013-08-15' }];
+    const merged = mergeIntoRiskProfile(p, [mvrResult({ cdlOriginalIssueDate: '08/15/2016' })]);
+    expect(driverExperience(merged.drivers[0], '2026-09-29')).toBeUndefined();
+  });
+
+  it('removing the MVR removes the date it filled in (and only that)', async () => {
+    const { mergeIntoRiskProfile, rollbackDocument } = await import('../../services/extraction/extractionService');
+    const p = createEmptyRiskProfile('a');
+    p.drivers = [photoRow()];
+    const merged = mergeIntoRiskProfile(p, [mvrResult()]);
+    const { profile } = rollbackDocument(merged, [], 'mvr', 'MVR.pdf');
+    expect(profile.drivers).toHaveLength(1);
+    expect(profile.drivers[0].cdlOriginalIssueDate).toBeUndefined();
+    expect(profile.drivers[0]).toMatchObject({ licenseNumber: 'G151-781-85-264-0', issueDate: '05/23/2022' });
+  });
+});
+
+describe('CDL date layouts', () => {
+  it('"Original Issue Date" under a CDL heading; not under another section', () => {
+    const doc = ['DRIVER LICENSE', 'Name: ALEX MORGAN', 'Issue Date: 05/23/2022', 'CDL Information', 'Class: A', 'Original Issue Date: 08/15/2013', 'Medical Certificate', 'Original Issue Date: 01/01/2020'].join('\n');
+    expect(extractDriverLicenseFields(lines(doc), doc)?.entry).toMatchObject({ cdlOriginalIssueDate: '08/15/2013', issueDate: '05/23/2022' });
+    const regular = ['DRIVER LICENSE', 'Name: ALEX MORGAN', 'Regular License', 'Original Issue Date: 08/15/2003'].join('\n');
+    expect(extractDriverLicenseFields(lines(regular), regular)?.entry.cdlOriginalIssueDate).toBeUndefined();
+  });
+
+  it('one row: "CDL  Class A  Original Issue: 08/15/2013"', () => {
+    const doc = 'DRIVER LICENSE\nName: ALEX MORGAN\nCDL   Class A   Original Issue: 08/15/2013';
+    expect(extractDriverLicenseFields(lines(doc), doc)?.entry.cdlOriginalIssueDate).toBe('08/15/2013');
+  });
+});
