@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { useAccountsStore } from '../../../state/useAccountsStore';
 import { deriveAccountActions } from '../../workflow/nextActions';
 import { draftRequestFollowUpEmail } from '../../workflow/emailDraft';
-import { detectDocumentSignals, normalizePersonName } from '../documentSignals';
+import { detectDocumentSignals, normalizePersonName, sameCompany } from '../documentSignals';
 import { matchRequestUpload, requirementShape } from '../matchUpload';
 import { outstandingRequestItems, type DocumentRequest, type DocumentRequestItem } from '../../../types';
 
@@ -86,6 +86,31 @@ describe('matching an upload to what was requested', () => {
     expect(matchRequestUpload({ signals: q3, slot: iftaQ2, others: [iftaQ2] }).outcome).toBe('needs_review');
     expect(matchRequestUpload({ signals: lossDoc, slot: { requestItemId: 'z', label: 'Safety manual' }, others: [] }).outcome).toBe('needs_review');
     expect(matchRequestUpload({ signals: lossDoc, slot: loss, others: [loss] }).outcome).toBe('satisfied');
+  });
+});
+
+describe('company check', () => {
+  const loss = { requestItemId: 'c', label: 'Loss runs' };
+  it('reads the insured, not the insurance carrier', () => {
+    const s = detectDocumentSignals({ text: 'LOSS RUN REPORT\nCarrier: Progressive\nNamed Insured: Blue Ridge Logistics, LLC   Policy #: P-1', fileName: 'x.pdf' });
+    expect(s.insuredNames).toEqual(['Blue Ridge Logistics, LLC']);
+  });
+  it('treats suffixes and punctuation as the same business', () => {
+    expect(sameCompany('ABC Trucking, LLC', 'ABC Trucking')).toBe(true);
+    expect(sameCompany('A.B.C. Trucking Inc', 'ABC Trucking LLC')).toBe(true);
+    expect(sameCompany('ABC Transportation', 'ABC Transportation LLC')).toBe(true);
+    expect(sameCompany('Smith Trucking', 'ABC Trucking')).toBe(false); // only the industry word in common
+    expect(sameCompany('A.B.C. Trucking', 'Smith Trucking')).toBe(false);
+    expect(sameCompany('Blue Ridge Logistics', 'ABC Trucking')).toBe(false);
+  });
+  it("sends another company's document to review", () => {
+    const other = detectDocumentSignals({ text: 'Loss Run Report\nInsured: Blue Ridge Logistics LLC', fileName: 'x.pdf' });
+    expect(matchRequestUpload({ signals: other, slot: loss, others: [loss], accountName: 'ABC Trucking LLC' })).toMatchObject({ outcome: 'needs_review', note: expect.stringMatching(/Blue Ridge Logistics LLC, not ABC Trucking LLC/) });
+    const mine = detectDocumentSignals({ text: 'Loss Run Report\nInsured: ABC Trucking', fileName: 'x.pdf' });
+    expect(matchRequestUpload({ signals: mine, slot: loss, others: [loss], accountName: 'ABC Trucking LLC' }).outcome).toBe('satisfied');
+    // No insured named on it: the company check doesn't block (the other checks still apply).
+    const unnamed = detectDocumentSignals({ text: 'Loss Run Report', fileName: 'x.pdf' });
+    expect(matchRequestUpload({ signals: unnamed, slot: loss, others: [loss], accountName: 'ABC Trucking LLC' }).outcome).toBe('satisfied');
   });
 });
 

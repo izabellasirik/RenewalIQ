@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { CircleCheck, Loader2, RotateCcw, TriangleAlert, Upload } from 'lucide-react';
 import { Button } from '../components/ui';
 import { BrandLogo } from '../components/branding/Logo';
-import { fetchPublicRequest, uploadRequestFile, type PublicRequestItem, type PublicRequestView } from '../services/supabase/documentRequestsRepo';
+import { fetchPublicRequest, uploadRequestFile, withdrawRequestFile, type PublicRequestItem, type PublicRequestView } from '../services/supabase/documentRequestsRepo';
 import { errorMessage } from '../services/intake/retry';
 import { cn } from '../utils/cn';
 
@@ -102,7 +102,27 @@ export function ClientRequestPage() {
     [token, view]
   );
 
-  function choose(itemId: string, files: FileList | null) {
+  const [fileErrors, setFileErrors] = useState<Record<string, string>>({});
+  /** Takes back a file the agent hasn't accepted yet. True once the server has removed it. */
+  async function withdraw(fileKey: string): Promise<boolean> {
+    setFileErrors(({ [fileKey]: _e, ...rest }) => rest);
+    const res = await withdrawRequestFile(token, fileKey);
+    if (!res.ok) {
+      setFileErrors((e) => ({ ...e, [fileKey]: res.message }));
+      return false;
+    }
+    setView(res.data);
+    return true;
+  }
+
+  /** Replace: the old file comes out first (server-confirmed), then the new one uploads. */
+  async function replace(itemId: string, fileKey: string, files: FileList | null) {
+    if (!files?.length) return;
+    const picked = Array.from(files);
+    if (await withdraw(fileKey)) choose(itemId, picked);
+  }
+
+  function choose(itemId: string, files: FileList | File[] | null) {
     if (!files?.length) return;
     const added = Array.from(files).map((file): Pending => ({ key: newFileKey(), file, state: 'uploading' }));
     setPending((all) => ({ ...all, [itemId]: [...(all[itemId] ?? []), ...added] }));
@@ -146,7 +166,18 @@ export function ClientRequestPage() {
         </p>
         <ul className="mt-5 flex flex-col gap-3">
           {view.items.map((item) => (
-            <ItemRow key={item.id} item={item} pending={pending[item.id] ?? []} closed={done} onChoose={(f) => choose(item.id, f)} onRetry={(p) => void send(item.id, p)} onRemove={(p) => patch(item.id, p.key, null)} />
+            <ItemRow
+              key={item.id}
+              item={item}
+              pending={pending[item.id] ?? []}
+              closed={view.status === 'complete'}
+              fileErrors={fileErrors}
+              onChoose={(f) => choose(item.id, f)}
+              onRetry={(p) => void send(item.id, p)}
+              onRemove={(p) => patch(item.id, p.key, null)}
+              onWithdraw={(key) => void withdraw(key)}
+              onReplace={(key, f) => void replace(item.id, key, f)}
+            />
           ))}
         </ul>
         <p className="mt-5 text-xs text-[var(--color-ink-500)]">Files go straight to your insurance agent. You can come back to this link any time to add what’s still missing.</p>
@@ -159,18 +190,29 @@ function ItemRow({
   item,
   pending,
   closed,
+  fileErrors,
   onChoose,
   onRetry,
   onRemove,
+  onWithdraw,
+  onReplace,
 }: {
   item: PublicRequestItem;
   pending: Pending[];
   closed: boolean;
+  fileErrors: Record<string, string>;
   onChoose: (files: FileList | null) => void;
   onRetry: (p: Pending) => void;
   onRemove: (p: Pending) => void;
+  /** Take back an uploaded file the agent hasn't accepted yet. */
+  onWithdraw: (fileKey: string) => void;
+  /** Swap an uploaded file for the right one: pick first, then the old one is removed and the new one sent. */
+  onReplace: (fileKey: string, files: FileList | null) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const busy = pending.some((p) => p.state !== 'failed');
   return (
     <li className={cn('rounded-xl border px-4 py-3', item.received ? 'border-[var(--color-success-100)] bg-[var(--color-success-100)]/40' : 'border-[var(--color-ink-100)]')} data-testid="client-item" data-received={item.received ? 'yes' : 'no'}>
@@ -182,12 +224,56 @@ function ItemRow({
           </p>
           {item.instructions && <p className="mt-0.5 pl-6 text-xs text-[var(--color-ink-500)]">{item.instructions}</p>}
           {item.files.length > 0 && (
-            <ul className="mt-1 pl-6 text-xs text-[var(--color-ink-600)]">
+            <ul className="mt-1 flex flex-col gap-0.5 pl-6 text-xs text-[var(--color-ink-600)]">
               {item.files.map((f, i) => (
-                <li key={`${f.name}-${i}`}>Received: {f.name}</li>
+                <li key={f.key ?? `${f.name}-${i}`} className="flex flex-wrap items-center gap-x-2" data-testid="client-file" data-file-state={f.state ?? 'received'}>
+                  <span>
+                    {f.state === 'accepted' ? 'Accepted' : f.state === 'checking' ? 'Received — your agent is checking it' : 'Received'}: <span className="font-medium text-[var(--color-ink-800)]">{f.name}</span>
+                  </span>
+                  {f.removable && f.key && !closed && (
+                    confirmRemove === f.key ? (
+                      <span className="inline-flex items-center gap-2">
+                        Remove this file?
+                        <button className="font-medium text-[var(--color-danger-600)] hover:underline cursor-pointer" onClick={() => (setConfirmRemove(null), onWithdraw(f.key!))}>
+                          Yes, remove
+                        </button>
+                        <button className="text-[var(--color-ink-500)] hover:underline cursor-pointer" onClick={() => setConfirmRemove(null)}>
+                          Keep it
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-2">
+                        <button
+                          className="font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"
+                          onClick={() => {
+                            setReplacing(f.key!);
+                            replaceInput.current?.click();
+                          }}
+                        >
+                          Replace
+                        </button>
+                        <button className="text-[var(--color-ink-500)] hover:underline cursor-pointer" onClick={() => setConfirmRemove(f.key!)}>
+                          Remove
+                        </button>
+                      </span>
+                    )
+                  )}
+                  {f.key && fileErrors[f.key] && <span className="basis-full text-[var(--color-danger-600)]">{fileErrors[f.key]}</span>}
+                </li>
               ))}
             </ul>
           )}
+          <input
+            ref={replaceInput}
+            type="file"
+            className="hidden"
+            onChange={(e) => {
+              if (replacing) onReplace(replacing, e.target.files);
+              setReplacing(null);
+              e.target.value = '';
+            }}
+            data-testid="client-replace-input"
+          />
         </div>
         {!item.received && !closed && (
           <>

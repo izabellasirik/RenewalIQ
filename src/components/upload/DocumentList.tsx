@@ -185,9 +185,12 @@ export function DocumentList({
         }}
         title="Delete this file?"
         description={
-          impactParts.length > 0
-            ? `Removing this file may affect information extracted from it: ${impactParts.join(', ')} that depended only on ${deleteTarget?.name} will be removed or updated. Values also confirmed by you or supported by another document will be kept.`
-            : `Removing this file may affect information extracted from it. Nothing currently in the Risk Profile depends only on ${deleteTarget?.name ?? 'this file'}.`
+          (impactParts.length > 0
+            ? `${impactParts.join(', ')} that came only from ${deleteTarget?.name} will be removed. Values you typed, and anything another document also shows, stay.`
+            : `Nothing in the Risk Profile depends only on ${deleteTarget?.name ?? 'this file'}.`) +
+          (impact?.flagged
+            ? ` ${impact.flagged} item${impact.flagged === 1 ? '' : 's'} you edited or confirmed will be kept and marked for review instead of removed.`
+            : '')
         }
         confirmLabel="Delete file"
       />

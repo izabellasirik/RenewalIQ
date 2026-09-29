@@ -49,6 +49,19 @@ interface FieldValueRow {
   source_page: number | null;
   source_excerpt: string | null;
   last_updated_at: string | null;
+  /** 0031: provenance that has no column of its own — see fieldDetails. Omitted when empty. */
+  details?: FieldDetails | null;
+}
+
+/** Other supporting documents, a review flag, and whether the broker confirmed it (0031). */
+type FieldDetails = Pick<FieldValue<unknown>, 'support' | 'reviewFlag' | 'confirmedByBroker'>;
+
+function fieldDetails(field: FieldValue<unknown>): FieldDetails | undefined {
+  const d: FieldDetails = {};
+  if (field.support?.length) d.support = field.support;
+  if (field.reviewFlag) d.reviewFlag = field.reviewFlag;
+  if (field.confirmedByBroker) d.confirmedByBroker = true;
+  return Object.keys(d).length ? d : undefined;
 }
 
 interface FieldAlternateRow {
@@ -82,6 +95,7 @@ function toFieldValueRow(submissionId: string, userId: string, section: FieldVal
     source_page: field.source?.page ?? null,
     source_excerpt: field.source?.excerpt ?? null,
     last_updated_at: field.lastUpdatedAt ?? null,
+    ...(fieldDetails(field) ? { details: fieldDetails(field) } : {}),
   };
 }
 
@@ -96,6 +110,7 @@ function fromFieldValueRow<T>(row: FieldValueRow, alternates: FieldAlternateRow[
     source: row.source_document_id
       ? { documentId: row.source_document_id, documentName: '', page: row.source_page ?? undefined, excerpt: row.source_excerpt ?? undefined }
       : undefined,
+    ...(row.details && typeof row.details === 'object' ? row.details : {}),
     alternateValues: alternates.length
       ? alternates.map((a) => ({
           value: a.value as T,
@@ -225,6 +240,9 @@ async function selectAllVisible(table: string, onlySubmissionId?: string) {
       else if (table === 'field_alternates') q = q.like('field_value_id', `${onlySubmissionId}::%`);
       else q = q.eq('submission_id', onlySubmissionId);
     }
+    // "Matched against N markets" is recomputed on every load and never needed from the cloud —
+    // older versions saved one per account per sign-in, thousands of rows that made loading slow.
+    if (table === 'activity_events') q = q.neq('type', 'matching_run');
     const { data, error } = await q.order('id').range(from, from + PAGE - 1);
     if (error) return { data: null, error };
     rows.push(...(data ?? []));
@@ -290,6 +308,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         .filter((c) => c.submission_id === sub.id)
         .map((c) => ({
           type: c.coverage_type as CoverageType,
+          ...(Array.isArray((c.details as { sources?: unknown } | null)?.sources) ? { sources: (c.details as { sources: string[] }).sources } : {}),
           currentLimit: coverageLimits[c.coverage_type]?.currentLimit,
           requestedLimit: coverageLimits[c.coverage_type]?.requestedLimit ?? emptyField<string>(),
           ...(coverageLimits[c.coverage_type]?.deductible ? { deductible: coverageLimits[c.coverage_type].deductible } : {}),
@@ -433,7 +452,8 @@ export async function saveSubmissionSnapshot(
     headerSaved = true;
 
     const { values, alternates } = collectFieldValueRows(userId, account.id, profile);
-    const coverageRows = profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type }));
+    // 0031: which documents put an extracted coverage line there (absent for broker-added lines).
+    const coverageRows = profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type, ...(c.sources ? { details: { sources: c.sources } } : {}) }));
     const vehicleRows = profile.vehicles.map((v) => vehicleToRow(v, account.id, userId));
     const driverRows = profile.drivers.map((d) => driverToRow(d, account.id, userId));
     const lossRows = profile.lossHistory.map((l) => lossToRow(l, account.id, userId));
@@ -477,13 +497,21 @@ export async function saveSubmissionSnapshot(
     if (values.length) {
       inserts.push(
         (async () => {
-          const res = await supabase.from('field_values').insert(values);
+          let res = await supabase.from('field_values').insert(values);
+          if (res.error && isMissingColumnError(res.error, ['details'])) res = await supabase.from('field_values').insert(values.map(({ details: _d, ...rest }) => rest)); // before 0031
           if (res.error || !alternates.length) return res;
           return supabase.from('field_alternates').insert(alternates);
         })()
       );
     }
-    if (coverageRows.length) inserts.push(supabase.from('coverage_lines').insert(coverageRows));
+    if (coverageRows.length)
+      inserts.push(
+        (async () => {
+          const res = await supabase.from('coverage_lines').insert(coverageRows);
+          // Before 0031: without which documents added each line.
+          return res.error && isMissingColumnError(res.error, ['details']) ? supabase.from('coverage_lines').insert(coverageRows.map(({ details: _d, ...rest }) => rest)) : res;
+        })()
+      );
     // Inserts a table's rows with every field; if 0024's `details` column isn't there yet, saves the
     // columns it does have and says the rest wasn't kept (instead of failing the whole save).
     const insertRows = (table: 'vehicles' | 'drivers' | 'losses', rows: Record<string, unknown>[]) =>
@@ -571,6 +599,8 @@ export async function deleteDocumentRow(documentId: string): Promise<RepoResult>
 
 export async function appendActivityEvents(userId: string, accountId: string, events: ActivityEvent[]): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
+  // Technical matching runs stay on this device (see selectAllVisible).
+  events = events.filter((e) => e.type !== 'matching_run');
   if (events.length === 0) return { ok: true, data: undefined };
   try {
     // ignoreDuplicates = INSERT … ON CONFLICT DO NOTHING. activity_events is append-only (no UPDATE

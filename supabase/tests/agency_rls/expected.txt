@@ -207,3 +207,24 @@ D11 settled another way: 1
 D11 → partial
 D11 all settled: complete next=none
 D12 expired link shows: expired
+E1 held: match=needs_review imported=false doc=none item=needs_review
+E1 accept without a document denied
+E1b auto-check claims held file: false | confirm claims it: true
+E1b released: true
+E2 client sees: Loss runs=loss.pdf:checking:false | MVR — John Smith=scan.pdf:checking:true
+E2 after remove: Loss runs received=true files=1 | MVR — John Smith received=false files=0
+E2 file kept as record: withdrawn / Removed by the client
+E2 remove again (retry) ok: true
+E3 remove while importing denied: Your agent has already received this file — contact them if it's the wrong one.
+E3 remove accepted file denied
+E4 other link denied: That file isn't part of this request.
+E5 confirm without importing denied
+E5 confirmed: match=satisfied doc=doc_mvr4 request=complete
+E6 wrong: match=rejected note=last year's MVR item=requested request=partial closed=false
+E6 again is a no-op: note=last year's MVR
+E6 client can upload it again: partial
+E7 anon cannot mark wrong
+E7 other agency cannot mark wrong
+E8 details columns: coverage_lines,field_values
+E8 saved: support=docB
+E8 saved: coverage sources=docA

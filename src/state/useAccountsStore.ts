@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
-import { createSafeStorage } from './safeStorage';
+import { persist } from 'zustand/middleware';
+import { createDebouncedJSONStorage, createSafeStorage } from './safeStorage';
 import type {
+  FieldValue,
   Account,
   AccountNote,
   ActivityEvent,
@@ -47,11 +48,10 @@ import {
   addRecordEntry,
   updateRecordEntry,
   deleteRecordEntry,
-  removeDocumentFromRiskProfile,
-  extractInsuranceFields,
-  reconcileImageExtraction,
+  rollbackDocument,
+  type RollbackReport,
 } from '../services/extraction';
-import { extractViaVision } from '../services/ingestion/visionExtraction';
+import { readDocumentFile, rekeyRead, type DocumentRead } from '../services/ingestion/readDocument';
 import { countExtractedFields } from '../utils/fieldCount';
 import { matchAllMarkets } from '../services/appetite';
 import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
@@ -191,10 +191,10 @@ interface AccountsState {
   setActiveAccount: (id: string) => void;
   /** Returns the new document ids, in the same order as `files`, so a caller can link one to a checklist item. */
   /** `fromClientRequest`: imported from a client's secure upload link (named) — the client's upload is already in Activity. */
-  addFiles: (accountId: string, files: File[], opts?: { fromClientRequest?: string }) => string[];
+  addFiles: (accountId: string, files: File[], opts?: { fromClientRequest?: string; preRead?: (DocumentRead | undefined)[] }) => string[];
   loadSampleDocuments: (accountId: string) => Promise<void>;
   /** Removes an uploaded file and safely retracts any extracted data that depended only on it (see removeDocumentFromRiskProfile) — never leaves stale facts pointing at a source that no longer exists. */
-  deleteDocument: (accountId: string, documentId: string) => void;
+  deleteDocument: (accountId: string, documentId: string, opts?: { activityMessage?: string }) => RollbackReport | null;
   updateField: (accountId: string, section: 'business' | 'transportation', key: string, value: unknown) => void;
   resolveField: (accountId: string, section: 'business' | 'transportation', key: string, resolution: FieldResolution<unknown>) => void;
   updateCoverage: (accountId: string, coverageType: CoverageType, field: CoverageField, value: string) => void;
@@ -268,6 +268,10 @@ interface AccountsState {
   resolveRequestUpload: (requestId: string, fileId: string, action: 'satisfy' | 'reject' | 'reassign', targetRequestItemId?: string) => Promise<{ ok: boolean; message?: string }>;
   /** Imports the account's new client uploads (each file once, across tabs) and matches them to what was asked. */
   syncRequestUploads: (accountId: string) => Promise<void>;
+  /** An accepted client upload was the wrong document: remove it and only the data that came from it, and ask for the item again. */
+  markRequestUploadWrong: (requestId: string, fileId: string, reason?: string) => Promise<{ ok: boolean; message?: string; report?: RollbackReport | null }>;
+  /** The broker looked at something kept for review after a document was removed, and keeps it. */
+  clearReviewFlag: (accountId: string, target: ReviewFlagTarget) => void;
   /** Set a checklist item's status directly (the broker's manual override of the request/receive flow). */
   setItemStatus: (accountId: string, itemId: string, status: MissingItemStatus) => void;
   /** Set the account's pipeline status by hand; null returns it to automatic. */
@@ -297,6 +301,12 @@ interface AccountsState {
   /** A carrier/MGA asked for more — links the carrier to the account's existing requirement for that document (same logical requirement, see requirementKey), or creates it; flags the quote. Returns the item id. */
   recordCarrierRequest: (accountId: string, quoteId: string, input: { label: string; type: MissingItemType; notes?: string }) => string;
 }
+
+/** Something kept for review after a document was removed (see rollbackDocument). */
+export type ReviewFlagTarget =
+  | { kind: 'field'; section: 'business' | 'transportation'; key: string }
+  | { kind: 'coverage'; type: CoverageLine['type']; field: 'currentLimit' | 'requestedLimit' | 'deductible' }
+  | { kind: 'driver' | 'vehicle' | 'loss' | 'lossRun'; id: string };
 
 export interface MissingItemSeed {
   label: string;
@@ -740,6 +750,150 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(r.accountId);
       }
 
+      /** What a read document evidently is — the same signals addFiles stores on an imported document. */
+      function readSignals(read: DocumentRead, name: string) {
+        const category =
+          read.documentCategory ??
+          (read.isImageSource && read.raw.text ? inferCategoryFromText(read.raw.text) : inferCategory(name) === 'other' ? inferCategoryFromResults(read.results) : null) ??
+          inferCategory(name);
+        return detectDocumentSignals({ text: read.raw.text, fileName: name, category, results: read.results });
+      }
+
+      /** One sign-in load (see hydrateCloudSubmissions). */
+      let hydrating: { userId: string; promise: Promise<void> } | null = null;
+      async function hydrateOnce(userId: string): Promise<void> {
+        const [result, accessRes] = await Promise.all([cloudRepo.fetchUserSubmissions(userId), cloudRepo.fetchAgencyAccess(userId)]);
+        if (get().currentUserId !== userId) return; // signed out / switched user mid-fetch
+        if (accessRes.ok) {
+          const agencyChanged = get().agencyAccess?.agencyId !== accessRes.data.access?.agencyId;
+          set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
+          // The agency's carrier appetite applies as soon as we know which agency this is.
+          if (agencyChanged) void get().reloadCarrierAppetite();
+          const me = accessRes.data.members.find((m) => m.userId === userId);
+          if (me && currentActor?.id === userId) currentActor = { id: userId, name: get().myProfile?.fullName || me.name };
+        }
+        if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
+        const needsPush: string[] = [];
+        set((s) => {
+          const cloudIds = new Set(result.data.map((b) => b.account.id));
+          // A cloud account hidden at sign-out comes back as this device's local copy to merge with.
+          const accounts = [...s.accounts, ...s.hiddenAccounts.filter((a) => cloudIds.has(a.id))];
+          const hiddenAccounts = s.hiddenAccounts.filter((a) => !cloudIds.has(a.id));
+          const accountOwners = { ...s.accountOwners, ...Object.fromEntries([...cloudIds].map((id) => [id, userId])) };
+          const documents = { ...s.documents };
+          const riskProfiles = { ...s.riskProfiles };
+          const activityLog = { ...s.activityLog };
+          const missingItems = { ...s.missingItems };
+          const quotes = { ...s.quotes };
+          const followUps = { ...s.followUps };
+          const cloudAccountIds = { ...s.cloudAccountIds };
+          const cloudSeenAt = { ...s.cloudSeenAt };
+          for (const bundle of result.data) {
+            const id = bundle.account.id;
+            const idx = accounts.findIndex((a) => a.id === id);
+            const local = idx === -1 ? undefined : accounts[idx];
+            cloudSeenAt[id] = bundle.account.updatedAt;
+            // Changes on this device that never reached the cloud: keep them (merged with anything
+            // newer from the cloud) and save again, instead of letting the cloud copy replace them.
+            if (local && s.unsyncedIds[id] && s.riskProfiles[id]) {
+              accounts[idx] = {
+                ...local,
+                agencyId: bundle.account.agencyId ?? local.agencyId,
+                assignedUserId: bundle.account.assignedUserId !== undefined ? bundle.account.assignedUserId : local.assignedUserId,
+                // Who's on the account is set on the server (0026), never by this device's pending save.
+                ...(bundle.account.collaboratorIds !== undefined ? { collaboratorIds: bundle.account.collaboratorIds } : {}),
+                ...(bundle.account.originalAssignedUserId !== undefined ? { originalAssignedUserId: bundle.account.originalAssignedUserId } : {}),
+                notes: mergeById(local.notes ?? [], bundle.account.notes ?? [], noteChangedAt),
+              };
+              riskProfiles[id] = mergeNewerFields(s.riskProfiles[id], bundle.profile);
+              needsPush.push(id);
+              cloudAccountIds[id] = true;
+              continue;
+            }
+            // Changed on this device after this cloud copy was read (e.g. the broker acted while the
+            // sign-in load was still running): the older copy must not overwrite it. Keep this
+            // device's version, take the server-owned fields, and save it again.
+            if (local && s.riskProfiles[id] && cloudAccountIds[id] && toMs(local.updatedAt) > toMs(bundle.account.updatedAt)) {
+              accounts[idx] = {
+                ...local,
+                agencyId: bundle.account.agencyId ?? local.agencyId,
+                assignedUserId: bundle.account.assignedUserId !== undefined ? bundle.account.assignedUserId : local.assignedUserId,
+                ...(bundle.account.collaboratorIds !== undefined ? { collaboratorIds: bundle.account.collaboratorIds } : {}),
+              };
+              needsPush.push(id);
+              continue;
+            }
+            // Cloud is authoritative for an already-known cloud account — except for fields the
+            // project's database can't hold yet (0007 / 0008 not applied), which would otherwise be
+            // wiped on every reload (e.g. the assigned broker "disappearing").
+            const merged: Account = {
+              ...bundle.account,
+              ...(!bundle.hasWorkflowColumns && local ? { contacts: local.contacts, assignedBroker: local.assignedBroker } : {}),
+              ...(!bundle.hasStageColumn && local ? { stage: local.stage } : {}),
+              ...(!bundle.hasDoneColumn && local?.doneActions ? { doneActions: local.doneActions } : {}),
+              ...(!bundle.hasNotesColumn && local?.notes ? { notes: local.notes } : {}),
+              ...(!bundle.hasLossRunsColumn && local?.lossRuns ? { lossRuns: local.lossRuns } : {}),
+            };
+            if (idx === -1) accounts.push(merged);
+            else accounts[idx] = merged;
+            // Documents: cloud rows win, but keep what the cloud never stores (per-document extracted
+            // fields, candidate notes) and a storage path the cloud row is missing; keep local-only rows.
+            const localDocs = s.documents[id] ?? [];
+            const cloudDocIds = new Set(bundle.documents.map((d) => d.id));
+            documents[id] = [
+              ...bundle.documents.map((d) => {
+                const l = localDocs.find((x) => x.id === d.id);
+                return l ? { ...l, ...d, storagePath: d.storagePath ?? l.storagePath, previewDataUrl: d.previewDataUrl ?? l.previewDataUrl } : d;
+              }),
+              ...localDocs.filter((d) => !cloudDocIds.has(d.id)),
+            ];
+            riskProfiles[id] = bundle.profile;
+            // Activity is append-only: union by id, so events that never reached the cloud aren't lost.
+            const byId = new Map<string, ActivityEvent>();
+            for (const e of [...(s.activityLog[id] ?? []), ...bundle.activity]) byId.set(e.id, e);
+            const cloudEventIds = new Set(bundle.activity.map((c) => c.id));
+            const localHadMore = (s.activityLog[id] ?? []).some((e) => e.type !== 'matching_run' && !cloudEventIds.has(e.id));
+            if (localHadMore) needsPush.push(id);
+            activityLog[id] = trimEvents([...byId.values()].sort((x, y) => (x.timestamp < y.timestamp ? -1 : 1)));
+            // undefined = the workflow columns don't exist yet (migration 0007 not applied) — keep
+            // whatever this device has rather than wiping it with an empty list.
+            if (bundle.missingItems) missingItems[bundle.account.id] = normalizeMissingItems(bundle.missingItems);
+            if (bundle.quotes) quotes[bundle.account.id] = bundle.quotes;
+            if (bundle.followUps) followUps[bundle.account.id] = bundle.followUps;
+            cloudAccountIds[bundle.account.id] = true;
+          }
+          return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, followUps, cloudAccountIds, cloudSeenAt };
+        });
+        // Accounts this device holds for this user that the cloud no longer returned: if they still
+        // exist, access was removed (e.g. an admin reassigned them to another agent) — drop the local
+        // copy so it can't be opened or re-saved from here. If they don't exist they were never
+        // uploaded (or were deleted) and are left alone, exactly as before.
+        {
+          const s = get();
+          const returned = new Set(result.data.map((b) => b.account.id));
+          const candidates = s.accounts.filter((a) => s.cloudAccountIds[a.id] && !returned.has(a.id)).map((a) => a.id);
+          const revoked = await cloudRepo.submissionsRevoked(candidates);
+          const gone = new Set(Object.keys(revoked).filter((id) => revoked[id]));
+          if (gone.size > 0 && get().currentUserId === userId) {
+            const st = get();
+            void deleteLocalFiles([...gone].flatMap((id) => localFileIds(st, id)));
+            set((cur) => withoutAccounts(cur, gone));
+          }
+        }
+        if (get().currentUserId === userId) set({ cloudHydratedFor: userId });
+        // Client document requests (0030) — and any files clients uploaded since, imported into their accounts.
+        void get()
+          .loadDocumentRequests()
+          .then(async () => {
+            for (const [accountId, reqs] of Object.entries(get().documentRequests)) {
+              if (reqs.some((r) => r.files.some((f) => f.matchStatus === 'pending' && !f.importedAt))) await get().syncRequestUploads(accountId);
+            }
+          });
+        for (const bundle of result.data) get().runMatching(bundle.account.id);
+        // Push back anything this device had that the cloud didn't (e.g. events lost to the old sync bug).
+        for (const id of needsPush) syncNow(id);
+      }
+
       async function waitForProcessed(accountId: string, documentId: string, timeoutMs: number): Promise<UploadedDocument | undefined> {
         const deadline = Date.now() + timeoutMs;
         for (;;) {
@@ -900,23 +1054,10 @@ export const useAccountsStore = create<AccountsState>()(
 
         newDocs.forEach((doc, i) => {
           const file = files[i];
-          import('../services/ingestion')
-            .then(async ({ parseFile }) => {
-              const raw = await parseFile(file);
-              const isImageSource = raw.fileType === 'image';
-              const ocrResults = extractInsuranceFields(raw, { documentId: doc.id, documentName: doc.name, isImageSource: isImageSource || raw.ocrConfidence !== undefined });
-
-              // Images are the primary case vision extraction exists for — a layout-aware model
-              // reads the photo directly instead of relying only on OCR text + regex. Attempted
-              // only when Supabase is configured and the broker is signed in (see
-              // isVisionExtractionAvailable); resolves to null on any failure (not configured,
-              // function not deployed, provider error, malformed response) so OCR is always there
-              // as a fallback — this call never throws and never blocks the OCR path.
-              const visionResult = isImageSource ? await extractViaVision(file, get().currentUserId) : null;
-
-              const { results, documentCategory, candidateNotes } = isImageSource
-                ? reconcileImageExtraction({ documentId: doc.id, documentName: doc.name, ocrResults, visionResult })
-                : { results: ocrResults, documentCategory: null, candidateNotes: undefined };
+          // Already read (a client upload checked before import): reuse that read, re-keyed to this document.
+          const preRead = opts?.preRead?.[i];
+          (preRead ? Promise.resolve(rekeyRead(preRead, doc.id, doc.name)) : readDocumentFile(file, doc.id, doc.name, get().currentUserId))
+            .then(async ({ raw, results, documentCategory, candidateNotes, visionResult, isImageSource }) => {
 
               const fieldsExtracted = countExtractedFields(results);
               // "Unreadable" now means BOTH extraction paths came up empty — vision succeeding on a
@@ -1032,23 +1173,38 @@ export const useAccountsStore = create<AccountsState>()(
         get().addFiles(accountId, files);
       },
 
-      deleteDocument: (accountId, documentId) => {
+      deleteDocument: (accountId, documentId, opts) => {
         void deleteLocalFiles([documentId]);
         const before = get().documents[accountId] ?? [];
         const doc = before.find((d) => d.id === documentId);
+        let report: RollbackReport | null = null;
         set((s) => {
           const docs = s.documents[accountId] ?? [];
           if (!doc) return {};
           const profile = s.riskProfiles[accountId];
-          const updatedProfile = profile ? removeDocumentFromRiskProfile({ ...profile }, documentId) : profile;
+          const account = s.accounts.find((a) => a.id === accountId);
+          // Source-aware: only what came from this document alone is undone; anything the broker
+          // edited or confirmed is kept and flagged for review (see rollbackDocument).
+          const rolled = profile ? rollbackDocument(profile, account?.lossRuns ?? [], documentId, doc.name) : null;
+          report = rolled?.report ?? null;
+          const flagged = rolled?.report.flagged.length ?? 0;
           return {
             documents: { ...s.documents, [accountId]: docs.filter((d) => d.id !== documentId) },
             missingItems: s.missingItems[accountId]
               ? { ...s.missingItems, [accountId]: s.missingItems[accountId].map((i) => (i.documentId === documentId ? { ...i, documentId: undefined } : i)) }
               : s.missingItems,
-            riskProfiles: updatedProfile ? { ...s.riskProfiles, [accountId]: updatedProfile } : s.riskProfiles,
-            accounts: touchAccount(s.accounts, accountId),
-            activityLog: appendEvent(s.activityLog, accountId, 'document_deleted', `Deleted ${doc.name}. Data that depended only on this file was removed or updated; broker-confirmed values were kept.`),
+            riskProfiles: rolled ? { ...s.riskProfiles, [accountId]: rolled.profile } : s.riskProfiles,
+            accounts: touchAccount(
+              rolled && account && rolled.lossRuns !== account.lossRuns ? s.accounts.map((a) => (a.id === accountId ? { ...a, lossRuns: rolled.lossRuns } : a)) : s.accounts,
+              accountId
+            ),
+            activityLog: appendEvent(
+              s.activityLog,
+              accountId,
+              'document_deleted',
+              opts?.activityMessage ??
+                `Deleted ${doc.name}. Data that came only from this file was removed; broker-entered values and data another document supports were kept.${flagged ? ` ${flagged} item${flagged === 1 ? '' : 's'} you edited or confirmed ${flagged === 1 ? 'was' : 'were'} kept for review.` : ''}`
+            ),
           };
         });
         get().runMatching(accountId);
@@ -1061,6 +1217,7 @@ export const useAccountsStore = create<AccountsState>()(
             }
           );
         }
+        return report;
       },
 
       updateField: (accountId, section, key, value) => {
@@ -1318,7 +1475,8 @@ export const useAccountsStore = create<AccountsState>()(
         const run = get().accounts.find((a) => a.id === accountId)?.lossRuns?.find((r) => r.id === lossRunId);
         if (!run) return;
         const now = new Date().toISOString();
-        const next: LossRun = { ...run, ...patch, updatedAt: now };
+        // A hand edit: removing the report's document later keeps this record (flagged for review).
+        const next: LossRun = { ...run, ...patch, editedByBroker: true, updatedAt: now };
         set((s) => ({
           accounts: touchAccount(
             s.accounts.map((a) => (a.id === accountId ? { ...a, lossRuns: (a.lossRuns ?? []).map((r) => (r.id === lossRunId ? next : r)) } : a)),
@@ -1399,10 +1557,16 @@ export const useAccountsStore = create<AccountsState>()(
         if (!profile) return;
         const results = matchAllMarkets(get().effectiveAppetiteRecords, profile);
         const likely = results.filter((r) => r.verdict === 'likely_match').length;
-        set((s) => ({
-          matchResults: { ...s.matchResults, [accountId]: results },
-          activityLog: appendEvent(s.activityLog, accountId, 'matching_run', `Matched against ${results.length} markets — ${likely} likely match${likely === 1 ? '' : 'es'}.`),
-        }));
+        const message = `Matched against ${results.length} markets — ${likely} likely match${likely === 1 ? '' : 'es'}.`;
+        set((s) => {
+          // Matching re-runs on every load and after every edit; Activity only records it when the
+          // outcome changed — never the same line again (it used to add one per account per sign-in).
+          const lastRun = [...(s.activityLog[accountId] ?? [])].reverse().find((e) => e.type === 'matching_run');
+          return {
+            matchResults: { ...s.matchResults, [accountId]: results },
+            ...(lastRun?.message === message ? {} : { activityLog: appendEvent(s.activityLog, accountId, 'matching_run', message) }),
+          };
+        });
       },
 
       loadEffectiveAppetiteRecords: async () => {
@@ -2643,172 +2807,164 @@ export const useAccountsStore = create<AccountsState>()(
         const r = findRequest(requestId);
         const f = r?.files.find((x) => x.id === fileId);
         if (!r || !f) return { ok: false, message: 'Upload not found.' };
-        const res = await requestsRepo.resolveRequestFile(fileId, action, targetRequestItemId);
-        if (!res.ok) return res;
+        const accountId = r.accountId;
+        let documentId = f.importedDocumentId;
+
+        if (action !== 'reject' && !documentId) {
+          // Held for review until now: import it into the account only on the broker's say-so.
+          if (!(await requestsRepo.claimRequestFile(f.id, true))) return { ok: false, message: 'Someone else is handling this file right now — try again in a minute.' };
+          const dl = await requestsRepo.downloadRequestFile(f);
+          if (!dl.ok) {
+            void requestsRepo.releaseRequestFile(f.id);
+            return { ok: false, message: `Couldn't open the file: ${dl.message}` };
+          }
+          [documentId] = get().addFiles(accountId, [dl.data], { fromClientRequest: r.contactName ?? 'the client' });
+          await waitForProcessed(accountId, documentId, 180_000);
+        }
+
+        const res = await requestsRepo.resolveRequestFile(fileId, action, targetRequestItemId, documentId);
+        if (!res.ok) {
+          // Not confirmed: take the just-imported copy back out, and free the file for another try.
+          if (documentId && documentId !== f.importedDocumentId) get().deleteDocument(accountId, documentId, { activityMessage: `Couldn't confirm ${f.fileName} — it was taken back out of the account.` });
+          void requestsRepo.releaseRequestFile(f.id);
+          return res;
+        }
+        if (action === 'reject' && f.importedDocumentId) {
+          // Imported before review existed: take it — and only what came from it — back out.
+          get().deleteDocument(accountId, f.importedDocumentId, { activityMessage: `Rejected ${f.fileName} from ${r.contactName ?? 'the client'} — not what was asked for. Its data was removed; anything you edited stays for review.` });
+        }
         // The checklist item it satisfies is received, with this upload as its source.
         const satisfiedItem = action === 'satisfy' ? r.items.find((i) => i.id === f.requestItemId) : action === 'reassign' ? r.items.find((i) => i.id === targetRequestItemId) : undefined;
-        const missing = satisfiedItem && (get().missingItems[r.accountId] ?? []).find((m) => m.id === satisfiedItem.missingItemId);
-        if (missing && missing.status !== 'received') get().markItemReceived(r.accountId, missing.id, { documentId: f.importedDocumentId });
-        await get().loadDocumentRequests([r.accountId]);
+        const missing = satisfiedItem && (get().missingItems[accountId] ?? []).find((m) => m.id === satisfiedItem.missingItemId);
+        if (missing && missing.status !== 'received') get().markItemReceived(accountId, missing.id, { documentId });
+        await get().loadDocumentRequests([accountId]);
         return { ok: true };
+      },
+
+      markRequestUploadWrong: async (requestId, fileId, reason) => {
+        const r = findRequest(requestId);
+        const f = r?.files.find((x) => x.id === fileId);
+        if (!r || !f) return { ok: false, message: 'Upload not found.' };
+        const accountId = r.accountId;
+        const res = await requestsRepo.markRequestFileWrong(fileId, reason || 'Wrong document');
+        if (!res.ok) return res;
+        const item = r.items.find((i) => i.id === f.requestItemId);
+        const who = r.contactName ?? 'the client';
+        // Remove the document and only the data that came from it; edited/confirmed data stays, flagged.
+        const report = f.importedDocumentId
+          ? get().deleteDocument(accountId, f.importedDocumentId, {
+              activityMessage: `Marked ${f.fileName} as the wrong document${item ? ` for ${item.label}` : ''} — asked ${who} for it again.`,
+            })
+          : null;
+        // The checklist item is outstanding again (still the same item — never a new one).
+        if (item) {
+          const now = new Date().toISOString();
+          set((s) => ({
+            missingItems: {
+              ...s.missingItems,
+              [accountId]: (s.missingItems[accountId] ?? []).map((m) =>
+                m.id === item.missingItemId && m.status === 'received' ? { ...m, status: 'requested' as const, receivedAt: undefined, documentId: undefined, updatedAt: now } : m
+              ),
+            },
+          }));
+          syncNow(accountId);
+        }
+        await get().loadDocumentRequests([accountId]);
+        return { ok: true, report };
+      },
+
+      clearReviewFlag: (accountId, target) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const now = new Date().toISOString();
+          // Dated, so this decision wins when copies from different devices are merged.
+          const unflag = <T extends { reviewFlag?: unknown }>(x: T): T => {
+            const { reviewFlag: _f, ...rest } = x;
+            return { ...rest, ...('updatedAt' in x ? { updatedAt: now } : { lastUpdatedAt: now }) } as unknown as T;
+          };
+          let next = profile;
+          if (target.kind === 'field') {
+            const bucket = { ...(profile[target.section] as unknown as Record<string, FieldValue<unknown>>) };
+            if (bucket[target.key]) bucket[target.key] = unflag(bucket[target.key]);
+            next = { ...profile, [target.section]: bucket };
+          } else if (target.kind === 'coverage') {
+            next = { ...profile, coverage: profile.coverage.map((c) => (c.type === target.type && c[target.field] ? { ...c, [target.field]: unflag(c[target.field]!) } : c)) };
+          } else if (target.kind === 'lossRun') {
+            return {
+              accounts: touchAccount(s.accounts.map((a) => (a.id === accountId ? { ...a, lossRuns: (a.lossRuns ?? []).map((r) => (r.id === target.id ? unflag(r) : r)) } : a)), accountId),
+            };
+          } else {
+            const list = target.kind === 'driver' ? 'drivers' : target.kind === 'vehicle' ? 'vehicles' : 'lossHistory';
+            next = { ...profile, [list]: (profile[list] as { id: string; reviewFlag?: unknown }[]).map((row) => (row.id === target.id ? unflag(row) : row)) };
+          }
+          return { riskProfiles: { ...s.riskProfiles, [accountId]: { ...next, updatedAt: new Date().toISOString() } }, accounts: touchAccount(s.accounts, accountId) };
+        });
+        syncNow(accountId);
       },
 
       syncRequestUploads: async (accountId) => {
         if (syncingRequestUploads.has(accountId) || !isSupabaseConfigured || !get().currentUserId) return;
         syncingRequestUploads.add(accountId);
-        let imported = 0;
+        let processed = 0;
         try {
           for (const req of get().documentRequests[accountId] ?? []) {
-            for (const f of req.files.filter((x) => !x.importedAt)) {
-              // Claimed on the server first: another tab or teammate importing it at the same time skips it.
+            // Files the automatic check hasn't looked at yet (held and rejected files are done).
+            for (const f of req.files.filter((x) => x.matchStatus === 'pending' && !x.importedAt)) {
+              // Claimed on the server first: another tab or teammate checking it at the same time skips it.
               if (!(await requestsRepo.claimRequestFile(f.id))) continue;
               const dl = await requestsRepo.downloadRequestFile(f);
-              if (!dl.ok) continue; // the claim lapses after 10 minutes and it's tried again
-              const [documentId] = get().addFiles(accountId, [dl.data], { fromClientRequest: req.contactName ?? 'the client' });
-              const doc = await waitForProcessed(accountId, documentId, 180_000);
+              if (!dl.ok) {
+                void requestsRepo.releaseRequestFile(f.id); // tried again on the next check
+                continue;
+              }
               const item = req.items.find((i) => i.id === f.requestItemId);
               if (!item) continue;
-              const missing = (get().missingItems[accountId] ?? []).find((m) => m.id === item.missingItemId);
+              // Read it WITHOUT adding it to the account, and check it's what was asked for.
+              const readId = `req_${f.id}`;
+              let read: DocumentRead | null = null;
+              try {
+                read = await readDocumentFile(dl.data, readId, f.fileName, get().currentUserId);
+              } catch {
+                read = null; // unreadable — held for review below
+              }
               const templateOf = (missingItemId: string) => (get().missingItems[accountId] ?? []).find((m) => m.id === missingItemId)?.templateKey;
+              const missing = (get().missingItems[accountId] ?? []).find((m) => m.id === item.missingItemId);
               const decision = matchRequestUpload({
-                signals: doc?.signals,
+                signals: read ? readSignals(read, f.fileName) : undefined,
                 slot: { requestItemId: item.id, label: item.label, templateKey: missing?.templateKey },
                 others: req.items.map((i) => ({ requestItemId: i.id, label: i.label, templateKey: templateOf(i.missingItemId) })),
+                accountName: get().accounts.find((a) => a.id === accountId)?.namedInsured,
               });
-              if (decision.outcome === 'satisfied') {
+              if (decision.outcome === 'satisfied' && read) {
+                // Confirmed: now it becomes an account document, from the read we already have.
+                const [documentId] = get().addFiles(accountId, [dl.data], { fromClientRequest: req.contactName ?? 'the client', preRead: [read] });
+                await waitForProcessed(accountId, documentId, 180_000);
                 const done = await requestsRepo.completeRequestFile(f.id, documentId, 'satisfied');
                 if (done.ok && missing && missing.status !== 'received') get().markItemReceived(accountId, missing.id, { documentId });
               } else {
-                await requestsRepo.completeRequestFile(f.id, documentId, 'needs_review', decision.note);
+                // Held outside the account until the broker looks at it — nothing imported, nothing to undo.
+                await requestsRepo.completeRequestFile(f.id, null, 'needs_review', decision.outcome === 'needs_review' ? decision.note : `Couldn't read this file — check it's the ${item.label}.`);
               }
-              imported++;
+              processed++;
             }
           }
         } finally {
           syncingRequestUploads.delete(accountId);
-          if (imported > 0) await get().loadDocumentRequests([accountId]);
+          if (processed > 0) await get().loadDocumentRequests([accountId]);
         }
       },
 
       hydrateCloudSubmissions: async () => {
         const userId = get().currentUserId;
         if (!isSupabaseConfigured || !userId) return;
-        const [result, accessRes] = await Promise.all([cloudRepo.fetchUserSubmissions(userId), cloudRepo.fetchAgencyAccess(userId)]);
-        if (get().currentUserId !== userId) return; // signed out / switched user mid-fetch
-        if (accessRes.ok) {
-          const agencyChanged = get().agencyAccess?.agencyId !== accessRes.data.access?.agencyId;
-          set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
-          // The agency's carrier appetite applies as soon as we know which agency this is.
-          if (agencyChanged) void get().reloadCarrierAppetite();
-          const me = accessRes.data.members.find((m) => m.userId === userId);
-          if (me && currentActor?.id === userId) currentActor = { id: userId, name: get().myProfile?.fullName || me.name };
-        }
-        if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
-        const needsPush: string[] = [];
-        set((s) => {
-          const cloudIds = new Set(result.data.map((b) => b.account.id));
-          // A cloud account hidden at sign-out comes back as this device's local copy to merge with.
-          const accounts = [...s.accounts, ...s.hiddenAccounts.filter((a) => cloudIds.has(a.id))];
-          const hiddenAccounts = s.hiddenAccounts.filter((a) => !cloudIds.has(a.id));
-          const accountOwners = { ...s.accountOwners, ...Object.fromEntries([...cloudIds].map((id) => [id, userId])) };
-          const documents = { ...s.documents };
-          const riskProfiles = { ...s.riskProfiles };
-          const activityLog = { ...s.activityLog };
-          const missingItems = { ...s.missingItems };
-          const quotes = { ...s.quotes };
-          const followUps = { ...s.followUps };
-          const cloudAccountIds = { ...s.cloudAccountIds };
-          const cloudSeenAt = { ...s.cloudSeenAt };
-          for (const bundle of result.data) {
-            const id = bundle.account.id;
-            const idx = accounts.findIndex((a) => a.id === id);
-            const local = idx === -1 ? undefined : accounts[idx];
-            cloudSeenAt[id] = bundle.account.updatedAt;
-            // Changes on this device that never reached the cloud: keep them (merged with anything
-            // newer from the cloud) and save again, instead of letting the cloud copy replace them.
-            if (local && s.unsyncedIds[id] && s.riskProfiles[id]) {
-              accounts[idx] = {
-                ...local,
-                agencyId: bundle.account.agencyId ?? local.agencyId,
-                assignedUserId: bundle.account.assignedUserId !== undefined ? bundle.account.assignedUserId : local.assignedUserId,
-                // Who's on the account is set on the server (0026), never by this device's pending save.
-                ...(bundle.account.collaboratorIds !== undefined ? { collaboratorIds: bundle.account.collaboratorIds } : {}),
-                ...(bundle.account.originalAssignedUserId !== undefined ? { originalAssignedUserId: bundle.account.originalAssignedUserId } : {}),
-                notes: mergeById(local.notes ?? [], bundle.account.notes ?? [], noteChangedAt),
-              };
-              riskProfiles[id] = mergeNewerFields(s.riskProfiles[id], bundle.profile);
-              needsPush.push(id);
-              cloudAccountIds[id] = true;
-              continue;
-            }
-            // Cloud is authoritative for an already-known cloud account — except for fields the
-            // project's database can't hold yet (0007 / 0008 not applied), which would otherwise be
-            // wiped on every reload (e.g. the assigned broker "disappearing").
-            const merged: Account = {
-              ...bundle.account,
-              ...(!bundle.hasWorkflowColumns && local ? { contacts: local.contacts, assignedBroker: local.assignedBroker } : {}),
-              ...(!bundle.hasStageColumn && local ? { stage: local.stage } : {}),
-              ...(!bundle.hasDoneColumn && local?.doneActions ? { doneActions: local.doneActions } : {}),
-              ...(!bundle.hasNotesColumn && local?.notes ? { notes: local.notes } : {}),
-              ...(!bundle.hasLossRunsColumn && local?.lossRuns ? { lossRuns: local.lossRuns } : {}),
-            };
-            if (idx === -1) accounts.push(merged);
-            else accounts[idx] = merged;
-            // Documents: cloud rows win, but keep what the cloud never stores (per-document extracted
-            // fields, candidate notes) and a storage path the cloud row is missing; keep local-only rows.
-            const localDocs = s.documents[id] ?? [];
-            const cloudDocIds = new Set(bundle.documents.map((d) => d.id));
-            documents[id] = [
-              ...bundle.documents.map((d) => {
-                const l = localDocs.find((x) => x.id === d.id);
-                return l ? { ...l, ...d, storagePath: d.storagePath ?? l.storagePath, previewDataUrl: d.previewDataUrl ?? l.previewDataUrl } : d;
-              }),
-              ...localDocs.filter((d) => !cloudDocIds.has(d.id)),
-            ];
-            riskProfiles[id] = bundle.profile;
-            // Activity is append-only: union by id, so events that never reached the cloud aren't lost.
-            const byId = new Map<string, ActivityEvent>();
-            for (const e of [...(s.activityLog[id] ?? []), ...bundle.activity]) byId.set(e.id, e);
-            const localHadMore = (s.activityLog[id] ?? []).some((e) => !bundle.activity.some((c) => c.id === e.id));
-            if (localHadMore) needsPush.push(id);
-            activityLog[id] = trimEvents([...byId.values()].sort((x, y) => (x.timestamp < y.timestamp ? -1 : 1)));
-            // undefined = the workflow columns don't exist yet (migration 0007 not applied) — keep
-            // whatever this device has rather than wiping it with an empty list.
-            if (bundle.missingItems) missingItems[bundle.account.id] = normalizeMissingItems(bundle.missingItems);
-            if (bundle.quotes) quotes[bundle.account.id] = bundle.quotes;
-            if (bundle.followUps) followUps[bundle.account.id] = bundle.followUps;
-            cloudAccountIds[bundle.account.id] = true;
-          }
-          return { accounts, hiddenAccounts, accountOwners, documents, riskProfiles, activityLog, missingItems, quotes, followUps, cloudAccountIds, cloudSeenAt };
+        // Asked for twice at sign-in (the stored session and the sign-in event): one load, not two racing.
+        if (hydrating?.userId === userId) return hydrating.promise;
+        const promise = hydrateOnce(userId).finally(() => {
+          if (hydrating?.promise === promise) hydrating = null;
         });
-        // Accounts this device holds for this user that the cloud no longer returned: if they still
-        // exist, access was removed (e.g. an admin reassigned them to another agent) — drop the local
-        // copy so it can't be opened or re-saved from here. If they don't exist they were never
-        // uploaded (or were deleted) and are left alone, exactly as before.
-        {
-          const s = get();
-          const returned = new Set(result.data.map((b) => b.account.id));
-          const candidates = s.accounts.filter((a) => s.cloudAccountIds[a.id] && !returned.has(a.id)).map((a) => a.id);
-          const revoked = await cloudRepo.submissionsRevoked(candidates);
-          const gone = new Set(Object.keys(revoked).filter((id) => revoked[id]));
-          if (gone.size > 0 && get().currentUserId === userId) {
-            const st = get();
-            void deleteLocalFiles([...gone].flatMap((id) => localFileIds(st, id)));
-            set((cur) => withoutAccounts(cur, gone));
-          }
-        }
-        if (get().currentUserId === userId) set({ cloudHydratedFor: userId });
-        // Client document requests (0030) — and any files clients uploaded since, imported into their accounts.
-        void get()
-          .loadDocumentRequests()
-          .then(async () => {
-            for (const [accountId, reqs] of Object.entries(get().documentRequests)) {
-              if (reqs.some((r) => r.files.some((f) => !f.importedAt))) await get().syncRequestUploads(accountId);
-            }
-          });
-        for (const bundle of result.data) get().runMatching(bundle.account.id);
-        // Push back anything this device had that the cloud didn't (e.g. events lost to the old sync bug).
-        for (const id of needsPush) syncNow(id);
+        hydrating = { userId, promise };
+        return promise;
       },
 
       importAccountsToCloud: async (accountIds) => {
@@ -2829,7 +2985,8 @@ export const useAccountsStore = create<AccountsState>()(
     {
       name: 'renewaliq.state.v1',
       // Never throws when the browser's storage is full (see safeStorage.ts).
-      storage: createJSONStorage(() => createSafeStorage()),
+      // Written in the background (at most every 0.8s), never once per change — see createDebouncedJSONStorage.
+      storage: createDebouncedJSONStorage(() => createSafeStorage()),
       // Reconcile checklists saved before requirements were shared across carriers: one row per
       // logical requirement, legacy single-carrier links folded in. Idempotent, runs on every load.
       merge: (persisted, current) => {

@@ -10,6 +10,7 @@ import { ContactsCard } from '../components/workspace/ContactsCard';
 import { FollowUpsCard } from '../components/workspace/FollowUpsCard';
 import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
 import { ClientRequestsCard } from '../components/workspace/ClientRequestsCard';
+import { ReviewFlagsPanel } from '../components/riskProfile/ReviewFlagsPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
 import { ActionList } from '../components/workspace/ActionList';
 import { DoneTasks } from '../components/workspace/DoneTasks';
@@ -166,6 +167,8 @@ export function AccountWorkspacePage() {
       {tab === 'checklist' && (
         <div className="flex flex-col gap-5">
           <ClientRequestsCard accountId={accountId} />
+          {/* Anything kept for review after a wrong document was removed. */}
+          <ReviewFlagsPanel accountId={accountId} />
           <ChecklistPanel accountId={accountId} />
           <Card>
             <CardBody className="pt-5">

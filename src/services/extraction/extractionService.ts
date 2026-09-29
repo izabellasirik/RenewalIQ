@@ -7,6 +7,9 @@ import type {
   VehicleEntry,
   DriverEntry,
   CoverageField,
+  FieldSource,
+  LossRun,
+  ReviewFlag,
 } from '../../types';
 import { emptyField } from '../../types';
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
@@ -24,6 +27,13 @@ function isEqualValue(a: unknown, b: unknown): boolean {
     return a.length === b.length && a.every((v, i) => isEqualScalar(v, b[i]));
   }
   return isEqualScalar(a, b);
+}
+
+/** `list` plus `source` — once per document, and never the value's own primary source. */
+function withSupport(list: FieldSource[] | undefined, source: FieldSource | undefined, primary: FieldSource | undefined): FieldSource[] | undefined {
+  const out = (list ?? []).filter((s) => s.documentId !== primary?.documentId);
+  if (source && source.documentId !== primary?.documentId && !out.some((s) => s.documentId === source.documentId)) out.push(source);
+  return out.length ? out : undefined;
 }
 
 /**
@@ -64,24 +74,46 @@ export function mergeFieldValue<T>(
     // result, never "broker confirmed" on its own.
     const methods = new Set([incoming.extractionMethod, existing.extractionMethod]);
     const isVisionOcrCorroboration = incoming.confidence !== 'low' && existing.confidence !== 'low' && methods.has('vision_extraction') && methods.has('image_ocr');
+    //
+    // Either way, every document stating the value is remembered (`support`), so removing one of
+    // them later keeps a value another still supports.
     if (isVisionOcrCorroboration) {
-      return { ...incoming, confidence: 'high', isConflicting: existing.isConflicting, alternateValues: existing.alternateValues, confirmedByBroker: existing.confirmedByBroker };
+      return {
+        ...incoming,
+        confidence: 'high',
+        isConflicting: existing.isConflicting,
+        alternateValues: existing.alternateValues,
+        confirmedByBroker: existing.confirmedByBroker,
+        support: withSupport(existing.support, existing.source, incoming.source),
+      };
     }
     const stronger = CONFIDENCE_ORDER[incoming.confidence] < CONFIDENCE_ORDER[existing.confidence];
-    return stronger ? { ...incoming, isConflicting: existing.isConflicting, alternateValues: existing.alternateValues, confirmedByBroker: existing.confirmedByBroker } : existing;
+    return stronger
+      ? {
+          ...incoming,
+          isConflicting: existing.isConflicting,
+          alternateValues: existing.alternateValues,
+          confirmedByBroker: existing.confirmedByBroker,
+          support: withSupport(existing.support, existing.source, incoming.source),
+        }
+      : { ...existing, support: withSupport(existing.support, incoming.source, existing.source) };
   }
 
   // Genuine conflict: two documents disagree. Higher confidence becomes primary.
   const incomingWins = CONFIDENCE_ORDER[incoming.confidence] < CONFIDENCE_ORDER[existing.confidence];
   const primary = incomingWins ? incoming : existing;
   const loser = incomingWins ? existing : incoming;
+  // The documents that supported the losing value become alternates too (each still says it).
+  const loserSupport = incomingWins && loser.value !== null ? (existing.support ?? []).map((source) => ({ value: loser.value as T, source, extractionMethod: loser.extractionMethod })) : [];
 
   return {
     ...primary,
+    support: incomingWins ? undefined : existing.support,
     isConflicting: true,
     alternateValues: [
       ...(existing.alternateValues ?? []),
       ...(loser.value !== null && loser.source ? [{ value: loser.value, source: loser.source, extractionMethod: loser.extractionMethod }] : []),
+      ...loserSupport,
     ],
   };
 }
@@ -98,18 +130,25 @@ export type FieldResolution<T> = { type: 'primary' } | { type: 'alternate'; inde
  * broker action in the conflict-resolver UI (see FieldRow.tsx's ConflictResolver and
  * NewAccountPage.tsx's identity-resolution step), never automatically.
  */
+/** The value being replaced, as alternates — one per document that stated it (its source and its support). */
+function demote<T>(existing: FieldValue<T>): { value: T; source: FieldSource; extractionMethod?: FieldValue<T>['extractionMethod'] }[] {
+  if (existing.value === null || !existing.source) return [];
+  return [existing.source, ...(existing.support ?? [])].map((source) => ({ value: existing.value as T, source, extractionMethod: existing.extractionMethod }));
+}
+
 export function resolveFieldConflict<T>(existing: FieldValue<T>, resolution: FieldResolution<T>): FieldValue<T> {
   const now = new Date().toISOString();
 
   if (resolution.type === 'primary') {
-    return { ...existing, confidence: 'manual', isConflicting: false, confirmedByBroker: true, lastUpdatedAt: now };
+    // A broker decision also settles any "check this" flag left by a removed document.
+    return { ...existing, confidence: 'manual', isConflicting: false, confirmedByBroker: true, reviewFlag: undefined, lastUpdatedAt: now };
   }
 
   if (resolution.type === 'alternate') {
     const alternates = existing.alternateValues ?? [];
     const chosen = alternates[resolution.index];
     if (!chosen) return existing;
-    const demotedPrimary = existing.value !== null && existing.source ? [{ value: existing.value, source: existing.source, extractionMethod: existing.extractionMethod }] : [];
+    const demotedPrimary = demote(existing);
     const remaining = [...alternates.slice(0, resolution.index), ...alternates.slice(resolution.index + 1), ...demotedPrimary];
     return {
       value: chosen.value,
@@ -129,7 +168,7 @@ export function resolveFieldConflict<T>(existing: FieldValue<T>, resolution: Fie
   // confirmedByBroker's "Broker Confirmed" (see fieldDataStatus) — set here anyway since it's
   // also, genuinely, broker-confirmed content, just additionally edited.
   const priorAlternates = existing.alternateValues ?? [];
-  const demotedPrimary = existing.value !== null && existing.source ? [{ value: existing.value, source: existing.source, extractionMethod: existing.extractionMethod }] : [];
+  const demotedPrimary = demote(existing);
   const history = [...priorAlternates, ...demotedPrimary];
   return {
     value: resolution.value,
@@ -150,18 +189,13 @@ function isEqualField(a: unknown, b: unknown): boolean {
 }
 
 /**
- * True if `entry` is an exact re-statement of a row already in `existing` — same natural key
- * (the field(s) that identify "the same real-world thing") and every other field equal too. This
- * is what makes re-uploading the same schedule a no-op instead of silently doubling every derived
- * total (fleet size, total insured value, claim counts, ...). Rows that share a key but disagree
- * on other fields are NOT deduped — both are kept, same "don't silently pick one" principle the
- * scalar-field merge already follows, just without a conflict badge since itemized rows don't have one yet.
+ * The existing row `entry` exactly re-states — same natural key (the field(s) that identify "the
+ * same real-world thing") and every other field equal too. This is what makes re-uploading the same
+ * schedule a no-op instead of silently doubling every derived total (fleet size, total insured
+ * value, claim counts, ...). Rows that share a key but disagree on other fields are NOT deduped —
+ * both are kept, same "don't silently pick one" principle the scalar-field merge follows.
  */
-function isDuplicateRow<T extends Record<string, unknown>>(existing: T[], entry: T, keyFields: (keyof T)[]): boolean {
-  return findDuplicateRow(existing, entry, keyFields) !== undefined;
-}
-
-/** The existing row `entry` re-states (see isDuplicateRow); `ignore` lists bookkeeping fields that don't make a row different. */
+/** `ignore` lists bookkeeping fields that don't make a row different. */
 function findDuplicateRow<T extends Record<string, unknown>>(existing: T[], entry: T, keyFields: (keyof T)[], ignore: string[] = []): T | undefined {
   const hasKey = keyFields.some((k) => entry[k] !== undefined && entry[k] !== '');
   if (!hasKey) return undefined;
@@ -173,6 +207,26 @@ function findDuplicateRow<T extends Record<string, unknown>>(existing: T[], entr
   });
 }
 
+/** Row fields that are bookkeeping, not content — a re-statement differing only in these is the same row. */
+const ROW_BOOKKEEPING = ['support', 'reviewFlag', 'isManual', 'lastUpdatedAt', 'notes'];
+
+/**
+ * The coverage line for `type`, created if missing. A line a document creates records that
+ * document (`sources`); a broker-added line has none and is never removed with a document.
+ */
+function touchCoverageLine(profile: RiskProfile, type: CoverageType, documentId: string | undefined) {
+  let line = profile.coverage.find((c) => c.type === type);
+  if (!line) {
+    line = { type, requestedLimit: { value: null, confidence: 'low', isMissing: true, isConflicting: false }, ...(documentId ? { sources: [documentId] } : {}) };
+    profile.coverage = [...profile.coverage, line];
+  } else if (documentId && line.sources && !line.sources.includes(documentId)) {
+    const updated = { ...line, sources: [...line.sources, documentId] };
+    profile.coverage = profile.coverage.map((c) => (c === line ? updated : c));
+    line = updated;
+  }
+  return line;
+}
+
 function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFieldResult): void {
   if (fieldPath === 'lossRun') {
     const draft = result.value as LossRunDraft;
@@ -182,37 +236,43 @@ function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFie
 
   if (fieldPath === 'lossHistory') {
     const { lossRunKey, ...entry } = result.value as Omit<LossEntry, 'id' | 'source'>;
-    const duplicateOf = findDuplicateRow(profile.lossHistory as unknown as Record<string, unknown>[], entry as Record<string, unknown>, ['lossDate', 'claimType', 'incurred'], ['lossRunId', 'lossRunKey']);
+    const duplicateOf = findDuplicateRow(profile.lossHistory as unknown as Record<string, unknown>[], entry as Record<string, unknown>, ['lossDate', 'claimType', 'incurred'], ['lossRunId', 'lossRunKey', 'support', 'reviewFlag']);
     if (duplicateOf) {
-      // The same claim again (e.g. the loss run re-uploaded): keep one, but let it join its loss-run record.
-      if (lossRunKey && !duplicateOf.lossRunId) {
-        profile.lossHistory = profile.lossHistory.map((l) => (l === (duplicateOf as unknown) ? { ...l, lossRunKey } : l));
-      }
+      // The same claim again (e.g. the loss run re-uploaded): keep one, remember this document
+      // supports it too, and let it join its loss-run record.
+      profile.lossHistory = profile.lossHistory.map((l) =>
+        l === (duplicateOf as unknown) ? { ...l, support: withSupport(l.support, result.source, l.source), ...(lossRunKey && !l.lossRunId ? { lossRunKey } : {}) } : l
+      );
       return;
     }
-    profile.lossHistory.push({ ...entry, ...(lossRunKey ? { lossRunKey } : {}), id: generateId('loss'), source: result.source });
+    profile.lossHistory = [...profile.lossHistory, { ...entry, ...(lossRunKey ? { lossRunKey } : {}), id: generateId('loss'), source: result.source }];
     return;
   }
 
   if (fieldPath === 'vehicles') {
     const entry = result.value as Omit<VehicleEntry, 'id' | 'source'>;
-    if (isDuplicateRow(profile.vehicles, entry, ['vin'])) return;
-    profile.vehicles.push({ ...entry, id: generateId('veh'), source: result.source });
+    const dup = findDuplicateRow(profile.vehicles as unknown as Record<string, unknown>[], entry as Record<string, unknown>, ['vin'], ROW_BOOKKEEPING);
+    if (dup) {
+      profile.vehicles = profile.vehicles.map((v) => (v === (dup as unknown) ? { ...v, support: withSupport(v.support, result.source, v.source) } : v));
+      return;
+    }
+    profile.vehicles = [...profile.vehicles, { ...entry, id: generateId('veh'), source: result.source }];
     return;
   }
 
   if (fieldPath === 'drivers') {
     const entry = result.value as Omit<DriverEntry, 'id' | 'source'>;
-    if (isDuplicateRow(profile.drivers, entry, ['name', 'dob'])) return;
-    profile.drivers.push({ ...entry, id: generateId('drv'), source: result.source });
+    const dup = findDuplicateRow(profile.drivers as unknown as Record<string, unknown>[], entry as Record<string, unknown>, ['name', 'dob'], ROW_BOOKKEEPING);
+    if (dup) {
+      profile.drivers = profile.drivers.map((d) => (d === (dup as unknown) ? { ...d, support: withSupport(d.support, result.source, d.source) } : d));
+      return;
+    }
+    profile.drivers = [...profile.drivers, { ...entry, id: generateId('drv'), source: result.source }];
     return;
   }
 
   if (fieldPath === 'coverageLine') {
-    const coverageType = result.value as CoverageType;
-    if (!profile.coverage.find((c) => c.type === coverageType)) {
-      profile.coverage.push({ type: coverageType, requestedLimit: { value: null, confidence: 'low', isMissing: true, isConflicting: false } });
-    }
+    touchCoverageLine(profile, result.value as CoverageType, result.source?.documentId);
     return;
   }
 
@@ -220,11 +280,7 @@ function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFie
 
   if (parts[0] === 'coverage') {
     const [, coverageType, sub] = parts as [string, CoverageType, 'currentLimit' | 'requestedLimit'];
-    let line = profile.coverage.find((c) => c.type === coverageType);
-    if (!line) {
-      line = { type: coverageType, requestedLimit: { value: null, confidence: 'low', isMissing: true, isConflicting: false } };
-      profile.coverage.push(line);
-    }
+    const line = touchCoverageLine(profile, coverageType, result.source?.documentId);
     line[sub] = mergeFieldValue(line[sub], result);
     return;
   }
@@ -300,40 +356,94 @@ export function addRecordEntry<T extends { id: string }>(list: T[], entry: Omit<
 
 export function updateRecordEntry<T extends { id: string }>(list: T[], id: string, patch: Partial<T>): T[] {
   const now = new Date().toISOString();
-  return list.map((item) => (item.id === id ? { ...item, ...patch, isManual: true, lastUpdatedAt: now } : item));
+  // Editing a row is reviewing it: any "check this" flag from a removed document is settled.
+  return list.map((item) => (item.id === id ? { ...item, ...patch, isManual: true, reviewFlag: undefined, lastUpdatedAt: now } : item));
 }
 
 export function deleteRecordEntry<T extends { id: string }>(list: T[], id: string): T[] {
   return list.filter((item) => item.id !== id);
 }
 
-/**
- * Removes a deleted document's influence from the risk profile, without discarding anything a
- * broker has since confirmed or that another surviving document still supports:
- *  - a broker-confirmed/edited value (confidence 'manual') is never touched — the source document
- *    disappearing doesn't make a human decision wrong.
- *  - a conflicting alternate that came from the deleted document is simply dropped; if that was
- *    the only disagreement, the field stops being a conflict.
- *  - a primary value whose *only* support was the deleted document falls back to the strongest
- *    remaining alternate (if any), demoted to 'medium' confidence since we no longer know its
- *    original confidence — or to fully missing if nothing else ever supported it. Never guesses a
- *    new value.
- *  - itemized rows (vehicles/drivers/losses) that came only from the deleted document are removed
- *    outright, since — unlike scalar fields — a row has exactly one source and no alternates.
- */
-export function removeDocumentFromRiskProfile(profile: RiskProfile, documentId: string): RiskProfile {
-  function demote<T>(field: FieldValue<T> | undefined): FieldValue<T> | undefined {
-    if (!field || field.isMissing || field.confidence === 'manual') return field;
-    const survivingAlternates = (field.alternateValues ?? []).filter((a) => a.source.documentId !== documentId);
+/** What removing a document did — shown to the broker and written to Activity. */
+export interface RollbackReport {
+  /** Values/rows removed because the document was their only support. */
+  removed: { fields: number; drivers: number; vehicles: number; losses: number; coverageLines: number; lossRuns: number };
+  /** Values/rows kept because another document still supports them. */
+  keptBySupport: number;
+  /** Values/rows kept but flagged: the broker edited, confirmed or annotated them. */
+  flagged: { kind: 'field' | 'driver' | 'vehicle' | 'loss' | 'lossRun'; label: string; reason: string }[];
+}
 
-    if (field.source?.documentId !== documentId) {
-      if (survivingAlternates.length === (field.alternateValues ?? []).length) return field;
-      return { ...field, alternateValues: survivingAlternates.length > 0 ? survivingAlternates : undefined, isConflicting: survivingAlternates.length > 0 };
+const emptyReport = (): RollbackReport => ({ removed: { fields: 0, drivers: 0, vehicles: 0, losses: 0, coverageLines: 0, lossRuns: 0 }, keptBySupport: 0, flagged: [] });
+
+const humanize = (key: string) => key.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
+
+/**
+ * Undoes one document's contribution to the risk profile (and the account's loss-run records),
+ * touching nothing that doesn't come from it alone. Pure — returns new objects.
+ *
+ *  - Broker-typed values (manual entry) and broker-added rows/lines/records have no document and
+ *    are never touched.
+ *  - A value or row another document also states (`support`) stays, now credited to that document.
+ *  - A conflicting alternate the document contributed is dropped; if it was the only
+ *    disagreement, the field stops being a conflict.
+ *  - A value that came only from this document falls back to the strongest remaining alternate
+ *    (demoted to 'medium') or to missing — never a guessed value.
+ *  - A row that came only from it is removed — unless the broker edited it or added notes to it,
+ *    or confirmed a value it provided: then it is KEPT and flagged for review (`reviewFlag`),
+ *    because undoing it automatically could throw away the broker's work.
+ *  - A coverage line the document created goes away only when no other document supports it and
+ *    none of its values remain.
+ *  - A loss-run record from it is removed unless the broker edited it or kept claims still point
+ *    to it (then flagged); fields it only filled in on another document's record are cleared.
+ */
+export function rollbackDocument(
+  profile: RiskProfile,
+  lossRuns: LossRun[],
+  documentId: string,
+  documentName: string,
+  now = new Date().toISOString()
+): { profile: RiskProfile; lossRuns: LossRun[]; report: RollbackReport } {
+  const report = emptyReport();
+  const flag = (reason: string): ReviewFlag => ({ documentId, documentName, reason, flaggedAt: now });
+  const fromDoc = (s: FieldSource | undefined) => s?.documentId === documentId;
+  const otherSupport = (list: FieldSource[] | undefined) => (list ?? []).filter((x) => x.documentId !== documentId);
+
+  function field<T>(f: FieldValue<T> | undefined, label: string): FieldValue<T> | undefined {
+    if (!f || f.isMissing) return f;
+    const alternates = (f.alternateValues ?? []).filter((a) => !fromDoc(a.source));
+    const support = otherSupport(f.support);
+    const altChanged = alternates.length !== (f.alternateValues ?? []).length;
+    const supportChanged = support.length !== (f.support ?? []).length;
+
+    if (!fromDoc(f.source)) {
+      if (!altChanged && !supportChanged) return f;
+      return {
+        ...f,
+        alternateValues: alternates.length ? alternates : undefined,
+        support: support.length ? support : undefined,
+        // A broker-settled field stays settled; otherwise it's a conflict only while alternates remain.
+        isConflicting: f.confidence === 'manual' ? f.isConflicting : alternates.some((a) => !isEqualValue(a.value, f.value)),
+      };
     }
 
-    if (survivingAlternates.length === 0) return emptyField<T>();
-
-    const [promoted, ...rest] = survivingAlternates;
+    // The value itself came from this document.
+    if (support.length) {
+      report.keptBySupport++;
+      const [next, ...rest] = support;
+      return { ...f, source: next, support: rest.length ? rest : undefined, alternateValues: alternates.length ? alternates : undefined, confidence: f.confidence === 'manual' ? 'manual' : 'medium', lastUpdatedAt: now };
+    }
+    if (f.confidence === 'manual') {
+      // The broker confirmed this document's value — keep it, but ask them to look again.
+      report.flagged.push({ kind: 'field', label, reason: 'You confirmed this value; it came from the removed document.' });
+      return { ...f, alternateValues: alternates.length ? alternates : undefined, reviewFlag: flag('You confirmed this value; it came from the removed document.') };
+    }
+    if (alternates.length === 0) {
+      report.removed.fields++;
+      return emptyField<T>();
+    }
+    report.removed.fields++;
+    const [promoted, ...rest] = alternates;
     return {
       value: promoted.value,
       confidence: 'medium',
@@ -342,55 +452,134 @@ export function removeDocumentFromRiskProfile(profile: RiskProfile, documentId: 
       isMissing: false,
       isConflicting: rest.some((alt) => !isEqualValue(alt.value, promoted.value)),
       alternateValues: rest.length > 0 ? rest : undefined,
-      lastUpdatedAt: new Date().toISOString(),
+      lastUpdatedAt: now,
     };
   }
 
-  for (const section of ['business', 'transportation'] as const) {
-    const bucket = profile[section] as unknown as Record<string, FieldValue<unknown>>;
-    for (const key of Object.keys(bucket)) {
-      const updated = demote(bucket[key]);
-      if (updated) bucket[key] = updated;
+  type Row = { id: string; source?: FieldSource; support?: FieldSource[]; isManual?: boolean; reviewFlag?: ReviewFlag; notes?: unknown[] };
+  function rows<R extends Row>(list: R[], kind: 'driver' | 'vehicle' | 'loss', labelOf: (r: R) => string): R[] {
+    const out: R[] = [];
+    for (const r of list) {
+      const support = otherSupport(r.support);
+      if (!fromDoc(r.source)) {
+        out.push(support.length !== (r.support ?? []).length ? { ...r, support: support.length ? support : undefined } : r);
+        continue;
+      }
+      if (support.length) {
+        report.keptBySupport++;
+        const [next, ...rest] = support;
+        out.push({ ...r, source: next, support: rest.length ? rest : undefined, lastUpdatedAt: now });
+        continue;
+      }
+      const reason = r.isManual ? 'You edited this after it was read from the removed document.' : (r.notes?.length ?? 0) > 0 ? 'You added notes to it; it came from the removed document.' : null;
+      if (reason) {
+        report.flagged.push({ kind, label: labelOf(r), reason });
+        out.push({ ...r, reviewFlag: flag(reason), lastUpdatedAt: now });
+        continue;
+      }
+      report.removed[kind === 'driver' ? 'drivers' : kind === 'vehicle' ? 'vehicles' : 'losses']++;
     }
+    return out;
   }
 
-  profile.coverage = profile.coverage.map((line) => ({
-    ...line,
-    currentLimit: demote(line.currentLimit),
-    requestedLimit: demote(line.requestedLimit) ?? line.requestedLimit,
-  }));
+  const business = { ...profile.business } as unknown as Record<string, FieldValue<unknown>>;
+  for (const key of Object.keys(business)) business[key] = field(business[key], humanize(key)) as FieldValue<unknown>;
+  const transportation = { ...profile.transportation } as unknown as Record<string, FieldValue<unknown>>;
+  for (const key of Object.keys(transportation)) transportation[key] = field(transportation[key], humanize(key)) as FieldValue<unknown>;
 
-  profile.vehicles = profile.vehicles.filter((v) => v.isManual || v.source?.documentId !== documentId);
-  profile.drivers = profile.drivers.filter((d) => d.isManual || d.source?.documentId !== documentId);
-  profile.lossHistory = profile.lossHistory.filter((l) => l.isManual || l.source?.documentId !== documentId);
+  const coverage = profile.coverage.flatMap((line) => {
+    const label = humanize(line.type.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase()));
+    const next = {
+      ...line,
+      currentLimit: field(line.currentLimit, `${label} current limit`),
+      requestedLimit: field(line.requestedLimit, `${label} requested limit`) ?? line.requestedLimit,
+      ...(line.deductible ? { deductible: field(line.deductible, `${label} deductible`) } : {}),
+    };
+    if (!line.sources?.includes(documentId)) return [next];
+    const sources = line.sources.filter((d) => d !== documentId);
+    const hasValue = [next.currentLimit, next.requestedLimit, next.deductible].some((f) => f && !f.isMissing && f.value !== null);
+    if (sources.length === 0 && !hasValue) {
+      report.removed.coverageLines++;
+      return [];
+    }
+    return [{ ...next, sources }];
+  });
 
-  profile.updatedAt = new Date().toISOString();
-  return profile;
+  const drivers = rows(profile.drivers, 'driver', (d) => `Driver ${d.name ?? '(no name)'}`);
+  const vehicles = rows(profile.vehicles, 'vehicle', (v) => `Vehicle ${[v.year, v.make, v.model].filter(Boolean).join(' ') || v.vin || '(no VIN)'}`);
+  const lossHistory = rows(profile.lossHistory, 'loss', (l) => `Claim ${l.lossDate || ''} ${l.claimType || ''}`.trim());
+
+  // Loss-run records.
+  const keptRunIds = new Set(lossHistory.map((l) => l.lossRunId).filter(Boolean));
+  const nextRuns: LossRun[] = [];
+  for (const run of lossRuns) {
+    const supporting = (run.supportingDocumentIds ?? []).filter((d) => d !== documentId);
+    // Fields this document only filled in on someone else's record.
+    const filled = Object.entries(run.fieldSources ?? {}).filter(([, d]) => d === documentId).map(([k]) => k);
+    if (run.documentId !== documentId) {
+      if (!filled.length && supporting.length === (run.supportingDocumentIds ?? []).length) {
+        nextRuns.push(run);
+        continue;
+      }
+      // updatedAt moves so this version wins when copies from different devices are merged.
+      const cleared: LossRun = { ...run, supportingDocumentIds: supporting.length ? supporting : undefined, updatedAt: now };
+      const fieldSources = { ...run.fieldSources };
+      for (const k of filled) {
+        delete fieldSources[k];
+        if (!run.editedByBroker) delete (cleared as unknown as Record<string, unknown>)[k];
+      }
+      cleared.fieldSources = Object.keys(fieldSources).length ? fieldSources : undefined;
+      if (filled.length && run.editedByBroker) {
+        const reason = 'You edited this record; some of its details came from the removed document.';
+        report.flagged.push({ kind: 'lossRun', label: `Loss run ${run.carrier}`, reason });
+        cleared.reviewFlag = flag(reason);
+      }
+      nextRuns.push(cleared);
+      continue;
+    }
+    if (supporting.length) {
+      report.keptBySupport++;
+      const [next, ...rest] = supporting;
+      nextRuns.push({ ...run, documentId: next, supportingDocumentIds: rest.length ? rest : undefined, updatedAt: now });
+      continue;
+    }
+    const reason = run.editedByBroker ? 'You edited this record; it came from the removed document.' : keptRunIds.has(run.id) ? 'Claims you kept still point to this record.' : null;
+    if (reason) {
+      report.flagged.push({ kind: 'lossRun', label: `Loss run ${run.carrier}`, reason });
+      nextRuns.push({ ...run, reviewFlag: flag(reason), updatedAt: now });
+      continue;
+    }
+    report.removed.lossRuns++;
+  }
+  const removedRunIds = new Set(lossRuns.filter((r) => !nextRuns.some((n) => n.id === r.id)).map((r) => r.id));
+
+  return {
+    profile: {
+      ...profile,
+      business: business as unknown as RiskProfile['business'],
+      transportation: transportation as unknown as RiskProfile['transportation'],
+      coverage,
+      drivers,
+      vehicles,
+      lossHistory: lossHistory.map((l) => (l.lossRunId && removedRunIds.has(l.lossRunId) ? { ...l, lossRunId: undefined } : l)),
+      pendingLossRuns: profile.pendingLossRuns?.filter((d) => d.documentId !== documentId),
+      updatedAt: now,
+    },
+    lossRuns: nextRuns,
+    report,
+  };
+}
+
+/** Removes a deleted document's influence from the risk profile — see rollbackDocument. */
+export function removeDocumentFromRiskProfile(profile: RiskProfile, documentId: string): RiskProfile {
+  return rollbackDocument(profile, [], documentId, '').profile;
 }
 
 /**
  * Best-effort, read-only summary of what a document's removal would affect — shown in the delete
- * confirmation so the broker knows before confirming, not just after. Mirrors the same rules as
- * removeDocumentFromRiskProfile without mutating anything.
+ * confirmation so the broker knows before confirming. Same rules as rollbackDocument.
  */
-export function previewDocumentRemovalImpact(profile: RiskProfile, documentId: string): { fields: number; vehicles: number; drivers: number; losses: number } {
-  let fields = 0;
-  const isSolelySourced = (field: FieldValue<unknown> | undefined) =>
-    !!field && !field.isMissing && field.confidence !== 'manual' && field.source?.documentId === documentId && !(field.alternateValues ?? []).some((a) => a.source.documentId !== documentId);
-
-  for (const section of ['business', 'transportation'] as const) {
-    const bucket = profile[section] as unknown as Record<string, FieldValue<unknown>>;
-    for (const key of Object.keys(bucket)) if (isSolelySourced(bucket[key])) fields++;
-  }
-  for (const line of profile.coverage) {
-    if (isSolelySourced(line.currentLimit)) fields++;
-    if (isSolelySourced(line.requestedLimit)) fields++;
-  }
-
-  return {
-    fields,
-    vehicles: profile.vehicles.filter((v) => !v.isManual && v.source?.documentId === documentId).length,
-    drivers: profile.drivers.filter((d) => !d.isManual && d.source?.documentId === documentId).length,
-    losses: profile.lossHistory.filter((l) => !l.isManual && l.source?.documentId === documentId).length,
-  };
+export function previewDocumentRemovalImpact(profile: RiskProfile, documentId: string, lossRuns: LossRun[] = []): { fields: number; vehicles: number; drivers: number; losses: number; flagged: number } {
+  const { removed, flagged } = rollbackDocument(profile, lossRuns, documentId, '').report;
+  return { fields: removed.fields, vehicles: removed.vehicles, drivers: removed.drivers, losses: removed.losses, flagged: flagged.length };
 }

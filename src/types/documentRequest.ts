@@ -5,7 +5,7 @@
  */
 export type DocumentRequestStatus = 'waiting' | 'partial' | 'complete' | 'cancelled';
 export type DocumentRequestItemStatus = 'requested' | 'uploaded' | 'needs_review' | 'satisfied' | 'waived';
-export type DocumentRequestFileMatch = 'pending' | 'satisfied' | 'needs_review' | 'rejected' | 'reassigned';
+export type DocumentRequestFileMatch = 'pending' | 'satisfied' | 'needs_review' | 'rejected' | 'reassigned' | 'withdrawn';
 
 export const DOCUMENT_REQUEST_STATUS_LABELS: Record<DocumentRequestStatus, string> = {
   waiting: 'Waiting on client',
@@ -38,8 +38,10 @@ export interface DocumentRequestFile {
   importedDocumentId?: string;
   importedAt?: string;
   matchStatus: DocumentRequestFileMatch;
-  /** Why it needs review. */
+  /** Why it needs review (or why it was rejected). */
   matchNote?: string;
+  /** 0031: the item it was accepted for — its own item, or the one the broker moved it to. */
+  resolvedItemId?: string;
 }
 
 export interface DocumentRequest {

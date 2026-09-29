@@ -1,5 +1,5 @@
 import { requirementKey } from '../workflow/requirementKey';
-import { normalizePersonName, REQUIREMENT_KIND_LABELS, type DocumentSignals, type RequirementKind } from './documentSignals';
+import { normalizePersonName, REQUIREMENT_KIND_LABELS, sameCompany, type DocumentSignals, type RequirementKind } from './documentSignals';
 
 /**
  * Does a client's upload satisfy the item they uploaded it for? The client chose the item, so the
@@ -47,11 +47,16 @@ function sameDriver(entity: string, name: string): boolean {
   return e[e.length - 1] === n[n.length - 1] && (e[0] === n[0] || e[0][0] === n[0][0]);
 }
 
-export function matchRequestUpload(input: { signals: DocumentSignals | undefined; slot: RequestedRequirement; others: RequestedRequirement[] }): MatchDecision {
-  const { signals, slot, others } = input;
+export function matchRequestUpload(input: { signals: DocumentSignals | undefined; slot: RequestedRequirement; others: RequestedRequirement[]; /** The account's named insured — a document naming a different business goes to review. */ accountName?: string }): MatchDecision {
+  const { signals, slot, others, accountName } = input;
   const want = requirementShape(slot);
   if (!want.kind) return { outcome: 'needs_review', note: `Check this is the ${slot.label} — this kind of document can't be recognized automatically.` };
   if (!signals || signals.kinds.length === 0) return { outcome: 'needs_review', note: `Couldn't tell what this document is — check it's the ${slot.label}.` };
+  // Right kind of document, wrong business (another client's loss run, say).
+  const insured = signals.insuredNames ?? [];
+  if (accountName && insured.length && !insured.some((n) => sameCompany(n, accountName))) {
+    return { outcome: 'needs_review', note: `It's for ${insured[0]}, not ${accountName} — check it's the right company's document.` };
+  }
 
   if (!signals.kinds.includes(want.kind)) {
     const other = others.find((o) => o.requestItemId !== slot.requestItemId && requirementShape(o).kind && signals.kinds.includes(requirementShape(o).kind!));

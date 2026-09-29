@@ -8,6 +8,7 @@ import { Button, ProgressBar, Tabs, OverflowMenu, ConfirmDialog, type OverflowMe
 import { SectionCard } from '../components/riskProfile/SectionCard';
 import { FieldRow } from '../components/riskProfile/FieldRow';
 import { ConflictBanner } from '../components/riskProfile/ConflictBanner';
+import { ReviewFlagsPanel } from '../components/riskProfile/ReviewFlagsPanel';
 import { MissingFieldsPanel } from '../components/riskProfile/MissingFieldsPanel';
 import { InsightStrip } from '../components/riskProfile/InsightStrip';
 import { AccountSummary } from '../components/riskProfile/AccountSummary';
@@ -143,6 +144,7 @@ export function RiskProfilePage() {
       </button>
 
       <ConflictBanner count={stats.conflicting.length} />
+      <ReviewFlagsPanel accountId={accountId} />
       <MissingFieldsPanel
         fields={stats.missing.map((m) => ({ label: m.field.label, section: m.field.section, key: m.field.key }))}
         onFieldClick={focusField}

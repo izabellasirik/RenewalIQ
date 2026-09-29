@@ -502,3 +502,100 @@ set role anon;
 select pg_temp.as_user('');
 select 'D12 expired link shows: ' || (v->>'status') from get_document_request(:'tk3') v;
 reset role;
+
+-- ============================================================================================
+-- 0031: uploads held for review, client remove, wrong document, provenance columns
+-- ============================================================================================
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select r->>'id' as rq4, r->>'token' as tk4 from (select create_document_request('acct_r1', gen_random_uuid(), '{"name":"John Smith"}', 'email', '[{"missingItemId":"mi_loss4","label":"Loss runs"},{"missingItemId":"mi_mvr4","label":"MVR — John Smith"}]', '2026-10-09') r) x \gset
+select id as it4_loss from document_request_items where request_id = :'rq4' and label = 'Loss runs' \gset
+select id as it4_mvr from document_request_items where request_id = :'rq4' and label like 'MVR%' \gset
+select set_config('my.tk4', :'tk4', false) is not null as _e0 \gset
+set role anon;
+select pg_temp.as_user('');
+insert into storage.objects (bucket_id, name) values ('intake-uploads', :'tk4' || '/key-e001-00001/scan.pdf'), ('intake-uploads', :'tk4' || '/key-e002-00002/loss.pdf'), ('intake-uploads', :'tk4' || '/key-e003-00003/other.pdf');
+select attach_document_request_file(:'tk4', :'it4_mvr', 'key-e001-00001', 'scan.pdf', :'tk4' || '/key-e001-00001/scan.pdf', 10) is not null as _e1 \gset
+select attach_document_request_file(:'tk4', :'it4_loss', 'key-e002-00002', 'loss.pdf', :'tk4' || '/key-e002-00002/loss.pdf', 10) is not null as _e2 \gset
+
+-- E1: the automatic check holds an unclear file outside the account (no document)
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select id as fe1 from document_request_files where client_file_key = 'key-e001-00001' \gset
+select id as fe2 from document_request_files where client_file_key = 'key-e002-00002' \gset
+select claim_document_request_file(:'fe1') and true as _e3 \gset
+select complete_document_request_file(:'fe1', null, 'needs_review', 'Couldn''t tell') is null as _e4 \gset
+select 'E1 held: match=' || match_status || ' imported=' || (imported_at is not null) || ' doc=' || coalesce(imported_document_id, 'none') || ' item=' || (select status from document_request_items where id = :'it4_mvr') from document_request_files where id = :'fe1';
+do $$ begin perform complete_document_request_file(current_setting('my.fe2_unset', true), null, 'satisfied', null); exception when others then null; end $$;
+select claim_document_request_file(:'fe2') and true as _e5 \gset
+do $$ begin perform complete_document_request_file((select id from document_request_files where client_file_key = 'key-e002-00002'), null, 'satisfied', null); raise notice 'E1 accept without document: ALLOWED (BAD)'; exception when others then raise notice 'E1 accept without a document denied'; end $$;
+
+-- E1b: the automatic check can't take a held file (a stale second tab); confirming can, and gives it back
+select 'E1b auto-check claims held file: ' || claim_document_request_file(:'fe1') || ' | confirm claims it: ' || claim_document_request_file(:'fe1', true);
+select release_document_request_file(:'fe1') is null as _e1b \gset
+select 'E1b released: ' || (claimed_at is null) from document_request_files where id = :'fe1';
+
+-- E2: the client removes the held file; the item is asked for again; the file leaves the view
+set role anon;
+select pg_temp.as_user('');
+select 'E2 client sees: ' || (select string_agg((i->>'label') || '=' || (select string_agg((f->>'name') || ':' || (f->>'state') || ':' || (f->>'removable'), ',') from jsonb_array_elements(i->'files') f), ' | ' order by i->>'label') from jsonb_array_elements(v->'items') i) from get_document_request(:'tk4') v;
+select 'E2 after remove: ' || (select string_agg((i->>'label') || ' received=' || (i->>'received') || ' files=' || jsonb_array_length(i->'files'), ' | ' order by i->>'label') from jsonb_array_elements(v->'items') i) from withdraw_document_request_file(:'tk4', 'key-e001-00001') v;
+reset role;
+select 'E2 file kept as record: ' || match_status || ' / ' || match_note from document_request_files where client_file_key = 'key-e001-00001';
+set role anon;
+select pg_temp.as_user('');
+select 'E2 remove again (retry) ok: ' || (v->>'requestId' is not null) from withdraw_document_request_file(:'tk4', 'key-e001-00001') v;
+
+-- E3: a file the broker is importing (claimed) can't be removed; nor can an accepted one
+do $$ begin perform withdraw_document_request_file(current_setting('my.tk4')::uuid, 'key-e002-00002'); raise notice 'E3 remove while importing: ALLOWED (BAD)'; exception when others then raise notice 'E3 remove while importing denied: %', sqlerrm; end $$;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select complete_document_request_file(:'fe2', 'doc_loss4', 'satisfied', null) is null as _e6 \gset
+set role anon;
+select pg_temp.as_user('');
+do $$ begin perform withdraw_document_request_file(current_setting('my.tk4')::uuid, 'key-e002-00002'); raise notice 'E3 remove accepted: ALLOWED (BAD)'; exception when others then raise notice 'E3 remove accepted file denied'; end $$;
+-- E4: another open request's link can't remove this request's file
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select r->>'token' as tk5 from (select create_document_request('acct_r1', gen_random_uuid(), '{"name":"Other"}', 'email', '[{"missingItemId":"mi_other5","label":"Unit list"}]', null) r) x \gset
+select set_config('my.tk5', :'tk5', false) is not null as _e5b \gset
+set role anon;
+select pg_temp.as_user('');
+do $$ begin perform withdraw_document_request_file(current_setting('my.tk5')::uuid, 'key-e002-00002'); raise notice 'E4 cross-link remove: ALLOWED (BAD)'; exception when others then raise notice 'E4 other link denied: %', sqlerrm; end $$;
+
+-- E5: a held file is confirmed only together with the document it was imported as
+select attach_document_request_file(:'tk4', :'it4_mvr', 'key-e003-00003', 'other.pdf', :'tk4' || '/key-e003-00003/other.pdf', 10) is not null as _e7 \gset
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select id as fe3 from document_request_files where client_file_key = 'key-e003-00003' \gset
+select claim_document_request_file(:'fe3') and true as _e8 \gset
+select complete_document_request_file(:'fe3', null, 'needs_review', 'Different driver') is null as _e9 \gset
+select set_config('my.fe3', :'fe3', false) is not null as _e10 \gset
+do $$ begin perform resolve_document_request_file(current_setting('my.fe3'), 'satisfy', null, null); raise notice 'E5 confirm without importing: ALLOWED (BAD)'; exception when others then raise notice 'E5 confirm without importing denied'; end $$;
+select resolve_document_request_file(:'fe3', 'satisfy', null, 'doc_mvr4') is null as _e11 \gset
+select 'E5 confirmed: match=' || f.match_status || ' doc=' || f.imported_document_id || ' request=' || r.status from document_request_files f join document_requests r on r.id = f.request_id where f.id = :'fe3';
+
+-- E6: wrong document after it was accepted — asked for again, request reopened, record kept
+select mark_document_request_file_wrong(:'fe3', 'last year''s MVR') is null as _e12 \gset
+select 'E6 wrong: match=' || f.match_status || ' note=' || f.match_note || ' item=' || i.status || ' request=' || r.status || ' closed=' || (r.closed_at is not null) from document_request_files f join document_request_items i on i.id = f.request_item_id join document_requests r on r.id = f.request_id where f.id = :'fe3';
+select mark_document_request_file_wrong(:'fe3', 'x') is null as _e12b \gset
+select 'E6 again is a no-op: note=' || match_note from document_request_files where id = :'fe3';
+set role anon;
+select pg_temp.as_user('');
+select 'E6 client can upload it again: ' || (v->>'status') from get_document_request(:'tk4') v;
+do $$ begin perform mark_document_request_file_wrong(current_setting('my.fe3'), 'x'); raise notice 'E7 anon wrong: ALLOWED (BAD)'; exception when others then raise notice 'E7 anon cannot mark wrong'; end $$;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform mark_document_request_file_wrong((select id from public.document_request_files where client_file_key = 'key-e002-00002'), 'x'); raise notice 'E7 other agency wrong: ALLOWED (BAD)'; exception when others then raise notice 'E7 other agency cannot mark wrong'; end $$;
+
+-- E8: provenance columns exist and the atomic save keeps them
+reset role;
+select 'E8 details columns: ' || string_agg(table_name, ',' order by table_name) from information_schema.columns where table_schema = 'public' and column_name = 'details' and table_name in ('field_values', 'coverage_lines');
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select replace_submission_children('acct_r1',
+  '[{"id":"acct_r1::transportation::dotNumber","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000a","section":"transportation","field_key":"dotNumber","value":"1234567","confidence":"high","is_missing":false,"is_conflicting":false,"source_document_id":"docA","details":{"support":[{"documentId":"docB","documentName":"b.pdf"}]}}]',
+  '[]', '[{"id":"acct_r1::cov::motor_truck_cargo","submission_id":"acct_r1","user_id":"00000000-0000-0000-0000-00000000000a","coverage_type":"motor_truck_cargo","details":{"sources":["docA"]}}]', '[]', '[]', '[]') is null as _e13 \gset
+select 'E8 saved: support=' || (details->'support'->0->>'documentId') from field_values where id = 'acct_r1::transportation::dotNumber';
+select 'E8 saved: coverage sources=' || (details->'sources'->>0) from coverage_lines where id = 'acct_r1::cov::motor_truck_cargo';
+reset role;

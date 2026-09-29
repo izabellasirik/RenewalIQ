@@ -1,4 +1,4 @@
-import type { StateStorage } from 'zustand/middleware';
+import type { PersistStorage, StateStorage, StorageValue } from 'zustand/middleware';
 
 /**
  * localStorage for the persisted store that never throws. Browsers cap localStorage at ~5 MB per
@@ -84,6 +84,59 @@ export function createSafeStorage(getStorage: () => Storage | undefined = () => 
       } catch {
         // nothing to do
       }
+    },
+  };
+}
+
+/**
+ * The persisted store's JSON storage, written at most once per `delayMs` (the latest state wins),
+ * and right away when the page is hidden or closed. zustand's persist writes on EVERY state change;
+ * serializing a broker's whole saved state (dozens of accounts, their documents and market
+ * matches) each time froze the page for seconds after sign-in, when every account is re-matched.
+ */
+export function createDebouncedJSONStorage<S>(getStorage: () => StateStorage, delayMs = 800): PersistStorage<S> {
+  let pending: { name: string; value: StorageValue<S> } | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    if (!pending) return;
+    const { name, value } = pending;
+    pending = null;
+    let json: string;
+    try {
+      json = JSON.stringify(value);
+    } catch (error) {
+      console.warn(`Could not save ${name} in this browser.`, error);
+      return;
+    }
+    void getStorage().setItem(name, json);
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flush());
+  }
+
+  return {
+    getItem: (name) => {
+      flush(); // never read an older copy than the one waiting to be written
+      const raw = getStorage().getItem(name) as string | null;
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as StorageValue<S>;
+      } catch {
+        return null;
+      }
+    },
+    setItem: (name, value) => {
+      pending = { name, value };
+      if (!timer) timer = setTimeout(flush, delayMs);
+    },
+    removeItem: (name) => {
+      if (pending?.name === name) pending = null;
+      void getStorage().removeItem(name);
     },
   };
 }

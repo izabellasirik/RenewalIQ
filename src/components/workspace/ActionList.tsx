@@ -118,7 +118,7 @@ function ActionRow({
           ) : (
             <p className={cn('text-sm', showAccount ? 'text-[var(--color-ink-700)]' : 'font-medium text-[var(--color-ink-900)]')}>{action.title}</p>
           )}
-          <p className={cn('text-xs', action.overdue ? 'font-medium text-[var(--color-danger-600)]' : 'text-[var(--color-ink-500)]')}>{action.detail}</p>
+          <p className={cn('text-xs', action.overdue ? 'font-medium text-[var(--color-danger-600)]' : 'text-[var(--color-ink-500)]')}>{withBoldFollowUp(action.detail)}</p>
         </div>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 pl-9 sm:pl-0">
@@ -173,5 +173,22 @@ function ActionRow({
         )}
       </div>
     </li>
+  );
+}
+
+/** "Follow-up due today" / "Follow-up Oct 3" / "Follow-up 2 days overdue" (see describeDue) stands out in the task's detail line. */
+const FOLLOW_UP_RE = /(Follow-up (?:due today|due tomorrow|\d+ days? overdue|[A-Z][a-z]{2} \d{1,2}(?:, \d{4})?))/;
+
+function withBoldFollowUp(detail: string) {
+  const parts = detail.split(FOLLOW_UP_RE);
+  if (parts.length === 1) return detail;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} className="font-bold" data-testid="follow-up-date">
+        {part}
+      </strong>
+    ) : (
+      part
+    )
   );
 }

@@ -26,11 +26,20 @@ export function settleLossRuns(existing: LossRun[], profile: RiskProfile, now = 
     );
     if (match) {
       const filled: LossRun = { ...match };
+      // Another document showing the same report: remember it (and which empty fields it filled),
+      // so removing either document later only undoes what that document contributed.
+      const fromOther = !!draft.documentId && draft.documentId !== match.documentId;
       for (const [k, v] of Object.entries(draft) as [keyof typeof draft, unknown][]) {
+        if (k === 'documentId') continue;
         const current = filled[k as keyof LossRun];
         const empty = current === undefined || current === '' || (k === 'carrier' && current === 'Carrier not listed');
-        if (empty && v !== undefined) (filled as unknown as Record<string, unknown>)[k] = v;
+        if (empty && v !== undefined) {
+          (filled as unknown as Record<string, unknown>)[k] = v;
+          if (fromOther) filled.fieldSources = { ...filled.fieldSources, [k]: draft.documentId! };
+        }
       }
+      // (A broker-added record keeps no documentId — the document only supports it.)
+      if (fromOther && !(filled.supportingDocumentIds ?? []).includes(draft.documentId!)) filled.supportingDocumentIds = [...(filled.supportingDocumentIds ?? []), draft.documentId!];
       filled.updatedAt = now;
       lossRuns[lossRuns.indexOf(match)] = filled;
       idForKey.set(key, match.id);

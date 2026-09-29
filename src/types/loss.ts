@@ -1,4 +1,4 @@
-import type { FieldSource } from './common';
+import type { FieldSource, ReviewFlag } from './common';
 
 export type LossStatus = 'open' | 'closed';
 
@@ -12,6 +12,10 @@ export interface LossEntry {
   status: LossStatus;
   /** Absent for a broker-added row (isManual: true) — there is no document to point to. */
   source?: FieldSource;
+  /** Other documents that listed this same row (besides `source`) — see FieldValue.support. */
+  support?: FieldSource[];
+  /** Kept for review after its source document was removed — see ReviewFlag. */
+  reviewFlag?: ReviewFlag;
   /** True for a row the broker added or edited directly, rather than one extracted from a document. Deleting a document never removes or alters a manual row. */
   isManual?: boolean;
   lastUpdatedAt?: string;
@@ -44,6 +48,14 @@ export interface LossRun {
   notes?: string;
   /** The uploaded document this came from, if any. */
   documentId?: string;
+  /** Other documents that showed this same report (e.g. it was uploaded twice). */
+  supportingDocumentIds?: string[];
+  /** Fields a later document filled in (field → document id), so removing that document clears only those. */
+  fieldSources?: Partial<Record<string, string>>;
+  /** The broker changed this record by hand — removing its document keeps it (for review). */
+  editedByBroker?: boolean;
+  /** Kept for review after its document was removed — see ReviewFlag. */
+  reviewFlag?: ReviewFlag;
   createdAt: string;
   updatedAt: string;
 }

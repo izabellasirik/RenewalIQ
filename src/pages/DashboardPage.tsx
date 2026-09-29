@@ -94,7 +94,8 @@ export function DashboardPage() {
           : byAgent
             ? brokerFilter === UNASSIGNED
               ? !a.assignedUserId
-              : a.assignedUserId === brokerFilter
+              : // An agent's accounts: assigned to them, or ones they collaborate on.
+                a.assignedUserId === brokerFilter || (a.collaboratorIds ?? []).includes(brokerFilter)
             : brokerFilter === UNASSIGNED
               ? !a.assignedBroker?.name
               : a.assignedBroker?.name?.trim().toLowerCase() === brokerFilter
@@ -201,11 +202,17 @@ export function DashboardPage() {
               <select value={brokerFilter} onChange={(e) => setBrokerFilter(e.target.value)} className={filterClass} aria-label={byAgent ? 'Filter by agent' : 'Filter by assigned broker'}>
                 <option value={ALL_BROKERS}>{byAgent ? 'All agents' : 'All brokers'}</option>
                 {byAgent
-                  ? agencyMembers.map((m) => (
-                      <option key={m.userId} value={m.userId}>
-                        {m.name} ({accounts.filter((a) => a.archived === showArchived && a.assignedUserId === m.userId).length})
-                      </option>
-                    ))
+                  ? agencyMembers.map((m) => {
+                      const shown = accounts.filter((a) => a.archived === showArchived);
+                      const assigned = shown.filter((a) => a.assignedUserId === m.userId).length;
+                      const helping = shown.filter((a) => a.assignedUserId !== m.userId && (a.collaboratorIds ?? []).includes(m.userId)).length;
+                      return (
+                        <option key={m.userId} value={m.userId}>
+                          {m.name} ({assigned + helping}
+                          {helping ? `, incl. ${helping} collaborating` : ''})
+                        </option>
+                      );
+                    })
                   : brokerOptions.map(([key, name]) => (
                       <option key={key} value={key}>
                         {name}

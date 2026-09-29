@@ -207,6 +207,17 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   database functions) and lets anonymous uploads go only to an open request's folder in
   `intake-uploads`. Needs 0026 and 0029 first. Additive, safe to re-run. Until it's applied, requests
   work as before (email only, no link).
+- **`supabase/migrations/0031_upload_review_and_provenance.sql`** — client uploads are checked
+  before they touch the account, and a document's data can be undone precisely. A client upload
+  that doesn't clearly match what was asked for is **held for review**: it stays out of the
+  account's documents and Risk Profile until the broker confirms it. The client can **remove or
+  replace** a file until it's accepted. A file accepted by mistake can be marked **Wrong
+  document**: its upload record is kept (with the reason), the item is asked for again on the same
+  link, and a completed request reopens. Adds a `details` column to `field_values` and
+  `coverage_lines` (every document that supports a value, review flags, which documents created a
+  coverage line) so removing a document removes only what came from it alone. Needs 0028 and 0030
+  first. Additive, safe to re-run (it replaces two 0030 functions with versions that take an extra,
+  optional parameter).
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -281,6 +292,7 @@ from (values
   ('0028_atomic_account_save',        to_regprocedure('public.replace_submission_children(text,jsonb,jsonb,jsonb,jsonb,jsonb,jsonb)') is not null),
   ('0029_intake_reliability',         to_regclass('public.intake_events') is not null),
   ('0030_document_requests',          to_regclass('public.document_requests') is not null),
+  ('0031_upload_review_and_provenance', to_regprocedure('public.withdraw_document_request_file(uuid,text)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

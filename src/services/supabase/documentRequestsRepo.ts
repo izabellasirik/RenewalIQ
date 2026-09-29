@@ -67,6 +67,7 @@ interface RequestRow {
     imported_at: string | null;
     match_status: DocumentRequestFile['matchStatus'];
     match_note: string | null;
+    resolved_item_id?: string | null;
   }[];
 }
 
@@ -111,6 +112,7 @@ function toRequest(r: RequestRow): DocumentRequest {
         importedAt: f.imported_at ?? undefined,
         matchStatus: f.match_status,
         matchNote: f.match_note ?? undefined,
+        resolvedItemId: f.resolved_item_id ?? undefined,
       }))
       .sort((a, b) => (a.uploadedAt < b.uploadedAt ? -1 : 1)),
   };
@@ -184,14 +186,27 @@ export const setRequestNextFollowUp = (requestId: string, nextFollowUp: string |
 export const cancelDocumentRequest = (requestId: string) => call('cancel_document_request', { p_request_id: requestId });
 export const settleRequestItems = (accountId: string, missingItemIds: string[], status: 'satisfied' | 'waived') =>
   call('settle_document_request_items', { p_submission_id: accountId, p_missing_item_ids: missingItemIds, p_status: status });
-export async function claimRequestFile(fileId: string): Promise<boolean> {
-  const r = await call('claim_document_request_file', { p_file_id: fileId });
+/** Short lock before importing a file: `held` for confirming one that waits for review (0031), otherwise one not yet checked. */
+export async function claimRequestFile(fileId: string, held = false): Promise<boolean> {
+  const r = await call('claim_document_request_file', held ? { p_file_id: fileId, p_held: true } : { p_file_id: fileId });
   return r.ok && r.data === true;
 }
-export const completeRequestFile = (fileId: string, documentId: string, match: 'satisfied' | 'needs_review', note?: string) =>
+/** Give a claim back when nothing was imported (0031) — best effort; it lapses after 10 minutes anyway. */
+export const releaseRequestFile = (fileId: string) => call('release_document_request_file', { p_file_id: fileId });
+/** The automatic check's result; a file held for review has no documentId (it isn't in the account yet). */
+export const completeRequestFile = (fileId: string, documentId: string | null, match: 'satisfied' | 'needs_review', note?: string) =>
   call('complete_document_request_file', { p_file_id: fileId, p_document_id: documentId, p_match: match, p_note: note ?? null });
-export const resolveRequestFile = (fileId: string, action: 'satisfy' | 'reject' | 'reassign', targetItemId?: string) =>
-  call('resolve_document_request_file', { p_file_id: fileId, p_action: action, p_target_item_id: targetItemId ?? null });
+/** A held or imported file's review decision; `documentId` is the account document a held file was just imported as (0031). */
+export async function resolveRequestFile(fileId: string, action: 'satisfy' | 'reject' | 'reassign', targetItemId?: string, documentId?: string) {
+  const res = await call('resolve_document_request_file', { p_file_id: fileId, p_action: action, p_target_item_id: targetItemId ?? null, p_document_id: documentId ?? null });
+  // Before 0031 the function had no document parameter.
+  if (!res.ok && /resolve_document_request_file|function .* does not exist|PGRST202/i.test(res.message)) {
+    return call('resolve_document_request_file', { p_file_id: fileId, p_action: action, p_target_item_id: targetItemId ?? null });
+  }
+  return res;
+}
+/** An accepted file was the wrong document: asked for again, request reopened (0031). */
+export const markRequestFileWrong = (fileId: string, note: string) => call('mark_document_request_file_wrong', { p_file_id: fileId, p_note: note });
 
 /** The client's original file, for importing into the account. */
 export async function downloadRequestFile(file: Pick<DocumentRequestFile, 'storagePath' | 'fileName'>): Promise<RepoResult<File>> {
@@ -212,12 +227,23 @@ export async function downloadRequestFile(file: Pick<DocumentRequestFile, 'stora
 // Client (anonymous, link token only)
 // ---------------------------------------------------------------------------------------------
 
+export interface PublicRequestFile {
+  name: string;
+  uploadedAt: string;
+  /** 0031: the client's own key for the file, whether it's accepted yet, and whether they can still remove it. */
+  key?: string;
+  state?: 'checking' | 'accepted';
+  removable?: boolean;
+}
+
 export interface PublicRequestItem {
   id: string;
   label: string;
   instructions?: string | null;
   received: boolean;
-  files: { name: string; uploadedAt: string }[];
+  /** 0031: the agent has accepted what was sent. */
+  confirmed?: boolean;
+  files: PublicRequestFile[];
 }
 
 export interface PublicRequestView {
@@ -283,4 +309,19 @@ export async function uploadRequestFile(
     },
     { onRetry: (attempt, err) => onRetry?.(attempt, errorMessage(err)) }
   );
+}
+
+/** The client takes back a file that hasn't been accepted yet (e.g. the wrong one) — 0031. */
+export async function withdrawRequestFile(token: string, fileKey: string): Promise<RepoResult<PublicRequestView>> {
+  if (!supabase) return fail(NOT_CONFIGURED);
+  try {
+    const data = await withRetry(async () => {
+      const { data, error } = await withTimeout(Promise.resolve(supabase!.rpc('withdraw_document_request_file', { p_token: token, p_file_key: fileKey })), TIMEOUT, 'Removing the file');
+      if (error) throw Object.assign(new Error(error.message), { code: error.code });
+      return data as PublicRequestView;
+    });
+    return { ok: true, data };
+  } catch (err) {
+    return fail(errorMessage(err));
+  }
 }
