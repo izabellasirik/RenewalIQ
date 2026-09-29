@@ -231,3 +231,40 @@ describe('CDL date layouts', () => {
     expect(extractDriverLicenseFields(lines(doc), doc)?.entry.cdlOriginalIssueDate).toBe('08/15/2013');
   });
 });
+
+describe('one person, however the name is printed', () => {
+  const list = { id: 'd1', name: 'Deshaun Walker', dob: '1984-05-23', licenseNumber: '100635861', licenseState: 'TN', source: { documentId: 'list', documentName: 'Driver list.pdf' } } as DriverEntry;
+  const licenseRead = (value: Partial<DriverEntry>) => ({ fieldPath: 'drivers' as const, value, confidence: 'medium' as const, source: { documentId: 'lic', documentName: 'license.jpg' } });
+
+  it('"Walker Deshaun Darrell" on the license (LAST FIRST MIDDLE) is "Deshaun Walker" — one row, class/CDL filled in', async () => {
+    const { mergeIntoRiskProfile } = await import('../../services/extraction/extractionService');
+    const p = createEmptyRiskProfile('a');
+    p.drivers = [list];
+    const merged = mergeIntoRiskProfile(p, [licenseRead({ name: 'Walker Deshaun Darrell', dob: '05/23/1984', licenseNumber: '100635861', licenseState: 'TN', licenseClass: 'A', isCDL: true })]);
+    expect(merged.drivers).toHaveLength(1);
+    expect(merged.drivers[0]).toMatchObject({ name: 'Deshaun Walker', licenseClass: 'A', isCDL: true });
+  });
+
+  it('same license # and DOB with a misread name still one person; a different DOB or license # never', async () => {
+    const { isSameDriver } = await import('../../services/extraction/extractionService');
+    expect(isSameDriver(list, { name: 'Deshawn Walker', dob: '05/23/1984', licenseNumber: '100635861' })).toBe(true);
+    expect(isSameDriver(list, { name: 'Walker Deshaun Darrell', dob: '05/23/1985', licenseNumber: '100635861' })).toBe(false);
+    expect(isSameDriver(list, { name: 'Deshaun Walker', dob: '05/23/1984', licenseNumber: '999999999' })).toBe(false);
+    expect(isSameDriver(list, { name: 'Marcus Walker', licenseNumber: '100635861' })).toBe(false); // same #, no DOB, different person's name
+  });
+
+  it('rows already saved twice are offered for a merge, and merging keeps everything from both', async () => {
+    const { findDuplicateDrivers, mergeDriverRows } = await import('../../services/extraction/extractionService');
+    const second = { id: 'd2', name: 'Walker Deshaun Darrell', dob: '05/23/1984', licenseNumber: '100635861', licenseState: 'TN', licenseClass: 'A', isCDL: true, notes: [{ id: 'n1', text: 'Prefers nights', createdAt: '2026-09-01' }], source: { documentId: 'lic', documentName: 'license.jpg' } } as DriverEntry;
+    const other = { id: 'd3', name: 'Deshaun Walker', dob: '1990-01-01' } as DriverEntry;
+    const pairs = findDuplicateDrivers([list, second, other]);
+    expect(pairs).toHaveLength(1);
+    const merged = mergeDriverRows([list, second, other], pairs[0].keep.id, pairs[0].drop.id);
+    expect(merged).toHaveLength(2);
+    const one = merged.find((d) => d.id === pairs[0].keep.id)!;
+    expect(one).toMatchObject({ licenseNumber: '100635861', licenseClass: 'A', isCDL: true, licenseState: 'TN' });
+    expect(one.notes).toHaveLength(1);
+    expect(one.support?.map((s) => s.documentId).sort()).toEqual([pairs[0].drop.source!.documentId]);
+    expect(findDuplicateDrivers(merged)).toEqual([]);
+  });
+});

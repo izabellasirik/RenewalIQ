@@ -41,6 +41,7 @@ import {
   createEmptyRiskProfile,
   mergeIntoRiskProfile,
   applyReviewCandidate,
+  mergeDriverRows,
   settleLossRuns,
   applyManualEdit,
   applyFieldResolution,
@@ -210,6 +211,8 @@ interface AccountsState {
   addDriver: (accountId: string, entry: Omit<DriverEntry, 'id'>) => void;
   updateDriver: (accountId: string, driverId: string, patch: Partial<DriverEntry>) => void;
   deleteDriver: (accountId: string, driverId: string) => void;
+  /** Two rows that are one person: `keepId` absorbs `dropId` (see mergeDriverRows). */
+  mergeDrivers: (accountId: string, keepId: string, dropId: string) => void;
   /** Driver-specific notes: dated, with author; editing keeps the date and records who edited. Not written to Activity (like account notes). */
   addDriverNote: (accountId: string, driverId: string, text: string) => void;
   updateDriverNote: (accountId: string, driverId: string, noteId: string, text: string) => void;
@@ -1449,6 +1452,22 @@ export const useAccountsStore = create<AccountsState>()(
             riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: new Date().toISOString() } },
             accounts: touchAccount(s.accounts, accountId),
             activityLog: appendEvent(s.activityLog, accountId, 'record_edited', 'Edited a driver.'),
+          };
+        });
+        get().runMatching(accountId);
+        syncNow(accountId);
+      },
+      mergeDrivers: (accountId, keepId, dropId) => {
+        set((s) => {
+          const profile = s.riskProfiles[accountId];
+          if (!profile) return {};
+          const kept = profile.drivers.find((d) => d.id === keepId);
+          const drivers = mergeDriverRows(profile.drivers, keepId, dropId);
+          if (drivers === profile.drivers) return {};
+          return {
+            riskProfiles: { ...s.riskProfiles, [accountId]: { ...profile, drivers, updatedAt: new Date().toISOString() } },
+            accounts: touchAccount(s.accounts, accountId),
+            activityLog: appendEvent(s.activityLog, accountId, 'record_edited', `Merged a duplicate of driver ${kept?.name ?? ''}.`.replace(' .', '.')),
           };
         });
         get().runMatching(accountId);

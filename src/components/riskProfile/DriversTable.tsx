@@ -5,6 +5,8 @@ import { Button, ConfirmDialog } from '../ui';
 import { formatExperience } from '../../utils/duration';
 import { driverExperience, usableCdlIssueDate } from '../../utils/driverExperience';
 import { useAccountsStore } from '../../state/useAccountsStore';
+import { cn } from '../../utils/cn';
+import { findDuplicateDrivers } from '../../services/extraction/extractionService';
 import { formatShortDate, normalizeDateKey } from '../../services/workflow/dates';
 import { formatTimestampShort } from '../workspace/time';
 import { inputClass, labelClass } from '../workspace/formStyles';
@@ -162,13 +164,21 @@ export function DriversTable({
   onAdd,
   onUpdate,
   onDelete,
+  onMerge,
 }: {
   accountId: string;
   drivers: DriverEntry[];
   onAdd: (entry: Omit<DriverEntry, 'id'>) => void;
   onUpdate: (id: string, patch: Partial<DriverEntry>) => void;
   onDelete: (id: string) => void;
+  /** Merge two rows that are one person (`keepId` absorbs `dropId`). */
+  onMerge?: (keepId: string, dropId: string) => void;
 }) {
+  const duplicates = onMerge ? findDuplicateDrivers(drivers) : [];
+  // A flagged duplicate sits right under its match — names printed in a different order
+  // ("Walker Deshaun Darrell" vs "Deshaun Walker") would otherwise land far apart.
+  const dupOf = new Map(duplicates.map(({ keep, drop }) => [drop.id, keep.id]));
+  const rows = drivers.filter((d) => !dupOf.has(d.id)).flatMap((d) => [d, ...drivers.filter((x) => dupOf.get(x.id) === d.id)]);
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -248,6 +258,17 @@ export function DriversTable({
 
   return (
     <div className="overflow-x-auto">
+      {duplicates.map(({ keep, drop }) => (
+        <div key={`${keep.id}-${drop.id}`} className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/30 px-3 py-2 text-sm" data-testid="duplicate-driver">
+          <span className="text-[var(--color-ink-700)]">
+            <strong>{drop.name ?? 'A driver'}</strong> and <strong>{keep.name ?? 'a driver'}</strong> look like the same person
+            {keep.licenseNumber && keep.licenseNumber === drop.licenseNumber ? ` (license ${keep.licenseNumber})` : ' (same name and date of birth)'}.
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => onMerge!(keep.id, drop.id)}>
+            Merge into one
+          </Button>
+        </div>
+      ))}
       <div className="mb-3 flex justify-end">
         <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={startAdd} disabled={editingId !== null}>
           Add driver
@@ -272,13 +293,13 @@ export function DriversTable({
         </thead>
         <tbody>
           {editingId === 'new' && editor(true)}
-          {drivers.map((d) => {
+          {rows.map((d) => {
             if (editingId === d.id) return editor(false);
             const open = expanded.has(d.id);
             const exp = driverExperience(d);
             return (
               <Fragment key={d.id}>
-                <tr className="border-b border-[var(--color-ink-100)] last:border-0">
+                <tr className={cn('border-b border-[var(--color-ink-100)] last:border-0', (dupOf.has(d.id) || [...dupOf.values()].includes(d.id)) && 'bg-[var(--color-warning-100)]/25')} data-duplicate={dupOf.has(d.id) || [...dupOf.values()].includes(d.id) ? 'yes' : undefined}>
                   <td className="py-2.5 align-top">
                     <button onClick={() => toggle(d.id)} className="rounded p-0.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer" aria-label={`${open ? 'Hide' : 'Show'} details for ${d.name ?? 'driver'}`} aria-expanded={open}>
                       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

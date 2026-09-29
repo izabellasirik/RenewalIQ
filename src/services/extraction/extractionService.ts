@@ -211,26 +211,95 @@ function findDuplicateRow<T extends Record<string, unknown>>(existing: T[], entr
 
 const nameTokens = (n: string | undefined) => (n ?? '').toLowerCase().replace(/[^a-z\s,]/g, ' ').replace(/,/g, ' ').split(/\s+/).filter((w) => w.length > 1);
 const sameDateKey = (a: string | undefined, b: string | undefined) => !!a && !!b && (normalizeDateKey(a) ?? a) === (normalizeDateKey(b) ?? b);
-/** Same first and last name (ignoring middle initials, order "Last, First", and case). */
+/**
+ * The same name in any order, with or without middle names: every word of the shorter name is in
+ * the longer one ("Deshaun Walker" = "Walker Deshaun Darrell" = "WALKER, DESHAUN D"). Needs two words.
+ */
 function sameName(a: string | undefined, b: string | undefined): boolean {
   const x = nameTokens(a);
   const y = nameTokens(b);
   if (x.length < 2 || y.length < 2) return false;
-  const [xf, xl] = [x[0], x[x.length - 1]];
-  const [yf, yl] = [y[0], y[y.length - 1]];
-  return (xf === yf && xl === yl) || (xf === yl && xl === yf);
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.every((w) => long.includes(w));
 }
+/** At least one name word in common — enough only when license number AND DOB already match. */
+function namesOverlap(a: string | undefined, b: string | undefined): boolean {
+  const y = nameTokens(b);
+  return nameTokens(a).some((w) => w.length > 2 && y.includes(w));
+}
+const licenseKey = (v?: string) => (v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 /**
- * Two reads of the same driver: the same license number (and names that don't disagree), or the
- * same name and date of birth. Different license numbers or DOBs are never the same driver.
+ * Two reads of the same driver. Never when their DOBs or license numbers differ. Otherwise:
+ *  - same license number and same DOB (names may be spelled or ordered differently);
+ *  - same license number and the same name (any order, middle names ignored);
+ *  - same name, when nothing contradicts it.
  */
 export function isSameDriver(a: Pick<DriverEntry, 'name' | 'dob' | 'licenseNumber'>, b: Pick<DriverEntry, 'name' | 'dob' | 'licenseNumber'>): boolean {
-  const lic = (v?: string) => (v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (a.dob && b.dob && !sameDateKey(a.dob, b.dob)) return false;
-  if (lic(a.licenseNumber) && lic(b.licenseNumber)) return lic(a.licenseNumber) === lic(b.licenseNumber) && (!a.name || !b.name || sameName(a.name, b.name));
-  // Same first and last name, and nothing that says otherwise (no two different DOBs or license
-  // numbers — checked above): "Michael Mong" on a list and "Michael Scott Mong" on his license.
+  const la = licenseKey(a.licenseNumber);
+  const lb = licenseKey(b.licenseNumber);
+  if (la && lb) {
+    if (la !== lb) return false;
+    if (sameDateKey(a.dob, b.dob)) return !a.name || !b.name || namesOverlap(a.name, b.name);
+    return !a.name || !b.name || sameName(a.name, b.name);
+  }
   return sameName(a.name, b.name);
+}
+
+/**
+ * Drivers already on file that are evidently one person: the same license number, or the same name
+ * and DOB (see isSameDriver) — offered for a one-click merge, never merged automatically.
+ */
+export function findDuplicateDrivers(drivers: DriverEntry[]): { keep: DriverEntry; drop: DriverEntry }[] {
+  const pairs: { keep: DriverEntry; drop: DriverEntry }[] = [];
+  const used = new Set<string>();
+  const filled = (d: DriverEntry) => Object.values(d).filter((v) => v !== undefined && v !== null && v !== '').length;
+  for (let i = 0; i < drivers.length; i++) {
+    for (let j = i + 1; j < drivers.length; j++) {
+      const [a, b] = [drivers[i], drivers[j]];
+      if (used.has(a.id) || used.has(b.id)) continue;
+      const strong = (licenseKey(a.licenseNumber) && licenseKey(a.licenseNumber) === licenseKey(b.licenseNumber)) || (sameName(a.name, b.name) && sameDateKey(a.dob, b.dob));
+      if (!strong || !isSameDriver(a, b)) continue;
+      const [keep, drop] = filled(a) >= filled(b) ? [a, b] : [b, a];
+      pairs.push({ keep, drop });
+      used.add(a.id);
+      used.add(b.id);
+    }
+  }
+  return pairs;
+}
+
+/**
+ * The broker merges two rows that are one person: `keep` gets whatever `drop` had that it didn't
+ * (nothing is overwritten), `drop`'s documents, notes and "filled from" records; `drop` goes away.
+ * Two different CDL dates stay a conflict. Pure — returns the new list.
+ */
+export function mergeDriverRows(drivers: DriverEntry[], keepId: string, dropId: string): DriverEntry[] {
+  const keep = drivers.find((d) => d.id === keepId);
+  const drop = drivers.find((d) => d.id === dropId);
+  if (!keep || !drop || keep === drop) return drivers;
+  const next: DriverEntry = { ...keep };
+  const filled: Record<string, string> = { ...(keep.filledFrom ?? {}), ...(drop.filledFrom ?? {}) };
+  for (const [key, value] of Object.entries(drop) as [keyof DriverEntry, unknown][]) {
+    if (DRIVER_MERGE_SKIP.has(key) || key === 'filledFrom' || value === undefined || value === null || value === '') continue;
+    const current = keep[key];
+    if (current === undefined || current === null || current === '') {
+      (next as unknown as Record<string, unknown>)[key] = value;
+      if (drop.source?.documentId) filled[key] = drop.filledFrom?.[key] ?? drop.source.documentId;
+      if (key === 'cdlOriginalIssueDate') next.cdlOriginalIssueSource = drop.cdlOriginalIssueSource;
+    } else if (key === 'cdlOriginalIssueDate' && !sameDateKey(String(current), String(value))) {
+      next.conflicts = { ...(next.conflicts ?? {}), cdlOriginalIssueDate: [...(next.conflicts?.cdlOriginalIssueDate ?? []), { value, extractionMethod: 'ai_extraction' }] };
+    }
+  }
+  const support = [...(keep.support ?? []), ...(drop.source ? [drop.source] : []), ...(drop.support ?? [])].filter(
+    (s, i, all) => s.documentId !== keep.source?.documentId && all.findIndex((x) => x.documentId === s.documentId) === i
+  );
+  next.support = support.length ? support : undefined;
+  next.filledFrom = Object.keys(filled).length ? filled : undefined;
+  if (drop.notes?.length) next.notes = [...(keep.notes ?? []), ...drop.notes];
+  if (drop.isManual) next.isManual = true;
+  next.lastUpdatedAt = new Date().toISOString();
+  return drivers.filter((d) => d.id !== dropId).map((d) => (d.id === keepId ? next : d));
 }
 
 /** Not merged field by field when a second document fills in a driver (bookkeeping, or handled on its own). */

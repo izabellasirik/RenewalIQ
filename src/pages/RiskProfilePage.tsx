@@ -64,6 +64,7 @@ export function RiskProfilePage() {
   const addDriver = useAccountsStore((s) => s.addDriver);
   const updateDriver = useAccountsStore((s) => s.updateDriver);
   const deleteDriver = useAccountsStore((s) => s.deleteDriver);
+  const mergeDrivers = useAccountsStore((s) => s.mergeDrivers);
   const addLoss = useAccountsStore((s) => s.addLoss);
   const updateLoss = useAccountsStore((s) => s.updateLoss);
   const deleteLoss = useAccountsStore((s) => s.deleteLoss);
@@ -275,6 +276,7 @@ export function RiskProfilePage() {
             onAdd={(entry) => addDriver(accountId, entry)}
             onUpdate={(id, patch) => updateDriver(accountId, id, patch)}
             onDelete={(id) => deleteDriver(accountId, id)}
+            onMerge={(keepId, dropId) => mergeDrivers(accountId, keepId, dropId)}
           />
         </SectionCard>
       )}
