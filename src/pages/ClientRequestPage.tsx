@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom';
 import { CircleCheck, Clock, Files, Loader2, RotateCcw, TriangleAlert, Upload } from 'lucide-react';
 import { Button } from '../components/ui';
 import { BrandLogo } from '../components/branding/Logo';
-import { fetchPublicRequest, uploadRequestFile, withdrawRequestFile, type PublicRequestItem, type PublicRequestView } from '../services/supabase/documentRequestsRepo';
+import { fetchPublicRequest, uploadRequestFile, withdrawRequestFile, submitDocumentRequest, type PublicRequestItem, type PublicRequestView } from '../services/supabase/documentRequestsRepo';
 import { errorMessage } from '../services/intake/retry';
 import { cn } from '../utils/cn';
 import { itemState, requestProgress, type ItemState } from '../services/requests/clientProgress';
@@ -247,13 +247,14 @@ export function ClientRequestPage() {
           />
         )}
         {skipped && <p className="mt-2 text-xs text-[var(--color-ink-500)] [overflow-wrap:anywhere]">{skipped}</p>}
-        <p className="mt-5 text-xs text-[var(--color-ink-500)]">Files go straight to your insurance agent. You can come back to this link any time to add what’s still missing.</p>
+        {!closed && <SubmitSection view={view} uploading={uploading} onSubmitted={setView} token={token} />}
       </div>
     </Shell>
   );
 }
 
-const linkButton = 'rounded px-1.5 py-1 font-medium hover:underline cursor-pointer';
+/** A small boxed button (Replace, Remove, Retry…) — easy to see and to tap. */
+const boxButton = 'inline-flex min-h-8 items-center rounded-md border border-[var(--color-ink-200)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-ink-50)] cursor-pointer';
 
 /** One uploaded file: its state in words, and Replace / Remove while your agent hasn't accepted it. */
 function UploadedFile({
@@ -274,27 +275,27 @@ function UploadedFile({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const accepted = file.state === 'accepted';
   return (
-    <li className="flex flex-wrap items-center gap-x-1 gap-y-0.5" data-testid="client-file" data-file-state={file.state ?? 'checking'}>
+    <li className="flex flex-wrap items-center gap-x-2 gap-y-1.5" data-testid="client-file" data-file-state={file.state ?? 'checking'}>
       <span className="min-w-0 [overflow-wrap:anywhere]">
         {accepted ? 'Received' : reviewText}: <span className="font-medium text-[var(--color-ink-800)]">{file.name}</span>
       </span>
       {!accepted && file.removable && file.key && !closed && (
         confirmRemove ? (
-          <span className="inline-flex flex-wrap items-center gap-1">
+          <span className="inline-flex flex-wrap items-center gap-1.5">
             Remove this file?
-            <button className={`${linkButton} text-[var(--color-danger-600)]`} onClick={() => (setConfirmRemove(false), onWithdraw(file.key!))}>
+            <button className={`${boxButton} text-[var(--color-danger-600)]`} onClick={() => (setConfirmRemove(false), onWithdraw(file.key!))}>
               Yes, remove
             </button>
-            <button className={`${linkButton} text-[var(--color-ink-500)]`} onClick={() => setConfirmRemove(false)}>
+            <button className={`${boxButton} text-[var(--color-ink-500)]`} onClick={() => setConfirmRemove(false)}>
               Keep it
             </button>
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1">
-            <button className={`${linkButton} text-[var(--color-brand-700)]`} onClick={() => onReplace(file.key!)}>
+          <span className="inline-flex items-center gap-1.5">
+            <button className={`${boxButton} text-[var(--color-brand-700)]`} onClick={() => onReplace(file.key!)}>
               Replace
             </button>
-            <button className={`${linkButton} text-[var(--color-ink-500)]`} onClick={() => setConfirmRemove(true)}>
+            <button className={`${boxButton} text-[var(--color-ink-500)]`} onClick={() => setConfirmRemove(true)}>
               Remove
             </button>
           </span>
@@ -319,10 +320,10 @@ function PendingList({ pending, onRetry, onRemove }: { pending: Pending[]; onRet
           </span>
           {p.state === 'failed' && (
             <>
-              <button className={`${linkButton} text-[var(--color-brand-700)]`} onClick={() => onRetry(p)}>
+              <button className={`${boxButton} text-[var(--color-brand-700)]`} onClick={() => onRetry(p)}>
                 Retry
               </button>
-              <button className={`${linkButton} text-[var(--color-ink-500)]`} onClick={() => onRemove(p)}>
+              <button className={`${boxButton} text-[var(--color-ink-500)]`} onClick={() => onRemove(p)}>
                 Remove
               </button>
             </>
@@ -382,8 +383,16 @@ function ItemRow({ item, closed, ...h }: RowHandlers & { item: PublicRequestItem
   const replace = useReplacePicker(h.onReplace);
   const state = itemState(item);
   const busy = h.pending.some((p) => p.state !== 'failed');
+  const canUpload = state === 'missing' && !closed;
+  const drop = useFileDrop(h.onChoose, canUpload && !busy);
   return (
-    <li className={cn('rounded-xl border px-4 py-3', STATE_STYLE[state])} data-testid="client-item" data-state={state} data-received={state === 'received' ? 'yes' : 'no'}>
+    <li
+      className={cn('rounded-xl border px-4 py-3 transition-colors', STATE_STYLE[state], drop.over && 'border-[var(--color-brand-500)] bg-[var(--color-brand-50)] ring-2 ring-[var(--color-brand-500)]/30')}
+      data-testid="client-item"
+      data-state={state}
+      data-received={state === 'received' ? 'yes' : 'no'}
+      {...drop.handlers}
+    >
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1">
           <p className="flex items-start gap-2 text-sm font-medium text-[var(--color-ink-900)]">
@@ -415,7 +424,7 @@ function ItemRow({ item, closed, ...h }: RowHandlers & { item: PublicRequestItem
           )}
           {replace.input}
         </div>
-        {state === 'missing' && !closed && (
+        {canUpload && (
           <>
             <input ref={input} type="file" multiple className="hidden" onChange={(e) => (h.onChoose(e.target.files), (e.target.value = ''))} data-testid="client-file-input" />
             <Button icon={<Upload size={15} />} disabled={busy} onClick={() => input.current?.click()} className="min-h-10 w-full sm:w-auto">
@@ -439,22 +448,25 @@ function ItemRow({ item, closed, ...h }: RowHandlers & { item: PublicRequestItem
 function MultiUpload({ unassigned, ...h }: RowHandlers & { unassigned: NonNullable<PublicRequestView['unassigned']> }) {
   const input = useRef<HTMLInputElement>(null);
   const replace = useReplacePicker(h.onReplace);
+  const drop = useFileDrop(h.onChoose, true);
   return (
-    <div className="mt-4 rounded-xl border border-dashed border-[var(--color-ink-200)] px-4 py-3" data-testid="multi-upload">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-        <p className="min-w-0 flex-1 text-xs text-[var(--color-ink-500)]">Have several files? Send them together — they’ll be matched to the right items.</p>
-        <input ref={input} type="file" multiple className="hidden" onChange={(e) => (h.onChoose(e.target.files), (e.target.value = ''))} data-testid="multi-file-input" />
-        <Button variant="secondary" icon={<Files size={15} />} onClick={() => input.current?.click()} className="min-h-10 w-full sm:w-auto">
-          Upload multiple documents
-        </Button>
-      </div>
+    <div
+      className={cn('mt-4 rounded-xl border border-dashed px-4 py-3 transition-colors', drop.over ? 'border-[var(--color-brand-500)] bg-[var(--color-brand-50)]' : 'border-[var(--color-ink-200)]')}
+      data-testid="multi-upload"
+      {...drop.handlers}
+    >
+      <input ref={input} type="file" multiple className="hidden" onChange={(e) => (h.onChoose(e.target.files), (e.target.value = ''))} data-testid="multi-file-input" />
+      <Button variant="secondary" icon={<Files size={15} />} onClick={() => input.current?.click()} className="min-h-11 w-full">
+        Upload multiple documents
+      </Button>
+      <p className="mt-1.5 text-center text-xs text-[var(--color-ink-400)]">{drop.over ? 'Drop to upload' : 'or drag and drop files here'}</p>
       {unassigned.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-0.5 text-xs text-[var(--color-ink-600)]" data-testid="unassigned-files">
+        <ul className="mt-2 flex flex-col gap-1.5 text-xs text-[var(--color-ink-600)]" data-testid="unassigned-files">
           {unassigned.map((f, i) => (
             <UploadedFile
               key={f.key ?? `${f.name}-${i}`}
               file={f}
-              reviewText="Uploaded — your agent is matching it to an item"
+              reviewText="Uploaded"
               closed={false}
               error={f.key ? h.fileErrors[f.key] : undefined}
               onWithdraw={h.onWithdraw}
@@ -465,6 +477,97 @@ function MultiUpload({ unassigned, ...h }: RowHandlers & { unassigned: NonNullab
       )}
       {replace.input}
       <PendingList pending={h.pending} onRetry={h.onRetry} onRemove={h.onRemove} />
+    </div>
+  );
+}
+
+/**
+ * Files dragged onto a box upload the same way as picking them. `over`: a file is being dragged
+ * over it (for the highlight). Disabled boxes ignore drops.
+ */
+function useFileDrop(onFiles: (files: FileList | null) => void, enabled: boolean) {
+  const [over, setOver] = useState(false);
+  const depth = useRef(0);
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  if (!enabled) return { over: false, handlers: {} };
+  return {
+    over,
+    handlers: {
+      onDragEnter: (e: React.DragEvent) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        depth.current += 1;
+        setOver(true);
+      },
+      onDragOver: (e: React.DragEvent) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      },
+      onDragLeave: () => {
+        depth.current = Math.max(0, depth.current - 1);
+        if (depth.current === 0) setOver(false);
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        depth.current = 0;
+        setOver(false);
+        if (e.dataTransfer.files?.length) onFiles(e.dataTransfer.files);
+      },
+    },
+  };
+}
+
+/** Every file the client has uploaded on this request (on items, or not yet matched). */
+function clientFiles(view: PublicRequestView) {
+  return [...view.items.flatMap((i) => i.files), ...(view.unassigned ?? [])];
+}
+
+/**
+ * "Submit": the client is done for now — the agent is told. Files are already uploaded as they're
+ * picked; this doesn't change what's received. Enabled once there's something new since the last
+ * submit and nothing is still uploading.
+ */
+function SubmitSection({ view, uploading, token, onSubmitted }: { view: PublicRequestView; uploading: boolean; token: string; onSubmitted: (v: PublicRequestView) => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const files = clientFiles(view);
+  const submittedAt = view.submittedAt ?? null;
+  const newSince = files.filter((f) => !submittedAt || (f.uploadedAt && f.uploadedAt > submittedAt)).length;
+  const canSubmit = files.length > 0 && newSince > 0 && !uploading && !submitting;
+  return (
+    <div className="mt-5" data-testid="submit-section">
+      <Button
+        className="min-h-11 w-full"
+        disabled={!canSubmit}
+        icon={submitting ? <Loader2 size={15} className="animate-spin" /> : undefined}
+        onClick={async () => {
+          setSubmitting(true);
+          setError(null);
+          const res = await submitDocumentRequest(token);
+          setSubmitting(false);
+          if (res.ok) onSubmitted(res.data);
+          else setError(res.message);
+        }}
+        data-testid="submit-request"
+      >
+        {submittedAt && newSince > 0 ? 'Submit new files' : 'Submit'}
+      </Button>
+      <p className="mt-1.5 text-center text-xs text-[var(--color-ink-500)]" data-testid="submit-status">
+        {error ? (
+          <span className="text-[var(--color-danger-600)]">{error}</span>
+        ) : uploading ? (
+          'Wait for the uploads to finish, then submit.'
+        ) : files.length === 0 ? (
+          'Upload your documents, then submit.'
+        ) : submittedAt && newSince === 0 ? (
+          <span className="inline-flex items-center gap-1 font-medium text-[var(--color-success-600)]">
+            <CircleCheck size={13} /> Submitted — your agent has been notified. You can add more files later.
+          </span>
+        ) : (
+          `${newSince} file${newSince === 1 ? '' : 's'} ready — submit to let your agent know.`
+        )}
+      </p>
     </div>
   );
 }

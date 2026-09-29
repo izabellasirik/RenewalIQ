@@ -236,6 +236,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   Profile. Two nullable columns on `documents` (`review_candidates`, `rejected_count`) keep that
   list with the document so it survives a reload and shows on every device. No RLS change. Until
   it's applied, review items stay on the device that read the document. Additive, safe to re-run.
+- **`supabase/migrations/0035_request_client_submit.sql`** — the client request page's "Submit":
+  the client says "that's everything for now". Records when (`document_requests.client_submitted_at`,
+  shown back to the client) and adds "… submitted their documents (N new files)" to the account's
+  activity. Token-only like the other client calls; needs at least one uploaded file; nothing is
+  accepted or counted by it. Needs 0033 first. Additive, safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -314,6 +319,7 @@ from (values
   ('0032_share_personal_accounts',    to_regprocedure('public.share_account_with_agency(text)') is not null),
   ('0033_request_multi_upload',       to_regprocedure('public.complete_document_request_file(text,text,text,text,text)') is not null),
   ('0034_document_review_candidates', exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'review_candidates')),
+  ('0035_request_client_submit',      to_regprocedure('public.submit_document_request(uuid)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

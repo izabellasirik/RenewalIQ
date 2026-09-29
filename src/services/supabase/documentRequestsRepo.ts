@@ -254,6 +254,8 @@ export interface PublicRequestView {
   accountName: string;
   /** 0033: the agency the client is dealing with (the account's agency, or the name the broker shows clients). */
   agencyName?: string | null;
+  /** When the client last pressed Submit (0035); absent before it's run. */
+  submittedAt?: string | null;
   /** 0033: files sent with "Upload multiple documents" that your agent hasn't placed yet. */
   unassigned?: PublicRequestFile[];
   contactFirstName?: string | null;
@@ -318,6 +320,25 @@ export async function uploadRequestFile(
 }
 
 /** The client takes back a file that hasn't been accepted yet (e.g. the wrong one) — 0031. */
+/**
+ * The client's "Submit": that's everything for now. Records when and tells the broker (activity) —
+ * nothing is accepted or counted by it. Needs migration 0035.
+ */
+export async function submitDocumentRequest(token: string): Promise<RepoResult<PublicRequestView>> {
+  if (!supabase) return fail(NOT_CONFIGURED);
+  try {
+    const data = await withRetry(async () => {
+      const { data, error } = await withTimeout(Promise.resolve(supabase!.rpc('submit_document_request', { p_token: token })), TIMEOUT, 'Submitting');
+      if (error) throw Object.assign(new Error(error.message), { code: error.code });
+      return data as PublicRequestView;
+    });
+    return { ok: true, data };
+  } catch (err) {
+    const message = errorMessage(err);
+    return fail(/submit_document_request|schema cache|PGRST202/i.test(message) ? 'Submitting isn’t available yet — your files are already with your agent.' : message);
+  }
+}
+
 export async function withdrawRequestFile(token: string, fileKey: string): Promise<RepoResult<PublicRequestView>> {
   if (!supabase) return fail(NOT_CONFIGURED);
   try {

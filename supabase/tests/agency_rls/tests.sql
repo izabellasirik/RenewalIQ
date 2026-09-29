@@ -660,3 +660,17 @@ set role anon;
 select pg_temp.as_user('');
 select 'J6 client sees it under its item: ' || (select string_agg((i->>'label') || '=' || (select string_agg((f->>'name') || ':' || (f->>'state'), ',' order by f->>'name') from jsonb_array_elements(i->'files') f), ' | ' order by i->>'label') from jsonb_array_elements(v->'items') i) || ' | unassigned=' || jsonb_array_length(v->'unassigned') from get_document_request(:'tk4') v;
 reset role;
+
+-- ============================================================================================
+-- 0035: the client's "Submit"
+-- ============================================================================================
+set role anon;
+select pg_temp.as_user('');
+do $$ begin perform submit_document_request(current_setting('my.tk5')::uuid); raise notice 'Q1 submit with no files: ALLOWED (BAD)'; exception when others then raise notice 'Q1 submit with no files denied: %', sqlerrm; end $$;
+do $$ begin perform submit_document_request(gen_random_uuid()); raise notice 'Q2 unknown link: ALLOWED (BAD)'; exception when others then raise notice 'Q2 unknown link denied: %', sqlerrm; end $$;
+select v->>'submittedAt' as q_first from submit_document_request(:'tk4') v \gset
+select 'Q3 submitted: submittedAt set=' || (:'q_first' <> '');
+select 'Q4 submitting again with nothing new changes nothing: same time=' || ((v->>'submittedAt') = :'q_first') from submit_document_request(:'tk4') v;
+reset role;
+select 'Q4 broker told once: events=' || count(*) from activity_events where message like '%submitted their documents%';
+select 'Q5 nothing accepted or counted by it: files still=' || (select count(*) from document_request_files f join document_requests r on r.id = f.request_id where r.token = :'tk4'::uuid);
