@@ -60,7 +60,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
     setDeleting(true);
     setDeleteError(null);
     try {
-      const result = await deleteAccountPermanently(account.id);
+      const result = await deleteAccountPermanently(account.id, { archiveFirst: !account.archived });
       if (!result.ok) {
         setDeleting(false);
         setDeleteError(result.message ?? "Something went wrong deleting this account. It hasn't been removed — try again.");
@@ -97,6 +97,21 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
         { key: 'duplicate', label: 'Duplicate for renewal', icon: <Copy size={14} />, onSelect: () => duplicateAccount(account.id) },
         { key: 'history', label: 'View history', icon: <History size={14} />, onSelect: onOpenHistory },
         { key: 'archive', label: 'Archive account', icon: <ArchiveIcon size={14} />, onSelect: () => setArchiveConfirmOpen(true) },
+        // Admins (and brokers outside an agency) can delete an active account outright.
+        ...(canManageArchive
+          ? [
+              {
+                key: 'delete',
+                label: 'Delete permanently',
+                icon: <Trash2 size={14} />,
+                tone: 'danger' as const,
+                onSelect: () => {
+                  setDeleteError(null);
+                  setDeleteConfirmOpen(true);
+                },
+              },
+            ]
+          : []),
       ];
 
   return (

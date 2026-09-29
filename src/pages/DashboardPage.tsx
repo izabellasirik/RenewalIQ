@@ -15,8 +15,6 @@ import { ACCOUNT_STAGE_LABELS, ACCOUNT_STAGE_ORDER, type AccountStage } from '..
 
 const ALL_BROKERS = '__all__';
 const UNASSIGNED = '__unassigned__';
-const ALL_COLLABORATORS = '__all__';
-const NO_COLLABORATORS = '__none__';
 const filterClass =
   'cursor-pointer rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
 
@@ -47,10 +45,6 @@ export function DashboardPage() {
   // by agent; an agent only ever has their own accounts, so there's nothing to filter.
   const byAgent = agencyAccess?.role === 'admin';
   const showBrokerFilter = !agencyAccess || byAgent;
-  // Collaborators are part of the account (0026): anyone in an agency can filter by them — an agent
-  // sees the accounts they're helping on, an admin who's helping where.
-  const [collaboratorFilter, setCollaboratorFilter] = useState<string>(ALL_COLLABORATORS);
-  const showCollaboratorFilter = !!agencyAccess;
   const [renewalSoon, setRenewalSoon] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [historyAccountId, setHistoryAccountId] = useState<string | null>(null);
@@ -100,24 +94,17 @@ export function DashboardPage() {
               ? !a.assignedBroker?.name
               : a.assignedBroker?.name?.trim().toLowerCase() === brokerFilter
       )
-      .filter((a) =>
-        collaboratorFilter === ALL_COLLABORATORS
-          ? true
-          : collaboratorFilter === NO_COLLABORATORS
-            ? !(a.collaboratorIds ?? []).length
-            : (a.collaboratorIds ?? []).includes(collaboratorFilter)
-      )
       .filter((a) => !renewalSoon || (daysToRenewal[a.id] !== undefined && daysToRenewal[a.id] >= 0 && daysToRenewal[a.id] <= RENEWAL_WINDOW_DAYS))
       // Renewal filter on: soonest renewal first. Otherwise most recently updated first.
       .sort((a, b) => (renewalSoon ? daysToRenewal[a.id] - daysToRenewal[b.id] : a.updatedAt < b.updatedAt ? 1 : -1));
-  }, [accounts, showArchived, search, stageFilter, brokerFilter, collaboratorFilter, stageOf, renewalSoon, daysToRenewal, byAgent]);
+  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalSoon, daysToRenewal, byAgent]);
 
   const stageCounts = useMemo(() => {
     const counts: Partial<Record<AccountStage, number>> = {};
     for (const a of accounts) if (a.archived === showArchived) counts[stageOf[a.id]] = (counts[stageOf[a.id]] ?? 0) + 1;
     return counts;
   }, [accounts, showArchived, stageOf]);
-  const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS || collaboratorFilter !== ALL_COLLABORATORS || renewalSoon;
+  const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS || renewalSoon;
 
   const historyAccount = historyAccountId ? accounts.find((a) => a.id === historyAccountId) : null;
 
@@ -221,20 +208,6 @@ export function DashboardPage() {
                 <option value={UNASSIGNED}>Unassigned</option>
               </select>
             )}
-            {showCollaboratorFilter && (
-              <select value={collaboratorFilter} onChange={(e) => setCollaboratorFilter(e.target.value)} className={filterClass} aria-label="Filter by collaborator">
-                <option value={ALL_COLLABORATORS}>All collaborators</option>
-                {agencyMembers
-                  .map((m) => ({ m, n: accounts.filter((a) => a.archived === showArchived && (a.collaboratorIds ?? []).includes(m.userId)).length }))
-                  .filter(({ m, n }) => n > 0 || m.userId === currentUserId)
-                  .map(({ m, n }) => (
-                    <option key={m.userId} value={m.userId}>
-                      {m.userId === currentUserId ? `Me (${m.name})` : m.name} ({n})
-                    </option>
-                  ))}
-                <option value={NO_COLLABORATORS}>No collaborators</option>
-              </select>
-            )}
             <button
               type="button"
               onClick={() => setRenewalSoon((v) => !v)}
@@ -254,7 +227,6 @@ export function DashboardPage() {
                 onClick={() => {
                   setStageFilter('all');
                   setBrokerFilter(ALL_BROKERS);
-                  setCollaboratorFilter(ALL_COLLABORATORS);
                   setRenewalSoon(false);
                 }}
                 className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"

@@ -31,12 +31,7 @@ export function Collaborators({ account }: { account: Account }) {
   // Accounts from before this broker's agency (0011/0022) stay personal until assigned — say so
   // rather than hiding the row, so it doesn't look like it's missing on some accounts.
   if (!account.agencyId)
-    return (
-      <span className="inline-flex items-center gap-1.5 text-sm text-[var(--color-ink-600)]" title="Created before your agency was set up, so only you can see it. Assigning it to a team member moves it into the agency; then you can add collaborators.">
-        <Users size={13} className="text-[var(--color-ink-400)]" />
-        Collaborators: <span className="italic text-[var(--color-ink-400)]">personal account — not shared with your agency</span>
-      </span>
-    );
+    return <PersonalAccount accountId={account.id} agencyName={agencyAccess.agencyName} />;
   const ids = account.collaboratorIds ?? [];
   const nameOf = (id: string) => (id === currentUserId ? 'You' : (members.find((m) => m.userId === id)?.name ?? 'Team member'));
   const canEdit = agencyAccess.role === 'admin' || (!!currentUserId && account.assignedUserId === currentUserId);
@@ -103,5 +98,49 @@ export function Collaborators({ account }: { account: Account }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * An account from before this broker's agency: only they can see it. Its creator (the only person
+ * who can see a personal account) can share it with the agency — it stays assigned to them (0032).
+ */
+function PersonalAccount({ accountId, agencyName }: { accountId: string; agencyName: string | null }) {
+  const share = useAccountsStore((s) => s.shareAccountWithAgency);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const agency = agencyName ?? 'your agency';
+
+  async function doShare() {
+    setBusy(true);
+    setError(null);
+    const res = await share(accountId);
+    setBusy(false);
+    if (!res.ok) setError(res.message ?? 'Could not share it.');
+    else setConfirming(false);
+  }
+
+  return (
+    <span className="relative inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--color-ink-600)]" data-testid="personal-account">
+      <Users size={13} className="text-[var(--color-ink-400)]" />
+      <span className="italic text-[var(--color-ink-400)]">Personal account — not shared with {agency}</span>
+      {confirming ? (
+        <span className="inline-flex items-center gap-1.5 not-italic">
+          <span className="text-xs">Share it? {agency}’s admins will see it; it stays assigned to you.</span>
+          <Button size="sm" onClick={() => void doShare()} disabled={busy}>
+            {busy ? 'Sharing…' : 'Share'}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)} disabled={busy}>
+            Cancel
+          </Button>
+        </span>
+      ) : (
+        <button onClick={() => setConfirming(true)} className="rounded-md px-1.5 py-0.5 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer">
+          Share with agency
+        </button>
+      )}
+      {error && <span className="basis-full text-xs text-[var(--color-danger-600)]">{error}</span>}
+    </span>
   );
 }

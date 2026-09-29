@@ -236,7 +236,10 @@ interface AccountsState {
    * account — the database enforces it). `rollbackUnsavedImport` is only for an intake import whose
    * save failed: that account is removed here and, if part of it reached the cloud, archived there.
    */
-  deleteAccountPermanently: (accountId: string, options?: { rollbackUnsavedImport?: boolean }) => Promise<{ ok: boolean; message?: string }>;
+  /** `archiveFirst`: an admin deleting an active account from the Accounts tab — it's archived, then deleted (the database only deletes archived accounts). */
+  /** A personal account (from before the agency) becomes an agency account; its creator keeps it (0032). */
+  shareAccountWithAgency: (accountId: string) => Promise<{ ok: boolean; message?: string }>;
+  deleteAccountPermanently: (accountId: string, options?: { rollbackUnsavedImport?: boolean; archiveFirst?: boolean }) => Promise<{ ok: boolean; message?: string }>;
 
   // --- Account workflow (contacts, checklist, markets & quotes) ------------------------------
   updateAccountInfo: (accountId: string, patch: { namedInsured?: string; state?: string }) => void;
@@ -1663,6 +1666,21 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
+      shareAccountWithAgency: async (accountId) => {
+        const s = get();
+        if (!s.agencyAccess || !s.currentUserId) return { ok: false, message: 'Join or create an agency first.' };
+        if (!s.cloudAccountIds[accountId]) return { ok: false, message: 'Save this account to your cloud account first.' };
+        const res = await cloudRepo.shareAccountWithAgency(accountId);
+        if (!res.ok) return res;
+        set((st) => ({
+          // In the agency now, still assigned to its creator (the database does the same).
+          accounts: st.accounts.map((a) => (a.id === accountId ? ownedByMe(a) : a)),
+          activityLog: appendEvent(st.activityLog, accountId, 'broker_assigned', `Shared with ${st.agencyAccess?.agencyName ?? 'the agency'}${actorSuffix(st.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
+        return { ok: true };
+      },
+
       deleteAccountPermanently: async (accountId, options) => {
         const s = get();
         const cloudBacked = isSupabaseConfigured && !!s.currentUserId && !!s.cloudAccountIds[accountId];
@@ -1679,6 +1697,21 @@ export const useAccountsStore = create<AccountsState>()(
         }
 
         const account = s.accounts.find((a) => a.id === accountId);
+        if (account && !account.archived && options?.archiveFirst) {
+          // Only someone who may manage archived accounts (an agency admin, or a broker outside any
+          // agency) — the database enforces the same when it deletes.
+          if (!selectCanManageArchive(s)) return { ok: false, message: 'Only an agency admin can permanently delete an account.' };
+          if (cloudBacked) {
+            const archived = await cloudRepo.archiveSubmissionCloud(accountId);
+            if (!archived.ok) return { ok: false, message: `Couldn't delete this account: ${archived.message}` };
+          }
+          // Locally only — a cloud save now could re-create the row right after it's deleted.
+          set((st) => ({ accounts: st.accounts.map((a) => (a.id === accountId ? { ...a, archived: true } : a)) }));
+          const res = await get().deleteAccountPermanently(accountId);
+          if (!res.ok) get().archiveAccount(accountId); // record + save the archive that did happen
+          // If the delete itself didn't go through, the account is archived (restorable), never half-deleted.
+          return res.ok ? res : { ok: false, message: `${res.message} It was archived instead — you can restore it from Archived.` };
+        }
         if (!account?.archived) return { ok: false, message: 'Archive this account first — only archived accounts can be deleted permanently.' };
 
         // A cloud-backed account: ask the database whether this user may delete it BEFORE removing

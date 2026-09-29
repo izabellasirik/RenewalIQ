@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { expandToken } from '../services/publicLinks';
 import { useParams } from 'react-router-dom';
 import { CircleCheck, Loader2, Plus, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { Button } from '../components/ui';
@@ -108,7 +109,9 @@ const UPLOAD_CONCURRENCY = 2;
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);
 
 export function IntakeFormPage() {
-  const { token } = useParams<{ token: string }>();
+  // The short form in links (/i/<32 characters>) and the original (/intake/<uuid>) both work.
+  const rawToken = useParams<{ token: string }>().token;
+  const token = rawToken ? expandToken(rawToken) : rawToken;
   const [status, setStatus] = useState<'loading' | 'invalid' | 'load_error' | 'ready' | 'submitting' | 'submitted' | 'partial'>('loading');
   const [link, setLink] = useState<IntakeLink | null>(null);
   const [answers, setAnswers] = useState<IntakeAnswers>(emptyAnswers);

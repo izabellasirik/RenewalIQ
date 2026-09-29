@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { intakeUrl } from '../services/publicLinks';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWarning, Inbox, Link2, Loader2, RotateCcw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -33,7 +34,7 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const url = `${window.location.origin}/intake/${link.token}`;
+  const url = intakeUrl(link.token);
 
   async function copy() {
     await navigator.clipboard.writeText(url);

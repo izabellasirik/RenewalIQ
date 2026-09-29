@@ -218,6 +218,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   coverage line) so removing a document removes only what came from it alone. Needs 0028 and 0030
   first. Additive, safe to re-run (it replaces two 0030 functions with versions that take an extra,
   optional parameter).
+- **`supabase/migrations/0032_share_personal_accounts.sql`** — lets the person who created a
+  *personal* account (one from before their agency existed) share it with their agency, whatever
+  their role: it moves into the agency and stays assigned to them, so admins can see it and
+  collaborators can be added. Nobody can share someone else's personal account. Needs 0022 first.
+  Additive, safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -293,6 +298,7 @@ from (values
   ('0029_intake_reliability',         to_regclass('public.intake_events') is not null),
   ('0030_document_requests',          to_regclass('public.document_requests') is not null),
   ('0031_upload_review_and_provenance', to_regprocedure('public.withdraw_document_request_file(uuid,text)') is not null),
+  ('0032_share_personal_accounts',    to_regprocedure('public.share_account_with_agency(text)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

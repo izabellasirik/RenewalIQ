@@ -1,6 +1,7 @@
 import { supabase } from './client';
 import type { DocumentRequest, DocumentRequestFile, DocumentRequestItem } from '../../types';
 import { storageSafeName } from './intakeRepo';
+import { clientRequestUrl } from '../publicLinks';
 import { errorMessage, errorStatus, withRetry, withTimeout } from '../intake/retry';
 
 /**
@@ -23,7 +24,7 @@ export const isMissingRequestsSchema = (e: { code?: string; message?: string }) 
   e.code === 'PGRST202' || e.code === 'PGRST205' || e.code === '42P01' || /document_request/.test(e.message ?? '');
 
 export function requestLink(token: string): string {
-  return `${window.location.origin}/request/${token}`;
+  return clientRequestUrl(token);
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -17,10 +17,10 @@ psql -q -v ON_ERROR_STOP=1 -d "$DB" \
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0011_agency_roles.sql" >/dev/null 2>&1
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0011_agency_roles.sql" >/dev/null 2>&1
 # Later migrations that touch profiles/agencies — also re-run once each.
-for m in 0014_activity_actor_name 0017_profile_contact_fields 0018_agency_invitations 0021_account_archive_permissions 0022_assign_own_personal_accounts 0023_agency_carriers 0026_collaborators_notifications 0027_team_management 0024_record_details 0028_atomic_account_save 0030_document_requests 0031_upload_review_and_provenance; do
+for m in 0014_activity_actor_name 0017_profile_contact_fields 0018_agency_invitations 0021_account_archive_permissions 0022_assign_own_personal_accounts 0023_agency_carriers 0026_collaborators_notifications 0027_team_management 0024_record_details 0028_atomic_account_save 0030_document_requests 0031_upload_review_and_provenance 0032_share_personal_accounts; do
   psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/$m.sql" >/dev/null 2>&1
   psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/$m.sql" >/dev/null 2>&1
 done
-ACTUAL="$(psql -q -d "$DB" -f "$DIR/tests.sql" 2>&1 | sed 's/psql:[^ ]* NOTICE:  //' | grep -E '^(L|T|N|X|A|S|F|U|P|I|G|C|K|M|R|D|E|backfill)[0-9 ]')"
+ACTUAL="$(psql -q -d "$DB" -f "$DIR/tests.sql" 2>&1 | sed 's/psql:[^ ]* NOTICE:  //' | grep -E '^(L|T|N|X|A|S|F|U|P|I|G|C|K|M|R|D|E|H|backfill)[0-9 ]')"
 [ -n "${KEEP_DB:-}" ] || psql -q -d postgres -c "drop database $DB" >/dev/null
 if diff <(cat "$DIR/expected.txt") <(echo "$ACTUAL"); then echo "agency RLS: all $(wc -l < "$DIR/expected.txt") checks passed"; else echo "agency RLS: MISMATCH (see diff above)"; exit 1; fi

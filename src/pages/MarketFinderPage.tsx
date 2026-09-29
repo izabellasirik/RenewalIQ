@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Search, Info, Plus, RotateCcw, X } from 'lucide-react';
+import { ChevronRight, Pencil, Search, Info, Plus, RotateCcw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
@@ -180,27 +180,38 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   );
 }
 
-function NeutralMarketList({ records, onOpen }: { records: AppetiteRecord[]; onOpen: (record: AppetiteRecord) => void }) {
+function NeutralMarketList({ records, onOpen, onEdit }: { records: AppetiteRecord[]; onOpen: (record: AppetiteRecord) => void; /** Agency admins only. */ onEdit?: (record: AppetiteRecord) => void }) {
   return (
     <div>
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">All Markets</p>
       <div className="divide-y divide-[var(--color-ink-100)] overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-white">
         {records.map((r) => (
-          <button
-            key={r.id}
-            type="button"
-            onClick={() => onOpen(r)}
-            className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-[var(--color-ink-50)] focus-visible:bg-[var(--color-ink-50)] focus-visible:outline-none cursor-pointer"
-          >
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{r.marketName}</p>
-              {r.parentCompany !== r.marketName && <p className="truncate text-xs text-[var(--color-ink-400)]">{r.parentCompany}</p>}
-            </div>
-            <span className="flex shrink-0 items-center gap-2">
-              <Badge tone="neutral">{r.marketType === 'direct' ? 'Direct' : 'MGA'}</Badge>
-              <ChevronRight size={14} className="text-[var(--color-ink-300)]" />
-            </span>
-          </button>
+          <div key={r.id} className="flex items-center hover:bg-[var(--color-ink-50)]">
+            <button
+              type="button"
+              onClick={() => onOpen(r)}
+              className="flex min-w-0 flex-1 items-center justify-between gap-3 px-4 py-2.5 text-left focus-visible:bg-[var(--color-ink-50)] focus-visible:outline-none cursor-pointer"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{r.marketName}</p>
+                {r.parentCompany !== r.marketName && <p className="truncate text-xs text-[var(--color-ink-400)]">{r.parentCompany}</p>}
+              </div>
+              <span className="flex shrink-0 items-center gap-2">
+                <Badge tone="neutral">{r.marketType === 'direct' ? 'Direct' : 'MGA'}</Badge>
+                {!onEdit && <ChevronRight size={14} className="text-[var(--color-ink-300)]" />}
+              </span>
+            </button>
+            {onEdit && (
+              <button
+                type="button"
+                onClick={() => onEdit(r)}
+                className="mr-3 inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer"
+                aria-label={`Edit ${r.marketName}`}
+              >
+                <Pencil size={12} /> Edit
+              </button>
+            )}
+          </div>
         ))}
       </div>
     </div>
@@ -401,6 +412,16 @@ export function MarketFinderPage() {
                   setBrowsedRecordId(record.id);
                   setDrawerOpen(true);
                 }}
+                onEdit={
+                  isAgencyAdmin
+                    ? (record) => {
+                        // After saving (or cancelling), the form returns to this market's details.
+                        setSelected(null);
+                        setBrowsedRecordId(record.id);
+                        setEditRow(carrierRowFor(record, useAccountsStore.getState().agencyCarriers));
+                      }
+                    : undefined
+                }
               />
             </div>
           ) : (
@@ -446,6 +467,17 @@ export function MarketFinderPage() {
                             setSelected(result);
                             setDrawerOpen(true);
                           }}
+                          onEdit={
+                            isAgencyAdmin
+                              ? () => {
+                                  const record = effectiveAppetiteRecords.find((r) => r.id === result.appetiteRecordId);
+                                  if (!record) return;
+                                  setBrowsedRecordId(null);
+                                  setSelected(result);
+                                  setEditRow(carrierRowFor(record, useAccountsStore.getState().agencyCarriers));
+                                }
+                              : undefined
+                          }
                         />
                       </motion.div>
                     ))}

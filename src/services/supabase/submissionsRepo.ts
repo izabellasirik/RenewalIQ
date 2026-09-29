@@ -655,6 +655,21 @@ export async function canDeleteAccount(submissionId: string): Promise<RepoResult
   }
 }
 
+/** Moves the caller's own personal account into their agency (0032). */
+export async function shareAccountWithAgency(submissionId: string): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { error } = await supabase.rpc('share_account_with_agency', { p_submission_id: submissionId });
+    if (error) {
+      if (/share_account_with_agency|schema cache|PGRST202/i.test(error.message) || error.code === 'PGRST202') return fail('Sharing needs database migration 0032_share_personal_accounts.sql.');
+      return fail(error.message);
+    }
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not share this account.');
+  }
+}
+
 /** Marks just the row archived (the database stamps who/when) — used to take a half-saved import out of the active views. */
 export async function archiveSubmissionCloud(submissionId: string): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;

@@ -599,3 +599,29 @@ select replace_submission_children('acct_r1',
 select 'E8 saved: support=' || (details->'support'->0->>'documentId') from field_values where id = 'acct_r1::transportation::dotNumber';
 select 'E8 saved: coverage sources=' || (details->'sources'->>0) from coverage_lines where id = 'acct_r1::cov::motor_truck_cargo';
 reset role;
+
+-- ============================================================================================
+-- 0032: the creator shares a personal account with their agency
+-- ============================================================================================
+select pg_temp.as_user('');
+insert into submissions (id, user_id, named_insured, organization_id, assigned_user_id) values ('acct_a_old','00000000-0000-0000-0000-00000000000a','A Early',null,null), ('acct_a_old2','00000000-0000-0000-0000-00000000000a','A Early 2',null,null);
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin perform share_account_with_agency('acct_a_old'); raise notice 'H1 admin shares an agent''s personal account: ALLOWED (BAD)'; exception when others then raise notice 'H1 sharing someone else''s account denied: %', sqlerrm; end $$;
+select 'H1 admin can''t see the agent''s personal account=' || count(*) from submissions where id = 'acct_a_old';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select share_account_with_agency('acct_a_old') is null as _h1 \gset
+select 'H2 agent shares own: in agency=' || (organization_id = current_agency_id()) || ' assigned to self=' || (assigned_user_id = '00000000-0000-0000-0000-00000000000a') || ' creator kept=' || (user_id = '00000000-0000-0000-0000-00000000000a') from submissions where id = 'acct_a_old';
+select share_account_with_agency('acct_a_old') is null as _h2 \gset
+select 'H2 again is a no-op: still in agency=' || (organization_id = current_agency_id()) from submissions where id = 'acct_a_old';
+update submissions set organization_id = current_agency_id() where id = 'acct_a_old2';
+select 'H3 a plain update can''t move it: still personal=' || (organization_id is null) from submissions where id = 'acct_a_old2';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'H4 admin now sees the shared account=' || count(*) from submissions where id = 'acct_a_old';
+select 'H4 admin still can''t see the unshared one=' || count(*) from submissions where id = 'acct_a_old2';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform share_account_with_agency('acct_a_old2'); raise notice 'H5 other agency shares it: ALLOWED (BAD)'; exception when others then raise notice 'H5 other agency denied'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
+do $$ begin perform share_account_with_agency('acct_n2'); raise notice 'H6 no agency: ALLOWED (BAD)'; exception when others then raise notice 'H6 without an agency: %', sqlerrm; end $$;
+reset role;
+select 'H5 acct_a_old2 still personal=' || (organization_id is null) from submissions where id = 'acct_a_old2';

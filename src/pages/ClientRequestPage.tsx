@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { expandToken } from '../services/publicLinks';
 import { useParams } from 'react-router-dom';
 import { CircleCheck, Loader2, RotateCcw, TriangleAlert, Upload } from 'lucide-react';
 import { Button } from '../components/ui';
@@ -48,7 +49,8 @@ function Notice({ title, children }: { title: string; children?: React.ReactNode
 }
 
 export function ClientRequestPage() {
-  const { token = '' } = useParams();
+  // The short form in links (/r/<32 characters>) and the original (/request/<uuid>) both work.
+  const token = expandToken(useParams().token ?? '');
   const [view, setView] = useState<PublicRequestView | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pending, setPending] = useState<Record<string, Pending[]>>({});

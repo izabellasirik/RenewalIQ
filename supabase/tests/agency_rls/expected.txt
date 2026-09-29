@@ -228,3 +228,13 @@ E7 other agency cannot mark wrong
 E8 details columns: coverage_lines,field_values
 E8 saved: support=docB
 E8 saved: coverage sources=docA
+H1 sharing someone else's account denied: Only the person who created this account can share it with the agency.
+H1 admin can't see the agent's personal account=0
+H2 agent shares own: in agency=true assigned to self=true creator kept=true
+H2 again is a no-op: still in agency=true
+H3 a plain update can't move it: still personal=true
+H4 admin now sees the shared account=1
+H4 admin still can't see the unshared one=0
+H5 other agency denied
+H6 without an agency: Join or create an agency first.
+H5 acct_a_old2 still personal=true

@@ -1,4 +1,5 @@
 import { supabase } from './client';
+import { inviteUrl } from '../publicLinks';
 
 /**
  * Agency team + invitations (0011 profiles, 0017 phone/job title, 0018 invitations). Everything is
@@ -38,7 +39,7 @@ const NOT_CONFIGURED: RepoResult<never> = { ok: false, message: 'Cloud sign-in i
 const fail = (err: unknown, fallback: string): RepoResult<never> => ({ ok: false, message: err instanceof Error ? err.message : ((err as { message?: string })?.message ?? fallback) });
 
 export function invitationLink(token: string): string {
-  return `${window.location.origin}/invite/${token}`;
+  return inviteUrl(token);
 }
 
 /** The agency's members (an admin gets everyone; RLS gives anyone else only themselves). */

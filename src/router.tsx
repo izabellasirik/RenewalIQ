@@ -34,6 +34,9 @@ export const router = createBrowserRouter([
   { path: '/intake/:token', element: <IntakeFormPage /> },
   // A client document request link (0030) — same idea: no login, only that request's own items.
   { path: '/request/:token', element: <ClientRequestPage /> },
+  // Short forms used in new links (see services/publicLinks.ts).
+  { path: '/r/:token', element: <ClientRequestPage /> },
+  { path: '/i/:token', element: <IntakeFormPage /> },
   // An agency invitation link — works signed out (sign up / sign in from here) and signed in (join).
   { path: '/invite/:token', element: <InvitePage /> },
   {
