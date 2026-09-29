@@ -176,7 +176,7 @@ D1 same click again, same request: true total=1
 D1 other agency create denied: You don't have access to this account.
 D1 other agency reads requests=0
 D1 agency admin reads requests=1
-D2 client view: Roman Trucking LLC | Current MVR — Alex Smith:false, Q2 IFTA:false, Updated Loss Runs:false | status=waiting | keys=accountName,contactFirstName,folder,items,requestId,status
+D2 client view: Roman Trucking LLC | Current MVR — Alex Smith:false, Q2 IFTA:false, Updated Loss Runs:false | status=waiting | keys=accountName,agencyName,contactFirstName,folder,items,requestId,status,unassigned
 D2 unknown link: null
 D2 client reads tables denied
 D3 upload outside an open request denied
@@ -238,3 +238,14 @@ H4 admin still can't see the unshared one=0
 H5 other agency denied
 H6 without an agency: Join or create an agency first.
 H5 acct_a_old2 still personal=true
+J1 upload without an item: unassigned=1 first=many1.pdf removable=true
+J1 retry is no duplicate: unassigned=1
+J2 agency name shown: Agency
+J2 nothing else about the account: keys=accountName,agencyName,contactFirstName,folder,items,requestId,status,unassigned
+J3 other link denied: The file path doesn't belong to this request.
+J4 placing on an item outside the request denied
+J4 placed: item=true match=satisfied mvr=satisfied
+J5 held without item: item=none match=needs_review
+J5 satisfy without an item denied: Choose which requested item this file is.
+J5 placed by broker: match=reassigned resolved=true
+J6 client sees it under its item: Loss runs=loss.pdf:accepted,many2.pdf:accepted | MVR — John Smith=many1.pdf:accepted | unassigned=0

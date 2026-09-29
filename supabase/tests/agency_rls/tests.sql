@@ -625,3 +625,38 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000e');
 do $$ begin perform share_account_with_agency('acct_n2'); raise notice 'H6 no agency: ALLOWED (BAD)'; exception when others then raise notice 'H6 without an agency: %', sqlerrm; end $$;
 reset role;
 select 'H5 acct_a_old2 still personal=' || (organization_id is null) from submissions where id = 'acct_a_old2';
+
+-- ============================================================================================
+-- 0033: "Upload multiple documents" (files without an item) + agency name on the client page
+-- ============================================================================================
+set role anon;
+select pg_temp.as_user('');
+insert into storage.objects (bucket_id, name) values ('intake-uploads', :'tk4' || '/key-j001-00001/many1.pdf'), ('intake-uploads', :'tk4' || '/key-j002-00002/many2.pdf');
+select 'J1 upload without an item: unassigned=' || jsonb_array_length(v->'unassigned') || ' first=' || (v->'unassigned'->0->>'name') || ' removable=' || (v->'unassigned'->0->>'removable') from attach_document_request_file(:'tk4', null, 'key-j001-00001', 'many1.pdf', :'tk4' || '/key-j001-00001/many1.pdf', 10) v;
+select 'J1 retry is no duplicate: unassigned=' || jsonb_array_length(v->'unassigned') from attach_document_request_file(:'tk4', null, 'key-j001-00001', 'many1.pdf', :'tk4' || '/key-j001-00001/many1.pdf', 10) v;
+select attach_document_request_file(:'tk4', null, 'key-j002-00002', 'many2.pdf', :'tk4' || '/key-j002-00002/many2.pdf', 10) is not null as _j1 \gset
+select 'J2 agency name shown: ' || coalesce(v->>'agencyName', 'none') from get_document_request(:'tk4') v;
+select 'J2 nothing else about the account: keys=' || (select string_agg(k, ',' order by k) from jsonb_object_keys(v) k) from get_document_request(:'tk4') v;
+do $$ begin perform attach_document_request_file(current_setting('my.tk5')::uuid, null, 'key-j001-00001', 'many1.pdf', current_setting('my.tk4') || '/key-j001-00001/many1.pdf', 10); raise notice 'J3 other link attaches this file: ALLOWED (BAD)'; exception when others then raise notice 'J3 other link denied: %', sqlerrm; end $$;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select id as fj1 from document_request_files where client_file_key = 'key-j001-00001' \gset
+select id as fj2 from document_request_files where client_file_key = 'key-j002-00002' \gset
+select set_config('my.fj1', :'fj1', false) is not null as _j2 \gset
+-- J4: the automatic check places a clear match on its one item (the MVR, asked for again in E6)
+select claim_document_request_file(:'fj1') and true as _j3 \gset
+do $$ begin perform complete_document_request_file(current_setting('my.fj1'), 'doc_j1', 'satisfied', null, 'no-such-item'); raise notice 'J4 place on a foreign item: ALLOWED (BAD)'; exception when others then raise notice 'J4 placing on an item outside the request denied'; end $$;
+select complete_document_request_file(:'fj1', 'doc_j1', 'satisfied', null, :'it4_mvr') is null as _j4 \gset
+select 'J4 placed: item=' || (request_item_id = :'it4_mvr') || ' match=' || match_status || ' mvr=' || (select status from document_request_items where id = :'it4_mvr') from document_request_files where id = :'fj1';
+-- J5: an unclear one is held without an item; "Yes it's the …" needs an item, "It's for…" places it
+select claim_document_request_file(:'fj2') and true as _j5 \gset
+select complete_document_request_file(:'fj2', null, 'needs_review', 'Uploaded without choosing an item') is null as _j6 \gset
+select 'J5 held without item: item=' || coalesce(request_item_id, 'none') || ' match=' || match_status from document_request_files where id = :'fj2';
+select set_config('my.fj2', :'fj2', false) is not null as _j7 \gset
+do $$ begin perform resolve_document_request_file(current_setting('my.fj2'), 'satisfy', null, 'doc_x'); raise notice 'J5 satisfy without item: ALLOWED (BAD)'; exception when others then raise notice 'J5 satisfy without an item denied: %', sqlerrm; end $$;
+select resolve_document_request_file(:'fj2', 'reassign', :'it4_loss', 'doc_j2') is null as _j8 \gset
+select 'J5 placed by broker: match=' || match_status || ' resolved=' || (resolved_item_id = :'it4_loss') from document_request_files where id = :'fj2';
+set role anon;
+select pg_temp.as_user('');
+select 'J6 client sees it under its item: ' || (select string_agg((i->>'label') || '=' || (select string_agg((f->>'name') || ':' || (f->>'state'), ',' order by f->>'name') from jsonb_array_elements(i->'files') f), ' | ' order by i->>'label') from jsonb_array_elements(v->'items') i) || ' | unassigned=' || jsonb_array_length(v->'unassigned') from get_document_request(:'tk4') v;
+reset role;

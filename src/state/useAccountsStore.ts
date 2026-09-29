@@ -74,7 +74,7 @@ import { inferFileType as inferQuoteFileType } from '../utils/documents';
 import { actionDoneKey, type ActionItem } from '../services/workflow/nextActions';
 import * as requestsRepo from '../services/supabase/documentRequestsRepo';
 import { detectDocumentSignals } from '../services/requests/documentSignals';
-import { matchRequestUpload } from '../services/requests/matchUpload';
+import { matchRequestUpload, placeUnassignedUpload } from '../services/requests/matchUpload';
 import { isOpenRequest, outstandingRequestItems, type DocumentRequest } from '../types';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
@@ -2881,7 +2881,7 @@ export const useAccountsStore = create<AccountsState>()(
         const accountId = r.accountId;
         const res = await requestsRepo.markRequestFileWrong(fileId, reason || 'Wrong document');
         if (!res.ok) return res;
-        const item = r.items.find((i) => i.id === f.requestItemId);
+        const item = r.items.find((i) => i.id === (f.resolvedItemId ?? f.requestItemId));
         const who = r.contactName ?? 'the client';
         // Remove the document and only the data that came from it; edited/confirmed data stays, flagged.
         const report = f.importedDocumentId
@@ -2951,8 +2951,11 @@ export const useAccountsStore = create<AccountsState>()(
                 void requestsRepo.releaseRequestFile(f.id); // tried again on the next check
                 continue;
               }
-              const item = req.items.find((i) => i.id === f.requestItemId);
-              if (!item) continue;
+              const item = f.requestItemId ? req.items.find((i) => i.id === f.requestItemId) : undefined;
+              if (f.requestItemId && !item) {
+                void requestsRepo.releaseRequestFile(f.id);
+                continue;
+              }
               // Read it WITHOUT adding it to the account, and check it's what was asked for.
               const readId = `req_${f.id}`;
               let read: DocumentRead | null = null;
@@ -2962,12 +2965,35 @@ export const useAccountsStore = create<AccountsState>()(
                 read = null; // unreadable — held for review below
               }
               const templateOf = (missingItemId: string) => (get().missingItems[accountId] ?? []).find((m) => m.id === missingItemId)?.templateKey;
+              const accountName = get().accounts.find((a) => a.id === accountId)?.namedInsured;
+              if (!item) {
+                // "Upload multiple documents": placed only on the ONE outstanding item it clearly is.
+                const slot = (i: (typeof req.items)[number]) => ({ requestItemId: i.id, label: i.label, templateKey: templateOf(i.missingItemId) });
+                const placement = placeUnassignedUpload({
+                  signals: read ? readSignals(read, f.fileName) : undefined,
+                  outstanding: req.items.filter((i) => ['requested', 'uploaded', 'needs_review'].includes(i.status)).map(slot),
+                  received: req.items.filter((i) => i.status === 'satisfied').map(slot),
+                  accountName,
+                });
+                if (placement.outcome === 'satisfied' && read) {
+                  const target = req.items.find((i) => i.id === placement.requestItemId)!;
+                  const [documentId] = get().addFiles(accountId, [dl.data], { fromClientRequest: req.contactName ?? 'the client', preRead: [read] });
+                  await waitForProcessed(accountId, documentId, 180_000);
+                  const done = await requestsRepo.completeRequestFile(f.id, documentId, 'satisfied', undefined, target.id);
+                  const targetMissing = (get().missingItems[accountId] ?? []).find((m) => m.id === target.missingItemId);
+                  if (done.ok && targetMissing && targetMissing.status !== 'received') get().markItemReceived(accountId, targetMissing.id, { documentId });
+                } else {
+                  await requestsRepo.completeRequestFile(f.id, null, 'needs_review', placement.outcome === 'needs_review' ? placement.note : 'Uploaded without choosing an item — choose which item it is.');
+                }
+                processed++;
+                continue;
+              }
               const missing = (get().missingItems[accountId] ?? []).find((m) => m.id === item.missingItemId);
               const decision = matchRequestUpload({
                 signals: read ? readSignals(read, f.fileName) : undefined,
                 slot: { requestItemId: item.id, label: item.label, templateKey: missing?.templateKey },
                 others: req.items.map((i) => ({ requestItemId: i.id, label: i.label, templateKey: templateOf(i.missingItemId) })),
-                accountName: get().accounts.find((a) => a.id === accountId)?.namedInsured,
+                accountName,
               });
               if (decision.outcome === 'satisfied' && read) {
                 // Confirmed: now it becomes an account document, from the read we already have.

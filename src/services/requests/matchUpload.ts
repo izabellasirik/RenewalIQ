@@ -83,3 +83,36 @@ export function matchRequestUpload(input: { signals: DocumentSignals | undefined
   }
   return { outcome: 'satisfied' };
 }
+
+export type PlacementDecision = { outcome: 'satisfied'; requestItemId: string } | { outcome: 'needs_review'; note: string; suggestedRequestItemId?: string };
+
+/**
+ * A file the client sent with "Upload multiple documents", without saying which item it is. It's
+ * placed only when it clearly satisfies exactly ONE outstanding item (by the same rules as a file
+ * uploaded for that item); none, or more than one, goes to the broker to decide — never a guess.
+ */
+export function placeUnassignedUpload(input: {
+  signals: DocumentSignals | undefined;
+  /** Items still waiting for a document. */
+  outstanding: RequestedRequirement[];
+  /** Items already received — a match here is probably a duplicate. */
+  received?: RequestedRequirement[];
+  accountName?: string;
+}): PlacementDecision {
+  const { signals, outstanding, received = [], accountName } = input;
+  if (!signals || signals.kinds.length === 0) return { outcome: 'needs_review', note: 'Uploaded without choosing an item, and it couldn’t be read clearly — choose which item it is.' };
+  const all = [...outstanding, ...received];
+  const decide = (slot: RequestedRequirement) => matchRequestUpload({ signals, slot, others: all, accountName });
+  const matches = outstanding.filter((slot) => decide(slot).outcome === 'satisfied');
+  if (matches.length === 1) return { outcome: 'satisfied', requestItemId: matches[0].requestItemId };
+  if (matches.length > 1) return { outcome: 'needs_review', note: `Could be ${matches.map((m) => m.label).join(' or ')} — choose which item it is.` };
+  const alreadyIn = received.find((slot) => decide(slot).outcome === 'satisfied');
+  if (alreadyIn) return { outcome: 'needs_review', note: `Looks like ${alreadyIn.label}, which was already received — a duplicate?`, suggestedRequestItemId: alreadyIn.requestItemId };
+  // Say why it didn't fit, from the closest candidate (same kind of document), if any.
+  const sameKind = outstanding.find((slot) => requirementShape(slot).kind && signals.kinds.includes(requirementShape(slot).kind!));
+  if (sameKind) {
+    const d = decide(sameKind);
+    if (d.outcome === 'needs_review') return { outcome: 'needs_review', note: `Uploaded without choosing an item. ${d.note}`, suggestedRequestItemId: sameKind.requestItemId };
+  }
+  return { outcome: 'needs_review', note: `Uploaded without choosing an item; it looks like ${REQUIREMENT_KIND_LABELS[signals.kinds[0]]}, which doesn’t match anything still needed — choose which item it is.` };
+}

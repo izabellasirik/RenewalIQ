@@ -59,7 +59,7 @@ interface RequestRow {
   }[];
   document_request_files?: {
     id: string;
-    request_item_id: string;
+    request_item_id: string | null;
     file_name: string;
     storage_path: string;
     size_bytes: number | null;
@@ -104,7 +104,7 @@ function toRequest(r: RequestRow): DocumentRequest {
     files: (r.document_request_files ?? [])
       .map((f) => ({
         id: f.id,
-        requestItemId: f.request_item_id,
+        requestItemId: f.request_item_id ?? undefined,
         fileName: f.file_name,
         storagePath: f.storage_path,
         sizeBytes: f.size_bytes ?? undefined,
@@ -195,8 +195,8 @@ export async function claimRequestFile(fileId: string, held = false): Promise<bo
 /** Give a claim back when nothing was imported (0031) — best effort; it lapses after 10 minutes anyway. */
 export const releaseRequestFile = (fileId: string) => call('release_document_request_file', { p_file_id: fileId });
 /** The automatic check's result; a file held for review has no documentId (it isn't in the account yet). */
-export const completeRequestFile = (fileId: string, documentId: string | null, match: 'satisfied' | 'needs_review', note?: string) =>
-  call('complete_document_request_file', { p_file_id: fileId, p_document_id: documentId, p_match: match, p_note: note ?? null });
+export const completeRequestFile = (fileId: string, documentId: string | null, match: 'satisfied' | 'needs_review', note?: string, itemId?: string) =>
+  call('complete_document_request_file', { p_file_id: fileId, p_document_id: documentId, p_match: match, p_note: note ?? null, ...(itemId ? { p_item_id: itemId } : {}) });
 /** A held or imported file's review decision; `documentId` is the account document a held file was just imported as (0031). */
 export async function resolveRequestFile(fileId: string, action: 'satisfy' | 'reject' | 'reassign', targetItemId?: string, documentId?: string) {
   const res = await call('resolve_document_request_file', { p_file_id: fileId, p_action: action, p_target_item_id: targetItemId ?? null, p_document_id: documentId ?? null });
@@ -252,6 +252,10 @@ export interface PublicRequestView {
   folder: string;
   status: 'waiting' | 'partial' | 'complete' | 'cancelled' | 'expired';
   accountName: string;
+  /** 0033: the agency the client is dealing with (the account's agency, or the name the broker shows clients). */
+  agencyName?: string | null;
+  /** 0033: files sent with "Upload multiple documents" that your agent hasn't placed yet. */
+  unassigned?: PublicRequestFile[];
   contactFirstName?: string | null;
   items: PublicRequestItem[];
 }
@@ -282,7 +286,8 @@ const isAlreadyThere = (error: unknown) => errorStatus(error) === 409 || /alread
 export async function uploadRequestFile(
   token: string,
   folder: string,
-  itemId: string,
+  /** null: "Upload multiple documents" — the agent's check works out which item it is. */
+  itemId: string | null,
   fileKey: string,
   file: File,
   onRetry?: (attempt: number, reason: string) => void

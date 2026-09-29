@@ -8,6 +8,8 @@ import { addBusinessDays, todayKey } from '../../services/workflow/dates';
 import type { MissingItem } from '../../types';
 import { inputClass, labelClass } from './formStyles';
 import { isSupabaseConfigured } from '../../services/supabase/client';
+import { splitDriverMvrs } from '../../services/workflow/driverRequirements';
+import { EMPTY_DRIVERS } from '../../utils/emptyArrays';
 
 /** Stands in for the secure link in the draft until it's created (on the first copy / open / send). */
 const LINK_PLACEHOLDER = '[secure upload link — added when you copy or send this]';
@@ -54,7 +56,14 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
         : null,
     [newDocument, accountId, docName, instructions]
   );
-  const selectedItems = useMemo(() => (draftItem ? [draftItem] : candidates.filter((i) => selectedIds.includes(i.id))), [draftItem, candidates, selectedIds]);
+  const pickedItems = useMemo(() => (draftItem ? [draftItem] : candidates.filter((i) => selectedIds.includes(i.id))), [draftItem, candidates, selectedIds]);
+  // "MVRs — all drivers" goes out as one MVR per named driver when the Risk Profile knows them.
+  const drivers = useAccountsStore((s) => s.riskProfiles[accountId]?.drivers) ?? EMPTY_DRIVERS;
+  const driverSplit = useMemo(() => (draftItem ? { display: pickedItems, splits: [] } : splitDriverMvrs(pickedItems, items, drivers)), [draftItem, pickedItems, items, drivers]);
+  const selectedItems = driverSplit.display;
+  // The per-driver checklist items, once created/reused for this request (so repeat clicks reuse them).
+  const splitIds = useRef<string[] | null>(null);
+  const setItemStatus = useAccountsStore((s) => s.setItemStatus);
   const [contactId, setContactId] = useState('');
   const [followUpDate, setFollowUpDate] = useState(() => addBusinessDays(new Date(), 3));
   const [subject, setSubject] = useState('');
@@ -77,6 +86,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     setCopied(false);
     clientKey.current = newKey();
     newItemId.current = null;
+    splitIds.current = null;
     setLink(null);
     setLinkError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,7 +116,25 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
 
   /** The checklist items this request is for (adding "+ Request document"'s item first, once). */
   function requestItemIds(): string[] {
-    if (!newDocument) return selectedItems.map((i) => i.id);
+    if (!newDocument && driverSplit.splits.length === 0) return selectedItems.map((i) => i.id);
+    if (!newDocument) {
+      if (!splitIds.current) {
+        // One canonical item per driver (an existing one is reused); the generic placeholder is
+        // then covered by them, so it's set aside rather than left outstanding.
+        const byLabel = new Map<string, string>();
+        for (const split of driverSplit.splits) {
+          const ids = addMissingItems(
+            accountId,
+            split.drivers.map((d) => ({ label: d.label, type: 'document' as const, templateKey: d.templateKey }))
+          );
+          split.drivers.forEach((d, i) => byLabel.set(d.label, ids[i]));
+          updateMissingItem(accountId, split.genericId, { notes: 'Requested as one MVR per driver.' });
+          setItemStatus(accountId, split.genericId, 'waived');
+        }
+        splitIds.current = selectedItems.map((i) => byLabel.get(i.label) ?? i.id);
+      }
+      return splitIds.current;
+    }
     if (!newItemId.current) {
       // Same requirement still outstanding on the checklist? That item is requested — no duplicate row.
       // Already received? A newer copy is being asked for, so it gets its own row.
@@ -218,15 +246,15 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
         <div className={newDocument ? 'hidden' : undefined}>
           <div className="flex items-center justify-between">
             <p className={labelClass}>
-              Requesting {selectedItems.length} of {candidates.length} — all in one email
+              Requesting {pickedItems.length} of {candidates.length} — all in one email
             </p>
             {candidates.length > 1 && !locked && (
               <button
                 type="button"
-                onClick={() => setSelectedIds(selectedItems.length === candidates.length ? [] : candidates.map((i) => i.id))}
+                onClick={() => setSelectedIds(pickedItems.length === candidates.length ? [] : candidates.map((i) => i.id))}
                 className="text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"
               >
-                {selectedItems.length === candidates.length ? 'Clear all' : 'Select all'}
+                {pickedItems.length === candidates.length ? 'Clear all' : 'Select all'}
               </button>
             )}
           </div>
@@ -253,6 +281,11 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
               );
             })}
           </ul>
+          {driverSplit.splits.some((sp) => sp.drivers.length > 0) && (
+            <p className="mt-1.5 text-xs text-[var(--color-ink-500)]" data-testid="driver-split-note">
+              MVRs will be requested one per driver: {driverSplit.splits.flatMap((sp) => sp.drivers.map((d) => d.label.replace(/^MVR — /, ''))).join(', ')}.
+            </p>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

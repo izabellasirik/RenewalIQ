@@ -10,7 +10,7 @@ psql -q -d postgres -c "drop database if exists $DB" -c "create database $DB" >/
 psql -q -v ON_ERROR_STOP=1 -d "$DB" \
   -c "do \$\$ begin create role authenticated nologin; exception when duplicate_object then null; end \$\$" \
   -f "$DIR/../agency_rls/stub_schema.sql" \
-  -c "alter table storage.objects add column metadata jsonb, add column created_at timestamptz default now(); grant usage on schema public, storage to anon; grant all on storage.objects to anon;" \
+  -c "alter table storage.objects add column if not exists metadata jsonb, add column if not exists created_at timestamptz default now(); grant usage on schema public, storage to anon; grant all on storage.objects to anon;" \
   -f "$MIG/0004_intake_submissions.sql" -f "$MIG/0013_intake_link_organization_name.sql" -f "$MIG/0019_intake_documents_insert_fix.sql" \
   -c "grant all on all tables in schema public to anon, authenticated; grant usage, select on all sequences in schema public to anon, authenticated; alter default privileges in schema public grant all on tables to anon, authenticated;" >/dev/null 2>&1
 # 0029 twice: it must be re-runnable.

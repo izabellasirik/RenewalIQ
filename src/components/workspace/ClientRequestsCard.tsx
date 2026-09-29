@@ -168,6 +168,24 @@ function RequestBlock({ accountId, request: r, onUndone }: { accountId: string; 
           <RequestItemRow key={i.id} request={r} item={i} files={r.files.filter((f) => f.requestItemId === i.id)} documents={documents} onUndone={onUndone} />
         ))}
       </ul>
+      {/* Sent with "Upload multiple documents" and not placed on an item yet. */}
+      {r.files.some((f) => !f.requestItemId && (f.matchStatus === 'pending' || f.matchStatus === 'needs_review')) && (
+        <div className="mt-1.5 rounded-md bg-[var(--color-ink-50)]/60 px-2.5 py-1.5 text-sm" data-testid="unassigned-uploads">
+          <p className="text-xs font-medium text-[var(--color-ink-600)]">Uploaded without choosing an item</p>
+          {r.files
+            .filter((f) => !f.requestItemId && f.matchStatus === 'pending')
+            .map((f) => (
+              <p key={f.id} className="mt-1 inline-flex items-center gap-1 text-xs text-[var(--color-ink-500)]">
+                <Loader2 size={12} className="animate-spin" /> {f.fileName} — checking which item it is
+              </p>
+            ))}
+          {r.files
+            .filter((f) => !f.requestItemId && f.matchStatus === 'needs_review')
+            .map((f) => (
+              <ReviewRow key={f.id} request={r} file={f} doc={documents.find((d) => d.id === f.importedDocumentId)} />
+            ))}
+        </div>
+      )}
 
       {openNow && outstanding.length > 0 && (
         <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-ink-600)]">
@@ -364,11 +382,12 @@ function rollbackSummary(r: RollbackReport): string[] {
 }
 
 /** An upload that couldn't be confirmed automatically: the broker decides, nothing is guessed. */
-function ReviewRow({ request, item, file, doc }: { request: DocumentRequest; item: DocumentRequestItem; file: DocumentRequestFile; doc?: import('../../types').UploadedDocument }) {
+/** `item` absent: a file sent with "Upload multiple documents" that couldn't be placed automatically. */
+function ReviewRow({ request, item, file, doc }: { request: DocumentRequest; item?: DocumentRequestItem; file: DocumentRequestFile; doc?: import('../../types').UploadedDocument }) {
   const resolve = useAccountsStore((s) => s.resolveRequestUpload);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const others = request.items.filter((i) => i.id !== item.id && i.status !== 'waived');
+  const others = request.items.filter((i) => i.id !== item?.id && i.status !== 'waived');
 
   // A held file isn't an account document: open the client's original straight from storage.
   async function openHeldFile() {
@@ -406,9 +425,11 @@ function ReviewRow({ request, item, file, doc }: { request: DocumentRequest; ite
       </div>
       {!doc && <p className="mt-0.5 text-[var(--color-ink-500)]">Not added to the account yet — it’s only added (and read into the Risk Profile) if you confirm it.</p>}
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-        <Button size="sm" disabled={busy} onClick={() => void act('satisfy')}>
-          Yes, it’s the {item.label}
-        </Button>
+        {item && (
+          <Button size="sm" disabled={busy} onClick={() => void act('satisfy')}>
+            Yes, it’s the {item.label}
+          </Button>
+        )}
         {others.length > 0 && (
           <select
             disabled={busy}

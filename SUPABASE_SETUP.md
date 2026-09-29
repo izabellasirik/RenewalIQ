@@ -223,6 +223,13 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   their role: it moves into the agency and stays assigned to them, so admins can see it and
   collaborators can be added. Nobody can share someone else's personal account. Needs 0022 first.
   Additive, safe to re-run.
+- **`supabase/migrations/0033_request_multi_upload.sql`** — the client request page's "Upload
+  multiple documents": a client file may arrive without an item (same token check, same storage
+  verification, max 200 files per request). It never counts by itself — the broker's automatic
+  check assigns it only when it clearly matches exactly one outstanding item, otherwise it's held
+  for review ("It's for…"). The client page also shows the agency's name (the account's agency,
+  else the organization name on the broker's intake link). Needs 0031 first. Additive, safe to
+  re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -299,6 +306,7 @@ from (values
   ('0030_document_requests',          to_regclass('public.document_requests') is not null),
   ('0031_upload_review_and_provenance', to_regprocedure('public.withdraw_document_request_file(uuid,text)') is not null),
   ('0032_share_personal_accounts',    to_regprocedure('public.share_account_with_agency(text)') is not null),
+  ('0033_request_multi_upload',       to_regprocedure('public.complete_document_request_file(text,text,text,text,text)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

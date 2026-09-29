@@ -29,7 +29,8 @@ export interface DocumentRequestItem {
 
 export interface DocumentRequestFile {
   id: string;
-  requestItemId: string;
+  /** Absent for a file the client uploaded with "Upload multiple documents" that isn't placed yet (0033). */
+  requestItemId?: string;
   fileName: string;
   storagePath: string;
   sizeBytes?: number;
