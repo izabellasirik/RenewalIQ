@@ -359,10 +359,16 @@ export function extractInsuranceFields(doc: RawDocument, meta: ExtractionSourceM
   const allLines = toTextLines(doc);
   const textLines = allLines.filter((l) => l.index === undefined || !tableLines.has(l.index));
   const tables = [...(doc.tables ?? []), ...layoutTables];
-  const hasDriverTable = tables.some((t) => classifyTable(t.headers) === 'drivers');
+  // A "driver table" that yields no actual driver (a license record's labels laid out in columns)
+  // doesn't stop the license reader.
+  const hasDriverTable = tables.some((t) => classifyTable(t.headers) === 'drivers' && mapDriverTable(t).length > 0);
 
   const claims: PositionedClaim[] = [];
-  const results = [...extractScalarText(doc, meta, textLines, hasDriverTable), ...extractTables(tables, meta, claims)];
+  const scalar = extractScalarText(doc, meta, textLines, hasDriverTable);
+  // A registration is one vehicle, read by the registration reader; its boxes laid out in columns
+  // are not a vehicle schedule.
+  const registrationRead = scalar.some((r) => r.fieldPath === 'vehicles');
+  const results = [...scalar, ...extractTables(registrationRead ? tables.filter((t) => classifyTable(t.headers) !== 'vehicles') : tables, meta, claims)];
 
   // VINs printed outside a table (declarations pages, emails, questionnaires). A license or
   // registration card already has its own extractor.

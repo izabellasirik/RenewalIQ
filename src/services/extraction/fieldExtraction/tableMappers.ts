@@ -5,6 +5,7 @@ import { COVERAGE_TYPE_ALIASES } from './coveragePatterns';
 import { normalizeVehicleBodyType } from './vehicleBodyType';
 import { normalizeDateKey } from '../../workflow/dates';
 import { isReadableText } from './textQuality';
+import { makeFromCode, plausibleLicenseNumber, plausibleMakeOrModel, plausiblePersonName, plausiblePlate } from './rowValues';
 
 function normalizeHeader(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -207,22 +208,34 @@ export function mapVehicleTable(table: RawTable): MappedVehicleRow[] {
     const entry: Omit<VehicleEntry, 'id' | 'source'> = {};
     const vin = normalizeVin(cell(row, col.vin));
     if (vin) entry.vin = vin;
+    // Make/model only when they read as one (see rowValues.ts) — a registration's code ("FRHT") is
+    // read as its make, and a form's labels or an address in the column are left out.
+    const makeCell = cell(row, col.make);
     if (makeModelTogether) {
-      const [make, ...model] = cell(row, col.make).split(/\s+/);
-      if (make) entry.make = make;
-      if (model.length) entry.model = model.join(' ');
+      const [make, ...model] = makeCell.split(/\s+/);
+      const m = make ? (makeFromCode(make) ?? plausibleMakeOrModel(make, 'make')) : null;
+      if (m) {
+        entry.make = m;
+        const rest = plausibleMakeOrModel(model.join(' '), 'model');
+        if (rest) entry.model = rest;
+      }
     } else {
-      if (cell(row, col.make)) entry.make = cell(row, col.make);
-      if (cell(row, col.model)) entry.model = cell(row, col.model);
+      const make = plausibleMakeOrModel(makeCell, 'make') ?? makeFromCode(makeCell);
+      if (make) entry.make = make;
+      const model = plausibleMakeOrModel(cell(row, col.model), 'model');
+      if (model) entry.model = model;
     }
-    const year = parseCount(cell(row, col.year));
+    // "2015 FRHT" in the make column: the year printed with it.
+    const yearInMake = !cell(row, col.year) && entry.make && entry.make !== makeCell ? makeCell.match(/\b(19[5-9]\d|20\d\d)\b/) : null;
+    const year = parseCount(cell(row, col.year) || (yearInMake ? yearInMake[1] : ''));
     if (year !== null && year >= 1950 && year <= 2100) entry.year = year;
     const value = parseAmount(cell(row, col.value));
     if (value !== null && value > 0) entry.value = value;
     // Only ever derived from an explicit type/body-type column — never guessed from make/model.
     const bodyType = cell(row, col.bodyType) ? normalizeVehicleBodyType(cell(row, col.bodyType)) : null;
     if (bodyType) entry.bodyType = bodyType;
-    if (cell(row, col.plate)) entry.plate = cell(row, col.plate).toUpperCase();
+    const plate = plausiblePlate(cell(row, col.plate));
+    if (plate) entry.plate = plate;
     // A vehicle needs something that identifies it — not just a stray value on a totals-like line.
     if (entry.vin || entry.make || entry.model || entry.plate) results.push({ row: i, entry });
   });
@@ -258,11 +271,12 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
     const entry: Omit<DriverEntry, 'id' | 'source'> = {};
     const full = cell(row, names.name);
     const joined = [cell(row, names.first), cell(row, names.last)].filter(Boolean).join(' ');
-    const name = full || joined;
+    const name = plausiblePersonName(full || joined);
     if (name && !/^(?:total|totals|count)\b/i.test(name)) entry.name = name;
     if (cell(row, col.dob)) entry.dob = isoDate(cell(row, col.dob));
     if (cell(row, col.licenseState)) entry.licenseState = cell(row, col.licenseState).toUpperCase();
-    if (cell(row, col.licenseNumber)) entry.licenseNumber = cell(row, col.licenseNumber).toUpperCase();
+    const licenseNumber = plausibleLicenseNumber(cell(row, col.licenseNumber));
+    if (licenseNumber) entry.licenseNumber = licenseNumber;
     if (cell(row, col.licenseClass)) entry.licenseClass = cell(row, col.licenseClass).toUpperCase().replace(/^CLASS\s+/, '');
     if (cell(row, col.issueDate)) entry.issueDate = isoDate(cell(row, col.issueDate));
     if (cell(row, col.expirationDate)) entry.expirationDate = isoDate(cell(row, col.expirationDate));

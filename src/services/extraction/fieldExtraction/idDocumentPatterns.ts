@@ -1,3 +1,4 @@
+import { makeFromCode } from './rowValues';
 import type { Confidence, DriverEntry, VehicleEntry } from '../../../types';
 import type { TextLine } from './textLines';
 import { parseCount } from './money';
@@ -339,9 +340,15 @@ export function detectVehicleRegistration(text: string): boolean {
   if (/\bvin\b/.test(t)) signals++;
   if (/\bplate\b/.test(t)) signals++;
   if (/\bmake\b/.test(t) && /\bmodel\b/.test(t)) signals++;
-  if (/\bregistration\b/.test(t)) signals++;
+  if (/\bregistration\b|\breg\.?\s*(?:no|number|#)/.test(t)) signals++;
+  if (/\bdecal\b/.test(t)) signals++;
+  if (/\btitle\s*(?:no\.?|number|#)/.test(t)) signals++;
+  if (/\bhsmv\b|\bodometer\b/.test(t)) signals++;
   return signals >= 3;
 }
+
+/** A registration's other box labels — what follows "Make"/"Model" on a header line. */
+const REGISTRATION_LABELS = /^(?:year|make|model|body|color|colour|type|vin|plate|title|weight|use|class|fuel|odometer|owner|decal|expires?|issued?)$/i;
 
 export interface VehicleRegistrationExtraction {
   entry: Omit<VehicleEntry, 'id' | 'source'>;
@@ -380,7 +387,12 @@ export function extractVehicleRegistrationFields(lines: TextLine[], fullText: st
   if (make) {
     attempted++;
     const t = make.raw.trim().replace(/[.,;]+$/, '');
-    if (/^[A-Za-z][A-Za-z-]*$/.test(t)) {
+    // "YEAR MAKE BODY …" header: the next word is another box's label, not the make.
+    const code = makeFromCode(t);
+    if (code) {
+      entry.make = code;
+      excerpts.push(make.line.text);
+    } else if (/^[A-Za-z][A-Za-z-]*$/.test(t) && !REGISTRATION_LABELS.test(t)) {
       entry.make = t.toUpperCase();
       excerpts.push(make.line.text);
     }
@@ -390,7 +402,7 @@ export function extractVehicleRegistrationFields(lines: TextLine[], fullText: st
   if (model) {
     attempted++;
     const t = model.raw.trim().replace(/[.,;]+$/, '');
-    if (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(t)) {
+    if (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(t) && !REGISTRATION_LABELS.test(t)) {
       entry.model = t.toUpperCase();
       excerpts.push(model.line.text);
     }

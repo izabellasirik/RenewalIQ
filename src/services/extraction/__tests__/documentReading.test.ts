@@ -244,3 +244,42 @@ describe('domicile state', () => {
     expect(read('Address: 55 Main St or nearby')).toBeUndefined();
   });
 });
+
+describe('a form read as a table is not a schedule', () => {
+  it('a registration receipt gives its one vehicle, not its labels', () => {
+    const rows = mapVehicleTable({
+      headers: ['Year', 'Make', 'Model', 'Plate'],
+      rows: [
+        ['', '2015 [FRHT | TR 17000', '', '—'],
+        ['', 'Color ——— Primary Brand ——— Secondary Brand ——- gf —— Use —— Prev fssue Dae', '', ''],
+        ['', '| | PRIVATEfoazasatee =', '', ''],
+        ['', 'Odometer Status or Vessel Manufactureror OH use ——— Engine Drive —— Hull Material', '', ''],
+        ['', '| | FE 5', '', ''],
+        ['', 'N COUNTRY CLUB DR APT 204', '', ''],
+        ['', '33180', '', ''],
+      ],
+    });
+    expect(rows.map((r) => r.entry)).toEqual([{ make: 'Freightliner', year: 2015 }]);
+  });
+
+  it('a license record gives its driver, not "Address:" or "Jurisdiction:"', () => {
+    const rows = mapDriverTable({
+      headers: ['Name', 'DOB', 'License Number'],
+      rows: [
+        ['Address:', 'City/State/Zip: Driver Information', ''],
+        ['Jurisdiction:', '', 'REG. NUMBER:'],
+        ['Speciality Code:', '', 'PHONE: ADDITIONAL MESSAGES'],
+        ['Sergey A Gaponov', '07/24/1985', 'G151-781-85-264-0'],
+      ],
+    });
+    expect(rows.map((r) => [r.entry.name, r.entry.licenseNumber])).toEqual([['Sergey A Gaponov', 'G151-781-85-264-0']]);
+  });
+
+  it('real schedules still read: "Last, First" names, numeric models, plates', () => {
+    expect(mapDriverTable({ headers: ['Driver Name', 'DOB', 'CDL #'], rows: [['Reed, Tamika', '1990-02-01', 'R123456'], ["Mary-Jane O'Neil", '', '']] }).map((r) => r.entry.name)).toEqual(['Reed, Tamika', "Mary-Jane O'Neil"]);
+    expect(mapVehicleTable({ headers: ['Year', 'Make', 'Model', 'Plate'], rows: [['2020', 'Peterbilt', '579', 'FL 12AB'], ['2018', 'Great Dane', 'Champion CL', '']] }).map((r) => r.entry)).toEqual([
+      { year: 2020, make: 'Peterbilt', model: '579', plate: 'FL12AB' },
+      { year: 2018, make: 'Great Dane', model: 'Champion CL' },
+    ]);
+  });
+});
