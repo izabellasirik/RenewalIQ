@@ -19,6 +19,7 @@ import { QUOTE_STATUS_TONE } from '../components/workspace/quoteStatus';
 import { ActivityTimeline } from '../components/history/ActivityTimeline';
 import { Dropzone } from '../components/upload/Dropzone';
 import { DocumentList } from '../components/upload/DocumentList';
+import { DownloadAllDocuments } from '../components/upload/DownloadAllDocuments';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useAccountWorkflow } from '../hooks/useAccountWorkflow';
 import { summarizeWaiting, type WorkspaceTab } from '../services/workflow/nextActions';
@@ -178,9 +179,12 @@ export function AccountWorkspacePage() {
                   Uploaded documents
                   <span className="font-normal text-[var(--color-ink-500)]">({documents.length})</span>
                 </h3>
-                <Link to={`/accounts/${accountId}/upload`} className="text-xs font-medium text-[var(--color-brand-700)] hover:underline">
-                  Open upload & extraction view →
-                </Link>
+                <span className="flex items-start gap-4">
+                  <DownloadAllDocuments documents={documents} accountName={account.namedInsured} />
+                  <Link to={`/accounts/${accountId}/upload`} className="text-xs font-medium text-[var(--color-brand-700)] hover:underline">
+                    Open upload & extraction view →
+                  </Link>
+                </span>
               </div>
               <Dropzone onFiles={(files) => addFiles(accountId, files)} />
               <div className="mt-3">

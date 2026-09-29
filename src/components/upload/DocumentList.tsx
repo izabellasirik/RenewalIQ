@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2, Eye } from 'lucide-react';
+import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2, Eye, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
 import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType, CoverageField } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { previewDocumentRemovalImpact } from '../../services/extraction';
 import { Badge, ConfirmDialog } from '../ui';
 import { DocumentPreviewModal } from './DocumentPreviewModal';
+import { downloadDocument } from '../../services/documents/downloadDocuments';
 import { DocumentExtractionDetail } from './DocumentExtractionDetail';
 import { licenseReadIssue } from '../../services/extraction/licenseReadability';
 
@@ -41,6 +42,7 @@ export function DocumentList({
   const [previewDoc, setPreviewDoc] = useState<UploadedDocument | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UploadedDocument | null>(null);
   const [detailDoc, setDetailDoc] = useState<UploadedDocument | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   if (documents.length === 0) return null;
 
@@ -145,6 +147,14 @@ export function DocumentList({
                 title="Preview"
               >
                 <Eye size={15} />
+              </button>
+              <button
+                onClick={() => void downloadDocument(doc).then((ok) => !ok && setDownloadError(doc.id))}
+                className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-brand-700)] cursor-pointer"
+                aria-label={`Download ${doc.name}`}
+                title={downloadError === doc.id ? 'This file isn’t available to download' : 'Download'}
+              >
+                <Download size={15} className={downloadError === doc.id ? 'text-[var(--color-danger-600)]' : undefined} />
               </button>
               {onDelete && (
                 <button
