@@ -70,10 +70,15 @@ export function rekeyRead(read: DocumentRead, documentId: string, documentName: 
     documentName,
     // Values can carry the document id too (a loss-run record's documentId, for one).
     results: read.results.map((r) => {
-      const v = r.value as { documentId?: unknown } | null;
-      const value = v && typeof v === 'object' && !Array.isArray(v) && v.documentId === read.documentId ? { ...v, documentId } : r.value;
+      const v = r.value as { documentId?: unknown; cdlOriginalIssueSource?: { documentId: string; documentName: string } } | null;
+      let value = v && typeof v === 'object' && !Array.isArray(v) && v.documentId === read.documentId ? { ...v, documentId } : r.value;
+      // A driver's original-CDL-date provenance points at the document too.
+      if (v && typeof v === 'object' && v.cdlOriginalIssueSource) value = { ...(value as object), cdlOriginalIssueSource: rekey(v.cdlOriginalIssueSource) };
       return { ...r, value, source: rekey(r.source) };
     }),
-    review: read.review.map((c) => ({ ...c, source: rekey(c.source) })),
+    review: read.review.map((c) => {
+      const v = c.value as { cdlOriginalIssueSource?: { documentId: string; documentName: string } } | null;
+      return { ...c, source: rekey(c.source), ...(v && typeof v === 'object' && v.cdlOriginalIssueSource ? { value: { ...v, cdlOriginalIssueSource: rekey(v.cdlOriginalIssueSource) } } : {}) };
+    }),
   };
 }

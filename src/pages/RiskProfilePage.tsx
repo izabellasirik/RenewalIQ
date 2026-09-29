@@ -28,7 +28,7 @@ import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
 import { emptyField } from '../types';
 import { cn } from '../utils/cn';
-import { formatDuration } from '../utils/duration';
+import { formatExperience } from '../utils/duration';
 import { AssignedAgent } from '../components/workspace/AssignedAgent';
 
 const TREND_ICON = { increasing: TrendingUp, decreasing: TrendingDown, stable: Minus, insufficient_data: Minus };
@@ -240,8 +240,8 @@ export function RiskProfilePage() {
                 { label: 'Driver Count', value: String(driverSummary.driverCount) },
                 { label: 'Min. Age', value: driverSummary.minDriverAge !== null ? String(driverSummary.minDriverAge) : '—' },
                 { label: 'Avg. Age', value: driverSummary.averageDriverAge !== null ? driverSummary.averageDriverAge.toFixed(1) : '—' },
-                { label: 'Min. Experience', value: driverSummary.minExperience !== null ? formatDuration(driverSummary.minExperience) : '—' },
-                { label: 'Avg. Experience', value: driverSummary.averageExperience !== null ? formatDuration(driverSummary.averageExperience) : '—' },
+                { label: 'Min. Experience', value: driverSummary.minExperience !== null ? formatExperience(driverSummary.minExperience) : '—' },
+                { label: 'Avg. Experience', value: driverSummary.averageExperience !== null ? formatExperience(driverSummary.averageExperience) : '—' },
                 {
                   label: 'Violations',
                   value: `${driverSummary.violations.driversWithViolations} of ${driverSummary.violations.totalDrivers} drivers`,

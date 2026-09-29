@@ -122,7 +122,10 @@ const DRIVER_COLS = {
     exclude: /state|class|exp|issue|endorse|restrict|type|date|years|yrs|st$/,
   },
   licenseClass: { synonyms: ['license class', 'lic class', 'cdl class', 'dl class', 'class'] },
-  issueDate: { synonyms: ['issue date', 'date issued', 'license issue date', 'original issue date', 'first licensed', 'issued'] },
+  issueDate: { synonyms: ['issue date', 'date issued', 'license issue date', 'issued'], exclude: /cdl|commercial|original|orig|first/ },
+  cdlOriginalIssueDate: {
+    synonyms: ['original cdl issue date', 'cdl original issue date', 'cdl orig issue date', 'original cdl date', 'cdl issue date', 'cdl issued', 'cdl date', 'cdl since', 'date cdl issued', 'date first cdl', 'first cdl date', 'commercial license issue date', 'commercial license original issue date'],
+  },
   expirationDate: { synonyms: ['expiration date', 'expiry date', 'exp date', 'license expiration', 'expiration', 'expires'], exact: ['exp'] },
   hireDate: { synonyms: ['date of hire', 'hire date', 'date hired', 'hired', 'employment date', 'start date'] },
   yearsExperience: {
@@ -171,7 +174,7 @@ export function classifyTable(headers: string[]): TableKind {
   if (has(VEHICLE_COLS.vin) || (has(VEHICLE_COLS.year) && has(VEHICLE_COLS.make)) || (has(VEHICLE_COLS.make) && has(VEHICLE_COLS.model))) return 'vehicles';
   const names = driverNameColumns(headers);
   const named = names.name !== -1 || (names.first !== -1 && names.last !== -1);
-  const driverish = [DRIVER_COLS.dob, DRIVER_COLS.licenseNumber, DRIVER_COLS.licenseState, DRIVER_COLS.licenseClass, DRIVER_COLS.hireDate, DRIVER_COLS.yearsExperience, DRIVER_COLS.issueDate, DRIVER_COLS.expirationDate].some(has);
+  const driverish = [DRIVER_COLS.dob, DRIVER_COLS.licenseNumber, DRIVER_COLS.licenseState, DRIVER_COLS.licenseClass, DRIVER_COLS.hireDate, DRIVER_COLS.yearsExperience, DRIVER_COLS.issueDate, DRIVER_COLS.expirationDate, DRIVER_COLS.cdlOriginalIssueDate].some(has);
   if ((named && driverish) || has(DRIVER_COLS.dob)) return 'drivers';
   if (has(COVERAGE_COLS.coverageType) && has(COVERAGE_COLS.requestedLimit)) return 'coverage';
   return 'unrecognized';
@@ -256,6 +259,7 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
     licenseNumber: findColumn(h, DRIVER_COLS.licenseNumber),
     licenseClass: findColumn(h, DRIVER_COLS.licenseClass),
     issueDate: findColumn(h, DRIVER_COLS.issueDate),
+    cdlOriginalIssueDate: findColumn(h, DRIVER_COLS.cdlOriginalIssueDate),
     expirationDate: findColumn(h, DRIVER_COLS.expirationDate),
     hireDate: findColumn(h, DRIVER_COLS.hireDate),
     yearsExperience: findColumn(h, DRIVER_COLS.yearsExperience),
@@ -279,6 +283,7 @@ export function mapDriverTable(table: RawTable): MappedDriverRow[] {
     if (licenseNumber) entry.licenseNumber = licenseNumber;
     if (cell(row, col.licenseClass)) entry.licenseClass = cell(row, col.licenseClass).toUpperCase().replace(/^CLASS\s+/, '');
     if (cell(row, col.issueDate)) entry.issueDate = isoDate(cell(row, col.issueDate));
+    if (cell(row, col.cdlOriginalIssueDate)) entry.cdlOriginalIssueDate = isoDate(cell(row, col.cdlOriginalIssueDate));
     if (cell(row, col.expirationDate)) entry.expirationDate = isoDate(cell(row, col.expirationDate));
     if (cell(row, col.hireDate)) entry.hireDate = isoDate(cell(row, col.hireDate));
     if (cell(row, col.mvrReportDate)) entry.mvrReportDate = isoDate(cell(row, col.mvrReportDate));

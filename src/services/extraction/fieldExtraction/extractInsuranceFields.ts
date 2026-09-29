@@ -202,9 +202,10 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLin
   // A driver list (a table of drivers) is not a license, even though it says "License #", "DOB" and "Class".
   const licenseMatch = hasDriverTable ? null : extractDriverLicenseFields(subjectLines(lines), doc.text);
   if (licenseMatch) {
+    const cdlLine = licenseMatch.cdlOriginalIssueLine;
     results.push({
       fieldPath: 'drivers',
-      value: licenseMatch.entry,
+      value: cdlLine ? { ...licenseMatch.entry, cdlOriginalIssueSource: scalarSource(meta, cdlLine.page, cdlLine.text) } : licenseMatch.entry,
       confidence: capConfidence('medium', meta),
       source: scalarSource(meta, undefined, licenseMatch.matchedText),
       extractionMethod: extractionMethodFor(meta),
@@ -311,6 +312,7 @@ function extractTables(tables: (RawTable | LayoutTable)[], meta: ExtractionSourc
       const rows = mapDriverTable(table);
       for (const { row, entry } of rows) {
         const desc = [entry.name, entry.licenseState && `License ${entry.licenseState}`].filter(Boolean).join(' ');
+        if (entry.cdlOriginalIssueDate) entry.cdlOriginalIssueSource = tableSource(meta, table.sheetName, row, `${entry.name ?? 'Driver'} — original CDL issue date ${entry.cdlOriginalIssueDate}`);
         results.push({ fieldPath: 'drivers', value: entry, confidence: 'high', source: tableSource(meta, table.sheetName, row, desc || 'driver'), extractionMethod: 'deterministic_import' });
       }
       if (rows.length > 0) {

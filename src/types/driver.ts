@@ -20,8 +20,18 @@ export interface DriverEntry {
   endorsements?: string;
   /** Legacy number = years; new edits store a Duration in months (utils/duration.ts). */
   yearsExperience?: DurationValue;
-  /** True when experience is counted from issueDate (kept current — see utils/driverExperience.ts); false/absent when entered or corrected by hand, or read from a document. */
+  /** Legacy: experience was counted from the CURRENT license's issue date (a renewal date, not experience). No longer used — see cdlOriginalIssueDate. */
   experienceFromIssueDate?: boolean;
+  /**
+   * When the driver was FIRST issued a commercial (CDL) license — as printed on an MVR, a license
+   * record or a driver schedule ("Original CDL Issue Date"). Driving experience is counted from it,
+   * kept current (see utils/driverExperience.ts). Never the DOB or the current license's issue/renewal date.
+   */
+  cdlOriginalIssueDate?: string;
+  /** Where cdlOriginalIssueDate was read (document, page, text); absent when the broker typed it. */
+  cdlOriginalIssueSource?: import('./common').FieldSource;
+  /** The broker corrected the experience by hand — their figure wins over the CDL-date calculation. */
+  experienceManual?: boolean;
   /** Date of hire with this company, YYYY-MM-DD. */
   hireDate?: string;
   /** Date of this driver's current MVR report, YYYY-MM-DD — used for the freshness check. */

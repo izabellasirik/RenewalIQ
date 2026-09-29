@@ -77,7 +77,7 @@ export function mergeEntryFields<T extends EntryWithMeta>(visionEntry: T | undef
   return { ...merged, fieldConfidence, conflicts: Object.keys(conflicts).length > 0 ? conflicts : undefined };
 }
 
-const DRIVER_FIELDS = ['name', 'dob', 'address', 'licenseState', 'licenseNumber', 'licenseClass', 'isCDL', 'issueDate', 'expirationDate', 'restrictions', 'endorsements'];
+const DRIVER_FIELDS = ['name', 'dob', 'address', 'licenseState', 'licenseNumber', 'licenseClass', 'isCDL', 'issueDate', 'expirationDate', 'cdlOriginalIssueDate', 'restrictions', 'endorsements'];
 const VEHICLE_FIELDS = ['vin', 'make', 'model', 'year', 'plate', 'value', 'bodyType'];
 
 export interface ReconcileImageExtractionInput {
@@ -156,6 +156,8 @@ export function reconcileImageExtraction({ documentId, documentName, ocrResults,
 
   const ocrDriver = ocrRowResults.find((r) => r.fieldPath === 'drivers')?.value as Record<string, unknown> | undefined;
   const mergedDriver = mergeEntryFields(visionResult.driver as EntryWithMeta | undefined, ocrDriver as EntryWithMeta | undefined, DRIVER_FIELDS);
+  // Where the original CDL date was read, when the kept date is the one OCR read.
+  if (mergedDriver && ocrDriver?.cdlOriginalIssueSource && mergedDriver.cdlOriginalIssueDate === ocrDriver.cdlOriginalIssueDate) mergedDriver.cdlOriginalIssueSource = ocrDriver.cdlOriginalIssueSource;
   if (mergedDriver) {
     const hasVision = !!visionResult.driver;
     results.push({

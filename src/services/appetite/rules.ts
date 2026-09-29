@@ -1,5 +1,6 @@
 import type { AppetiteRecord, MatchReason, ReasonGroup, RiskProfile, RuleType, VerificationStatus } from '../../types';
 import { formatDuration, toMonths } from '../../utils/duration';
+import { driverExperience } from '../../utils/driverExperience';
 
 function groupFor(status: MatchReason['status'], isDataGap?: boolean): ReasonGroup {
   if (status === 'fail') return 'failed';
@@ -247,11 +248,27 @@ export function evaluateCommodities(record: AppetiteRecord, profile: RiskProfile
   return reason('Commodities', 'pass', `All hauled commodities (${commodities.join(', ')}) sit squarely in ${record.marketName}'s published appetite.`, ruleType);
 }
 
+/**
+ * The account's least-experienced driver, in months, for appetite matching — from each driver's
+ * current experience (counted from their original CDL issue date to today, or as stated/entered;
+ * see driverExperience). `complete`: every driver's experience is known. With no drivers on file,
+ * the Minimum Driver Experience field is used as before.
+ */
+export function minDriverExperienceMonths(profile: RiskProfile, asOf?: string): { months: number | null; complete: boolean } {
+  if (profile.drivers.length > 0) {
+    const known = profile.drivers.map((d) => toMonths(driverExperience(d, asOf))).filter((m): m is number => m !== null);
+    if (known.length > 0) return { months: Math.min(...known), complete: known.length === profile.drivers.length };
+  }
+  const field = toMonths(profile.transportation.minDriverExperienceYears.value);
+  return { months: field, complete: field !== null };
+}
+
 export function evaluateDriverRequirements(record: AppetiteRecord, profile: RiskProfile): MatchReason {
   const minAge = profile.transportation.minDriverAge.value;
   // Months on both sides (carrier minimums are years, possibly fractional — 8 months ≈ 0.67).
-  const minExp = toMonths(profile.transportation.minDriverExperienceYears.value);
-  const expText = formatDuration(profile.transportation.minDriverExperienceYears.value);
+  const experience = minDriverExperienceMonths(profile);
+  const minExp = experience.months;
+  const expText = formatDuration(minExp === null ? null : { months: minExp });
   const ageCriterion = record.minDriverAge;
   const expCriterion = record.minDriverExperienceYears;
   const ageUsable = isUsable(ageCriterion.verificationStatus) && ageCriterion.value !== null;
@@ -279,7 +296,8 @@ export function evaluateDriverRequirements(record: AppetiteRecord, profile: Risk
     if (expCriterion.ruleType === 'HARD_RULE') return reason('Driver Requirements', 'fail', failText, expCriterion.ruleType);
     return reason('Driver Requirements', 'warning', failText, expCriterion.ruleType, false);
   }
-  const stillUnknownSide = (!ageUsable && ageCriterion.ruleType !== 'UNKNOWN') || (!expUsable && expCriterion.ruleType !== 'UNKNOWN') || minAge === null || minExp === null;
+  // A driver whose experience isn't known could be the least experienced one.
+  const stillUnknownSide = (!ageUsable && ageCriterion.ruleType !== 'UNKNOWN') || (!expUsable && expCriterion.ruleType !== 'UNKNOWN') || minAge === null || minExp === null || (expUsable && !experience.complete);
   if (stillUnknownSide) {
     return reason(
       'Driver Requirements',

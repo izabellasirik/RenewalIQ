@@ -2,7 +2,7 @@ import { driverExperience } from '../../utils/driverExperience';
 import type { ApplicationTemplate, DriverEntry, LossEntry, VehicleEntry } from '../../types';
 import { COVERAGE_LABELS, DEDUCTIBLE_COVERAGES } from '../../types';
 import { formatCurrency, formatDateMDY, formatNewVenture, formatStatus } from './formatters';
-import { formatDuration } from '../../utils/duration';
+import { formatExperience } from '../../utils/duration';
 
 const CURRENT_POLICY_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability'] as const;
 const REQUESTED_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability', 'warehouse_legal_liability'] as const;
@@ -105,7 +105,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           { key: 'name', label: 'Driver Name' },
           { key: 'dob', label: 'DOB', format: (e) => ((e as DriverEntry).dob ? formatDateMDY((e as DriverEntry).dob) : '') },
           { key: 'licenseState', label: 'License State' },
-          { key: 'yearsExperience', label: 'Experience', format: (e) => formatDuration(driverExperience(e as DriverEntry)) },
+          { key: 'yearsExperience', label: 'Experience', format: (e) => formatExperience(driverExperience(e as DriverEntry)) },
           { key: 'violations', label: 'Violations' },
         ],
       },

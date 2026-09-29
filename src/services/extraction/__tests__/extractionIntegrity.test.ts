@@ -141,7 +141,7 @@ describe('G — downstream numbers only see applied data', () => {
     expect(deriveDriverSummary(profile.drivers).driverCount).toBe(0);
     expect(profile.transportation.fleetSize.isMissing).toBe(true);
     // Market Finder: no fleet size was confirmed, so it asks rather than matching on a made-up 7.
-    const record = { marketName: 'Test Market', fleetSize: { value: { min: 5, max: 50 }, verificationStatus: 'verified', ruleType: 'hard' } } as unknown as AppetiteRecord;
+    const record = { marketName: 'Test Market', fleetSize: { value: { min: 5, max: 50 }, verificationStatus: 'VERIFIED', ruleType: 'HARD_RULE' } } as unknown as AppetiteRecord;
     expect(evaluateFleetSize(record, profile).status).toBe('warning');
   });
 });

@@ -143,10 +143,25 @@ export function detectDriverLicense(text: string): boolean {
 
 export interface DriverLicenseExtraction {
   entry: Omit<DriverEntry, 'id' | 'source'>;
+  /** The line the original CDL issue date was read from (its provenance). */
+  cdlOriginalIssueLine?: TextLine;
   matchedText: string;
   /** How many license fields had a label match at all, whether or not the value passed validation — for debug/telemetry only, never logged with the actual values. */
   fieldsAttempted: number;
 }
+
+const COMMERCIAL = "(?:cdl|commercial(?:\\s+driver'?s?)?(?:\\s+licen[cs]e)?|class\\s+[ab]\\b(?:\\s+(?:cdl|licen[cs]e))?)";
+const ORIGINAL = '(?:original(?:ly)?|orig\\.?|first)';
+const ISSUED = '(?:issue|iss\\.?|issued)(?:\\s*date)?';
+const DATE_CAPTURE = '\\s*[:#-]?\\s*(\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})';
+/** "Original CDL Issue Date: 07/13/2013", "CDL Original Issue 07/13/2013", "Commercial License Originally Issued: …", "Date CDL First Issued …", "CDL Since …". */
+export const CDL_ORIGINAL_ISSUE_PATTERNS = [
+  new RegExp(`${ORIGINAL}\\s+${COMMERCIAL}\\s+${ISSUED}${DATE_CAPTURE}`, 'i'),
+  new RegExp(`${COMMERCIAL}\\s+${ORIGINAL}\\s+${ISSUED}${DATE_CAPTURE}`, 'i'),
+  new RegExp(`${COMMERCIAL}\\s+${ISSUED}\\s+\\(?${ORIGINAL}\\)?${DATE_CAPTURE}`, 'i'),
+  new RegExp(`date\\s+${COMMERCIAL}\\s+(?:was\\s+)?${ORIGINAL}\\s+issued${DATE_CAPTURE}`, 'i'),
+  new RegExp(`${COMMERCIAL}\\s+(?:holder\\s+)?since${DATE_CAPTURE}`, 'i'),
+];
 
 export function extractDriverLicenseFields(lines: TextLine[], fullText: string): DriverLicenseExtraction | null {
   if (!detectDriverLicense(fullText)) return null;
@@ -271,7 +286,8 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
   }
 
   const iss = firstValidMatch(
-    lines,
+    // The current license's issue date — never the "Original CDL Issue Date" line.
+    lines.filter((l) => !CDL_ORIGINAL_ISSUE_PATTERNS.some((re) => re.test(l.text)) && !/\b(?:original(?:ly)?|orig\.?|first)\s+(?:issue|iss)/i.test(l.text)),
     withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}iss(?:ue)?(?:\\s*date)?\\b\\s*:?\\s*(\\S+)`, 'i')),
     normalizeDate
   );
@@ -296,6 +312,18 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
     entry.expirationDate = exp.value;
     fieldConfidence.expirationDate = 'medium';
     excerpts.push(exp.line.text);
+  }
+
+  // When the driver FIRST got a commercial license — what driving experience is counted from. Only
+  // a label that says so ("Original CDL Issue Date", "CDL Orig Iss", "Commercial License Originally
+  // Issued", "CDL Since"): a bare "Original Issue Date" may be their first (non-commercial) license
+  // and is left alone rather than guessed at.
+  const cdlOrig = firstValidMatch(lines, CDL_ORIGINAL_ISSUE_PATTERNS, normalizeDate);
+  if (cdlOrig) {
+    attempted++;
+    entry.cdlOriginalIssueDate = cdlOrig.value;
+    fieldConfidence.cdlOriginalIssueDate = 'medium';
+    excerpts.push(cdlOrig.line.text);
   }
 
   // restrictions/endorsements have no fixed format to validate against (unlike a date or an
@@ -326,7 +354,7 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
   if (populatedFields === 0) return null;
 
   entry.fieldConfidence = fieldConfidence;
-  return { entry, matchedText: excerpts.slice(0, 3).join(' | ') || 'Driver license fields', fieldsAttempted: attempted };
+  return { entry, matchedText: excerpts.slice(0, 3).join(' | ') || 'Driver license fields', fieldsAttempted: attempted, ...(cdlOrig ? { cdlOriginalIssueLine: cdlOrig.line } : {}) };
 }
 
 // ---------------------------------------------------------------------------

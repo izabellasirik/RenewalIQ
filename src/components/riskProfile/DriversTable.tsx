@@ -2,8 +2,8 @@ import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Plus, Pencil, Trash2, User, AlertTriangle, ChevronDown, ChevronRight, StickyNote } from 'lucide-react';
 import type { DriverEntry, DriverNote } from '../../types';
 import { Button, ConfirmDialog } from '../ui';
-import { formatDuration, toMonths } from '../../utils/duration';
-import { driverExperience, monthsSince } from '../../utils/driverExperience';
+import { formatExperience, toMonths } from '../../utils/duration';
+import { driverExperience, driverExperienceWithBasis, usableCdlIssueDate } from '../../utils/driverExperience';
 import { DurationInput } from './DurationInput';
 import { EMPTY_DURATION_DRAFT, draftToDuration, durationToDraft, type DurationDraft } from '../../utils/durationDraft';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -22,13 +22,14 @@ type Draft = {
   licenseClass: string;
   issueDate: string;
   expirationDate: string;
+  cdlOriginalIssueDate: string;
   hireDate: string;
   mvrReportDate: string;
   yearsExperience: DurationDraft;
   violations: string;
 };
 
-const EMPTY_DRAFT: Draft = { name: '', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', issueDate: '', expirationDate: '', hireDate: '', mvrReportDate: '', yearsExperience: EMPTY_DURATION_DRAFT, violations: '' };
+const EMPTY_DRAFT: Draft = { name: '', address: '', dob: '', licenseState: '', licenseNumber: '', licenseClass: '', issueDate: '', expirationDate: '', cdlOriginalIssueDate: '', hireDate: '', mvrReportDate: '', yearsExperience: EMPTY_DURATION_DRAFT, violations: '' };
 
 /** A date input wants YYYY-MM-DD; a value read off a document may be "04/02/1980" — normalized when possible, else shown as text. */
 const dateDraft = (v?: string) => (v ? (normalizeDateKey(v) ?? v) : '');
@@ -43,6 +44,7 @@ function toDraft(d: DriverEntry): Draft {
     licenseClass: d.licenseClass ?? '',
     issueDate: dateDraft(d.issueDate),
     expirationDate: dateDraft(d.expirationDate),
+    cdlOriginalIssueDate: dateDraft(d.cdlOriginalIssueDate),
     hireDate: d.hireDate ?? '',
     mvrReportDate: d.mvrReportDate ?? '',
     yearsExperience: durationToDraft(driverExperience(d)),
@@ -51,14 +53,18 @@ function toDraft(d: DriverEntry): Draft {
 }
 
 /**
- * Experience: counted from the license issue date unless the broker typed something different —
- * then their figure is kept as a manual correction. `experienceTouched`: the broker changed the
- * experience box in this edit.
+ * Experience: counted from the original CDL issue date (kept current) unless the broker typed a
+ * different figure — then theirs is kept as a manual correction. `experienceTouched`: the broker
+ * changed the experience box in this edit. `before`: the row being edited — a CDL date that didn't
+ * change keeps the document it was read from.
  */
-export function fromDraft(d: Draft, experienceTouched: boolean): Omit<DriverEntry, 'id'> {
+export function fromDraft(d: Draft, experienceTouched: boolean, before?: DriverEntry): Omit<DriverEntry, 'id'> {
   const typed = draftToDuration(d.yearsExperience) ?? undefined;
-  const fromIssue = d.issueDate ? monthsSince(d.issueDate) : null;
-  const auto = fromIssue !== null && (!experienceTouched || typed === undefined || toMonths(typed) === fromIssue);
+  const cdlDate = d.cdlOriginalIssueDate.trim() || undefined;
+  const fromCdl = cdlDate ? (driverExperienceWithBasis({ cdlOriginalIssueDate: cdlDate, dob: d.dob.trim() || undefined })?.value ?? null) : null;
+  const differs = typed !== undefined && (fromCdl === null || toMonths(typed) !== toMonths(fromCdl));
+  const manual = experienceTouched ? differs : !!before?.experienceManual && differs;
+  const keepSource = before?.cdlOriginalIssueSource && dateDraft(before.cdlOriginalIssueDate) === cdlDate;
   return {
     name: d.name.trim() || undefined,
     address: d.address.trim() || undefined,
@@ -68,10 +74,14 @@ export function fromDraft(d: Draft, experienceTouched: boolean): Omit<DriverEntr
     licenseClass: d.licenseClass.trim() || undefined,
     issueDate: d.issueDate.trim() || undefined,
     expirationDate: d.expirationDate.trim() || undefined,
+    cdlOriginalIssueDate: cdlDate,
+    cdlOriginalIssueSource: keepSource ? before!.cdlOriginalIssueSource : undefined,
     hireDate: d.hireDate || undefined,
     mvrReportDate: d.mvrReportDate || undefined,
-    yearsExperience: auto ? { months: fromIssue! } : typed,
-    experienceFromIssueDate: auto,
+    // With a usable CDL date the figure is calculated (stored value only as a fallback); otherwise it's what was typed.
+    yearsExperience: manual || fromCdl === null ? typed : undefined,
+    experienceManual: manual || undefined,
+    experienceFromIssueDate: false,
     violations: d.violations.trim() || undefined,
   };
 }
@@ -87,6 +97,13 @@ function reviewTooltip(d: DriverEntry): string {
     return `AI vision and OCR read this row's ${fields} differently — double-check against the source photo.`;
   }
   return 'Some fields on this row were a shakier read — double-check against the source photo.';
+}
+
+/** Where the original CDL date came from, for the hover text. */
+function cdlSourceTitle(d: DriverEntry): string {
+  const s = d.cdlOriginalIssueSource;
+  if (!s) return `Original CDL issue date ${d.cdlOriginalIssueDate} — entered in Renewal IQ. Experience is counted from it to today.`;
+  return `Original CDL issue date ${d.cdlOriginalIssueDate} — from ${s.documentName}${s.page ? `, page ${s.page}` : ''}${s.excerpt ? `: “${s.excerpt}”` : ''}. Experience is counted from it to today.`;
 }
 
 const COLS = 11;
@@ -126,7 +143,7 @@ export function DriversTable({
   function save(e: FormEvent) {
     e.preventDefault();
     if (editingId === 'new') onAdd(fromDraft(draft, experienceTouched));
-    else if (editingId) onUpdate(editingId, fromDraft(draft, experienceTouched));
+    else if (editingId) onUpdate(editingId, fromDraft(draft, experienceTouched, drivers.find((x) => x.id === editingId)));
     setEditingId(null);
   }
   const toggle = (id: string) =>
@@ -137,7 +154,8 @@ export function DriversTable({
       return next;
     });
 
-  const fromIssue = draft.issueDate ? monthsSince(draft.issueDate) : null;
+  const fromCdl = draft.cdlOriginalIssueDate ? (driverExperienceWithBasis({ cdlOriginalIssueDate: draft.cdlOriginalIssueDate, dob: draft.dob || undefined })?.value ?? null) : null;
+  const cdlUnusable = !!draft.cdlOriginalIssueDate && fromCdl === null;
 
   function editor(isNew: boolean) {
     const field = (label: string, key: keyof Omit<Draft, 'yearsExperience'>, type: 'text' | 'date' = 'text', placeholder?: string) => (
@@ -158,10 +176,11 @@ export function DriversTable({
             {field('Class', 'licenseClass', 'text', 'e.g. A')}
             {field('License issue date', 'issueDate', 'date')}
             {field('License expiration', 'expirationDate', 'date')}
+            {field('Original CDL issue date', 'cdlOriginalIssueDate', 'date')}
             {field('Date of hire', 'hireDate', 'date')}
             {field('MVR report date', 'mvrReportDate', 'date')}
             <div className="col-span-2">
-              <span className={labelClass}>Driving / license experience</span>
+              <span className={labelClass}>CDL experience</span>
               <DurationInput
                 value={draft.yearsExperience}
                 onChange={(v) => {
@@ -171,24 +190,25 @@ export function DriversTable({
                 inputClassName={inputClass}
                 label="Driver experience"
               />
-              {fromIssue !== null && (
+              {fromCdl !== null && (
                 <p className="mt-1 text-xs text-[var(--color-ink-500)]">
-                  From the issue date: {formatDuration({ months: fromIssue }) || '0 months'}
-                  {experienceTouched && toMonths(draftToDuration(draft.yearsExperience) ?? undefined) !== fromIssue ? ' — your figure will be kept as a correction.' : ' — kept up to date automatically.'}
+                  From the original CDL issue date: {formatExperience(fromCdl)}
+                  {experienceTouched && toMonths(draftToDuration(draft.yearsExperience) ?? undefined) !== toMonths(fromCdl) ? ' — your figure will be kept as a correction.' : ' — kept up to date automatically.'}
                   {experienceTouched && (
                     <button
                       type="button"
                       className="ml-1 font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"
                       onClick={() => {
                         setExperienceTouched(false);
-                        setDraft({ ...draft, yearsExperience: durationToDraft({ months: fromIssue }) });
+                        setDraft({ ...draft, yearsExperience: durationToDraft(fromCdl) });
                       }}
                     >
-                      Use issue date
+                      Use CDL date
                     </button>
                   )}
                 </p>
               )}
+              {cdlUnusable && <p className="mt-1 text-xs text-[var(--color-warning-600)]">That CDL date can’t be right (in the future, or before the driver turned 18) — experience isn’t calculated from it.</p>}
             </div>
             <div className="col-span-2">{field('Violations', 'violations', 'text', 'None')}</div>
             <div className="col-span-2 flex items-end justify-end gap-2 sm:col-span-4">
@@ -233,7 +253,7 @@ export function DriversTable({
           {drivers.map((d) => {
             if (editingId === d.id) return editor(false);
             const open = expanded.has(d.id);
-            const exp = driverExperience(d);
+            const exp = driverExperienceWithBasis(d);
             return (
               <Fragment key={d.id}>
                 <tr className="border-b border-[var(--color-ink-100)] last:border-0">
@@ -278,8 +298,13 @@ export function DriversTable({
                   <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.issueDate)}</td>
                   <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.expirationDate)}</td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">
-                    {exp !== undefined ? formatDuration(exp) || '—' : '—'}
-                    {d.experienceFromIssueDate && d.issueDate && <div className="text-[11px] text-[var(--color-ink-400)]">from issue date</div>}
+                    <span data-testid="driver-experience">{exp ? formatExperience(exp.value) || '—' : '—'}</span>
+                    {exp?.basis === 'cdl' && (
+                      <div className="text-[11px] text-[var(--color-ink-400)]" title={cdlSourceTitle(d)}>
+                        CDL since {formatShortDate(usableCdlIssueDate(d) ?? '')}
+                      </div>
+                    )}
+                    {exp?.basis === 'manual' && <div className="text-[11px] text-[var(--color-ink-400)]">entered</div>}
                   </td>
                   <td className="whitespace-nowrap py-2.5 pr-4 text-[var(--color-ink-800)]">{dateCell(d.hireDate)}</td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{d.violations ?? '—'}</td>
