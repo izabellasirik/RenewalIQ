@@ -187,6 +187,37 @@ describe('the MVR fills in the driver read from their license photo', () => {
   });
 });
 
+describe('the same person from two documents is one driver', () => {
+  it('"Michael Mong" on a list + "Michael Scott Mong" on his license → one row, gaps filled, nothing overwritten; removing the license takes back only what it filled', async () => {
+    const { mergeIntoRiskProfile, rollbackDocument } = await import('../../services/extraction/extractionService');
+    const p = createEmptyRiskProfile('a');
+    p.drivers = [{ id: 'm1', name: 'Michael Mong', licenseState: 'TX', source: { documentId: 'list', documentName: 'Equipment list.pdf' } }];
+    const license = {
+      fieldPath: 'drivers' as const,
+      value: { name: 'Michael Scott Mong', dob: '02/03/1980', licenseNumber: 'M123456', licenseState: 'CA', issueDate: '01/10/2021' },
+      confidence: 'medium' as const,
+      source: { documentId: 'lic', documentName: 'MICHAEL MONG.jpg' },
+    };
+    const merged = mergeIntoRiskProfile(p, [license]);
+    expect(merged.drivers).toHaveLength(1);
+    expect(merged.drivers[0]).toMatchObject({ name: 'Michael Mong', licenseState: 'TX', dob: '02/03/1980', licenseNumber: 'M123456', issueDate: '01/10/2021', support: [{ documentId: 'lic' }] });
+    const { profile } = rollbackDocument(merged, [], 'lic', 'MICHAEL MONG.jpg');
+    expect(profile.drivers).toHaveLength(1);
+    expect(profile.drivers[0]).toMatchObject({ name: 'Michael Mong', licenseState: 'TX' });
+    expect(profile.drivers[0].dob).toBeUndefined();
+    expect(profile.drivers[0].licenseNumber).toBeUndefined();
+  });
+
+  it('same name but a different DOB or license number stays two people; two rows of one document are never merged', async () => {
+    const { mergeIntoRiskProfile } = await import('../../services/extraction/extractionService');
+    const p = createEmptyRiskProfile('a');
+    p.drivers = [{ id: 'm1', name: 'Michael Mong', dob: '02/03/1980', source: { documentId: 'list', documentName: 'list.pdf' } }];
+    const other = (value: Partial<DriverEntry>, documentId = 'lic') => ({ fieldPath: 'drivers' as const, value, confidence: 'high' as const, source: { documentId, documentName: 'x' } });
+    expect(mergeIntoRiskProfile({ ...p, drivers: [...p.drivers] }, [other({ name: 'Michael Mong', dob: '05/05/1995' })]).drivers).toHaveLength(2);
+    expect(mergeIntoRiskProfile({ ...p, drivers: [...p.drivers] }, [other({ name: 'Michael Mong', dob: '02/03/1980', licenseState: 'TX' }, 'list')]).drivers).toHaveLength(2);
+  });
+});
+
 describe('CDL date layouts', () => {
   it('"Original Issue Date" under a CDL heading; not under another section', () => {
     const doc = ['DRIVER LICENSE', 'Name: ALEX MORGAN', 'Issue Date: 05/23/2022', 'CDL Information', 'Class: A', 'Original Issue Date: 08/15/2013', 'Medical Certificate', 'Original Issue Date: 01/01/2020'].join('\n');

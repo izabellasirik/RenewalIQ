@@ -28,6 +28,8 @@ export interface DriverEntry {
    * kept current (see utils/driverExperience.ts). Never the DOB or the current license's issue/renewal date.
    */
   cdlOriginalIssueDate?: string;
+  /** Details another document filled in on this driver (field → document id) — removed with that document. */
+  filledFrom?: Record<string, string>;
   /** Where cdlOriginalIssueDate was read (document, page, text); absent when the broker typed it. */
   cdlOriginalIssueSource?: import('./common').FieldSource;
 

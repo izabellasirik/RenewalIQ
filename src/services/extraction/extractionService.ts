@@ -228,8 +228,13 @@ export function isSameDriver(a: Pick<DriverEntry, 'name' | 'dob' | 'licenseNumbe
   const lic = (v?: string) => (v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (a.dob && b.dob && !sameDateKey(a.dob, b.dob)) return false;
   if (lic(a.licenseNumber) && lic(b.licenseNumber)) return lic(a.licenseNumber) === lic(b.licenseNumber) && (!a.name || !b.name || sameName(a.name, b.name));
-  return sameName(a.name, b.name) && sameDateKey(a.dob, b.dob);
+  // Same first and last name, and nothing that says otherwise (no two different DOBs or license
+  // numbers — checked above): "Michael Mong" on a list and "Michael Scott Mong" on his license.
+  return sameName(a.name, b.name);
 }
+
+/** Not merged field by field when a second document fills in a driver (bookkeeping, or handled on its own). */
+const DRIVER_MERGE_SKIP = new Set<keyof DriverEntry>(['id', 'source', 'support', 'reviewFlag', 'isManual', 'lastUpdatedAt', 'notes', 'fieldConfidence', 'conflicts', 'filledFrom', 'cdlOriginalIssueSource']);
 
 /** Row fields that are bookkeeping, not content — a re-statement differing only in these is the same row. */
 const ROW_BOOKKEEPING = ['support', 'reviewFlag', 'isManual', 'lastUpdatedAt', 'notes', 'fieldConfidence', 'conflicts'];
@@ -294,19 +299,31 @@ function setByPath(profile: RiskProfile, fieldPath: string, result: ExtractedFie
     // The same person from another document (a license photo, then their MVR): the MVR's original
     // CDL issue date fills in that driver instead of starting a second row. Nothing else is
     // overwritten; two different CDL dates are kept as a conflict (so experience reads "—").
-    const same = profile.drivers.find((d) => isSameDriver(d, entry));
-    if (same && entry.cdlOriginalIssueDate) {
-      const cdlSource = entry.cdlOriginalIssueSource ?? result.source;
+    // The same person read from another document (a list, then their license or MVR): one row.
+    // The new document only fills in what the row doesn't have yet — nothing is overwritten — and
+    // each detail it filled remembers the document (filledFrom), so removing that document takes
+    // back exactly those. Two different CDL dates are kept as a conflict (experience reads "—").
+    // Two rows of one document are never merged.
+    const same = profile.drivers.find((d) => d.source?.documentId !== result.source?.documentId && isSameDriver(d, entry));
+    if (same) {
+      const docId = result.source?.documentId;
       profile.drivers = profile.drivers.map((d) => {
         if (d !== same) return d;
-        const support = withSupport(d.support, result.source, d.source);
-        if (!d.cdlOriginalIssueDate) return { ...d, cdlOriginalIssueDate: entry.cdlOriginalIssueDate, cdlOriginalIssueSource: cdlSource, support };
-        if (sameDateKey(d.cdlOriginalIssueDate, entry.cdlOriginalIssueDate)) return { ...d, support };
-        return {
-          ...d,
-          support,
-          conflicts: { ...(d.conflicts ?? {}), cdlOriginalIssueDate: [...(d.conflicts?.cdlOriginalIssueDate ?? []), { value: entry.cdlOriginalIssueDate, extractionMethod: result.extractionMethod ?? 'ai_extraction' }] },
-        };
+        const next: DriverEntry = { ...d, support: withSupport(d.support, result.source, d.source) };
+        const filled: Record<string, string> = { ...(d.filledFrom ?? {}) };
+        for (const [key, value] of Object.entries(entry) as [keyof DriverEntry, unknown][]) {
+          if (DRIVER_MERGE_SKIP.has(key) || value === undefined || value === null || value === '') continue;
+          const current = d[key];
+          if (current === undefined || current === null || current === '') {
+            (next as unknown as Record<string, unknown>)[key] = value;
+            if (docId) filled[key] = docId;
+          } else if (key === 'cdlOriginalIssueDate' && !sameDateKey(String(current), String(value))) {
+            next.conflicts = { ...(next.conflicts ?? {}), cdlOriginalIssueDate: [...(next.conflicts?.cdlOriginalIssueDate ?? []), { value, extractionMethod: result.extractionMethod ?? 'ai_extraction' }] };
+          }
+        }
+        if (docId && filled.cdlOriginalIssueDate === docId) next.cdlOriginalIssueSource = entry.cdlOriginalIssueSource ?? result.source;
+        if (Object.keys(filled).length) next.filledFrom = filled;
+        return next;
       });
       return;
     }
@@ -549,11 +566,21 @@ export function rollbackDocument(
   });
 
   const drivers = rows(profile.drivers, 'driver', (d) => `Driver ${d.name ?? '(no name)'}`).map((d) => {
-    // An original CDL date this document filled in on a driver from another document goes with it.
-    if (d.cdlOriginalIssueSource?.documentId !== documentId) return d;
-    const { cdlOriginalIssueDate: _date, cdlOriginalIssueSource: _src, ...rest } = d;
-    report.removed.fields++;
-    return { ...rest, lastUpdatedAt: now } as DriverEntry;
+    // Details this document filled in on a driver from another document go with it.
+    const filled = Object.entries(d.filledFrom ?? {}).filter(([, doc]) => doc === documentId).map(([k]) => k);
+    const cdlFromDoc = d.cdlOriginalIssueSource?.documentId === documentId;
+    if (!filled.length && !cdlFromDoc) return d;
+    const next = { ...d } as unknown as Record<string, unknown>;
+    for (const k of filled) delete next[k];
+    if (cdlFromDoc) {
+      delete next.cdlOriginalIssueDate;
+      delete next.cdlOriginalIssueSource;
+    }
+    const left = Object.fromEntries(Object.entries(d.filledFrom ?? {}).filter(([, doc]) => doc !== documentId));
+    next.filledFrom = Object.keys(left).length ? left : undefined;
+    next.lastUpdatedAt = now;
+    report.removed.fields += filled.length || 1;
+    return next as unknown as DriverEntry;
   });
   const vehicles = rows(profile.vehicles, 'vehicle', (v) => `Vehicle ${[v.year, v.make, v.model].filter(Boolean).join(' ') || v.vin || '(no VIN)'}`);
   const lossHistory = rows(profile.lossHistory, 'loss', (l) => `Claim ${l.lossDate || ''} ${l.claimType || ''}`.trim());
