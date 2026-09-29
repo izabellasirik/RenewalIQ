@@ -163,40 +163,43 @@ function LinksSection({ userId }: { userId: string }) {
         <h2 className="text-sm font-semibold text-[var(--color-ink-900)]">Submission Links</h2>
         <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">Share a link with an agency, safety company, or client so they can submit a new account without a RenewalIQ login.</p>
       </div>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
         <label className="flex-1 text-xs font-medium text-[var(--color-ink-600)]">
           Label (only you see this)
           <input className={`${inputClass} mt-1`} placeholder="e.g. ABC Client" value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreate()} />
         </label>
-        <label className="flex-1 text-xs font-medium text-[var(--color-ink-600)]">
-          Agency name (shown to the client)
-          <input
-            className={`${inputClass} mt-1`}
-            placeholder="e.g. DXP Services Inc."
-            value={orgName}
-            onChange={(e) => {
-              setOrgName(e.target.value);
-              setOrgNameTouched(true);
-              setOrgNameNote(null);
-            }}
-            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-          />
-        </label>
-        <Button disabled={!label.trim() || creating} onClick={handleCreate}>
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-[var(--color-ink-600)]">
+            Agency name (shown to the client)
+            <input
+              className={`${inputClass} mt-1`}
+              placeholder="e.g. DXP Services Inc."
+              value={orgName}
+              onChange={(e) => {
+                setOrgName(e.target.value);
+                setOrgNameTouched(true);
+                setOrgNameNote(null);
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+            />
+          </label>
+          {!orgName.trim() && !orgNameTouched && <p className="mt-1 text-xs font-normal text-[var(--color-ink-400)]">Without an agency name, the form says “your insurance broker”.</p>}
+          {savedOrgName !== null && orgName.trim() && orgName.trim() !== savedOrgName ? (
+            <p className="mt-1 text-xs font-normal text-[var(--color-ink-500)]">
+              <button onClick={handleSaveOrgName} disabled={savingOrgName} className="font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60 cursor-pointer">
+                {savingOrgName ? 'Saving…' : 'Save as default'}
+              </button>{' '}
+              so you don't have to type it next time.
+            </p>
+          ) : (
+            orgNameNote && <p className="mt-1 text-xs font-normal text-[var(--color-ink-500)]">{orgNameNote}</p>
+          )}
+        </div>
+        {/* Lined up with the inputs (not their hints below). */}
+        <Button disabled={!label.trim() || creating} onClick={handleCreate} className="sm:mt-5">
           {creating ? 'Creating…' : 'New Link'}
         </Button>
       </div>
-      {!orgName.trim() && !orgNameTouched && <p className="-mt-2 text-xs text-[var(--color-ink-400)]">Without an agency name, the form says “your insurance broker”.</p>}
-      {savedOrgName !== null && orgName.trim() && orgName.trim() !== savedOrgName ? (
-        <p className="-mt-2 text-xs text-[var(--color-ink-500)]">
-          <button onClick={handleSaveOrgName} disabled={savingOrgName} className="font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60 cursor-pointer">
-            {savingOrgName ? 'Saving…' : 'Save as default'}
-          </button>{' '}
-          so you don't have to type it next time.
-        </p>
-      ) : (
-        orgNameNote && <p className="-mt-2 text-xs text-[var(--color-ink-500)]">{orgNameNote}</p>
-      )}
       {createError && <p className="text-xs text-[var(--color-danger-600)]">{createError}</p>}
       {loading ? (
         <Skeleton variant="block" className="h-16 w-full" />
