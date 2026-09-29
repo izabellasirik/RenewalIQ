@@ -4,6 +4,7 @@ import { parseCount, parseMoney } from './money';
 import { COVERAGE_TYPE_ALIASES } from './coveragePatterns';
 import { normalizeVehicleBodyType } from './vehicleBodyType';
 import { normalizeDateKey } from '../../workflow/dates';
+import { isReadableText } from './textQuality';
 
 function normalizeHeader(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -175,7 +176,11 @@ export function classifyTable(headers: string[]): TableKind {
   return 'unrecognized';
 }
 
-const cell = (row: string[], i: number) => (i >= 0 ? (row[i] ?? '').trim() : '');
+/** A cell's text — empty when it's OCR noise rather than text (see isReadableText). */
+const cell = (row: string[], i: number) => {
+  const t = i >= 0 ? (row[i] ?? '').trim() : '';
+  return t && isReadableText(t) ? t : '';
+};
 const isoDate = (raw: string) => (raw ? (normalizeDateKey(raw) ?? raw) : '');
 
 export interface MappedVehicleRow {

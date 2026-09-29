@@ -182,3 +182,36 @@ describe('more layouts', () => {
     expect(drivers.map((d) => (d.value as { name?: string }).name)).toEqual(['John A. Smith', 'Tamika Reed']);
   });
 });
+
+describe('OCR noise is never read as data', () => {
+  // A scanned receipt: a barcode and ruled lines under words that happen to look like a vehicle schedule's headers.
+  const RECEIPT = page([
+    { y: 700, cells: [[36, 'RECEIPT']], size: 14 },
+    { y: 680, cells: [[36, 'Address: {=a']] },
+    { y: 650, cells: [[36, 'Item'], [200, 'Make'], [320, 'Model'], [440, 'Qty']] },
+    ...Array.from({ length: 8 }, (_, k) => ({ y: 636 - k * 14, cells: [[200, '|||||'], [320, 'IIII'], [440, '—']] as [number, string][] })),
+  ]);
+
+  it('adds no vehicles, fleet size or address from a receipt of barcodes', () => {
+    const results = extractInsuranceFields(pdfDoc(RECEIPT, 'Receipt.pdf'), { documentId: 'd1', documentName: 'Receipt.pdf' });
+    expect(results.filter((r) => r.fieldPath === 'vehicles')).toEqual([]);
+    expect(results.find((r) => r.fieldPath === 'transportation.fleetSize')).toBeUndefined();
+    expect(results.find((r) => r.fieldPath === 'business.address')).toBeUndefined();
+  });
+
+  it('still reads a real vehicle schedule next to a noisy cell', () => {
+    const rows = mapVehicleTable({ headers: ['Year', 'Make', 'Model', 'Plate'], rows: [['2021', 'Freightliner', 'Cascadia', '|||'], ['2019', 'Kenworth', 'T680', 'ABC123'], ['', '|||||', '{=', '']] });
+    expect(rows.map((r) => r.entry)).toEqual([
+      { year: 2021, make: 'Freightliner', model: 'Cascadia' },
+      { year: 2019, make: 'Kenworth', model: 'T680', plate: 'ABC123' },
+    ]);
+  });
+});
+
+describe('isReadableText', () => {
+  it('tells text from OCR noise', async () => {
+    const { isReadableText } = await import('../fieldExtraction/textQuality');
+    for (const ok of ['A', 'TX', '2021', '$18,450.00', '(1,200)', '01/15/2025', 'N/A', '123 Main St, Dallas, TX 75201', 'O', '1111']) expect(isReadableText(ok), ok).toBe(true);
+    for (const bad of ['|||||', '{=a', 'IIIII', 'lllll', '—', '-----', '', '  ', '|I|l|']) expect(isReadableText(bad), bad).toBe(false);
+  });
+});

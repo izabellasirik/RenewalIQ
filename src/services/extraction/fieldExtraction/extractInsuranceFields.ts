@@ -11,6 +11,7 @@ import { extractLossRunDrafts, labeledTotals, looksLikeLossRun, type StatedTotal
 import { findTables, type LayoutTable } from '../../ingestion/pdfLayout';
 import type { RawTable } from '../../ingestion';
 import { parseAddressComponents } from './addressPatterns';
+import { isReadableText } from './textQuality';
 import {
   extractDriverLicenseFields,
   extractVehicleRegistrationFields,
@@ -98,7 +99,10 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLin
           for (const line of lines) {
             const m = line.text.match(pattern);
             if (!m || !m[1]) continue;
-            const value = field.coerce(m[1]);
+            let value = field.coerce(m[1]);
+            // OCR noise after a label ("Address: {=a") is not a value.
+            if (typeof value === 'string' && !isReadableText(value)) continue;
+            if (Array.isArray(value)) value = value.filter((v) => typeof v !== 'string' || isReadableText(v));
             if (value === null || value === undefined || (Array.isArray(value) && value.length === 0)) continue;
             results.push({
               fieldPath: field.fieldPath,
