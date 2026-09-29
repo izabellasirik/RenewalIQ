@@ -22,6 +22,11 @@ export interface IntakeLink {
   token: string;
   active: boolean;
   createdAt: string;
+  /** Whose link it is — shown when an admin sees the agency's links (0036). */
+  ownerName?: string;
+  /** Submissions through it not yet imported or dismissed (0036) — a link with any can't be deleted. */
+  openSubmissions?: number;
+  totalSubmissions?: number;
 }
 
 /**

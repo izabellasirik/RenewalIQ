@@ -674,3 +674,37 @@ select 'Q4 submitting again with nothing new changes nothing: same time=' || ((v
 reset role;
 select 'Q4 broker told once: events=' || count(*) from activity_events where message like '%submitted their documents%';
 select 'Q5 nothing accepted or counted by it: files still=' || (select count(*) from document_request_files f join document_requests r on r.id = f.request_id where r.token = :'tk4'::uuid);
+
+-- ============================================================================================
+-- 0036: an agency admin sees and manages every intake link in the agency
+-- ============================================================================================
+reset role;
+insert into intake_links (id, user_id, label, token, active) values
+  ('ilink_roman', '00000000-0000-0000-0000-00000000000a', 'Roman link', 'tok-roman', true),
+  ('ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'Roman busy link', 'tok-roman2', true),
+  ('ilink_denis', '00000000-0000-0000-0000-00000000000d', 'Denis link', 'tok-denis', true),
+  ('ilink_b', '00000000-0000-0000-0000-00000000000b', 'Former member link', 'tok-b', true),
+  ('ilink_out', '00000000-0000-0000-0000-00000000000c', 'Other agency link', 'tok-out', true)
+on conflict (id) do nothing;
+insert into intake_submissions (id, intake_link_id, user_id, status, named_insured) values
+  ('isub_open_r', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'pending', 'Open Co'),
+  ('isub_done_r', 'ilink_roman', '00000000-0000-0000-0000-00000000000a', 'imported', 'Done Co')
+on conflict (id) do nothing;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'W1 admin sees every link of the agency''s members: ' || string_agg(label || ' (' || owner_name || ', open ' || open_submissions || ')', ', ' order by label) from list_manageable_intake_links();
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'W2 agent sees only own: ' || string_agg(label, ', ' order by label) from list_manageable_intake_links();
+do $$ begin perform delete_intake_link('ilink_denis'); raise notice 'W3 agent deletes a colleague''s link: ALLOWED (BAD)'; exception when others then raise notice 'W3 agent deleting a colleague''s link denied: %', sqlerrm; end $$;
+do $$ begin perform set_intake_link_active('ilink_denis', false); raise notice 'W3 agent pauses a colleague''s link: ALLOWED (BAD)'; exception when others then raise notice 'W3 agent pausing a colleague''s link denied'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform delete_intake_link('ilink_roman'); raise notice 'W4 other agency deletes: ALLOWED (BAD)'; exception when others then raise notice 'W4 other agency admin denied: %', sqlerrm; end $$;
+select 'W4 other agency admin sees only its own: ' || coalesce(string_agg(label, ', '), 'none') from list_manageable_intake_links();
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin perform delete_intake_link('ilink_roman2'); raise notice 'W5 delete with an open submission: ALLOWED (BAD)'; exception when others then raise notice 'W5 open submission blocks delete: %', sqlerrm; end $$;
+select set_intake_link_active('ilink_roman2', false) is null as _w5 \gset
+select delete_intake_link('ilink_roman') is null as _w6 \gset
+reset role;
+select 'W5 admin paused it instead: active=' || active from intake_links where id = 'ilink_roman2';
+select 'W6 admin deleted a member''s link: left=' || count(*) from intake_links where id = 'ilink_roman';
+select 'W6 its imported submission went with it; the open one stays: ' || string_agg(id, ',' order by id) from intake_submissions where id in ('isub_open_r', 'isub_done_r');

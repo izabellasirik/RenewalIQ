@@ -255,3 +255,13 @@ Q3 submitted: submittedAt set=true
 Q4 submitting again with nothing new changes nothing: same time=true
 Q4 broker told once: events=1
 Q5 nothing accepted or counted by it: files still=5
+W1 admin sees every link of the agency's members: Denis link (Denis, open 0), Roman busy link (Roman Smith, open 1), Roman link (Roman Smith, open 0)
+W2 agent sees only own: Roman busy link, Roman link
+W3 agent deleting a colleague's link denied: You can't delete this link.
+W3 agent pausing a colleague's link denied
+W4 other agency admin denied: You can't delete this link.
+W4 other agency admin sees only its own: Other agency link
+W5 open submission blocks delete: 1 submission from this link has not been imported or dismissed yet — deal with it first, or deactivate the link instead.
+W5 admin paused it instead: active=false
+W6 admin deleted a member's link: left=0
+W6 its imported submission went with it; the open one stays: isub_open_r

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { intakeUrl } from '../services/publicLinks';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWarning, Inbox, Link2, Loader2, RotateCcw, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWarning, Inbox, Link2, Loader2, RotateCcw, Trash2, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, ConfirmDialog, EmptyState, Skeleton, Tabs } from '../components/ui';
 import { COVERAGE_LABELS } from '../types';
@@ -13,8 +13,9 @@ import {
   downloadIntakeDocumentFile,
   fetchIntakeDocuments,
   fetchIntakeEvents,
-  fetchIntakeLinks,
+  fetchManageableIntakeLinks,
   fetchIntakeSubmissions,
+  deleteIntakeLink,
   markStaleIntakeSubmissions,
   setIntakeLinkActive,
 } from '../services/supabase/intakeRepo';
@@ -30,10 +31,25 @@ import { formatDate } from '../utils/dates';
 const inputClass =
   'w-full rounded-lg border border-[var(--color-ink-200)] px-3 py-2 text-sm outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
 
-function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void }) {
+function LinkRow({ link, onToggled, mine }: { link: IntakeLink; onToggled: () => void; mine: boolean }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const open = link.openSubmissions ?? 0;
+
+  async function remove() {
+    setConfirmDelete(false);
+    setBusy(true);
+    setError(null);
+    const result = await deleteIntakeLink(link.id);
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
+    onToggled();
+  }
   const url = intakeUrl(link.token);
 
   async function copy() {
@@ -58,7 +74,10 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
     <div className="rounded-lg border border-[var(--color-ink-100)] px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{link.label}</p>
+          <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">
+            {link.label}
+            {!mine && link.ownerName && <span className="font-normal text-[var(--color-ink-500)]"> · {link.ownerName}’s link</span>}
+          </p>
           <p className="truncate text-xs text-[var(--color-ink-500)]">
             Shown to the client as: <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName || 'your insurance broker (no agency name set)'}</span>
           </p>
@@ -72,9 +91,30 @@ function LinkRow({ link, onToggled }: { link: IntakeLink; onToggled: () => void 
           <Button size="sm" variant="ghost" disabled={busy} onClick={toggle}>
             {link.active ? 'Deactivate' : 'Activate'}
           </Button>
+          <button
+            onClick={() =>
+              open > 0
+                ? setError(`${open} submission${open === 1 ? '' : 's'} from this link ${open === 1 ? 'has' : 'have'} not been imported or dismissed yet — deal with ${open === 1 ? 'it' : 'them'} first, or deactivate the link instead.`)
+                : setConfirmDelete(true)
+            }
+            disabled={busy}
+            className="rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] disabled:opacity-40 cursor-pointer"
+            aria-label={`Delete link ${link.label}`}
+          >
+            <Trash2 size={14} />
+          </button>
         </div>
       </div>
       {error && <p className="mt-1.5 text-xs text-[var(--color-danger-600)]">{error}</p>}
+      <ConfirmDialog
+        open={confirmDelete}
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={remove}
+        title="Delete this link?"
+        description={`Anyone who has "${link.label}" will no longer be able to submit through it. Accounts already imported from it are not affected.`}
+        confirmLabel="Delete link"
+        variant="danger"
+      />
     </div>
   );
 }
@@ -122,7 +162,7 @@ function LinksSection({ userId }: { userId: string }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const result = await fetchIntakeLinks(userId);
+    const result = await fetchManageableIntakeLinks(userId);
     setLoading(false);
     if (!result.ok) {
       setLoadError(result.message);
@@ -211,7 +251,7 @@ function LinksSection({ userId }: { userId: string }) {
       ) : (
         <div className="flex flex-col gap-2">
           {links.map((l) => (
-            <LinkRow key={l.id} link={l} onToggled={load} />
+            <LinkRow key={l.id} link={l} onToggled={load} mine={l.userId === userId} />
           ))}
         </div>
       )}
@@ -554,7 +594,7 @@ function SubmissionsSection({ userId }: { userId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
     // Link labels only name the source on each card — a failure here just leaves them out.
-    fetchIntakeLinks(userId).then((links) => {
+    fetchManageableIntakeLinks(userId).then((links) => {
       if (links.ok) setLinkLabels(Object.fromEntries(links.data.map((l) => [l.id, l.label])));
     });
     // Submissions a client stopped sending (2 hours without activity) show as incomplete.

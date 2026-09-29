@@ -241,6 +241,12 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   shown back to the client) and adds "… submitted their documents (N new files)" to the account's
   activity. Token-only like the other client calls; needs at least one uploaded file; nothing is
   accepted or counted by it. Needs 0033 first. Additive, safe to re-run.
+- **`supabase/migrations/0036_agency_intake_links.sql`** — Submission Intake: an agency admin sees
+  every intake link of the agency's members (whose it is, open submissions) and can deactivate,
+  reactivate or delete them; agents still manage only their own. Through checked functions
+  (`list_manageable_intake_links`, `set_intake_link_active`, `delete_intake_link`). A link with
+  submissions not yet imported or dismissed can't be deleted (deleting would cascade to them).
+  Additive, safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -320,6 +326,7 @@ from (values
   ('0033_request_multi_upload',       to_regprocedure('public.complete_document_request_file(text,text,text,text,text)') is not null),
   ('0034_document_review_candidates', exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'review_candidates')),
   ('0035_request_client_submit',      to_regprocedure('public.submit_document_request(uuid)') is not null),
+  ('0036_agency_intake_links',        to_regprocedure('public.delete_intake_link(text)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

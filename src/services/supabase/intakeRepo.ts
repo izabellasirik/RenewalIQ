@@ -406,9 +406,46 @@ export async function fetchIntakeLinks(userId: string): Promise<RepoResult<Intak
   }
 }
 
+const isMissingFunction = (e: { code?: string; message: string }) => e.code === 'PGRST202' || e.code === '42883' || /could not find the function|schema cache/i.test(e.message);
+
+/**
+ * The links this broker manages: their own — and, for an agency admin, every member's (0036), with
+ * whose link it is and how many submissions are still open. Before 0036: their own, as before.
+ */
+export async function fetchManageableIntakeLinks(userId: string): Promise<RepoResult<IntakeLink[]>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('list_manageable_intake_links');
+    if (error && isMissingFunction(error)) return fetchIntakeLinks(userId);
+    if (error) return fail(error.message);
+    return {
+      ok: true,
+      data: ((data ?? []) as (IntakeLinkRow & { owner_name: string | null; open_submissions: number; total_submissions: number })[]).map((r) => ({
+        ...rowToLink(r),
+        ownerName: r.owner_name ?? undefined,
+        openSubmissions: r.open_submissions,
+        totalSubmissions: r.total_submissions,
+      })),
+    };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not load your intake links.');
+  }
+}
+
 export async function setIntakeLinkActive(id: string, active: boolean): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
-  const { error } = await supabase.from('intake_links').update({ active }).eq('id', id);
+  // 0036: checked server-side (the creator, or an admin of their agency).
+  let { error } = await supabase.rpc('set_intake_link_active', { p_id: id, p_active: active });
+  if (error && isMissingFunction(error)) ({ error } = await supabase.from('intake_links').update({ active }).eq('id', id));
+  if (error) return fail(error.message);
+  return { ok: true, data: undefined };
+}
+
+/** Deletes a link (0036) — refused while submissions through it are still open. */
+export async function deleteIntakeLink(id: string): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  const { error } = await supabase.rpc('delete_intake_link', { p_id: id });
+  if (error && isMissingFunction(error)) return fail('Deleting links needs the latest database update (migration 0036).');
   if (error) return fail(error.message);
   return { ok: true, data: undefined };
 }
