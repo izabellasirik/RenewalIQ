@@ -251,6 +251,8 @@ interface AccountsState {
   updateAccountInfo: (accountId: string, patch: { namedInsured?: string; state?: string }) => void;
   setAssignedBroker: (accountId: string, broker: AssignedBroker | null) => void;
   addContact: (accountId: string, contact: Omit<Contact, 'id'>) => string;
+  /** The broker opened an RQ draft in Gmail's compose window — recorded as opened, never as sent (RQ can't see what Gmail does). */
+  recordEmailDraftOpened: (accountId: string, to: string, subject: string) => void;
   updateContact: (accountId: string, contactId: string, patch: Partial<Omit<Contact, 'id'>>) => void;
   deleteContact: (accountId: string, contactId: string) => void;
   addMissingItems: (accountId: string, seeds: MissingItemSeed[]) => string[];
@@ -1843,6 +1845,11 @@ export const useAccountsStore = create<AccountsState>()(
             `${broker ? `Assigned to ${broker.name}` : 'Removed the assigned broker'}${actorSuffix(s.currentUserEmail, broker?.email)}.`
           ),
         }));
+        syncNow(accountId);
+      },
+
+      recordEmailDraftOpened: (accountId, to, subject) => {
+        set((s) => (s.accounts.some((a) => a.id === accountId) ? { activityLog: appendEvent(s.activityLog, accountId, 'email_draft_opened', `Email draft opened in Gmail for ${to}: “${subject}” (not sent from Renewal IQ)`) } : {}));
         syncNow(accountId);
       },
 

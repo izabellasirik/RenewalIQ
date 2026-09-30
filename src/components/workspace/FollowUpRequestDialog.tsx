@@ -5,7 +5,7 @@ import { outstandingRequestItems } from '../../types';
 import { Button, Modal } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
-import { draftRequestFollowUpEmail, mailtoHref } from '../../services/workflow/emailDraft';
+import { draftRequestFollowUpEmail, gmailComposeUrl, MISSING_RECIPIENT_MESSAGE } from '../../services/workflow/emailDraft';
 import { addBusinessDays, formatShortDate } from '../../services/workflow/dates';
 import { requestLink } from '../../services/supabase/documentRequestsRepo';
 import { inputClass, labelClass } from './formStyles';
@@ -48,6 +48,16 @@ export function FollowUpRequestDialog({ accountId, request, onClose }: { account
     }
   }
 
+  const recordEmailDraftOpened = useAccountsStore((s) => s.recordEmailDraftOpened);
+  /** Gmail's compose window in a new tab, draft filled in; the broker sends it there. Recorded as opened, never as sent. */
+  function openInGmail() {
+    const url = gmailComposeUrl(request.contactEmail, { subject, body });
+    if (!url) return setError(MISSING_RECIPIENT_MESSAGE);
+    setError(null);
+    window.open(url, '_blank', 'noopener,noreferrer');
+    recordEmailDraftOpened(accountId, request.contactEmail!.trim(), subject);
+  }
+
   async function markSent() {
     setBusy(true);
     setError(null);
@@ -69,13 +79,9 @@ export function FollowUpRequestDialog({ accountId, request, onClose }: { account
           <Button variant="secondary" size="sm" icon={copied ? <Check size={14} /> : <Copy size={14} />} onClick={() => void copy()}>
             {copied ? 'Copied' : 'Copy email'}
           </Button>
-          <a
-            href={mailtoHref(request.contactEmail, { subject, body })}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-ink-200)] bg-white px-2.5 py-1.5 text-xs font-medium text-[var(--color-ink-800)] hover:bg-[var(--color-ink-50)]"
-          >
-            <Mail size={14} />
-            Open in email app
-          </a>
+          <Button variant="secondary" size="sm" icon={<Mail size={14} />} onClick={openInGmail} data-testid="open-in-gmail">
+            Open in Gmail
+          </Button>
           <Button size="sm" icon={<Send size={14} />} onClick={() => void markSent()} disabled={busy}>
             Mark follow-up sent
           </Button>

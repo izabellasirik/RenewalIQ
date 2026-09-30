@@ -30,6 +30,8 @@ import {
   ArrowRightLeft,
   ShieldCheck,
   Flag,
+  Inbox,
+  ExternalLink,
   type LucideIcon,
 } from 'lucide-react';
 import type { ActivityEvent, ActivityEventType } from '../../types';
@@ -83,6 +85,8 @@ const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   request_follow_up: Mail,
   request_completed: CheckCircle2,
   request_cancelled: Ban,
+  client_submitted: Inbox,
+  email_draft_opened: ExternalLink,
 };
 
 const EVENT_TONE: Partial<Record<ActivityEventType, string>> = {
@@ -94,7 +98,32 @@ const EVENT_TONE: Partial<Record<ActivityEventType, string>> = {
   item_requested: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
   submission_sent: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
   item_sent_to_carrier: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
+  client_submitted: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
 };
+
+/** A client submission: exactly what arrived — names as uploaded, who (as given), the reference. */
+function ClientSubmissionFacts({ details }: { details: NonNullable<ActivityEvent['details']> }) {
+  return (
+    <div className="mt-1 rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)]/60 px-3 py-2 text-xs text-[var(--color-ink-700)]" data-testid="client-submission-facts">
+      {details.accountName && <p className="font-semibold text-[var(--color-ink-900)]">{details.accountName}</p>}
+      <p>
+        {details.files.length} file{details.files.length === 1 ? '' : 's'} received
+      </p>
+      {details.files.length > 0 && (
+        <ul className="mt-0.5 list-disc pl-4">
+          {details.files.map((f, i) => (
+            <li key={`${f}-${i}`} className="break-all">
+              {f}
+            </li>
+          ))}
+        </ul>
+      )}
+      {details.clientEmail && <p className="mt-1">Submitted by: {details.clientEmail}{details.clientName ? ` (${details.clientName})` : ''} — as entered on the form</p>}
+      {!details.clientEmail && details.linkSentTo && <p className="mt-1">Through the secure link sent to: {details.linkSentTo}</p>}
+      {details.reference && <p>Reference: {details.reference}</p>}
+    </div>
+  );
+}
 
 function formatTimestamp(iso: string): string {
   const d = new Date(iso);
@@ -108,6 +137,7 @@ export function ActivityTimeline({ events }: { events: ActivityEvent[] }) {
   const members = useAccountsStore((s) => s.agencyMembers);
   // Who did it: "You", the agency member's current name, or the name saved with the event.
   const actorOf = (e: ActivityEvent): string | null => {
+    if (e.type === 'client_submitted') return 'Client';
     if (!e.actorId && !e.actorName) return null;
     if (e.actorId && e.actorId === currentUserId) return 'You';
     return members.find((m) => m.userId === e.actorId)?.name ?? e.actorName ?? null;
@@ -124,6 +154,7 @@ export function ActivityTimeline({ events }: { events: ActivityEvent[] }) {
             </span>
             <div className="min-w-0 pt-1">
               <p className="break-words text-sm text-[var(--color-ink-800)]">{event.message}</p>
+              {event.type === 'client_submitted' && event.details && <ClientSubmissionFacts details={event.details} />}
               <p className="mt-0.5 text-xs text-[var(--color-ink-400)]">
                 {formatTimestamp(event.timestamp)}
                 {actorOf(event) && (

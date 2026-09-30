@@ -316,3 +316,12 @@ Z8 a later Submit is a new event: 2
 Z8 request email → account=acct_r1 broker=roman@agency.com files=4
 Z9 after 8 attempts → gave_up due=0
 Z10 queue: request:failed x8, intake:sent x2, intake:sending x1, request:pending x0
+B1 each Submit with new files is one event: 2 on acct_r1
+B1 facts: Client submitted documents — 4 files received | files=["loss.pdf", "other.pdf", "many1.pdf", "many2.pdf"] | link sent to=John Smith | at submit time=true | actor=Client
+B2 the old free-text line is no longer written: 0
+B2 a repeated Submit / refresh adds nothing: 2
+B3 intake → event on that account: Client submitted documents — 1 file received | files=["z_loss_runs.pdf"] | email=zoe@client.com | ref ok=true | at completion time=true
+B4 re-import / re-delivered notification adds nothing: 1
+B5 no document types in the history: 0
+B6 other agency sees none of these events: 0
+B6 the account's broker sees them: 3

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, FileQuestion, Loader2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { UploadedDocument } from '../../types';
+import type { RawDocument } from '../../services/ingestion/types';
 import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
 
 type Content =
@@ -50,8 +51,18 @@ async function render(doc: PreviewableFile, blob: Blob): Promise<Content> {
   return { kind: 'error', message: "This file type can't be previewed in RenewalIQ. Download it to open it." };
 }
 
-/** Renders every PDF page to a canvas with pdf.js — works the same in every browser and never triggers a download. */
-function PdfPages({ blob }: { blob: Blob }) {
+/** How many pages carry their own (selectable) text — a scanned page has none. */
+export interface PdfTextInfo {
+  pages: number;
+  pagesWithText: number;
+}
+
+/**
+ * Renders every PDF page to a canvas with pdf.js — works the same in every browser and never
+ * triggers a download — with pdf.js's text layer on top, so the PDF's own text can be selected and
+ * copied exactly where it sits on the page.
+ */
+function PdfPages({ blob, onTextInfo }: { blob: Blob; onTextInfo?: (info: PdfTextInfo) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,19 +86,39 @@ function PdfPages({ blob }: { blob: Blob }) {
         if (!container || cancelled) return;
         container.replaceChildren(holder);
         const width = Math.min(container.clientWidth || 800, 1000);
+        let pagesWithText = 0;
         for (let i = 1; i <= pdf.numPages && !cancelled; i++) {
           const page = await pdf.getPage(i);
           const base = page.getViewport({ scale: 1 });
-          const scale = width / base.width;
-          const viewport = page.getViewport({ scale: scale * (window.devicePixelRatio || 1) });
+          const cssScale = width / base.width;
+          const cssViewport = page.getViewport({ scale: cssScale });
+          const viewport = page.getViewport({ scale: cssScale * (window.devicePixelRatio || 1) });
+          const pageDiv = document.createElement('div');
+          pageDiv.className = 'pdf-page mx-auto mb-3 rounded bg-white shadow';
+          pageDiv.style.width = `${cssViewport.width}px`;
+          pageDiv.style.height = `${cssViewport.height}px`;
+          pageDiv.dataset.page = String(i);
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
-          canvas.style.width = `${width}px`;
-          canvas.className = 'mx-auto mb-3 block rounded bg-white shadow';
-          holder.appendChild(canvas);
+          canvas.style.width = `${cssViewport.width}px`;
+          canvas.style.height = `${cssViewport.height}px`;
+          canvas.className = 'block rounded';
+          pageDiv.appendChild(canvas);
+          holder.appendChild(pageDiv);
           await page.render({ canvas, viewport }).promise;
+          // The page's own text, invisible but selectable, laid exactly over the drawing.
+          const text = await page.getTextContent();
+          if (text.items.some((it) => 'str' in it && it.str.trim())) {
+            pagesWithText++;
+            const layer = document.createElement('div');
+            layer.className = 'textLayer';
+            layer.style.setProperty('--total-scale-factor', String(cssScale));
+            pageDiv.appendChild(layer);
+            await new pdfjs.TextLayer({ textContentSource: text, container: layer, viewport: cssViewport }).render();
+          }
         }
+        if (!cancelled) onTextInfo?.({ pages: pdf.numPages, pagesWithText });
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Could not render this PDF.');
       }
@@ -96,16 +127,103 @@ function PdfPages({ blob }: { blob: Blob }) {
       cancelled = true;
       void task?.destroy();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blob]);
 
   if (error) return <p className="p-6 text-center text-sm text-[var(--color-danger-600)]">{error}</p>;
-  return <div ref={ref} className="min-h-40" />;
+  return <div ref={ref} className="min-h-40" data-testid="pdf-pages" />;
+}
+
+/** Text read for viewing only, cached per document for this session. */
+const readTextCache = new Map<string, Promise<RawDocument>>();
+
+/**
+ * "Extracted text": what the local reader (PDF text + OCR, no AI) reads from the file, shown so the
+ * broker can select and copy it. For viewing only — it is never applied to the Risk Profile, never
+ * passes through extraction, and is labelled as an OCR read that may contain mistakes.
+ */
+function ExtractedTextPanel({ doc, blob }: { doc: PreviewableFile; blob: Blob }) {
+  const [state, setState] = useState<{ kind: 'reading' } | { kind: 'done'; raw: RawDocument } | { kind: 'error'; message: string }>({ kind: 'reading' });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ kind: 'reading' });
+    const key = `${doc.id}:${blob.size}`;
+    let job = readTextCache.get(key);
+    if (!job) {
+      const file = new File([blob], doc.name, { type: blob.type });
+      job = (async () => {
+        if (doc.fileType === 'pdf') return (await import('../../services/ingestion/parsePdf')).parsePdf(file);
+        return (await import('../../services/ingestion/parseImage')).parseImage(file);
+      })();
+      readTextCache.set(key, job);
+      job.catch(() => readTextCache.delete(key));
+    }
+    job.then(
+      (raw) => !cancelled && setState({ kind: 'done', raw }),
+      (err) => !cancelled && setState({ kind: 'error', message: err instanceof Error ? err.message : 'Could not read text from this file.' })
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [doc.id, doc.name, doc.fileType, blob]);
+
+  const raw = state.kind === 'done' ? state.raw : null;
+  const pages = raw?.pages?.filter((p) => p.text.trim()) ?? [];
+  const text = raw?.text.trim() ?? '';
+  const confidence = raw?.ocrConfidence;
+  const partial = confidence !== undefined && confidence < 60;
+
+  return (
+    <section className="flex min-h-0 flex-col bg-white" aria-label="Extracted text" data-testid="extracted-text-panel">
+      <div className="border-b border-[var(--color-ink-100)] px-4 py-2.5">
+        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-600)]">
+          Extracted text
+          <span className="rounded-full bg-[var(--color-warning-100)] px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-[var(--color-warning-600)]">OCR · not verified</span>
+        </p>
+        <p className="mt-1 text-xs text-[var(--color-ink-500)]">
+          Read automatically from the original — it can contain mistakes. Check it against the document. Copying it doesn’t add anything to the Risk Profile.
+        </p>
+        {confidence !== undefined && (
+          <p className={`mt-1 text-xs ${partial ? 'text-[var(--color-warning-600)]' : 'text-[var(--color-ink-500)]'}`} data-testid="ocr-confidence">
+            OCR confidence: {Math.round(confidence)}%{partial ? ' — only partly readable; the text below is likely incomplete.' : ''}
+          </p>
+        )}
+      </div>
+      <div className="flex-1 overflow-auto p-4 scrollbar-thin">
+        {state.kind === 'reading' && (
+          <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
+            <Loader2 size={14} className="animate-spin" /> Reading text… (can take a few seconds)
+          </p>
+        )}
+        {state.kind === 'error' && <p className="text-sm text-[var(--color-danger-600)]">{state.message}</p>}
+        {state.kind === 'done' && !text && (
+          <p className="text-sm text-[var(--color-ink-500)]" data-testid="no-extracted-text">
+            No text could be read from this document. Use the original on the left.
+          </p>
+        )}
+        {state.kind === 'done' && text && (
+          <div className="select-text whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-[var(--color-ink-800)]" data-testid="extracted-text">
+            {pages.length > 1
+              ? pages.map((p) => (
+                  <div key={p.pageNumber} className="mb-4">
+                    <p className="mb-1 select-none font-sans text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">Page {p.pageNumber}</p>
+                    {p.text}
+                  </div>
+                ))
+              : text}
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | null; onClose: () => void }) {
   const [content, setContent] = useState<Content>({ kind: 'loading' });
   const [blob, setBlob] = useState<Blob | null>(null);
   const [sheet, setSheet] = useState(0);
+  const [pdfText, setPdfText] = useState<PdfTextInfo | null>(null);
 
   useEffect(() => {
     if (!doc) return;
@@ -114,12 +232,19 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
     setContent({ kind: 'loading' });
     setBlob(null);
     setSheet(0);
+    setPdfText(null);
     (async () => {
       const b = doc.loadBlob ? await doc.loadBlob() : await loadStoredFile(doc);
       if (cancelled) return;
       if (!b) {
         // Photos always have a small preview copy even when the original isn't available.
-        if (doc.previewDataUrl) return setContent({ kind: 'image', url: doc.previewDataUrl });
+        if (doc.previewDataUrl) {
+          setContent({ kind: 'image', url: doc.previewDataUrl });
+          // The small preview copy can still be read for the Extracted text panel.
+          const copy = await fetch(doc.previewDataUrl).then((r) => r.blob()).catch(() => null);
+          if (!cancelled && copy) setBlob(copy);
+          return;
+        }
         return setContent({
           kind: 'error',
           message: doc.storagePath
@@ -191,7 +316,13 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                 </div>
               )}
 
-              <div className="flex-1 overflow-auto bg-[var(--color-ink-50)] scrollbar-thin">
+              {(() => {
+                // Images, and PDFs with pages that carry no text of their own (scans), get the
+                // Extracted text panel; a PDF's own text is selectable right on the page.
+                const showText = !!blob && ((content.kind === 'image' && doc.fileType === 'image') || (content.kind === 'pdf' && !!pdfText && pdfText.pagesWithText < pdfText.pages));
+                const original = (
+                  <div className="flex-1 overflow-auto bg-[var(--color-ink-50)] scrollbar-thin" data-testid="original-document">
+                    {showText && <p className="sticky top-0 z-10 border-b border-[var(--color-ink-100)] bg-white/95 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-600)]">Original document</p>}
                 {content.kind === 'loading' && (
                   <div className="flex h-full min-h-60 items-center justify-center gap-2 text-sm text-[var(--color-ink-500)]">
                     <Loader2 size={16} className="animate-spin" /> Loading preview…
@@ -206,7 +337,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                 {content.kind === 'image' && <img src={content.url} alt={doc.name} className="mx-auto block max-w-full p-4" />}
                 {content.kind === 'pdf' && (
                   <div className="p-3 sm:p-4">
-                    <PdfPages blob={content.blob} />
+                    <PdfPages blob={content.blob} onTextInfo={setPdfText} />
                   </div>
                 )}
                 {content.kind === 'html' && (
@@ -221,6 +352,19 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                 {content.kind === 'text' && <pre className="whitespace-pre-wrap break-words bg-white p-5 font-mono text-xs text-[var(--color-ink-800)]">{content.text}</pre>}
                 {content.kind === 'tables' && <TableView table={content.tables[Math.min(sheet, content.tables.length - 1)]} />}
               </div>
+                );
+                // Same tree whether or not the panel shows, so the document isn't re-rendered when it appears.
+                return (
+                  <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+                    <div className={`flex min-h-0 flex-1 flex-col ${showText ? 'lg:border-r lg:border-[var(--color-ink-100)]' : ''}`}>{original}</div>
+                    {showText && (
+                      <div className="flex max-h-[45%] min-h-0 flex-col border-t border-[var(--color-ink-100)] lg:max-h-none lg:w-[380px] lg:border-t-0">
+                        <ExtractedTextPanel doc={doc} blob={blob!} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </motion.div>
           </div>
         </>

@@ -102,3 +102,24 @@ export function draftRequestFollowUpEmail({
 export function mailtoHref(to: string | undefined, draft: EmailDraft): string {
   return `mailto:${encodeURIComponent(to ?? '')}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`;
 }
+
+const EMAIL_RE = /^[^\s@<>(),;:"]+@[^\s@<>(),;:"]+\.[^\s@<>(),;:"]+$/;
+
+/** A single, plausible recipient address — never a list or anything that could add headers. */
+export function isSendableEmail(to: string | null | undefined): to is string {
+  return !!to && EMAIL_RE.test(to.trim());
+}
+
+/**
+ * Gmail's compose window with the draft filled in: To, Subject and the whole body. Every value is
+ * percent-encoded (spaces, line breaks, &, #, ?, +, quotes, accents …), so nothing in the draft can
+ * end or corrupt the URL. Null when there's no usable recipient — the caller asks for one instead.
+ * The broker reviews and presses Send in Gmail; Renewal IQ never sends anything itself.
+ */
+export function gmailComposeUrl(to: string | null | undefined, draft: EmailDraft): string | null {
+  if (!isSendableEmail(to)) return null;
+  const q = (v: string) => encodeURIComponent(v);
+  return `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${q(to.trim())}&su=${q(draft.subject)}&body=${q(draft.body)}`;
+}
+
+export const MISSING_RECIPIENT_MESSAGE = 'This contact has no email address. Select a contact with an email (or add one) before opening Gmail.';

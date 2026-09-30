@@ -346,7 +346,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
 
       const activity: ActivityEvent[] = (actRes.data ?? [])
         .filter((e) => e.submission_id === sub.id)
-        .map((e) => ({ id: e.id, accountId: sub.id, type: e.type, message: e.message, timestamp: e.occurred_at, actorId: e.user_id ?? undefined, ...(e.actor_name ? { actorName: e.actor_name as string } : {}) }))
+        .map((e) => ({ id: e.id, accountId: sub.id, type: e.type, message: e.message, timestamp: e.occurred_at, actorId: e.user_id ?? undefined, ...(e.actor_name ? { actorName: e.actor_name as string } : {}), ...(e.details && typeof e.details === 'object' ? { details: e.details as ActivityEvent['details'] } : {}) }))
         .sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
 
       const emptyProfile = createEmptyRiskProfile(sub.id);

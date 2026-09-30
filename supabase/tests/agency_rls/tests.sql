@@ -672,7 +672,7 @@ select v->>'submittedAt' as q_first from submit_document_request(:'tk4') v \gset
 select 'Q3 submitted: submittedAt set=' || (:'q_first' <> '');
 select 'Q4 submitting again with nothing new changes nothing: same time=' || ((v->>'submittedAt') = :'q_first') from submit_document_request(:'tk4') v;
 reset role;
-select 'Q4 broker told once: events=' || count(*) from activity_events where message like '%submitted their documents%';
+select 'Q4 broker told once: events=' || count(*) from activity_events where type = 'client_submitted' or message like '%submitted their documents%';
 select 'Q5 nothing accepted or counted by it: files still=' || (select count(*) from document_request_files f join document_requests r on r.id = f.request_id where r.token = :'tk4'::uuid);
 
 -- ============================================================================================
@@ -906,3 +906,31 @@ set role service_role;
 select 'Z9 after 8 attempts → ' || (c->>'reason') || ' due=' || (select count(*) from due_submission_emails(50) k where k = :'zkey8') from claim_submission_email_event(:'zkey8') c;
 reset role;
 select 'Z10 queue: ' || string_agg(kind || ':' || status || ' x' || attempts, ', ' order by id) from submission_email_notifications;
+
+-- ============================================================================================
+-- 0042: a client submission is one factual Account Activity event
+-- ============================================================================================
+reset role;
+select 'B1 each Submit with new files is one event: ' || count(*) || ' on ' || min(submission_id) from activity_events where type = 'client_submitted' and submission_id = 'acct_r1';
+select 'B1 facts: ' || message || ' | files=' || (details->'files')::text || ' | link sent to=' || coalesce(details->>'linkSentTo', '-') || ' | at submit time=' || (occurred_at = (details->>'submittedAt')::timestamptz) || ' | actor=' || actor_name
+  from activity_events where type = 'client_submitted' and submission_id = 'acct_r1' order by occurred_at limit 1;
+select 'B2 the old free-text line is no longer written: ' || count(*) from activity_events where message like '%ready for your review%';
+set role anon;
+do $$ begin perform submit_document_request(current_setting('my.tk4')::uuid); exception when others then null; end $$;
+reset role;
+select 'B2 a repeated Submit / refresh adds nothing: ' || count(*) from activity_events where type = 'client_submitted' and submission_id = 'acct_r1';
+-- Intake: when the submission is put into an account.
+update intake_submissions set status = 'imported', imported_at = now(), imported_account_id = 'acct_y_dot' where id = :'zsid';
+select 'B3 intake → event on that account: ' || message || ' | files=' || (details->'files')::text || ' | email=' || (details->>'clientEmail') || ' | ref ok=' || ((details->>'reference') = (select reference from intake_submissions where id = :'zsid')) || ' | at completion time=' || (occurred_at = (select completed_at from intake_submissions where id = :'zsid'))
+  from activity_events where type = 'client_submitted' and submission_id = 'acct_y_dot';
+update intake_submissions set imported_account_id = null where id = :'zsid';
+update intake_submissions set imported_account_id = 'acct_y_dot' where id = :'zsid';
+select public.dispatch_submission_emails(null) is null as _b4 \gset
+select 'B4 re-import / re-delivered notification adds nothing: ' || count(*) from activity_events where type = 'client_submitted' and submission_id = 'acct_y_dot';
+select 'B5 no document types in the history: ' || count(*) from activity_events where type = 'client_submitted' and (message ~* '\m(mvr|license|registration|loss run|ifta|title)\M');
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select 'B6 other agency sees none of these events: ' || count(*) from activity_events where type = 'client_submitted';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'B6 the account''s broker sees them: ' || count(*) from activity_events where type = 'client_submitted' and submission_id in ('acct_r1', 'acct_y_dot');
+reset role;

@@ -270,6 +270,13 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   asks Renewal IQ's server to send it, and a pg_cron job retries anything due every 2 minutes (back-off,
   up to 8 attempts). A submission never waits on, or fails because of, email. Needs pg_net + pg_cron
   and one settings row (see §6b). Needs 0040 first. Additive, safe to re-run.
+- **`supabase/migrations/0042_client_submission_activity.sql`** — a client submission becomes one
+  factual Account Activity event ("Client submitted documents — N files received"): the submission
+  time, the account name, the original file names, the email the client typed (intake) or the contact
+  the link was sent to (request), and the intake reference — never a document type from extraction.
+  Written by the database (document-request Submit; intake once imported/added to an account), once
+  per submission (fixed event id). Replaces the request Submit's old free-text activity line. Adds
+  `activity_events.details`. Needs 0041 first. Additive, safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -355,6 +362,7 @@ from (values
   ('0039_intake_duplicate_accounts',  to_regprocedure('public.find_intake_duplicate_accounts(text)') is not null),
   ('0040_submission_email_notifications', to_regclass('public.submission_email_notifications') is not null),
   ('0041_submission_email_queue',     to_regprocedure('public.claim_submission_email_event(text)') is not null),
+  ('0042_client_submission_activity', exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'activity_events' and column_name = 'details')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

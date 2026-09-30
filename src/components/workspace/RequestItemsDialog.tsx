@@ -3,7 +3,7 @@ import { Check, Copy, Link2, Loader2, Lock, Mail, Send, UserPlus } from 'lucide-
 import { Button, Modal } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
-import { draftClientRequestEmail, mailtoHref } from '../../services/workflow/emailDraft';
+import { draftClientRequestEmail, gmailComposeUrl, isSendableEmail, MISSING_RECIPIENT_MESSAGE } from '../../services/workflow/emailDraft';
 import { addBusinessDays, todayKey } from '../../services/workflow/dates';
 import type { MissingItem } from '../../types';
 import { inputClass, labelClass } from './formStyles';
@@ -162,9 +162,32 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     return { body: withLink };
   }
 
-  async function openEmail() {
+  const recordEmailDraftOpened = useAccountsStore((s) => s.recordEmailDraftOpened);
+  const [gmailError, setGmailError] = useState<string | null>(null);
+
+  /**
+   * Gmail's compose window, in a new tab, with To / Subject / the whole draft filled in. The broker
+   * reviews and sends it there — Renewal IQ sends nothing and records only that the draft was opened.
+   */
+  async function openInGmail() {
+    const to = contact?.email?.trim();
+    if (!isSendableEmail(to)) return setGmailError(MISSING_RECIPIENT_MESSAGE);
+    setGmailError(null);
+    // The tab is opened now, while the click still counts (a link may need creating first).
+    const tab = window.open('about:blank', '_blank');
     const ready = await ensureLink();
-    if (ready) window.location.href = mailtoHref(contact?.email, { subject, body: ready.body });
+    if (!ready) {
+      tab?.close();
+      return;
+    }
+    const url = gmailComposeUrl(to, { subject, body: ready.body })!;
+    if (tab) {
+      tab.opener = null;
+      tab.location.href = url;
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+    recordEmailDraftOpened(accountId, to, subject);
   }
 
   async function copy() {
@@ -217,8 +240,8 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
           <Button variant="secondary" size="sm" icon={copied ? <Check size={14} /> : <Copy size={14} />} onClick={() => void copy()} disabled={linkBusy}>
             {copied ? 'Copied' : 'Copy email'}
           </Button>
-          <Button variant="secondary" size="sm" icon={<Mail size={14} />} onClick={() => void openEmail()} disabled={linkBusy}>
-            Open in email app
+          <Button variant="secondary" size="sm" icon={<Mail size={14} />} onClick={() => void openInGmail()} disabled={linkBusy} data-testid="open-in-gmail">
+            Open in Gmail
           </Button>
           <Button size="sm" icon={linkBusy ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} onClick={() => void markSent()} disabled={linkBusy || (newDocument ? !docName.trim() : selectedItems.length === 0)}>
             {newDocument ? 'Add to checklist as requested' : 'Mark as sent'}
@@ -227,6 +250,11 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
       }
     >
       <div className="flex flex-col gap-4">
+        {gmailError && (
+          <p className="rounded-lg bg-[var(--color-danger-100)]/60 px-3 py-2 text-sm text-[var(--color-danger-600)]" role="alert" data-testid="gmail-error">
+            {gmailError}
+          </p>
+        )}
         {newDocument && (
           <div className="grid grid-cols-1 gap-3">
             <div>
@@ -294,7 +322,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
               Send to
             </label>
             {contacts.length > 0 ? (
-              <select id="req-contact" value={contactId} disabled={locked} onChange={(e) => setContactId(e.target.value)} className={inputClass}>
+              <select id="req-contact" value={contactId} disabled={locked} onChange={(e) => (setContactId(e.target.value), setGmailError(null))} className={inputClass}>
                 {contacts.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}

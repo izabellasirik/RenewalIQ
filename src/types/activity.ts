@@ -45,7 +45,11 @@ export type ActivityEventType =
   // Client document requests (0030)
   | 'request_follow_up'
   | 'request_completed'
-  | 'request_cancelled';
+  | 'request_cancelled'
+  // A client's submission, as recorded by the database (0042) — facts only, see ClientSubmissionDetails.
+  | 'client_submitted'
+  // The broker opened an RQ-drafted email in Gmail's compose window. Not "sent": RQ can't see that.
+  | 'email_draft_opened';
 
 export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<ActivityEventType>([
   'account_created',
@@ -79,7 +83,29 @@ export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<Acti
   'request_follow_up',
   'request_completed',
   'request_cancelled',
+  'client_submitted',
+  'email_draft_opened',
 ]);
+
+/**
+ * What a client submission event records (activity_events.details, 0042): only what Renewal IQ knows
+ * for certain — never a document type read by extraction.
+ */
+export interface ClientSubmissionDetails {
+  source: 'intake' | 'document_request';
+  /** False for an intake the client didn't finish (imported with what arrived). */
+  complete: boolean;
+  submittedAt: string;
+  accountName?: string | null;
+  /** Original file names, as uploaded. */
+  files: string[];
+  /** Intake: the email the client typed on the form. */
+  clientEmail?: string | null;
+  clientName?: string | null;
+  /** Document request: the contact the secure link was sent to. */
+  linkSentTo?: string | null;
+  reference?: string | null;
+}
 
 export interface ActivityEvent {
   id: string;
@@ -91,4 +117,6 @@ export interface ActivityEvent {
   actorId?: string;
   /** Their display name when it happened (agency name, else email). */
   actorName?: string;
+  /** Structured facts for some events (client_submitted). */
+  details?: ClientSubmissionDetails;
 }
