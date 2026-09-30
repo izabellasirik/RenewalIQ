@@ -28,3 +28,12 @@ export const clientRequestUrl = (token: string) => `${publicAppUrl()}/r/${compac
 export const intakeUrl = (token: string) => `${publicAppUrl()}/i/${compactToken(token)}`;
 /** An agency invitation link. */
 export const inviteUrl = (token: string) => `${publicAppUrl()}/invite/${token}`;
+
+/**
+ * Pages a client, applicant or invitee opens from a link — they must render whether or not someone
+ * is (or was) signed in to Renewal IQ in this browser, and must never be sent to the sign-in page.
+ */
+const PUBLIC_PATH_RE = /^\/(r|i|request|intake|invite)\/[^/]+\/?$/;
+export function isPublicLinkPath(pathname: string): boolean {
+  return PUBLIC_PATH_RE.test(pathname);
+}
