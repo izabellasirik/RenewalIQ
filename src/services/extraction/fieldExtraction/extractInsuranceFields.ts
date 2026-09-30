@@ -13,6 +13,8 @@ import type { RawTable } from '../../ingestion';
 import { parseAddressComponents, stateFromAddress } from './addressPatterns';
 import { isReadableText } from './textQuality';
 import {
+  subjectLines,
+  detectMvr,
   extractDriverLicenseFields,
   extractVehicleRegistrationFields,
   findGenericBusinessName,
@@ -80,30 +82,8 @@ function synthesizeKeyValueLines(doc: RawDocument): TextLine[] {
   return lines;
 }
 
-/**
- * The lines about the document's subject — the driver — without the sections about someone else.
- * A driving record carries a medical certificate: the medical examiner's name, their license or
- * registry number, their phone, their specialty. Read as license fields, the examiner's license
- * number became the driver's, or the examiner became a second driver.
- */
-const OTHER_PERSON_SECTION = /medical\s+(?:examiner|certificate|certification)|examiner|national\s+registry|registry\s+(?:no|number|#)|practitioner|physician|speciality|specialty|self[\s-]*certification|emergency\s+contact/i;
-const SUBJECT_SECTION = /^(?:driver|licensee|subject|personal)\b.*\b(?:information|details|data)\b|^driver\s+licen[cs]e\s+information|^license\s+information/i;
-export function subjectLines(lines: TextLine[]): TextLine[] {
-  const out: TextLine[] = [];
-  let inOtherSection = false;
-  for (const line of lines) {
-    const t = line.text.trim();
-    if (SUBJECT_SECTION.test(t)) inOtherSection = false;
-    else if (OTHER_PERSON_SECTION.test(t)) {
-      // A heading ("Medical Examiner Information") opens the other person's section; a single
-      // labelled line ("Examiner License #: …") is just skipped.
-      if (!/:\s*\S/.test(t)) inOtherSection = true;
-      continue;
-    }
-    if (!inOtherSection) out.push(line);
-  }
-  return out;
-}
+// The lines about the document's subject (the driver) — see idDocumentPatterns.ts.
+export { subjectLines } from './idDocumentPatterns';
 
 function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLines: TextLine[], hasDriverTable: boolean): ExtractedFieldResult[] {
   const lines = [...textLines, ...synthesizeKeyValueLines(doc)];
@@ -204,7 +184,9 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLin
   // partially-unreadable field.
   // A driver list (a table of drivers) is not a license, even though it says "License #", "DOB" and "Class".
   const isApplication = detectApplication(doc.text);
-  const licenseMatch = hasDriverTable || isApplication ? null : extractDriverLicenseFields(subjectLines(lines), doc.text);
+  // An MVR is about one driver even when it carries a table (violations, associated persons): its
+  // license holder is still read, and the table's rows are never taken as its driver (see the gate).
+  const licenseMatch = (hasDriverTable && !detectMvr(doc.text)) || isApplication ? null : extractDriverLicenseFields(subjectLines(lines), doc.text);
   if (licenseMatch) {
     const cdlLine = licenseMatch.cdlOriginalIssueLine;
     results.push({

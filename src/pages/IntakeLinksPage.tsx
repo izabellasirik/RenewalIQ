@@ -14,6 +14,7 @@ import {
   fetchIntakeDocuments,
   fetchIntakeEvents,
   fetchManageableIntakeLinks,
+  fetchIntakeDuplicateCandidates,
   fetchIntakeSubmissions,
   deleteIntakeLink,
   markStaleIntakeSubmissions,
@@ -22,8 +23,8 @@ import {
 import { DocumentPreviewModal, type PreviewableFile } from '../components/upload/DocumentPreviewModal';
 import { saveBlobAs } from '../services/documents/fileAccess';
 import { inferFileType } from '../utils/documents';
-import { importIntakeSubmission } from '../services/intake/importIntakeSubmission';
-import { findLikelyDuplicateAccount, type DuplicateMatch } from '../services/intake/duplicateDetection';
+import { addIntakeSubmissionToAccount, importIntakeSubmission, type ImportResult } from '../services/intake/importIntakeSubmission';
+import { classifyDuplicates, intakeIdentity, localDuplicateCandidates, type DuplicateMatch } from '../services/intake/duplicateDetection';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { fetchIntakeAgencyName, saveIntakeAgencyName } from '../services/supabase/profileRepo';
 import { formatDate } from '../utils/dates';
@@ -342,10 +343,13 @@ function SubmissionCard({
   collapsed,
   onToggle,
   linkLabel,
+  brokerName,
 }: {
   submission: IntakeSubmission;
   /** The broker's label for the submission link the client used (e.g. "ABC Client"). */
   linkLabel?: string;
+  /** Whose submission it is (the link's broker) — shown to admins, who see the whole agency's. */
+  brokerName?: string;
   onChanged: () => void;
   /** A message that should outlive this card (it moves to another tab after importing). */
   onNotice: (text: string) => void;
@@ -371,21 +375,30 @@ function SubmissionCard({
     };
   }, [submission.id]);
 
-  // Warn before creating a second account for the same business (DOT # or named insured match).
-  const [duplicate, setDuplicate] = useState<DuplicateMatch | null>(null);
+  // Before creating an account: is this business already an account in the organization? (0039)
+  const [duplicates, setDuplicates] = useState<DuplicateMatch[] | null>(null);
 
-  function handleImportClick() {
+  async function handleImportClick() {
+    setError(null);
+    setBusy('import');
+    const server = await fetchIntakeDuplicateCandidates(submission.id);
+    setBusy(null);
+    if (!server.ok) {
+      setError(`Couldn't check for an existing account, so nothing was imported: ${server.message}`);
+      return;
+    }
     const { accounts, riskProfiles } = useAccountsStore.getState();
-    const match = findLikelyDuplicateAccount(submission, accounts, riskProfiles);
-    if (match) setDuplicate(match);
-    else void handleImport();
+    const candidates = server.data ?? localDuplicateCandidates(accounts, riskProfiles);
+    const matches = classifyDuplicates(intakeIdentity(submission), candidates);
+    if (matches.length > 0) setDuplicates(matches);
+    else void runImport(() => importIntakeSubmission(submission));
   }
 
-  async function handleImport() {
-    setDuplicate(null);
+  async function runImport(action: () => Promise<ImportResult>) {
+    setDuplicates(null);
     setBusy('import');
     setError(null);
-    const result = await importIntakeSubmission(submission);
+    const result = await action();
     setBusy(null);
     if (!result.ok) {
       setError(result.message ?? 'Could not import this submission.');
@@ -448,6 +461,7 @@ function SubmissionCard({
               {[submission.contactName, submission.contactEmail, submission.contactPhone].filter(Boolean).join(' · ') || <span className="italic text-[var(--color-ink-400)]">no contact details given</span>}
             </p>
             <p className="text-xs text-[var(--color-ink-500)]">
+              {brokerName && <>Broker: <span className="font-medium text-[var(--color-ink-700)]" data-testid="submission-broker">{brokerName}</span> · </>}
               {linkLabel ? <>Via link: <span className="font-medium text-[var(--color-ink-700)]">{linkLabel}</span></> : 'Via a submission link'}
               {submission.dotNumber && ` · DOT ${submission.dotNumber}`}
               {collapsed && documents && documents.length > 0 && ` · ${documents.length} document${documents.length === 1 ? '' : 's'}`}
@@ -548,20 +562,43 @@ function SubmissionCard({
           </Button>
         </div>
       )}
-      <ConfirmDialog
-        open={!!duplicate}
-        onCancel={() => setDuplicate(null)}
-        onConfirm={() => void handleImport()}
-        title="Possible duplicate account"
-        description={
-          duplicate
-            ? `You already have "${duplicate.account.namedInsured}" (${duplicate.reason}). Import this submission as another account anyway?`
-            : ''
-        }
-        confirmLabel="Import anyway"
-        cancelLabel="Don't import"
-        variant="default"
-      />
+      {duplicates && (
+        <div className="mt-3 rounded-lg border border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/40 p-3" data-testid="possible-existing-account" role="alert">
+          <p className="text-sm font-semibold text-[var(--color-ink-900)]">Possible existing account</p>
+          <p className="mt-0.5 text-xs text-[var(--color-ink-600)]">Nothing has been imported yet — the submission and its files stay here until you choose.</p>
+          <ul className="mt-2 flex flex-col gap-2">
+            {duplicates.map(({ candidate, reason }) => (
+              <li key={candidate.accountId} className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-[var(--color-ink-900)]">
+                    {candidate.namedInsured}
+                    {candidate.archived && <span className="ml-1 text-xs font-normal text-[var(--color-ink-500)]">(archived)</span>}
+                  </p>
+                  <p className="text-xs text-[var(--color-ink-500)]">
+                    {reason}
+                    {candidate.assignedName ? ` · Broker: ${candidate.assignedName}` : ''}
+                    {!candidate.canOpen && ' · assigned to someone else — ask them or an admin'}
+                  </p>
+                </div>
+                <Button size="sm" disabled={busy !== null || !candidate.canOpen} onClick={() => void runImport(() => addIntakeSubmissionToAccount(submission, candidate.accountId))}>
+                  Add submission to this account
+                </Button>
+                <Button size="sm" variant="secondary" disabled={!candidate.canOpen} onClick={() => navigate(`/accounts/${candidate.accountId}`)}>
+                  Open existing account
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" disabled={busy !== null} onClick={() => void runImport(() => importIntakeSubmission(submission))}>
+              Create new account anyway
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setDuplicates(null)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
       {(submission.status === 'imported' || submission.status === 'dismissed') && (
         <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-ink-100)] pt-3">
           {submission.status === 'imported' && submission.importedAccountId && (
@@ -590,12 +627,15 @@ function SubmissionsSection({ userId }: { userId: string }) {
   const [collapsed, toggleCollapsed] = useCollapsedSubmissions();
   const [notice, setNotice] = useState<string | null>(null);
   const [linkLabels, setLinkLabels] = useState<Record<string, string>>({});
+  const [linkOwners, setLinkOwners] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     // Link labels only name the source on each card — a failure here just leaves them out.
     fetchManageableIntakeLinks(userId).then((links) => {
-      if (links.ok) setLinkLabels(Object.fromEntries(links.data.map((l) => [l.id, l.label])));
+      if (!links.ok) return;
+      setLinkLabels(Object.fromEntries(links.data.map((l) => [l.id, l.label])));
+      setLinkOwners(Object.fromEntries(links.data.map((l) => [l.id, l.userId === userId ? 'You' : (l.ownerName ?? 'A teammate')])));
     });
     // Submissions a client stopped sending (2 hours without activity) show as incomplete.
     await markStaleIntakeSubmissions();
@@ -645,7 +685,7 @@ function SubmissionsSection({ userId }: { userId: string }) {
       ) : (
         <div className="flex flex-col gap-3">
           {filtered.map((s) => (
-            <SubmissionCard key={s.id} submission={s} onChanged={load} onNotice={setNotice} collapsed={collapsed.has(s.id)} onToggle={() => toggleCollapsed(s.id)} linkLabel={linkLabels[s.intakeLinkId]} />
+            <SubmissionCard key={s.id} submission={s} onChanged={load} onNotice={setNotice} collapsed={collapsed.has(s.id)} onToggle={() => toggleCollapsed(s.id)} linkLabel={linkLabels[s.intakeLinkId]} brokerName={s.userId !== userId ? (linkOwners[s.intakeLinkId] ?? 'A teammate') : undefined} />
           ))}
         </div>
       )}

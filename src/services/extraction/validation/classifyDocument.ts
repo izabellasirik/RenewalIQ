@@ -1,5 +1,5 @@
 import type { DocumentCategory, ExtractedFieldResult } from '../../../types';
-import { detectApplication, detectDriverLicense, detectVehicleRegistration, detectDeclarationsPage, detectInsuranceIdCard } from '../fieldExtraction/idDocumentPatterns';
+import { detectApplication, detectMvr, detectDriverLicense, detectVehicleRegistration, detectDeclarationsPage, detectInsuranceIdCard } from '../fieldExtraction/idDocumentPatterns';
 import { inferCategory, inferCategoryFromText } from '../../../utils/documents';
 
 /**
@@ -18,7 +18,6 @@ export interface DocumentClassification {
   signal: string;
 }
 
-const MVR = /\bmvr\b|motor\s+vehicle\s+(?:record|report)|driving\s+record|driver\s+record\s+abstract|record\s+of\s+convictions|driver\s+history\s+record/i;
 /** A driver record with a medical certificate section (CDL self-certification / medical examiner). */
 const MEDICAL_SECTION = /medical\s+(?:examiner|certificate|certification)|self[\s-]*certification/i;
 const TITLE = /certificate\s+of\s+title|\bmotor\s+vehicle\s+title\b|\bvessel\s+title\b|\btitle\s*(?:no\.?|number|#)\s*:?\s*[A-Z0-9]/i;
@@ -37,7 +36,7 @@ export function classifyDocument(input: { text: string; fileName: string; vision
   if (detectApplication(text)) return { category: 'application', certainty: 'high', signal: 'text: application' };
   // Single-subject documents next: their text also mentions licenses, VINs, makes and dates, which
   // is exactly what makes them look like schedules to a table reader.
-  if (MVR.test(text)) return { category: 'mvr', certainty: 'high', signal: 'text: driving record' };
+  if (detectMvr(text)) return { category: 'mvr', certainty: 'high', signal: 'text: driving record' };
   if (detectDriverLicense(text) && MEDICAL_SECTION.test(text)) return { category: 'mvr', certainty: 'high', signal: 'text: driver license record with a medical certificate' };
   if (TITLE.test(text)) return { category: 'vehicle_title', certainty: 'high', signal: 'text: certificate of title' };
   if (detectVehicleRegistration(text)) return { category: 'vehicle_registration', certainty: 'high', signal: 'text: vehicle registration' };

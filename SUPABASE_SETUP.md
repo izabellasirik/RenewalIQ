@@ -247,6 +247,23 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   (`list_manageable_intake_links`, `set_intake_link_active`, `delete_intake_link`). A link with
   submissions not yet imported or dismissed can't be deleted (deleting would cascade to them).
   Additive, safe to re-run.
+- **`supabase/migrations/0037_intake_link_privacy.sql`** — intake links are no longer readable by
+  every signed-in user: a user reads only the links they manage (their own; an agency admin, every
+  member's). The public form looks a link up by its code through `get_public_intake_link(token)`,
+  one link or nothing. Needs 0036 first. Additive, safe to re-run.
+- **`supabase/migrations/0038_agency_intake_submission_visibility.sql`** — an agency admin sees
+  (and can import or dismiss) every intake submission, file and history entry that came through a
+  link of a member of their agency; agents still see only their own; other agencies see nothing. A
+  submission can't be moved to another broker. Needs 0036 first. Additive, safe to re-run.
+- **`supabase/migrations/0039_intake_duplicate_accounts.sql`** — "Possible existing account" before
+  importing a client submission: `find_intake_duplicate_accounts(submission)` returns the accounts in
+  the submission's own organization with the same USDOT number or company name (contact details of
+  accounts the caller can't open are compared server-side, never returned). Nothing is merged.
+  Needs 0038 first. Additive, safe to re-run.
+- **`supabase/migrations/0040_submission_email_notifications.sql`** — the broker is emailed when a
+  client submits (see §6b). `claim_submission_email` / `complete_submission_email` are callable only
+  with the service role: they check the submission was saved and verified and record each email
+  once (`submission_email_notifications`). Needs 0035 first. Additive, safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -327,6 +344,10 @@ from (values
   ('0034_document_review_candidates', exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'documents' and column_name = 'review_candidates')),
   ('0035_request_client_submit',      to_regprocedure('public.submit_document_request(uuid)') is not null),
   ('0036_agency_intake_links',        to_regprocedure('public.delete_intake_link(text)') is not null),
+  ('0037_intake_link_privacy',        to_regprocedure('public.get_public_intake_link(text)') is not null),
+  ('0038_agency_intake_submission_visibility', to_regprocedure('public.intake_file_readable_by_admin(text)') is not null),
+  ('0039_intake_duplicate_accounts',  to_regprocedure('public.find_intake_duplicate_accounts(text)') is not null),
+  ('0040_submission_email_notifications', to_regclass('public.submission_email_notifications') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);
@@ -429,6 +450,20 @@ To turn it on:
 
 The server only emails an invitation that the signed-in admin can read under RLS (their own
 agency's, still open), and only to the address it was created for.
+
+**Client submission emails** (0040). When a client finishes a Submission Intake form or presses
+Submit on a document request, `api/notify-submission.ts` emails the assigned broker: the account /
+client name, the client's email, when, the files, and a button into Renewal IQ. From is Renewal IQ's
+own address shown as "<Agency> via Renewal IQ"; Reply-To is the client's email when they gave one.
+Each submission is emailed once, only after it was saved and verified. Needs, in Vercel:
+   - `RESEND_API_KEY` (as above)
+   - `NOTIFY_EMAIL_FROM` = e.g. `Renewal IQ <notifications@your-domain.com>` on the verified domain
+     (falls back to `INVITE_EMAIL_FROM`)
+   - `SUPABASE_SERVICE_ROLE_KEY` = Supabase → Project Settings → API → `service_role` key. Server-side
+     only — never a `VITE_` variable. It lets the server confirm the submission and read the broker's
+     address, which the client never sees.
+   - `APP_URL` (optional) for the button's link
+Until they're set, submissions work exactly as before and no email is sent (nothing is recorded as sent).
 
 **Assignment emails are not sent yet.** Assignments and new collaborators create in-app
 notifications (the bell, 0026). Emailing them needs the same provider plus a server-side sender

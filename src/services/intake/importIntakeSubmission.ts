@@ -133,6 +133,14 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
     return { ok: false, message: `Couldn't save this submission to your account, so nothing was imported — please try again.${saved.message ? ` (${saved.message})` : ''}` };
   }
 
+  // An admin importing a teammate's submission: the account belongs to the broker whose link it came through.
+  let assignWarning: string | null = null;
+  const { currentUserId, assignAccountToAgent } = useAccountsStore.getState();
+  if (submission.userId && currentUserId && submission.userId !== currentUserId) {
+    const assigned = await assignAccountToAgent(accountId, submission.userId);
+    if (!assigned.ok) assignWarning = `The account was created but couldn't be assigned to the submission's broker: ${assigned.message}`;
+  }
+
   // Marked imported only once the documents are in the account's cloud storage (the originals stay in
   // intake storage either way, so a slow upload is never a lost file).
   const notYetUploaded = files.length > 0 ? await waitForUploads(accountId, addFiles(accountId, files), 120_000) : [];
@@ -144,6 +152,58 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
       : null,
     missing.length > 0 ? `${missing.length} document${missing.length === 1 ? '' : 's'} couldn't be downloaded (${missing.join(', ')}) — use Reimport, or download ${missing.length === 1 ? 'it' : 'them'} here and upload to the account.` : null,
     markResult.ok ? null : `The account was created, but the submission couldn't be marked imported: ${markResult.message}`,
+    assignWarning,
+  ].filter(Boolean);
+  return { ok: true, accountId, ...(warnings.length ? { warning: warnings.join(' ') } : {}) };
+}
+
+/** Downloads a submission's files (one retry each). */
+async function downloadSubmissionFiles(submissionId: string): Promise<{ ok: false; message: string } | { ok: true; files: File[]; missing: string[] }> {
+  const docsResult = await fetchIntakeDocuments(submissionId);
+  if (!docsResult.ok) return { ok: false, message: docsResult.message };
+  const files: File[] = [];
+  const missing: string[] = [];
+  for (const doc of docsResult.data) {
+    let fileResult = await downloadIntakeDocumentFile(doc);
+    if (!fileResult.ok) fileResult = await downloadIntakeDocumentFile(doc);
+    if (fileResult.ok) files.push(fileResult.data);
+    else missing.push(doc.fileName);
+  }
+  return { ok: true, files, missing };
+}
+
+/**
+ * "Add submission to existing account" — the broker decided a new submission is the same business as
+ * an account they already have. Its files go into that account through the normal upload pipeline
+ * (read, validated, and applied or sent to review exactly like any upload — nothing the client typed
+ * overwrites the account's data); the client's contact is added if the account doesn't have them yet;
+ * the submission is marked imported into that account. Nothing is merged automatically.
+ */
+export async function addIntakeSubmissionToAccount(submission: IntakeSubmission, accountId: string): Promise<ImportResult> {
+  if (submission.status === 'uploading') return { ok: false, message: 'The client is still sending this submission — it can be added once they finish.' };
+  let store = useAccountsStore.getState();
+  if (!store.accounts.some((a) => a.id === accountId)) {
+    await store.hydrateCloudSubmissions();
+    store = useAccountsStore.getState();
+  }
+  const account = store.accounts.find((a) => a.id === accountId);
+  if (!account) return { ok: false, message: "You don't have access to that account — ask its broker or an admin, or create a new account." };
+
+  const downloaded = await downloadSubmissionFiles(submission.id);
+  if (!downloaded.ok) return { ok: false, message: downloaded.message };
+
+  const email = submission.contactEmail?.trim().toLowerCase();
+  const known = (account.contacts ?? []).some((c) => (email && c.email?.trim().toLowerCase() === email) || (!email && c.name === submission.contactName));
+  if (!known && (submission.contactName || submission.contactEmail || submission.contactPhone)) {
+    store.addContact(accountId, { name: submission.contactName ?? submission.contactEmail ?? 'Client', email: submission.contactEmail ?? undefined, phone: submission.contactPhone ?? undefined });
+  }
+
+  const notYetUploaded = downloaded.files.length > 0 ? await waitForUploads(accountId, store.addFiles(accountId, downloaded.files), 120_000) : [];
+  const markResult = await markIntakeSubmissionImported(submission.id, accountId);
+  const warnings = [
+    notYetUploaded.length > 0 ? `${notYetUploaded.length} document${notYetUploaded.length === 1 ? ' is' : 's are'} still uploading to the account (${notYetUploaded.join(', ')}) — keep this tab open for a moment.` : null,
+    downloaded.missing.length > 0 ? `${downloaded.missing.length} document${downloaded.missing.length === 1 ? '' : 's'} couldn't be downloaded (${downloaded.missing.join(', ')}).` : null,
+    markResult.ok ? null : `The files were added, but the submission couldn't be marked imported: ${markResult.message}`,
   ].filter(Boolean);
   return { ok: true, accountId, ...(warnings.length ? { warning: warnings.join(' ') } : {}) };
 }

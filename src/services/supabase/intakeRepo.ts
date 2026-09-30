@@ -1,4 +1,5 @@
 import { supabase } from './client';
+import type { DuplicateCandidate } from '../intake/duplicateDetection';
 import type { CoverageType, IntakeDocument, IntakeEvent, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../../types';
 import { errorMessage, errorStatus, isTransientError, withRetry, withTimeout } from '../intake/retry';
 import { generateId } from '../../utils/id';
@@ -35,6 +36,8 @@ interface IntakeLinkRow {
   active: boolean;
   created_at: string;
 }
+
+const isMissingFunction = (e: { code?: string; message: string }) => e.code === 'PGRST202' || e.code === '42883' || /could not find the function|schema cache/i.test(e.message);
 
 function rowToLink(row: IntakeLinkRow): IntakeLink {
   return { id: row.id, userId: row.user_id, label: row.label, organizationName: row.organization_name ?? null, token: row.token, active: row.active, createdAt: row.created_at };
@@ -134,9 +137,16 @@ function rowToDocument(row: IntakeDocumentRow): IntakeDocument {
 export async function fetchIntakeLinkByToken(token: string): Promise<RepoResult<IntakeLink | null>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const { data, error } = await supabase.from('intake_links').select('*').eq('token', token).maybeSingle();
-    if (error) return fail(error.message);
-    return { ok: true, data: data ? rowToLink(data as IntakeLinkRow) : null };
+    // 0037: intake links aren't readable by the public any more — one link, by its code, through this.
+    const res = await supabase.rpc('get_public_intake_link', { p_token: token });
+    if (res.error && isMissingFunction(res.error)) {
+      const { data, error } = await supabase.from('intake_links').select('*').eq('token', token).maybeSingle();
+      if (error) return fail(error.message);
+      return { ok: true, data: data ? rowToLink(data as IntakeLinkRow) : null };
+    }
+    if (res.error) return fail(res.error.message);
+    const row = ((res.data ?? []) as IntakeLinkRow[])[0];
+    return { ok: true, data: row ? rowToLink(row) : null };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not load this link.');
   }
@@ -406,7 +416,6 @@ export async function fetchIntakeLinks(userId: string): Promise<RepoResult<Intak
   }
 }
 
-const isMissingFunction = (e: { code?: string; message: string }) => e.code === 'PGRST202' || e.code === '42883' || /could not find the function|schema cache/i.test(e.message);
 
 /**
  * The links this broker manages: their own — and, for an agency admin, every member's (0036), with
@@ -450,10 +459,14 @@ export async function deleteIntakeLink(id: string): Promise<RepoResult> {
   return { ok: true, data: undefined };
 }
 
-export async function fetchIntakeSubmissions(userId: string): Promise<RepoResult<IntakeSubmission[]>> {
+/**
+ * The submissions this user may see — RLS decides: their own, and for an agency admin every member's
+ * (0038). `_userId` is kept for callers; it no longer narrows the list to the user's own links.
+ */
+export async function fetchIntakeSubmissions(_userId: string): Promise<RepoResult<IntakeSubmission[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const { data, error } = await supabase.from('intake_submissions').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+    const { data, error } = await supabase.from('intake_submissions').select('*').order('created_at', { ascending: false });
     if (error) return fail(error.message);
     return { ok: true, data: ((data ?? []) as IntakeSubmissionRow[]).map(rowToSubmission) };
   } catch (err) {
@@ -518,4 +531,35 @@ export async function fetchIntakeEvents(intakeSubmissionId: string): Promise<Rep
   const { data, error } = await supabase.from('intake_events').select('id, event, detail, created_at').eq('intake_submission_id', intakeSubmissionId).order('id', { ascending: true });
   if (error) return error.code === '42P01' || error.code === 'PGRST205' ? { ok: true, data: [] } : fail(error.message);
   return { ok: true, data: (data ?? []).map((r) => ({ id: r.id as number, event: r.event as IntakeEvent['event'], detail: (r.detail ?? {}) as Record<string, unknown>, createdAt: r.created_at as string })) };
+}
+
+/**
+ * Accounts in the submission's own organization that could be the same business (0039) — the app
+ * decides which are likely matches (services/intake/duplicateDetection.ts). data: null when the
+ * database doesn't have the check yet (the caller falls back to the accounts on this device).
+ */
+export async function fetchIntakeDuplicateCandidates(intakeSubmissionId: string): Promise<RepoResult<DuplicateCandidate[] | null>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('find_intake_duplicate_accounts', { p_intake_submission_id: intakeSubmissionId });
+    if (error && isMissingFunction(error)) return { ok: true, data: null };
+    if (error) return fail(error.message);
+    type Row = { account_id: string; named_insured: string; dot_number: string | null; address: string | null; email_match: boolean; phone_match: boolean; assigned_name: string | null; can_open: boolean; archived: boolean };
+    return {
+      ok: true,
+      data: ((data ?? []) as Row[]).map((r) => ({
+        accountId: r.account_id,
+        namedInsured: r.named_insured,
+        dotNumber: r.dot_number,
+        address: r.address,
+        emailMatch: r.email_match,
+        phoneMatch: r.phone_match,
+        assignedName: r.assigned_name,
+        canOpen: r.can_open,
+        archived: r.archived,
+      })),
+    };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not check for existing accounts.');
+  }
 }

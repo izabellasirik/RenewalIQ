@@ -1,3 +1,4 @@
+import { notifyBrokerOfSubmission } from '../services/notifications/notifySubmission';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { expandToken } from '../services/publicLinks';
 import { useParams } from 'react-router-dom';
@@ -353,6 +354,8 @@ export function IntakeFormPage() {
       clearIntakeDraft(token);
       setResult({ reference: fin.reference, files: fin.files });
       setStatus('submitted');
+      // Saved and verified — email the broker (the server sends it once, however often this runs).
+      void notifyBrokerOfSubmission({ kind: 'intake', submissionId: session.submissionId, clientToken: session.clientToken });
     } catch (err) {
       setError(
         isTransientError(err)

@@ -708,3 +708,146 @@ reset role;
 select 'W5 admin paused it instead: active=' || active from intake_links where id = 'ilink_roman2';
 select 'W6 admin deleted a member''s link: left=' || count(*) from intake_links where id = 'ilink_roman';
 select 'W6 its imported submission went with it; the open one stays: ' || string_agg(id, ',' order by id) from intake_submissions where id in ('isub_open_r', 'isub_done_r');
+
+-- ============================================================================================
+-- 0037: intake links readable only inside the agency (by who manages them); public lookup by code
+-- ============================================================================================
+reset role;
+grant select on public.intake_links to anon; grant insert on public.intake_submissions to anon; -- as on Supabase: table grants for anon; RLS decides
+insert into intake_links (id, user_id, label, token, active) values
+  ('ilink_out2', '00000000-0000-0000-0000-00000000000c', 'Other agency second link', 'tok-out2', true)
+on conflict (id) do nothing;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'V1 agent reads only own links: ' || coalesce(string_agg(label, ', ' order by label), 'none') from intake_links;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'V2 admin reads the agency''s links, no other agency''s: ' || coalesce(string_agg(label, ', ' order by label), 'none') from intake_links;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select 'V3 other agency admin reads only its own: ' || coalesce(string_agg(label, ', ' order by label), 'none') from intake_links;
+select 'V4 other agency looking up Agency A codes directly: rows=' || count(*) from intake_links where token in ('tok-roman2', 'tok-denis', 'tok-b') or user_id in ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000d');
+select 'V4 other agency cannot list codes through the admin list either: ' || coalesce(string_agg(token, ', ' order by token), 'none') from list_manageable_intake_links();
+reset role;
+set role anon;
+select pg_temp.as_user('');
+select 'V5 anonymous can''t list links: rows=' || count(*) from intake_links;
+select 'V6 client opens a valid code: ' || label || ' active=' || active from get_public_intake_link('tok-denis');
+select 'V6 unknown / empty / wildcard codes find nothing: ' || (select count(*) from get_public_intake_link('tok-nope')) || ',' || (select count(*) from get_public_intake_link('')) || ',' || (select count(*) from get_public_intake_link('%')) || ',' || (select count(*) from get_public_intake_link(null));
+select 'V6 a paused link reads as inactive: active=' || active from get_public_intake_link('tok-roman2');
+do $$ begin
+  insert into intake_submissions (id, intake_link_id, user_id, status, named_insured) values ('isub_v7', 'ilink_denis', '00000000-0000-0000-0000-00000000000d', 'pending', 'V7 Co');
+  raise notice 'V7 old-style submit through an active link still works';
+exception when others then raise notice 'V7 old-style submit denied (BAD): %', sqlerrm; end $$;
+do $$ begin
+  insert into intake_submissions (id, intake_link_id, user_id, status, named_insured) values ('isub_v7b', 'ilink_denis', '00000000-0000-0000-0000-00000000000c', 'pending', 'Spoof');
+  raise notice 'V7 submit claiming another broker: ALLOWED (BAD)';
+exception when others then raise notice 'V7 submit claiming another broker denied'; end $$;
+reset role;
+delete from intake_submissions where id = 'isub_v7';
+
+-- ============================================================================================
+-- 0038: an agency admin sees (and can import/dismiss) every member's intake submission
+-- ============================================================================================
+reset role;
+insert into intake_submissions (id, intake_link_id, user_id, status, named_insured, contact_email, completed_at) values
+  ('isub_o_denis', 'ilink_denis', '00000000-0000-0000-0000-00000000000d', 'pending', 'Denis Client Co', 'dc@client.com', now()),
+  ('isub_o_out', 'ilink_out', '00000000-0000-0000-0000-00000000000c', 'pending', 'Outside Client Co', 'oc@client.com', now())
+on conflict (id) do nothing;
+insert into intake_documents (id, intake_submission_id, user_id, file_name, storage_path) values
+  ('idoc_o_r', 'isub_open_r', '00000000-0000-0000-0000-00000000000a', 'roman_client.pdf', 'isub_open_r/idoc_o_r/roman_client.pdf'),
+  ('idoc_o_out', 'isub_o_out', '00000000-0000-0000-0000-00000000000c', 'outside.pdf', 'isub_o_out/idoc_o_out/outside.pdf')
+on conflict (id) do nothing;
+insert into storage.objects (bucket_id, name) values ('intake-uploads', 'isub_open_r/idoc_o_r/roman_client.pdf'), ('intake-uploads', 'isub_o_out/idoc_o_out/outside.pdf');
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'O1 admin sees the agency''s submissions: ' || string_agg(named_insured, ', ' order by named_insured) from intake_submissions;
+select 'O1 admin reads a member''s files: docs=' || (select count(*) from intake_documents where intake_submission_id = 'isub_open_r') || ' storage=' || (select count(*) from storage.objects where bucket_id = 'intake-uploads' and name like 'isub_open_r/%');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'O2 agent sees only own: ' || string_agg(named_insured, ', ' order by named_insured) from intake_submissions;
+select 'O2 agent can''t read the admin''s submission files: docs=' || count(*) from intake_documents where intake_submission_id = 'isub_o_denis';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select 'O3 other agency admin sees only its own: ' || string_agg(named_insured, ', ' order by named_insured) from intake_submissions;
+select 'O3 other agency: Agency A docs=' || (select count(*) from intake_documents where user_id <> '00000000-0000-0000-0000-00000000000c') || ' files=' || (select count(*) from storage.objects where bucket_id = 'intake-uploads' and name like 'isub_open_r/%') || ' events=' || (select count(*) from intake_events e join intake_submissions s on s.id = e.intake_submission_id where s.user_id <> '00000000-0000-0000-0000-00000000000c');
+with u as (update intake_submissions set status = 'dismissed' where id = 'isub_open_r' returning 1) select 'O3 other agency dismissing Agency A''s submission: rows=' || count(*) from u;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+with u as (update intake_submissions set status = 'dismissed' where id = 'isub_o_denis' returning 1) select 'O4 admin dismisses a submission: rows=' || count(*) from u;
+do $$ begin update intake_submissions set user_id = '00000000-0000-0000-0000-00000000000d' where id = 'isub_open_r'; raise notice 'O5 admin moves a submission to another broker: ALLOWED (BAD)'; exception when others then raise notice 'O5 moving a submission to another broker denied: %', sqlerrm; end $$;
+reset role;
+select 'O4 state: ' || string_agg(id || '=' || status || '/' || user_id::text, ', ' order by id) from intake_submissions where id in ('isub_open_r', 'isub_o_denis');
+
+-- ============================================================================================
+-- 0039: possible existing account — only inside the submission's own organization
+-- ============================================================================================
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+insert into submissions (id, user_id, organization_id, named_insured, assigned_user_id, contact_email)
+select 'acct_y_dot', '00000000-0000-0000-0000-00000000000a', a.id, 'Blue Ridge Logistics LLC', '00000000-0000-0000-0000-00000000000a', null from agencies a where a.name = 'Agency';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+insert into submissions (id, user_id, organization_id, named_insured, assigned_user_id, contact_email)
+select 'acct_y_name', '00000000-0000-0000-0000-00000000000d', a.id, 'Harbor Freight Co', '00000000-0000-0000-0000-00000000000d', 'OPS@harbor.com' from agencies a where a.name = 'Agency';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+insert into submissions (id, user_id, organization_id, named_insured, assigned_user_id, contact_email)
+select 'acct_y_samename', '00000000-0000-0000-0000-00000000000a', a.id, 'Harbor Freight', '00000000-0000-0000-0000-00000000000a', 'someone@else.com' from agencies a where a.name = 'Agency';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+insert into submissions (id, user_id, organization_id, named_insured, assigned_user_id, contact_email)
+select 'acct_y_out', '00000000-0000-0000-0000-00000000000c', a.id, 'Blue Ridge Logistics', '00000000-0000-0000-0000-00000000000c', 'ops@harbor.com' from agencies a where a.name = 'Other Agency';
+insert into field_values (id, submission_id, user_id, section, field_key, value) values
+  ('fv_y1', 'acct_y_dot', '00000000-0000-0000-0000-00000000000a', 'transportation', 'dotNumber', '"7654321"'),
+  ('fv_y2', 'acct_y_out', '00000000-0000-0000-0000-00000000000c', 'transportation', 'dotNumber', '"7654321"'),
+  ('fv_y3', 'acct_y_dot', '00000000-0000-0000-0000-00000000000a', 'business', 'address', '"120 Main St"');
+select pg_temp.as_user('');
+insert into intake_submissions (id, intake_link_id, user_id, status, named_insured, dot_number, contact_email) values
+  ('isub_y_dot', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'pending', 'Totally New Name', 'USDOT 7654321', null),
+  ('isub_y_name', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'pending', 'Harbor Freight, LLC', null, 'ops@harbor.com'),
+  ('isub_y_out', 'ilink_out', '00000000-0000-0000-0000-00000000000c', 'pending', 'Blue Ridge Logistics', '7654321', null);
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'Y1 same DOT inside the agency only: ' || string_agg(account_id || ' dot=' || dot_number || ' open=' || can_open || ' addr=' || coalesce(address, '-'), ', ' order by account_id) from find_intake_duplicate_accounts('isub_y_dot');
+select 'Y2 same name: ' || string_agg(account_id || ' email=' || email_match || ' open=' || can_open || ' addr=' || coalesce(address, case when can_open then '-' else 'hidden' end) || ' broker=' || coalesce(assigned_name, '-'), ', ' order by account_id) from find_intake_duplicate_accounts('isub_y_name');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'Y3 admin may open it: ' || string_agg(account_id || ' open=' || can_open, ', ' order by account_id) from find_intake_duplicate_accounts('isub_y_name');
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform find_intake_duplicate_accounts('isub_y_dot'); raise notice 'Y4 other agency checks Agency A''s submission: ALLOWED (BAD)'; exception when others then raise notice 'Y4 other agency denied: %', sqlerrm; end $$;
+select 'Y5 other agency''s own submission matches only its own accounts: ' || string_agg(account_id, ', ' order by account_id) from find_intake_duplicate_accounts('isub_y_out');
+reset role;
+set role anon;
+do $$ begin perform find_intake_duplicate_accounts('isub_y_dot'); raise notice 'Y6 anonymous: ALLOWED (BAD)'; exception when others then raise notice 'Y6 anonymous denied'; end $$;
+reset role;
+
+-- ============================================================================================
+-- 0040: broker email on client submission — claimed once, only after saved + verified
+-- ============================================================================================
+reset role;
+insert into intake_submissions (id, intake_link_id, user_id, status, named_insured, contact_name, contact_email, client_token, completed_at) values
+  ('isub_z', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'pending', 'Zed Trucking', 'Zoe', 'zoe@client.com', '11111111-1111-1111-1111-111111111111', now()),
+  ('isub_z_noemail', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'pending', 'No Email Co', 'Nia', null, '22222222-2222-2222-2222-222222222222', now()),
+  ('isub_z_failed', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'uploading', 'Half Sent Co', 'Hal', 'hal@client.com', '33333333-3333-3333-3333-333333333333', null);
+insert into intake_documents (id, intake_submission_id, user_id, file_name, storage_path) values
+  ('idoc_z1', 'isub_z', '00000000-0000-0000-0000-00000000000a', 'z_loss_runs.pdf', 'isub_z/idoc_z1/z_loss_runs.pdf');
+set role anon;
+do $$ begin perform claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111'); raise notice 'Z1 anonymous claim: ALLOWED (BAD)'; exception when others then raise notice 'Z1 anonymous can''t claim or read broker emails'; end $$;
+reset role;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin perform claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111'); raise notice 'Z1 signed-in claim: ALLOWED (BAD)'; exception when others then raise notice 'Z1 signed-in users can''t claim either'; end $$;
+do $$ declare n integer; begin select count(*) into n from submission_email_notifications; raise notice 'Z1 outbox rows visible to a user: %', n; exception when others then raise notice 'Z1 outbox rows visible to a user: 0 (no access)'; end $$;
+reset role;
+set role service_role;
+select 'Z2 verified intake → claimed: ' || (c->>'claimed') || ' to=' || (c->>'brokerEmail') || ' reply=' || coalesce(c->>'clientEmail', '-') || ' files=' || (c->'files')::text || ' account=' || (c->>'accountName') || ' agency=' || coalesce(c->>'agencyName', '-') from claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111') c;
+select 'Z3 retry / double submit → ' || (c->>'claimed') || ' ' || (c->>'reason') from claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111') c;
+select 'Z4 wrong client key → ' || (c->>'reason') from claim_submission_email('intake', 'isub_z', '99999999-9999-9999-9999-999999999999') c;
+select 'Z4 garbage key → ' || (c->>'reason') from claim_submission_email('intake', 'isub_z', 'not-a-uuid') c;
+select 'Z5 failed / unverified upload → ' || (c->>'claimed') || ' ' || (c->>'reason') from claim_submission_email('intake', 'isub_z_failed', '33333333-3333-3333-3333-333333333333') c;
+select 'Z6 missing client email → claimed=' || (c->>'claimed') || ' reply=' || coalesce(c->>'clientEmail', 'none') from claim_submission_email('intake', 'isub_z_noemail', '22222222-2222-2222-2222-222222222222') c;
+select complete_submission_email('intake:isub_z', false, null, 'Email service refused it') is null as _z7 \gset
+select 'Z7 a failed send can be claimed again: ' || (c->>'claimed') from claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111') c;
+select complete_submission_email('intake:isub_z', true, 'email_1', null) is null as _z7b \gset
+select 'Z7 once sent, never again: ' || (c->>'reason') from claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111') c;
+select 'Z8 document request Submit → claimed=' || (c->>'claimed') || ' account=' || (c->>'accountId') || ' files=' || jsonb_array_length(c->'files') from claim_submission_email('request', '', :'tk4') c;
+select 'Z8 same Submit again → ' || (c->>'reason') from claim_submission_email('request', '', :'tk4') c;
+select 'Z9 unsubmitted request → ' || (c->>'reason') from claim_submission_email('request', '', :'tk5') c;
+reset role;
+update document_requests set client_submitted_at = client_submitted_at + interval '1 minute' where token = :'tk4'::uuid;
+set role service_role;
+select 'Z10 a later Submit is a new email: ' || (c->>'claimed') || ' files=' || jsonb_array_length(c->'files') from claim_submission_email('request', '', :'tk4') c;
+reset role;
+select 'Z11 outbox: ' || string_agg(kind || ':' || status || ' x' || attempts, ', ' order by id) from submission_email_notifications;

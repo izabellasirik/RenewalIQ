@@ -67,7 +67,7 @@ describe('B — MVR with a medical certificate', () => {
     expect(drivers(g.applied)).toHaveLength(0);
     const held = of(g.review, 'drivers').map((c) => (c.value as DriverEntry).name);
     expect(held).toEqual(['Alex R Morgan', 'Jordan P Lee']);
-    expect(of(g.review, 'drivers')[0].reason).toMatch(/one driver, but 2 possible drivers/);
+    expect(of(g.review, 'drivers')[0].reason).toMatch(/one driver, but 2 possible drivers|table on this driving record/);
     // "Address:", "Jurisdiction:", "Speciality Code:" are neither applied nor offered.
     expect(JSON.stringify([...g.applied, ...g.review])).not.toMatch(/Address:|Jurisdiction|Speciality|REG\. NUMBER/);
   });

@@ -149,6 +149,63 @@ export function detectApplication(text: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// MVR / driving record: whose record it is
+// ---------------------------------------------------------------------------
+
+/** A motor vehicle record / driving record — about one driver, its license holder. */
+const MVR_TEXT = /\bmvr\b|motor\s+vehicle\s+(?:record|report)|driving\s+record|driver\s+record\s+abstract|record\s+of\s+convictions|driver\s+history\s+record|^\s*driver'?s?\s+(?:record|history)\b/im;
+export function detectMvr(text: string): boolean {
+  return MVR_TEXT.test(text);
+}
+
+/**
+ * Sections and lines about SOMEONE ELSE than the record's subject. A driving record also names the
+ * medical examiner (with their own license/registry number), whoever requested or reviewed the
+ * report, the employer and its contact, officials and clerks, and people in notes and history. Read
+ * as the driver's fields, any of them became the driver — or a second driver.
+ */
+const OTHER_PERSON = new RegExp(
+  [
+    'medical\\s+(?:examiner|certificate|certification)', 'examiner', 'national\\s+registry', 'registry\\s+(?:no|number|#)', 'practitioner', 'physician',
+    'speciality', 'specialty', 'self[\\s-]*certification', 'emergency\\s+contact',
+    'request(?:ed|er|or)\\b', 'ordered\\s+by', 'prepared\\s+by', 'reviewed\\s+by', 'reviewer', 'certif(?:ied|ying)\\s+(?:by|official)', 'custodian', 'clerk', '\\bofficer\\b',
+    '\\bcourt\\b', '\\bjudge\\b', 'employer', 'company\\s+contact', 'contact\\s+person', 'account\\s+(?:name|holder|contact)', '\\b(?:insurance\\s+)?agent\\b', '(?:insurance|requesting)\\s+agency', 'agency\\s+(?:name|contact)', 'carrier\\s+contact', 'insurer',
+    'associated', 'co[\\s-]*driver', 'witness', 'signature', '\\battn\\b', 'attention', '^\\s*notes?\\b', '^\\s*comments?\\b', '^\\s*remarks?\\b',
+  ].join('|'),
+  'i'
+);
+/** Headings that start the subject's own section again. */
+const SUBJECT_SECTION = /^(?:driver|licensee|subject|personal)\b.*\b(?:information|details|data)\b|^driver\s+licen[cs]e\s+information|^licen[cs]e\s+(?:information|holder)\b|^licensee\b|^license\s+holder\b|^driver\s+(?:information|details|record)\b/i;
+/** Lines that describe a person — the ones that follow "Employer: …" or "Examiner Name: …" belong to them. */
+const PERSON_DESCRIPTOR = /^\s*(?:(?:full\s+)?name|title|position|phone|tel|telephone|fax|e-?mail|company|organization|contact|address|city|license\s*(?:no\.?|number|#)|lic(?:ense)?\s*#|reg(?:istry)?\.?\s*(?:no\.?|number|#)|npi)\b/i;
+
+export function subjectLines(lines: TextLine[]): TextLine[] {
+  const out: TextLine[] = [];
+  let inOtherSection = false;
+  let afterOtherLine = false;
+  for (const line of lines) {
+    const t = line.text.trim();
+    if (SUBJECT_SECTION.test(t) && !OTHER_PERSON.test(t.replace(SUBJECT_SECTION, ''))) {
+      inOtherSection = false;
+      afterOtherLine = false;
+    } else if (OTHER_PERSON.test(t)) {
+      // A heading ("Medical Examiner Information", "Requested By") opens the other person's section;
+      // a labelled line ("Employer: Coastal Freight", "Examiner Name: …") is skipped, and so are
+      // the name/phone/license lines right after it, which describe that same person.
+      if (!/:\s*\S/.test(t)) inOtherSection = true;
+      else afterOtherLine = true;
+      continue;
+    } else if (afterOtherLine && PERSON_DESCRIPTOR.test(t)) {
+      continue;
+    } else {
+      afterOtherLine = false;
+    }
+    if (!inOtherSection) out.push(line);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Driver's license
 // ---------------------------------------------------------------------------
 
@@ -224,7 +281,7 @@ function originalIssueInCdlSection(lines: TextLine[]): { value: string; line: Te
 }
 
 export function extractDriverLicenseFields(lines: TextLine[], fullText: string): DriverLicenseExtraction | null {
-  if (!detectDriverLicense(fullText)) return null;
+  if (!detectDriverLicense(fullText) && !detectMvr(fullText)) return null;
 
   const entry: Omit<DriverEntry, 'id' | 'source'> = {};
   const fieldConfidence: Partial<Record<string, Confidence>> = {};
@@ -243,16 +300,33 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
       excerpts.push(ln.line.text, fn.line.text);
     }
   }
+  // The license holder's name, labelled as theirs ("Driver Name", "Licensee", "License Holder").
   if (!entry.name) {
-    const plain = firstMatch(lines, [/^(?:full\s*)?name\s*:?\s*(.+)$/i]);
-    if (plain) {
-      attempted++;
-      const norm = normalizePlainName(plain.raw);
-      if (norm) {
-        entry.name = norm;
-        fieldConfidence.name = 'medium';
-        excerpts.push(plain.line.text);
-      }
+    const labelled = firstMatch(lines, [/^(?:driver'?s?|licensee'?s?|license\s+holder'?s?|subject'?s?|operator'?s?)\s*(?:full\s+)?name\s*:?\s*(.+)$/i, /^(?:driver|licensee|license\s+holder|subject)\s*:\s*(.+)$/i]);
+    const norm = labelled ? normalizePlainName(labelled.raw) : null;
+    if (labelled) attempted++;
+    if (labelled && norm) {
+      entry.name = norm;
+      fieldConfidence.name = 'medium';
+      excerpts.push(labelled.line.text);
+    }
+  }
+  if (!entry.name) {
+    // A plain "Name:" — only lines about the subject reach here (see subjectLines). Two different
+    // plain names left means it's unclear whose record this is: never guess — kept as a conflict,
+    // which sends the driver to review.
+    const plainNames = lines
+      .map((line) => ({ line, m: line.text.match(/^(?:full\s*)?name\s*:?\s*(.+)$/i) }))
+      .filter((x): x is { line: TextLine; m: RegExpMatchArray } => !!x.m)
+      .map(({ line, m }) => ({ line, norm: normalizePlainName(m[1]) }))
+      .filter((x): x is { line: TextLine; norm: string } => !!x.norm);
+    if (plainNames.length) attempted++;
+    const distinct = [...new Set(plainNames.map((x) => x.norm.toLowerCase()))];
+    if (plainNames.length) {
+      entry.name = plainNames[0].norm;
+      fieldConfidence.name = distinct.length > 1 ? 'low' : 'medium';
+      excerpts.push(plainNames[0].line.text);
+      if (distinct.length > 1) (entry as { conflicts?: Record<string, unknown> }).conflicts = { name: plainNames.map((x) => x.norm) };
     }
   }
 
@@ -566,4 +640,17 @@ export function findGenericCityState(lines: TextLine[]): CityStateMatch | null {
     return { city, state: stateRaw.toUpperCase(), line };
   }
   return null;
+}
+
+/**
+ * Who a driving record / license is about, read from its subject lines only — used to check that a
+ * driver read from it (by text, OCR or the vision model) really is its license holder.
+ */
+export function documentSubjectIdentity(text: string): { name?: string; licenseNumber?: string; dob?: string } | null {
+  if (!detectMvr(text) && !detectDriverLicense(text)) return null;
+  const lines: TextLine[] = text.split(/\r?\n/).map((t) => ({ text: t })).filter((l) => l.text.trim());
+  const found = extractDriverLicenseFields(subjectLines(lines), text);
+  if (!found) return null;
+  const { name, licenseNumber, dob } = found.entry;
+  return { name, licenseNumber, dob };
 }

@@ -6,6 +6,7 @@ import { looksLikeLabel } from '../fieldExtraction/rowValues';
 import { toMonths, type DurationValue } from '../../../utils/duration';
 import { classifyDocument, ENTITY_LIMITS, type DocumentClassification } from './classifyDocument';
 import { assessAddress, assessDriver, assessVehicle, type EntityContext, type Verdict } from './entityValidation';
+import { documentSubjectIdentity } from '../fieldExtraction/idDocumentPatterns';
 
 /**
  * The one step between reading a document and changing an account. Everything a reader produced —
@@ -71,6 +72,20 @@ export function gateExtraction(input: GateInput, now = new Date()): GateResult {
 
   const drivers: ExtractedFieldResult[] = [];
   const vehicles: ExtractedFieldResult[] = [];
+  // A driving record or a license is about its license holder. Anyone else it names — an examiner,
+  // an employer's contact, someone in a table of associated persons — is never its driver.
+  const oneDriverDocument = category === 'mvr' || category === 'driver_license';
+  const subject = oneDriverDocument ? documentSubjectIdentity(input.text) : null;
+  const licenseKey = (v: unknown) => (typeof v === 'string' ? v.toUpperCase().replace(/[^A-Z0-9]/g, '') : '');
+  const docNoun = category === 'mvr' ? 'driving record' : 'driver’s license';
+  const notTheSubject = (r: ExtractedFieldResult): string | null => {
+    if (!oneDriverDocument) return null;
+    if (r.extractionMethod === 'deterministic_import') return `Listed in a table on this ${docNoun} — it may be someone else the record mentions, not its license holder.`;
+    const lic = licenseKey((r.value as { licenseNumber?: unknown }).licenseNumber);
+    const subjectLic = licenseKey(subject?.licenseNumber);
+    if (lic && subjectLic && lic !== subjectLic) return `Its license number doesn’t match this ${docNoun}’s license holder — it may be someone else the document mentions.`;
+    return null;
+  };
 
   for (const r of input.results) {
     if (ROW_DERIVED.has(r.fieldPath) && r.extractionMethod === 'deterministic_import') continue; // recomputed below
@@ -79,6 +94,7 @@ export function gateExtraction(input: GateInput, now = new Date()): GateResult {
       const verdict = r.fieldPath === 'drivers' ? assessDriver(r.value as never, ctx, now) : assessVehicle(r.value as never, ctx, now);
       if (verdict.verdict === 'reject') rejected++;
       else if (verdict.verdict === 'review') hold(r, verdict.reason);
+      else if (r.fieldPath === 'drivers' && notTheSubject(r)) hold(r, notTheSubject(r)!);
       else (r.fieldPath === 'drivers' ? drivers : vehicles).push(r);
       continue;
     }
