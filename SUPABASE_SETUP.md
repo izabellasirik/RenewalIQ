@@ -264,6 +264,12 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   client submits (see §6b). `claim_submission_email` / `complete_submission_email` are callable only
   with the service role: they check the submission was saved and verified and record each email
   once (`submission_email_notifications`). Needs 0035 first. Additive, safe to re-run.
+- **`supabase/migrations/0041_submission_email_queue.sql`** — the broker email no longer depends on
+  the client's browser: a verified submission queues the email in the same transaction (triggers on
+  `intake_submissions.completed_at` and `document_requests.client_submitted_at`); after commit pg_net
+  asks Renewal IQ's server to send it, and a pg_cron job retries anything due every 2 minutes (back-off,
+  up to 8 attempts). A submission never waits on, or fails because of, email. Needs pg_net + pg_cron
+  and one settings row (see §6b). Needs 0040 first. Additive, safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -348,6 +354,7 @@ from (values
   ('0038_agency_intake_submission_visibility', to_regprocedure('public.intake_file_readable_by_admin(text)') is not null),
   ('0039_intake_duplicate_accounts',  to_regprocedure('public.find_intake_duplicate_accounts(text)') is not null),
   ('0040_submission_email_notifications', to_regclass('public.submission_email_notifications') is not null),
+  ('0041_submission_email_queue',     to_regprocedure('public.claim_submission_email_event(text)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);
@@ -451,19 +458,36 @@ To turn it on:
 The server only emails an invitation that the signed-in admin can read under RLS (their own
 agency's, still open), and only to the address it was created for.
 
-**Client submission emails** (0040). When a client finishes a Submission Intake form or presses
-Submit on a document request, `api/notify-submission.ts` emails the assigned broker: the account /
-client name, the client's email, when, the files, and a button into Renewal IQ. From is Renewal IQ's
-own address shown as "<Agency> via Renewal IQ"; Reply-To is the client's email when they gave one.
-Each submission is emailed once, only after it was saved and verified. Needs, in Vercel:
+**Client submission emails** (0040, 0041). When a client finishes a Submission Intake form or presses
+Submit on a document request, the broker is emailed: the account / client name, the client's email,
+when, the files, and a button into Renewal IQ. From is Renewal IQ's own address shown as
+"<Agency> via Renewal IQ"; Reply-To is the client's email when they gave one. The client's browser
+plays no part: the database queues the email with the verified submission and asks
+`api/notify-submission.ts` to send it; failed sends are retried; each submission is emailed once.
+
+1. Supabase → Database → Extensions: enable **pg_net** and **pg_cron**, then run 0041 again (it
+   schedules the retry job `renewaliq-submission-emails` only when pg_cron is on).
+2. Pick a long random secret and tell the database where to send (SQL editor):
+   ```sql
+   insert into public.notification_dispatch_settings (id, endpoint_url, secret, vercel_bypass_token)
+   values (1, 'https://<your deployment>/api/notify-submission', '<long random secret>', null)
+   on conflict (id) do update set endpoint_url = excluded.endpoint_url, secret = excluded.secret,
+     vercel_bypass_token = excluded.vercel_bypass_token;
+   ```
+   For a Preview behind Vercel Deployment Protection, use the branch's stable URL and set
+   `vercel_bypass_token` to Vercel → Settings → Deployment Protection → **Protection Bypass for
+   Automation** secret (otherwise Vercel answers 401 before Renewal IQ sees the call).
+3. Vercel environment variables (server-side only — never `VITE_`):
+   - `NOTIFY_WEBHOOK_SECRET` = the same secret as in step 2
    - `RESEND_API_KEY` (as above)
    - `NOTIFY_EMAIL_FROM` = e.g. `Renewal IQ <notifications@your-domain.com>` on the verified domain
      (falls back to `INVITE_EMAIL_FROM`)
-   - `SUPABASE_SERVICE_ROLE_KEY` = Supabase → Project Settings → API → `service_role` key. Server-side
-     only — never a `VITE_` variable. It lets the server confirm the submission and read the broker's
-     address, which the client never sees.
+   - `SUPABASE_SERVICE_ROLE_KEY` = Supabase → Project Settings → API → `service_role` key
    - `APP_URL` (optional) for the button's link
-Until they're set, submissions work exactly as before and no email is sent (nothing is recorded as sent).
+
+Until this is set up, submissions work exactly as before and emails stay queued (status `pending`);
+they go out once it is. To see the queue: `select kind, status, attempts, error, next_attempt_at from
+public.submission_email_notifications order by id desc;`
 
 **Assignment emails are not sent yet.** Assignments and new collaborators create in-app
 notifications (the bell, 0026). Emailing them needs the same provider plus a server-side sender

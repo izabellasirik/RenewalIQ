@@ -1,4 +1,3 @@
-import { notifyBrokerOfSubmission } from '../services/notifications/notifySubmission';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { expandToken } from '../services/publicLinks';
 import { useParams } from 'react-router-dom';
@@ -547,11 +546,8 @@ function SubmitSection({ view, uploading, token, onSubmitted }: { view: PublicRe
           setError(null);
           const res = await submitDocumentRequest(token);
           setSubmitting(false);
-          if (res.ok) {
-            onSubmitted(res.data);
-            // A new submit was recorded (not a repeat with nothing new): email the broker, once.
-            if (res.data.submittedAt && res.data.submittedAt !== submittedAt) void notifyBrokerOfSubmission({ kind: 'request', token });
-          }
+          // The broker's email is queued by the database with the submit itself (0041) — nothing more to do here.
+          if (res.ok) onSubmitted(res.data);
           else setError(res.message);
         }}
         data-testid="submit-request"

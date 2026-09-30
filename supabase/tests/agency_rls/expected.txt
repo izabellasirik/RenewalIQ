@@ -292,19 +292,27 @@ Y3 admin may open it: acct_y_name open=true, acct_y_samename open=true
 Y4 other agency denied: You can't see this submission.
 Y5 other agency's own submission matches only its own accounts: acct_y_out
 Y6 anonymous denied
-Z1 anonymous can't claim or read broker emails
-Z1 signed-in users can't claim either
-Z1 outbox rows visible to a user: 0
-Z2 verified intake → claimed: true to=roman@agency.com reply=zoe@client.com files=["z_loss_runs.pdf"] account=Zed Trucking agency=Agency
-Z3 retry / double submit → false already_sent
-Z4 wrong client key → not_found
-Z4 garbage key → not_found
-Z5 failed / unverified upload → false not_submitted
-Z6 missing client email → claimed=true reply=none
-Z7 a failed send can be claimed again: true
-Z7 once sent, never again: already_sent
-Z8 document request Submit → claimed=true account=acct_r1 files=4
-Z8 same Submit again → already_sent
-Z9 unsubmitted request → not_submitted
-Z10 a later Submit is a new email: true files=0
-Z11 outbox: intake:sent x2, intake:sending x1, request:sending x1, request:sending x1
+Z0 a Submit before the dispatcher is configured is still queued: request:pending
+Z1 client submission verified: true
+Z1 queued by the database, no client call: pending attempts=0 broker=denis@agency.com
+Z1 server asked to send exactly this event (pg_net): requests=1 secret=hook-secret url=https://preview.renewaliq.test/api/notify-submission
+Z2 failed upload: ok=false
+Z2 nothing queued for it: rows=0
+Z3 dispatcher unavailable, submission still succeeds: ok=true
+Z3 and it stays queued for the retry sweep: pending
+Z4 anonymous can't claim
+Z4 signed-in users can't list or claim
+Z4 queue rows visible to a user: 0
+Z4 dispatch secret visible to a user: 0 rows
+Z5 claim: true to=denis@agency.com reply=zoe@client.com files=["z_loss_runs.pdf"] account=Zed Trucking agency=Agency
+Z5 a second delivery while sending → not_due
+Z6 failed → not due until its back-off: not_due due=0
+Z6 back-off passed → due again: 1, retried as attempt 2
+Z6 once sent, never again: already_sent due=0
+Z7 missing client email → claimed=true reply=none to=denis@agency.com
+Z8 Submit (Q3) was queued: 1
+Z8 Submit again with nothing new → still one: 1
+Z8 a later Submit is a new event: 2
+Z8 request email → account=acct_r1 broker=roman@agency.com files=4
+Z9 after 8 attempts → gave_up due=0
+Z10 queue: request:failed x8, intake:sent x2, intake:sending x1, request:pending x0

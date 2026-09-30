@@ -1,29 +1,29 @@
 /**
- * POST /api/notify-submission
- *   { kind: 'intake', submissionId, clientToken }   — after a Submission Intake form finished (0029)
- *   { kind: 'request', token }                      — after a client pressed Submit on a document request (0035)
+ * POST /api/notify-submission — sends the broker the "client submitted" email.
  *
- * Emails the assigned broker that a client just submitted documents, through Resend
- * (https://resend.com). Called by the public client page — no sign-in — so it trusts nothing it is
- * sent: claim_submission_email (0040), run here with the service role, checks the client's own proof
- * (the intake submission's client key / the request's link token), that the submission really was
- * saved and verified, and that this submission event hasn't been emailed already; it also returns the
- * broker's address, which never reaches the browser. Each event is emailed at most once (the claim,
- * plus Resend's Idempotency-Key); a send the email service refuses can be retried, a sent one never.
+ * Called by the DATABASE, never by the client's browser (0041): a verified submission queues an
+ * event in the same transaction, and after it commits pg_net posts { eventKey } here; every two
+ * minutes pg_cron posts { drain: true } to retry whatever is still due. Each call carries the shared
+ * secret (header x-renewaliq-notify-secret = NOTIFY_WEBHOOK_SECRET); anything else is refused.
+ *
+ * Each event is claimed atomically (claim_submission_email_event), sent once through Resend with
+ * Idempotency-Key = the event key, and recorded 'sent' or 'failed' (retried with back-off, up to 8
+ * attempts). A submission never waits on this or on the email provider.
  *
  * Vercel environment variables (server-side only, never VITE_):
+ *   NOTIFY_WEBHOOK_SECRET       — the same secret as notification_dispatch_settings.secret (0041)
  *   RESEND_API_KEY              — as for team invitations (api/send-invitation.ts)
  *   NOTIFY_EMAIL_FROM           — sender on a Resend-verified domain, e.g. "Renewal IQ <notifications@yourdomain.com>"
  *                                 (falls back to INVITE_EMAIL_FROM). Shown as "<Agency> via Renewal IQ".
- *   SUPABASE_SERVICE_ROLE_KEY   — lets this server call the claim; never exposed to the browser
+ *   SUPABASE_SERVICE_ROLE_KEY   — lets this server claim events and read the broker's address
  *   APP_URL (optional)          — the address used for the "Open in Renewal IQ" button
- * Until they're set this answers 501 { notConfigured: true } and nothing is recorded as sent.
  *
  * From is always Renewal IQ's own sending address — never the client's. Reply-To is the client's
  * email when they gave one, so the broker can simply reply.
  */
 
 export interface NotifyEnv {
+  NOTIFY_WEBHOOK_SECRET?: string;
   RESEND_API_KEY?: string;
   NOTIFY_EMAIL_FROM?: string;
   INVITE_EMAIL_FROM?: string;
@@ -112,26 +112,34 @@ export function buildSubmissionEmail(c: ClaimedEmail, opts: { from: string; appU
   return { from: `${senderName(c.agencyName)} <${addr}>`, to: [c.brokerEmail], subject, text, html, ...(replyTo ? { reply_to: replyTo } : {}) };
 }
 
-type Body = { kind?: unknown; submissionId?: unknown; clientToken?: unknown; token?: unknown };
+/** Constant-time string comparison (the webhook secret). */
+function sameSecret(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+type Outcome = 'sent' | 'failed' | 'already_sent' | 'not_due' | 'not_found' | 'skipped' | 'no_recipient' | 'error';
 
 export async function handleNotifySubmission(request: Request, env: NotifyEnv, fetchImpl: typeof fetch = fetch): Promise<Response> {
+  const hookSecret = env.NOTIFY_WEBHOOK_SECRET ?? '';
   const apiKey = env.RESEND_API_KEY;
   const from = env.NOTIFY_EMAIL_FROM || env.INVITE_EMAIL_FROM;
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
   const supabaseUrl = (env.SUPABASE_URL ?? env.VITE_SUPABASE_URL ?? '').replace(/\/$/, '');
-  if (!apiKey || !from || !serviceKey || !supabaseUrl) return json(501, { notConfigured: true, error: 'Submission emails are not configured for this deployment.' });
+  if (!hookSecret || !apiKey || !from || !serviceKey || !supabaseUrl) return json(501, { notConfigured: true, error: 'Submission emails are not configured for this deployment.' });
+  if (!sameSecret(request.headers.get('x-renewaliq-notify-secret') ?? '', hookSecret)) return json(401, { error: 'Not allowed.' });
   if (!senderAddress(from)) return json(501, { notConfigured: true, error: 'NOTIFY_EMAIL_FROM is not a valid address.' });
 
-  let body: Body = {};
+  let body: { eventKey?: unknown; drain?: unknown } = {};
   try {
-    body = (await request.json()) as Body;
+    body = (await request.json()) as typeof body;
   } catch {
     // handled below
   }
-  const kind = body.kind === 'intake' || body.kind === 'request' ? body.kind : null;
-  const id = kind === 'intake' ? String(body.submissionId ?? '') : '';
-  const proof = String((kind === 'intake' ? body.clientToken : body.token) ?? '');
-  if (!kind || !/^[0-9a-f-]{32,36}$/i.test(proof) || (kind === 'intake' && !/^[\w-]{1,80}$/.test(id))) return json(400, { error: 'Unknown submission.' });
+  const eventKey = typeof body.eventKey === 'string' && /^(?:intake|request):[\w:-]{1,120}$/.test(body.eventKey) ? body.eventKey : null;
+  if (!eventKey && body.drain !== true) return json(400, { error: 'Unknown event.' });
 
   const rpc = (fn: string, args: Record<string, unknown>) =>
     fetchImpl(`${supabaseUrl}/rest/v1/rpc/${fn}`, {
@@ -140,45 +148,57 @@ export async function handleNotifySubmission(request: Request, env: NotifyEnv, f
       body: JSON.stringify(args),
       signal: AbortSignal.timeout(8_000),
     });
-
-  let claim: ClaimedEmail | { claimed: false; reason: string };
-  try {
-    const res = await rpc('claim_submission_email', { p_kind: kind, p_id: id, p_proof: kind === 'request' ? proof.replace(/^([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})$/i, '$1-$2-$3-$4-$5') : proof });
-    if (!res.ok) return json(502, { error: 'Could not check the submission.' });
-    claim = (await res.json()) as typeof claim;
-  } catch {
-    return json(502, { error: 'Could not check the submission.' });
-  }
-  if (!claim.claimed) {
-    // Already emailed (a retry or double submit), not submitted/verified yet, or no broker address.
-    return json(claim.reason === 'not_found' ? 404 : 200, { sent: false, reason: claim.reason });
-  }
-
   const appUrl = (env.APP_URL || new URL(request.url).origin).replace(/\/$/, '');
-  let sent = false;
-  let providerId: string | null = null;
-  let error: string | null = null;
-  try {
-    const message = buildSubmissionEmail(claim, { from, appUrl });
-    const sendRes = await fetchImpl('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json', 'Idempotency-Key': claim.eventKey },
-      body: JSON.stringify(message),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const out = (await sendRes.json().catch(() => null)) as { id?: string; message?: string } | null;
-    sent = sendRes.ok;
-    providerId = out?.id ?? null;
-    error = sendRes.ok ? null : `Email service refused it${out?.message ? `: ${out.message}` : ''}`;
-  } catch (err) {
-    error = err instanceof Error ? err.message : 'Email could not be sent';
+
+  async function processEvent(key: string): Promise<Outcome> {
+    let claim: ClaimedEmail | { claimed: false; reason: Outcome };
+    try {
+      const res = await rpc('claim_submission_email_event', { p_event_key: key });
+      if (!res.ok) return 'error';
+      claim = (await res.json()) as typeof claim;
+    } catch {
+      return 'error';
+    }
+    if (!claim.claimed) return claim.reason;
+    let sent = false;
+    let providerId: string | null = null;
+    let error: string | null = null;
+    try {
+      const message = buildSubmissionEmail(claim, { from: from!, appUrl });
+      const sendRes = await fetchImpl('https://api.resend.com/emails', {
+        method: 'POST',
+        // Resend drops a repeat with the same key (24 h) — a crash between sending and recording never sends twice.
+        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json', 'Idempotency-Key': claim.eventKey },
+        body: JSON.stringify(message),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const out = (await sendRes.json().catch(() => null)) as { id?: string; message?: string } | null;
+      sent = sendRes.ok;
+      providerId = out?.id ?? null;
+      error = sendRes.ok ? null : `Email service refused it${out?.message ? `: ${out.message}` : ''}`;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Email could not be sent';
+    }
+    try {
+      await rpc('complete_submission_email_event', { p_event_key: claim.eventKey, p_sent: sent, p_provider_message_id: providerId, p_error: error });
+    } catch {
+      // Left 'sending': due again after 10 minutes; Resend's idempotency key prevents a double send.
+    }
+    return sent ? 'sent' : 'failed';
   }
-  try {
-    await rpc('complete_submission_email', { p_event_key: claim.eventKey, p_sent: sent, p_provider_message_id: providerId, p_error: error });
-  } catch {
-    // The claim stays "sending" and becomes claimable again after 10 minutes if it wasn't sent.
+
+  let keys: string[] = eventKey ? [eventKey] : [];
+  if (!eventKey) {
+    try {
+      const res = await rpc('due_submission_emails', { p_limit: 20 });
+      keys = res.ok ? ((await res.json()) as string[]) : [];
+    } catch {
+      keys = [];
+    }
   }
-  return sent ? json(200, { sent: true }) : json(502, { sent: false, error });
+  const processed: { eventKey: string; outcome: Outcome }[] = [];
+  for (const key of keys) processed.push({ eventKey: key, outcome: await processEvent(key) });
+  return json(200, { processed });
 }
 
 export async function POST(request: Request): Promise<Response> {

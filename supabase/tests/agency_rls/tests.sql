@@ -814,40 +814,95 @@ do $$ begin perform find_intake_duplicate_accounts('isub_y_dot'); raise notice '
 reset role;
 
 -- ============================================================================================
--- 0040: broker email on client submission — claimed once, only after saved + verified
+-- 0040/0041: broker email on client submission — queued by the database, sent server-side once
 -- ============================================================================================
 reset role;
-insert into intake_submissions (id, intake_link_id, user_id, status, named_insured, contact_name, contact_email, client_token, completed_at) values
-  ('isub_z', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'pending', 'Zed Trucking', 'Zoe', 'zoe@client.com', '11111111-1111-1111-1111-111111111111', now()),
-  ('isub_z_noemail', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'pending', 'No Email Co', 'Nia', null, '22222222-2222-2222-2222-222222222222', now()),
-  ('isub_z_failed', 'ilink_roman2', '00000000-0000-0000-0000-00000000000a', 'uploading', 'Half Sent Co', 'Hal', 'hal@client.com', '33333333-3333-3333-3333-333333333333', null);
-insert into intake_documents (id, intake_submission_id, user_id, file_name, storage_path) values
-  ('idoc_z1', 'isub_z', '00000000-0000-0000-0000-00000000000a', 'z_loss_runs.pdf', 'isub_z/idoc_z1/z_loss_runs.pdf');
+-- pg_net stand-in: like the real extension, http_post only records the request in a queue that its
+-- worker sends after the transaction commits (a rolled-back submission leaves nothing behind).
+create schema if not exists net;
+create table if not exists net.http_request_queue (id bigserial primary key, url text, body jsonb, headers jsonb);
+create or replace function net.http_post(url text, body jsonb default '{}', params jsonb default '{}', headers jsonb default '{}', timeout_milliseconds integer default 5000) returns bigint
+language plpgsql as $$ declare v bigint; begin
+  if current_setting('my.net_down', true) = 'on' then raise exception 'pg_net unavailable'; end if;
+  insert into net.http_request_queue (url, body, headers) values (url, body, headers) returning id into v; return v; end $$;
+grant usage on schema net to anon, authenticated, service_role;
+select 'Z0 a Submit before the dispatcher is configured is still queued: ' || string_agg(kind || ':' || status, ',') from submission_email_notifications;
+insert into notification_dispatch_settings (id, endpoint_url, secret) values (1, 'https://preview.renewaliq.test/api/notify-submission', 'hook-secret') on conflict (id) do update set endpoint_url = excluded.endpoint_url, secret = excluded.secret;
+
+-- A client finishes an intake form through the public calls — and does nothing after that.
 set role anon;
-do $$ begin perform claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111'); raise notice 'Z1 anonymous claim: ALLOWED (BAD)'; exception when others then raise notice 'Z1 anonymous can''t claim or read broker emails'; end $$;
+select pg_temp.as_user('');
+select submission_id as zsid from start_intake_submission('tok-denis', '44444444-4444-4444-4444-444444444444', '{"namedInsured":"Zed Trucking","dotNumber":"7000001","contactName":"Zoe","contactEmail":"zoe@client.com"}', 1) \gset
+reset role;
+insert into storage.objects (bucket_id, name) values ('intake-uploads', :'zsid' || '/key-zzzz-0001/z_loss_runs.pdf');
+set role anon;
+select attach_intake_document(:'zsid', '44444444-4444-4444-4444-444444444444', 'key-zzzz-0001', 'z_loss_runs.pdf', :'zsid' || '/key-zzzz-0001/z_loss_runs.pdf', 10) is not null as _z1 \gset
+select 'Z1 client submission verified: ' || (finalize_intake_submission(:'zsid', '44444444-4444-4444-4444-444444444444', array['key-zzzz-0001'])->>'ok');
+reset role;
+select 'Z1 queued by the database, no client call: ' || status || ' attempts=' || attempts || ' broker=' || (select email from auth.users where id = recipient_user_id) from submission_email_notifications where source_id = :'zsid';
+select 'Z1 server asked to send exactly this event (pg_net): requests=' || count(*) || ' secret=' || min(headers->>'x-renewaliq-notify-secret') || ' url=' || min(url) from net.http_request_queue where body->>'eventKey' = 'intake:' || :'zsid';
+
+-- A submission whose files weren't all verified is never queued.
+set role anon;
+select submission_id as zsid2 from start_intake_submission('tok-denis', '55555555-5555-5555-5555-555555555555', '{"namedInsured":"Half Sent Co","dotNumber":"7000002","contactName":"Hal","contactEmail":"hal@client.com"}', 1) \gset
+select 'Z2 failed upload: ok=' || (finalize_intake_submission(:'zsid2', '55555555-5555-5555-5555-555555555555', array['key-missing-0001'])->>'ok');
+reset role;
+select 'Z2 nothing queued for it: rows=' || count(*) from submission_email_notifications where source_id = :'zsid2';
+
+-- The email side being down never fails a submission.
+select set_config('my.net_down', 'on', false) is not null as _z3 \gset
+set role anon;
+select submission_id as zsid3 from start_intake_submission('tok-denis', '66666666-6666-6666-6666-666666666666', '{"namedInsured":"Down Co","dotNumber":"7000003","contactName":"Nia","contactEmail":"nia@client.com"}', 0) \gset
+select 'Z3 dispatcher unavailable, submission still succeeds: ok=' || (finalize_intake_submission(:'zsid3', '66666666-6666-6666-6666-666666666666', array[]::text[])->>'ok');
+reset role;
+select set_config('my.net_down', 'off', false) is not null as _z3b \gset
+select 'Z3 and it stays queued for the retry sweep: ' || status from submission_email_notifications where source_id = :'zsid3';
+
+-- Nobody but the server (service role) can claim, list or read.
+set role anon;
+do $$ begin perform claim_submission_email_event('intake:x'); raise notice 'Z4 anonymous claim: ALLOWED (BAD)'; exception when others then raise notice 'Z4 anonymous can''t claim'; end $$;
 reset role;
 set role authenticated;
-select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
-do $$ begin perform claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111'); raise notice 'Z1 signed-in claim: ALLOWED (BAD)'; exception when others then raise notice 'Z1 signed-in users can''t claim either'; end $$;
-do $$ declare n integer; begin select count(*) into n from submission_email_notifications; raise notice 'Z1 outbox rows visible to a user: %', n; exception when others then raise notice 'Z1 outbox rows visible to a user: 0 (no access)'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin perform due_submission_emails(10); raise notice 'Z4 admin lists the queue: ALLOWED (BAD)'; exception when others then raise notice 'Z4 signed-in users can''t list or claim'; end $$;
+do $$ declare n integer; begin select count(*) into n from submission_email_notifications; raise notice 'Z4 queue rows visible to a user: %', n; exception when others then raise notice 'Z4 queue rows visible to a user: 0 (no access)'; end $$;
+do $$ declare n integer; begin select count(*) into n from notification_dispatch_settings; raise notice 'Z4 dispatch secret visible to a user: % rows', n; exception when others then raise notice 'Z4 dispatch secret not readable by users'; end $$;
 reset role;
+
+-- The server: claim once, send, record; a failed attempt is retried later, never twice at once.
 set role service_role;
-select 'Z2 verified intake → claimed: ' || (c->>'claimed') || ' to=' || (c->>'brokerEmail') || ' reply=' || coalesce(c->>'clientEmail', '-') || ' files=' || (c->'files')::text || ' account=' || (c->>'accountName') || ' agency=' || coalesce(c->>'agencyName', '-') from claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111') c;
-select 'Z3 retry / double submit → ' || (c->>'claimed') || ' ' || (c->>'reason') from claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111') c;
-select 'Z4 wrong client key → ' || (c->>'reason') from claim_submission_email('intake', 'isub_z', '99999999-9999-9999-9999-999999999999') c;
-select 'Z4 garbage key → ' || (c->>'reason') from claim_submission_email('intake', 'isub_z', 'not-a-uuid') c;
-select 'Z5 failed / unverified upload → ' || (c->>'claimed') || ' ' || (c->>'reason') from claim_submission_email('intake', 'isub_z_failed', '33333333-3333-3333-3333-333333333333') c;
-select 'Z6 missing client email → claimed=' || (c->>'claimed') || ' reply=' || coalesce(c->>'clientEmail', 'none') from claim_submission_email('intake', 'isub_z_noemail', '22222222-2222-2222-2222-222222222222') c;
-select complete_submission_email('intake:isub_z', false, null, 'Email service refused it') is null as _z7 \gset
-select 'Z7 a failed send can be claimed again: ' || (c->>'claimed') from claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111') c;
-select complete_submission_email('intake:isub_z', true, 'email_1', null) is null as _z7b \gset
-select 'Z7 once sent, never again: ' || (c->>'reason') from claim_submission_email('intake', 'isub_z', '11111111-1111-1111-1111-111111111111') c;
-select 'Z8 document request Submit → claimed=' || (c->>'claimed') || ' account=' || (c->>'accountId') || ' files=' || jsonb_array_length(c->'files') from claim_submission_email('request', '', :'tk4') c;
-select 'Z8 same Submit again → ' || (c->>'reason') from claim_submission_email('request', '', :'tk4') c;
-select 'Z9 unsubmitted request → ' || (c->>'reason') from claim_submission_email('request', '', :'tk5') c;
+select 'Z5 claim: ' || (c->>'claimed') || ' to=' || (c->>'brokerEmail') || ' reply=' || coalesce(c->>'clientEmail', '-') || ' files=' || (c->'files')::text || ' account=' || (c->>'accountName') || ' agency=' || coalesce(c->>'agencyName', '-') from claim_submission_email_event('intake:' || :'zsid') c;
+select 'Z5 a second delivery while sending → ' || (c->>'reason') from claim_submission_email_event('intake:' || :'zsid') c;
+select complete_submission_email_event('intake:' || :'zsid', false, null, 'Email service refused it') is null as _z6 \gset
+select 'Z6 failed → not due until its back-off: ' || (c->>'reason') || ' due=' || (select count(*) from due_submission_emails(50) k where k = 'intake:' || :'zsid') from claim_submission_email_event('intake:' || :'zsid') c;
 reset role;
+update submission_email_notifications set next_attempt_at = now() - interval '1 second' where source_id = :'zsid';
+set role service_role;
+select 'Z6 back-off passed → due again: ' || (select count(*) from due_submission_emails(50) k where k = 'intake:' || :'zsid') || ', retried as attempt ' || (c->>'attempt') from claim_submission_email_event('intake:' || :'zsid') c;
+select complete_submission_email_event('intake:' || :'zsid', true, 'email_1', null) is null as _z6b \gset
+select 'Z6 once sent, never again: ' || (c->>'reason') || ' due=' || (select count(*) from due_submission_emails(50) k where k = 'intake:' || :'zsid') from claim_submission_email_event('intake:' || :'zsid') c;
+reset role;
+update intake_submissions set contact_email = null where id = :'zsid3'; -- a client email isn't always known (e.g. a document request without one)
+set role service_role;
+select 'Z7 missing client email → claimed=' || (c->>'claimed') || ' reply=' || coalesce(c->>'clientEmail', 'none') || ' to=' || (c->>'brokerEmail') from claim_submission_email_event('intake:' || :'zsid3') c;
+reset role;
+
+-- Document requests: each Submit that recorded new files is one event.
+select 'Z8 Submit (Q3) was queued: ' || count(*) from submission_email_notifications n join document_requests r on r.id = n.source_id where r.token = :'tk4'::uuid;
+set role anon;
+do $$ begin perform submit_document_request(current_setting('my.tk4')::uuid); exception when others then null; end $$;
+reset role;
+select 'Z8 Submit again with nothing new → still one: ' || count(*) from submission_email_notifications n join document_requests r on r.id = n.source_id where r.token = :'tk4'::uuid;
 update document_requests set client_submitted_at = client_submitted_at + interval '1 minute' where token = :'tk4'::uuid;
+select 'Z8 a later Submit is a new event: ' || count(*) from submission_email_notifications n join document_requests r on r.id = n.source_id where r.token = :'tk4'::uuid;
+select n.event_key as zkey8 from submission_email_notifications n join document_requests r on r.id = n.source_id where r.token = :'tk4'::uuid order by n.submitted_at limit 1 \gset
 set role service_role;
-select 'Z10 a later Submit is a new email: ' || (c->>'claimed') || ' files=' || jsonb_array_length(c->'files') from claim_submission_email('request', '', :'tk4') c;
+select 'Z8 request email → account=' || (c->>'accountId') || ' broker=' || (c->>'brokerEmail') || ' files=' || jsonb_array_length(c->'files') from claim_submission_email_event(:'zkey8') c;
 reset role;
-select 'Z11 outbox: ' || string_agg(kind || ':' || status || ' x' || attempts, ', ' order by id) from submission_email_notifications;
+
+-- Capped: after 8 attempts it is no longer retried automatically.
+update submission_email_notifications set status = 'failed', attempts = 8, next_attempt_at = now() - interval '1 hour' where event_key = :'zkey8';
+set role service_role;
+select 'Z9 after 8 attempts → ' || (c->>'reason') || ' due=' || (select count(*) from due_submission_emails(50) k where k = :'zkey8') from claim_submission_email_event(:'zkey8') c;
+reset role;
+select 'Z10 queue: ' || string_agg(kind || ':' || status || ' x' || attempts, ', ' order by id) from submission_email_notifications;
