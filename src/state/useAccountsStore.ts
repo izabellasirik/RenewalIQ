@@ -63,6 +63,7 @@ import { licenseReadReasons, licenseWarnings } from '../services/extraction/lice
 import { freshnessApplies, freshnessInstructions, freshnessItemLabel, freshnessTemplateKey, outdatedReports } from '../services/workflow/freshness';
 import { layerAgencyCarriers, type AgencyCarrier } from '../services/appetite/agencyCarriers';
 import { fetchAgencyCarriers } from '../services/supabase/carriersRepo';
+import { trackEvent, markAccountDemo } from '../services/productAnalytics/trackEvent';
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
@@ -180,7 +181,7 @@ interface AccountsState {
     files?: File[],
     contact?: { name?: string; email?: string; phone?: string },
     /** skipAutoSync: the caller saves it itself with saveAccountNow (e.g. intake import) — avoids two overlapping saves. */
-    options?: { skipAutoSync?: boolean }
+    options?: { skipAutoSync?: boolean; /** Founder Analytics: an account made from a client's intake submission. */ source?: 'intake' }
   ) => string;
   /**
    * Saves one account to the cloud now and waits for the result (the same save syncNow runs in the
@@ -958,6 +959,7 @@ export const useAccountsStore = create<AccountsState>()(
           cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
         }));
         if (cloud) syncNow(account.id);
+        trackEvent('account_created', { accountId: account.id, metadata: { source: 'manual' } });
         return account.id;
       },
 
@@ -1004,6 +1006,19 @@ export const useAccountsStore = create<AccountsState>()(
         });
         get().runMatching(account.id);
         if (!options?.skipAutoSync) syncNow(account.id);
+        // Founder Analytics — counts only, nothing from the documents themselves.
+        trackEvent(options?.source === 'intake' ? 'account_imported' : 'account_created', { accountId: account.id, metadata: { source: options?.source ?? 'documents' } });
+        if (finalDocs.length) {
+          trackEvent('document_uploaded', { accountId: account.id, metadata: { count: finalDocs.length, source: options?.source ?? 'new_submission' } });
+          const processed = finalDocs.filter((d) => d.status === 'processed');
+          if (processed.length) trackEvent('document_processed', { accountId: account.id, metadata: { count: processed.length } });
+          const fields = finalDocs.reduce((n, d) => n + (d.fieldsExtracted ?? 0), 0);
+          if (fields > 0) {
+            const vision = finalDocs.some((d) => d.extractedFields?.some((f) => f.extractionMethod === 'vision_extraction'));
+            trackEvent('ai_extraction_completed', { accountId: account.id, metadata: { fields, method: vision ? 'vision' : 'text' } });
+            trackEvent('risk_profile_generated', { accountId: account.id, dedupeKey: `rp_generated:${account.id}` });
+          }
+        }
         // Keep the originals in this browser for in-app preview.
         files?.forEach((file, i) => {
           if (file && finalDocs[i]) void saveLocalFile(finalDocs[i].id, file, file.name);
@@ -1062,6 +1077,7 @@ export const useAccountsStore = create<AccountsState>()(
 
         // Keep the originals in this browser for in-app preview (fire-and-forget, never blocks extraction).
         newDocs.forEach((doc, i) => void saveLocalFile(doc.id, files[i], files[i].name));
+        if (newDocs.length) trackEvent('document_uploaded', { accountId, metadata: { count: newDocs.length, source: opts?.fromClientRequest ? 'client_request' : 'broker' } });
 
         newDocs.forEach((doc, i) => {
           const file = files[i];
@@ -1152,6 +1168,11 @@ export const useAccountsStore = create<AccountsState>()(
                 };
               });
               if (licenseReasons.length) requestClearerLicense(accountId, doc.name, licenseReasons, typeof licenseDriver?.name === 'string' ? licenseDriver.name : null);
+              trackEvent('document_processed', { accountId, metadata: { status: readFailed ? 'unreadable' : 'processed' } });
+              if (fieldsExtracted > 0) {
+                trackEvent('ai_extraction_completed', { accountId, metadata: { fields: fieldsExtracted, method: visionResult ? 'vision' : 'text' } });
+                trackEvent('risk_profile_generated', { accountId, dedupeKey: `rp_generated:${accountId}` });
+              }
               get().runMatching(accountId);
               // A link was downloaded: keep the real document (for preview and the cloud copy), not the shortcut.
               if (raw.linkedFile) void saveLocalFile(doc.id, raw.linkedFile, raw.linkedFile.name);
@@ -1187,6 +1208,8 @@ export const useAccountsStore = create<AccountsState>()(
             return new File([blob], fixture.name, { type: blob.type });
           })
         );
+        // Sample documents make this a demo account in Founder Analytics (nothing else changes).
+        markAccountDemo(accountId);
         get().addFiles(accountId, files);
       },
 
@@ -2001,6 +2024,7 @@ export const useAccountsStore = create<AccountsState>()(
         const account = s0.accounts.find((a) => a.id === accountId);
         const items = (s0.missingItems[accountId] ?? []).filter((i) => itemIds.includes(i.id));
         if (!account || items.length === 0) return;
+        if (followUpDate) trackEvent('follow_up_created', { accountId, metadata: { source: 'document_request', count: items.length } });
         const contact = getAccountContacts(account).find((c) => c.id === contactId);
         const now = new Date().toISOString();
         const onDate = parseDateKey(requestedOn ?? '');
@@ -2212,6 +2236,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         syncNow(accountId);
+        trackEvent('market_added', { accountId, metadata: { source: input.appetiteRecordId ? 'appetite' : 'manual', status: quote.status } });
         return quote.id;
       },
 
@@ -2268,6 +2293,12 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         syncNow(accountId);
+        if (statusChanged) {
+          trackEvent('market_status_changed', { accountId, metadata: { status: next.status } });
+          if (next.status === 'quoted' && !(before.options ?? []).length) trackEvent('quote_added', { accountId, metadata: { source: 'status' } });
+        } else if (patch.premium !== undefined && next.premium !== before.premium) {
+          trackEvent(before.premium ? 'quote_updated' : 'quote_added', { accountId, metadata: { source: 'premium' } });
+        }
       },
 
       addQuoteNote: (accountId, quoteId, text) => {
@@ -2334,6 +2365,7 @@ export const useAccountsStore = create<AccountsState>()(
           activityLog: appendEvent(s.activityLog, accountId, 'quote_status_changed', `Edited ${quote.marketName} ${option.label ?? 'quote'}: ${changes.join(', ')}${actorSuffix(s.currentUserEmail)}.`),
         }));
         syncNow(accountId);
+        trackEvent('quote_updated', { accountId, metadata: { source: 'quote_option' } });
       },
 
       addFollowUp: (accountId, input) => {
@@ -2341,6 +2373,7 @@ export const useAccountsStore = create<AccountsState>()(
         if (!subject || !input.dueDate) return '';
         const now = new Date().toISOString();
         const followUp: FollowUp = { id: generateId('fu'), accountId, subject, dueDate: input.dueDate, notes: input.notes?.trim() || undefined, createdAt: now, updatedAt: now };
+        trackEvent('follow_up_created', { accountId, metadata: { source: 'follow_up' } });
         set((s) => ({
           followUps: { ...s.followUps, [accountId]: [...(s.followUps[accountId] ?? []), followUp] },
           accounts: touchAccount(s.accounts, accountId),
@@ -2379,6 +2412,7 @@ export const useAccountsStore = create<AccountsState>()(
           activityLog: appendEvent(s.activityLog, accountId, 'follow_up_completed', `Followed up: ${f.subject}${actorSuffix(s.currentUserEmail)}.`),
         }));
         syncNow(accountId);
+        trackEvent('follow_up_completed', { accountId, metadata: { source: 'follow_up' } });
       },
 
       deleteFollowUp: (accountId, followUpId) => {
@@ -2448,6 +2482,7 @@ export const useAccountsStore = create<AccountsState>()(
         }));
         if (input.file && option.attachment) storeQuoteFile(accountId, quoteId, option.id, option.attachment.id, input.file);
         syncNow(accountId);
+        trackEvent('quote_added', { accountId, metadata: { source: 'quote_option', count } });
         return option.id;
       },
 
@@ -2872,6 +2907,7 @@ export const useAccountsStore = create<AccountsState>()(
           accounts: touchAccount(s.accounts, r.accountId),
         }));
         syncNow(r.accountId);
+        trackEvent('follow_up_completed', { accountId: r.accountId, metadata: { source: 'client_request' } });
         setRequestItemsFollowUp(r, nextFollowUp || undefined);
         await get().loadDocumentRequests([r.accountId]);
         return { ok: true };

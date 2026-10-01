@@ -5,6 +5,8 @@ import type { AppetiteRecord } from '../../types';
 import { Button } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { EMPTY_QUOTES } from '../../utils/emptyArrays';
+import { trackEvent } from '../../services/productAnalytics/trackEvent';
+import { offerTimeSavedQuestion } from '../../services/productAnalytics/timeSaved';
 
 /**
  * The one bridge from market research to the account workflow: turns an appetite record into a
@@ -49,7 +51,11 @@ export function AddToQuotesAction({ record, accountId: fixedAccountId }: { recor
             </Link>
           </span>
         ) : (
-          <Button size="sm" icon={<Plus size={14} />} disabled={!accountId} onClick={() => addQuote(accountId, { marketName: record.marketName, appetiteRecordId: record.id })}>
+          <Button size="sm" icon={<Plus size={14} />} disabled={!accountId} onClick={() => {
+              addQuote(accountId, { marketName: record.marketName, appetiteRecordId: record.id });
+              trackEvent('market_added_to_account', { accountId, metadata: { source: fixedAccountId ? 'carrier_appetite' : 'market_finder' } });
+              offerTimeSavedQuestion({ workflow: 'market_research', accountId });
+            }}>
             Add to Quotes
           </Button>
         )}

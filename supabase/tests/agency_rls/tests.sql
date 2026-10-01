@@ -934,3 +934,74 @@ select 'B6 other agency sees none of these events: ' || count(*) from activity_e
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 select 'B6 the account''s broker sees them: ' || count(*) from activity_events where type = 'client_submitted' and submission_id in ('acct_r1', 'acct_y_dot');
 reset role;
+
+-- ============================================================================================
+-- 0043: Founder Analytics — tracked events, Real/Test, founder-only reads
+-- ============================================================================================
+reset role;
+insert into auth.users (id, email, email_confirmed_at) values
+  ('00000000-0000-0000-0000-000000000099', 'anism.academy@gmail.com', now()),
+  ('00000000-0000-0000-0000-000000000098', 'Anism.Academy@gmail.com.evil.com', now())
+on conflict (id) do nothing;
+grant execute on function track_product_event(text, text, jsonb, text) to anon; -- as if misconfigured: the function itself still refuses anonymous callers
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'FA1 broker records an event: ' || track_product_event('account_created', 'acct_y_dot', '{"source":"manual","driverName":"Alex Morgan","dot":"7654321","count":2}', null);
+reset role;
+select 'FA1 stored with who/where, metadata cut to safe keys: ' || (user_id = '00000000-0000-0000-0000-00000000000a') || ' org=' || (organization_id = (select id from agencies where name = 'Agency')) || ' account=' || account_id || ' metadata=' || metadata::text
+  from product_events where event_name = 'account_created' and account_id = 'acct_y_dot';
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'FA2 unknown event name refused quietly: ' || track_product_event('button_clicked', null, '{}', null);
+select 'FA3 another agency''s account is not attached: ' || track_product_event('market_added', 'acct_y_out', '{}', null);
+select 'FA4 once-only key: ' || track_product_event('account_opened_on_later_day', 'acct_y_dot', '{}', 'opened:acct_y_dot:2026-10-01') || ',' || track_product_event('account_opened_on_later_day', 'acct_y_dot', '{}', 'opened:acct_y_dot:2026-10-01');
+do $$ declare n integer; begin select count(*) into n from product_events; raise notice 'FA5 broker reads product_events: % rows', n; exception when others then raise notice 'FA5 broker reads product_events: no access'; end $$;
+do $$ begin perform founder_analytics_snapshot(now() - interval '1 day', now() + interval '1 day'); raise notice 'FA5 broker reads Founder Analytics: ALLOWED (BAD)'; exception when others then raise notice 'FA5 broker denied Founder Analytics: %', sqlerrm; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin perform founder_analytics_snapshot(now() - interval '1 day', now() + interval '1 day'); raise notice 'FA5 agency admin reads Founder Analytics: ALLOWED (BAD)'; exception when others then raise notice 'FA5 agency admin denied too'; end $$;
+do $$ begin perform set_account_analytics_mode('acct_y_dot', 'test'); raise notice 'FA5 admin marks accounts test: ALLOWED (BAD)'; exception when others then raise notice 'FA5 only the founder marks Real/Test'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000098');
+do $$ begin perform founder_analytics_snapshot(now() - interval '1 day', now() + interval '1 day'); raise notice 'FA6 look-alike email: ALLOWED (BAD)'; exception when others then raise notice 'FA6 look-alike email denied'; end $$;
+reset role;
+set role anon;
+select pg_temp.as_user('');
+select 'FA6 anonymous can''t record events: ' || track_product_event('account_created', null, '{}', null);
+reset role;
+select 'FA6 rows by anyone but the broker: ' || count(*) from product_events where user_id is null and event_name = 'account_created';
+select 'FA2/FA3 stored: ' || string_agg(event_name || '@' || coalesce(account_id, 'none'), ', ' order by event_name) from product_events where user_id = '00000000-0000-0000-0000-00000000000a' and event_name in ('market_added', 'button_clicked', 'account_opened_on_later_day');
+-- Real vs Test
+insert into submissions (id, user_id, organization_id, named_insured) select 'acct_fa_test', '00000000-0000-0000-0000-00000000000a', id, 'Demo Trucking (test)' from agencies where name = 'Agency';
+select 'FA7 automatic: sample=' || analytics_account_is_test('acct_abc_transportation') || ' named test=' || analytics_account_is_test('acct_fa_test') || ' normal=' || analytics_account_is_test('acct_y_dot');
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000099');
+select set_account_analytics_mode('acct_fa_test', 'real') is null as _fa7 \gset
+select set_account_analytics_mode('acct_y_dot', 'test') is null as _fa7b \gset
+reset role;
+select 'FA7 founder''s call wins: named test → ' || analytics_account_is_test('acct_fa_test') || ', normal → ' || analytics_account_is_test('acct_y_dot');
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000099');
+select set_account_analytics_mode('acct_y_dot', 'auto') is null as _fa7c \gset
+reset role;
+select 'FA7 back to automatic: ' || analytics_account_is_test('acct_y_dot');
+-- Intake events recorded by the database (no client login)
+select 'FA8 intake submitted (trigger): ' || count(*) from product_events where event_name = 'intake_submitted' and dedupe_key = 'intake_submitted:' || :'zsid';
+update intake_submissions set imported_account_id = 'acct_y_name' where id = :'zsid2';
+select 'FA8 intake imported (trigger): ' || count(*) || ' account=' || min(account_id) from product_events where event_name = 'intake_imported' and dedupe_key like 'intake_imported:' || :'zsid2' || '%';
+-- Time saved
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'FA9 time saved recorded once: ' || record_time_saved('application', 'acct_y_dot', '30to60', 12) || ',' || record_time_saved('application', 'acct_y_dot', 'lt5', 1);
+select 'FA9 bad answer refused: ' || record_time_saved('application', 'acct_y_dot', 'forever', null);
+do $$ declare n integer; begin select count(*) into n from time_saved_responses; raise notice 'FA9 broker reads answers: % rows', n; exception when others then raise notice 'FA9 broker reads answers: no access'; end $$;
+-- The founder's view
+select pg_temp.as_user('00000000-0000-0000-0000-000000000099');
+select 'FA10 founder snapshot: events=' || (jsonb_array_length(v->'events') > 0) || ' users have names=' || (select bool_and(u ? 'name' and u ? 'firstSeen') from jsonb_array_elements(v->'users') u)
+       || ' brokerages=' || (select string_agg(o->>'name', ',' order by o->>'name') from jsonb_array_elements(v->'orgs') o)
+       || ' timeSaved=' || jsonb_array_length(v->'timeSaved')
+  from founder_analytics_snapshot(now() - interval '1 day', now() + interval '1 day') v;
+reset role;
+update auth.users set email_confirmed_at = null where id = '00000000-0000-0000-0000-000000000099';
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000099');
+do $$ begin perform founder_analytics_snapshot(now() - interval '1 day', now() + interval '1 day'); raise notice 'FA11 unconfirmed founder email: ALLOWED (BAD)'; exception when others then raise notice 'FA11 unconfirmed founder email denied'; end $$;
+reset role;

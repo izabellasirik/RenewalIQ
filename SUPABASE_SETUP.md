@@ -277,6 +277,13 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   Written by the database (document-request Submit; intake once imported/added to an account), once
   per submission (fixed event id). Replaces the request Submit's old free-text activity line. Adds
   `activity_events.details`. Needs 0041 first. Additive, safe to re-run.
+- **`supabase/migrations/0043_founder_analytics.sql`** — private Founder Analytics. Adds
+  `product_events` (written only through `track_product_event`, which never raises, keeps only a few
+  safe metadata keys and drops any account the caller can't access; plus intake triggers),
+  `account_analytics_flags` (the founder's Real/Test call) and `time_saved_responses`. No user can
+  read these tables directly; only `founder_analytics_snapshot` returns them, and only when
+  `is_founder()` — the signed-in auth user's confirmed email is anism.academy@gmail.com. Additive,
+  safe to re-run.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -363,6 +370,7 @@ from (values
   ('0040_submission_email_notifications', to_regclass('public.submission_email_notifications') is not null),
   ('0041_submission_email_queue',     to_regprocedure('public.claim_submission_email_event(text)') is not null),
   ('0042_client_submission_activity', exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'activity_events' and column_name = 'details')),
+  ('0043_founder_analytics',          to_regprocedure('public.founder_analytics_snapshot(timestamptz,timestamptz)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

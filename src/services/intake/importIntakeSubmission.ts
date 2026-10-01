@@ -120,7 +120,7 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
       phone: submission.contactPhone ?? undefined,
     },
     // Saved (and awaited) just below instead — two overlapping saves would race.
-    { skipAutoSync: true }
+    { skipAutoSync: true, source: 'intake' }
   );
 
   // The submission is only marked imported once the account and its Risk Profile are actually in

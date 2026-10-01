@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { trackEvent } from '../services/productAnalytics/trackEvent';
+import { offerTimeSavedQuestion } from '../services/productAnalytics/timeSaved';
 import { intakeUrl } from '../services/publicLinks';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWarning, Inbox, Link2, Loader2, RotateCcw, Trash2, X } from 'lucide-react';
@@ -192,6 +194,7 @@ function LinksSection({ userId }: { userId: string }) {
       setCreateError(result.message);
       return;
     }
+    trackEvent('intake_link_created');
     setLabel('');
     setOrgNameTouched(false);
     // The name used for a link becomes the default for the next one.
@@ -404,6 +407,7 @@ function SubmissionCard({
       setError(result.message ?? 'Could not import this submission.');
       return;
     }
+    if (result.accountId) offerTimeSavedQuestion({ workflow: 'intake_import', accountId: result.accountId });
     // Something needs attention (a file didn't come through): stay here and say so.
     if (result.warning) {
       onNotice(`${submission.namedInsured || 'Submission'}: ${result.warning}`);

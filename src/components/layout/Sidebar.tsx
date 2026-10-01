@@ -1,11 +1,12 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
 import { BrandLogo } from '../branding/Logo';
 import { useEffect, useState } from 'react';
 import { checkIsAdmin } from '../../services/supabase/adminAuth';
+import { checkIsFounder } from '../../services/productAnalytics/founderRepo';
 
 /** Whether the signed-in user may review product feedback and appetite-update requests — asks the database (is_admin()). */
 function useIsReviewer(): boolean {
@@ -23,6 +24,24 @@ function useIsReviewer(): boolean {
     };
   }, [userId]);
   return reviewer;
+}
+
+/** Whether the signed-in user is the Renewal IQ founder — the database's is_founder() decides (never an email check here). */
+function useIsFounder(): boolean {
+  const userId = useAccountsStore((s) => s.currentUserId);
+  const [founder, setFounder] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!userId) {
+      setFounder(false);
+      return;
+    }
+    checkIsFounder().then((ok) => !cancelled && setFounder(ok));
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+  return founder;
 }
 
 const navItemClass =
@@ -46,6 +65,7 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
   const steps = useWorkflowStatus(account?.id);
   const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   const isReviewer = useIsReviewer();
+  const isFounder = useIsFounder();
   const pendingIntake = useAccountsStore((s) => s.pendingIntakeCount);
 
   return (
@@ -146,6 +166,24 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
           <BarChart3 size={17} />
           Analytics
         </NavLink>
+
+        {/* The founder only — the database's is_founder() decides, and the page's data is refused to anyone else. */}
+        {isFounder && (
+          <NavLink
+            to="/founder-analytics"
+            className={({ isActive }) =>
+              cn(
+                navItemClass,
+                isActive
+                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+              )
+            }
+          >
+            <LineChart size={17} />
+            Founder Analytics
+          </NavLink>
+        )}
 
         {/* Renewal IQ reviewers (admin_users) only — the database's is_admin() decides, and the /admin pages check it again. */}
         {isReviewer && (

@@ -25,6 +25,7 @@ import { ProfileGate } from './components/profile/ProfileGate';
 import { InvitePage } from './pages/InvitePage';
 import { TeamPage } from './pages/TeamPage';
 import { CarriersPage } from './pages/CarriersPage';
+import { FounderAnalyticsPage } from './pages/FounderAnalyticsPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -56,6 +57,8 @@ export const router = createBrowserRouter([
       { path: '/market-finder', element: <MarketFinderPage /> },
       // V1: the dashboard (AnalyticsPage) is kept but not shown — Coming Soon instead.
       { path: '/analytics', element: <AnalyticsComingSoonPage /> },
+      // Founder only — the page asks the database (is_founder) and the data RPC refuses everyone else.
+      { path: '/founder-analytics', element: <FounderAnalyticsPage /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },
       { path: '/team', element: <TeamPage /> },
       // Carrier appetite management lives inside Market Finder (admins reach it from there).

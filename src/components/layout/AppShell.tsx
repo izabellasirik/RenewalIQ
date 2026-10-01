@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { FeedbackWidget } from '../feedback/FeedbackWidget';
+import { TimeSavedPrompt } from '../productAnalytics/TimeSavedPrompt';
 
 export function AppShell() {
   const location = useLocation();
@@ -30,6 +31,7 @@ export function AppShell() {
         </main>
       </div>
       <FeedbackWidget />
+      <TimeSavedPrompt />
     </div>
   );
 }

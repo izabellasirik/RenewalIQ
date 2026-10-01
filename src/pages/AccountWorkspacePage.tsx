@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Building2, ClipboardList, Clock, FileText } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -50,6 +51,13 @@ export function AccountWorkspacePage() {
   useEffect(() => {
     ensureChecklist(accountId);
   }, [accountId, cloudHydratedFor, ensureChecklist]);
+  // Founder Analytics: came back to this account on a later day than it was created (once a day).
+  const accountCreatedAt = account?.createdAt;
+  useEffect(() => {
+    if (!accountCreatedAt) return;
+    const today = dayKey();
+    if (dayKey(new Date(accountCreatedAt)) < today) trackEvent('account_opened_on_later_day', { accountId, dedupeKey: `opened:${accountId}:${today}` });
+  }, [accountId, accountCreatedAt]);
   // Outdated MVRs / loss runs → "Updated …" checklist items (and cleared again once current).
   const ensureFreshnessItems = useAccountsStore((s) => s.ensureFreshnessItems);
   const lossRuns = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId)?.lossRuns);

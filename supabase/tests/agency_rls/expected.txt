@@ -325,3 +325,26 @@ B4 re-import / re-delivered notification adds nothing: 1
 B5 no document types in the history: 0
 B6 other agency sees none of these events: 0
 B6 the account's broker sees them: 3
+FA1 broker records an event: true
+FA1 stored with who/where, metadata cut to safe keys: true org=true account=acct_y_dot metadata={"count": 2, "source": "manual"}
+FA2 unknown event name refused quietly: false
+FA3 another agency's account is not attached: true
+FA4 once-only key: true,true
+FA5 broker reads product_events: 0 rows
+FA5 broker denied Founder Analytics: Founder Analytics is not available for this account.
+FA5 agency admin denied too
+FA5 only the founder marks Real/Test
+FA6 look-alike email denied
+FA6 anonymous can't record events: false
+FA6 rows by anyone but the broker: 0
+FA2/FA3 stored: account_opened_on_later_day@acct_y_dot, market_added@none
+FA7 automatic: sample=true named test=true normal=false
+FA7 founder's call wins: named test → false, normal → true
+FA7 back to automatic: false
+FA8 intake submitted (trigger): 1
+FA8 intake imported (trigger): 1 account=acct_y_name
+FA9 time saved recorded once: true,true
+FA9 bad answer refused: false
+FA9 broker reads answers: 0 rows
+FA10 founder snapshot: events=true users have names=true brokerages=Agency timeSaved=1
+FA11 unconfirmed founder email denied

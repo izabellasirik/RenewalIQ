@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -36,7 +37,15 @@ export function CarrierAppetitePage() {
   // By id, so the market shows its fresh verdict after an edit re-runs matching.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected: MatchResult | null = matchResults.find((r) => r.appetiteRecordId === selectedId) ?? null;
-  const setSelected = (r: MatchResult | null) => setSelectedId(r?.appetiteRecordId ?? null);
+  const setSelected = (r: MatchResult | null) => {
+    setSelectedId(r?.appetiteRecordId ?? null);
+    if (r) trackEvent('carrier_match_opened', { accountId, metadata: { source: 'carrier_appetite' }, dedupeKey: `match_opened:${accountId}:${r.appetiteRecordId}:${dayKey()}` });
+  };
+  // Founder Analytics: appetite results were produced for this account (once a day per account).
+  const hasResults = matchResults.length > 0 && !!account;
+  useEffect(() => {
+    if (hasResults) trackEvent('carrier_appetite_generated', { accountId, dedupeKey: `appetite:${accountId}:${dayKey()}` });
+  }, [accountId, hasResults]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Agency admins edit a market's appetite right here — the same form as Manage Carrier Appetite; the
   // database only accepts it from an admin (0023). Saving re-matches every account.

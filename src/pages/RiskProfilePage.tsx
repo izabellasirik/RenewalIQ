@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowRight, ListChecks, TrendingUp, TrendingDown, Minus, Archive as ArchiveIcon } from 'lucide-react';
@@ -81,6 +82,15 @@ export function RiskProfilePage() {
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [whatsMissingOpen, setWhatsMissingOpen] = useState(false);
   const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
+  // Founder Analytics: the Risk Profile was looked at (once a day) / reached 100% (once).
+  const hasAccount = !!account;
+  useEffect(() => {
+    if (hasAccount) trackEvent('risk_profile_reviewed', { accountId, dedupeKey: `rp_reviewed:${accountId}:${dayKey()}` });
+  }, [accountId, hasAccount]);
+  const fullyComplete = completeness?.percent === 100;
+  useEffect(() => {
+    if (fullyComplete) trackEvent('risk_profile_completed', { accountId, dedupeKey: `rp_completed:${accountId}` });
+  }, [accountId, fullyComplete]);
 
   function focusField(section: 'business' | 'transportation', key: string) {
     const id = `field-${section}-${key}`;

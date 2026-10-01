@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
+import { offerTimeSavedQuestion } from '../services/productAnalytics/timeSaved';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, FileSearch, FileSpreadsheet } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -49,6 +51,16 @@ export function SubmissionAssistantPage() {
 
   const missingCount = completeness ? completeness.missingRequiredFields.length + completeness.missingRecommendedFields.length + completeness.missingRecommendedDocuments.length : 0;
 
+  // Founder Analytics: the application was reviewed (once a day per account); the Risk Profile is complete.
+  const hasAccount = !!account;
+  useEffect(() => {
+    if (reviewing && hasAccount) trackEvent('application_reviewed', { accountId, dedupeKey: `app_reviewed:${accountId}:${dayKey()}` });
+  }, [reviewing, accountId, hasAccount]);
+  const fullyComplete = completeness?.percent === 100;
+  useEffect(() => {
+    if (fullyComplete) trackEvent('risk_profile_completed', { accountId, dedupeKey: `rp_completed:${accountId}` });
+  }, [accountId, fullyComplete]);
+
   if (!account || !profile || !application || !stats || !completeness) {
     return <AccountNotFound />;
   }
@@ -87,6 +99,8 @@ export function SubmissionAssistantPage() {
         const { generateApplicationPdf } = await import('../services/application/exportApplication');
         const bytes = await generateApplicationPdf(application!, account!.namedInsured);
         downloadBlob(new Uint8Array(bytes), `${slugify(account!.namedInsured)}_${slugify(application!.templateName)}.pdf`, 'application/pdf');
+        trackEvent('application_downloaded', { accountId, metadata: { source: reviewing ? 'review' : 'assistant' } });
+        offerTimeSavedQuestion({ workflow: 'application', accountId, startedAt: account!.createdAt });
       } else {
         const { generateApplicationCsv } = await import('../services/application/exportApplication');
         downloadBlob(generateApplicationCsv(application!, account!.namedInsured), `${slugify(account!.namedInsured)}_application.csv`, 'text/csv;charset=utf-8');
