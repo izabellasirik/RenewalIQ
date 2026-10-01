@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, Download, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, FileSearch, FileSpreadsheet } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, OverflowMenu, ConfirmDialog } from '../components/ui';
 import { ApplicationPreview } from '../components/submission/ApplicationPreview';
+import { ApplicationReview } from '../components/submission/ApplicationReview';
 import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { mapRiskProfileToApplication, computeApplicationStats, computeSubmissionCompleteness, applicationTitleFor, APPLICATION_TEMPLATES, DEFAULT_APPLICATION_TEMPLATE_ID } from '../services/application';
@@ -35,6 +36,11 @@ export function SubmissionAssistantPage() {
   const [pendingExport, setPendingExport] = useState<ExportKind | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [whatsMissingOpen, setWhatsMissingOpen] = useState(false);
+  // "Review Application": what the download will contain, before downloading (?view=review, so Back works).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const reviewing = searchParams.get('view') === 'review';
+  const openReview = () => setSearchParams((p) => (p.set('view', 'review'), p));
+  const closeReview = () => setSearchParams((p) => (p.delete('view'), p));
 
   const template = APPLICATION_TEMPLATES.find((t) => t.id === templateId) ?? APPLICATION_TEMPLATES[0];
   const application = useMemo(() => (profile ? mapRiskProfileToApplication(profile, template) : null), [profile, template]);
@@ -118,6 +124,7 @@ export function SubmissionAssistantPage() {
     <PageContainer
       title={`Submission Assistant — ${account.namedInsured}`}
       actions={
+        reviewing ? undefined : (
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)} className="print:hidden">
             What's missing?
@@ -127,15 +134,38 @@ export function SubmissionAssistantPage() {
               { key: 'csv', label: 'Export as CSV', icon: <FileSpreadsheet size={14} />, onSelect: () => guardExport('csv') },
             ]}
           />
-          <Button icon={exportingPdf ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} onClick={() => guardExport('pdf')} disabled={exportingPdf} className="print:hidden">
-            Download Application
+          <Button icon={<FileSearch size={15} />} onClick={openReview} className="print:hidden" data-testid="review-application">
+            Review Application
           </Button>
           <Button variant="secondary" icon={<Compass size={15} />} onClick={() => navigate(`/accounts/${accountId}/carrier-appetite`)} className="print:hidden">
             Carrier Appetite
           </Button>
         </>
+        )
       }
     >
+      {reviewing ? (
+        <>
+          {exportError && (
+            <div className="flex items-center gap-2 rounded-lg border border-[var(--color-danger-300)] bg-[var(--color-danger-100)]/40 px-4 py-3 text-sm text-[var(--color-danger-700)]">
+              <TriangleAlert size={16} className="shrink-0" />
+              {exportError}
+            </div>
+          )}
+          <ApplicationReview
+            application={application}
+            title={applicationTitleFor(account.namedInsured, application.templateName)}
+            completenessPercent={completeness.percent}
+            missingCount={missingCount}
+            needsReviewCount={completeness.needsReview.length}
+            conflictCount={completeness.conflicts.length}
+            downloading={exportingPdf}
+            onBack={closeReview}
+            onDownload={() => guardExport('pdf')}
+          />
+        </>
+      ) : (
+      <>
       {/* Only a real choice of templates is shown; the single built-in template's internal name isn't. */}
       {APPLICATION_TEMPLATES.length > 1 && (
         <div className="flex flex-col gap-1 print:hidden">
@@ -208,6 +238,8 @@ export function SubmissionAssistantPage() {
       )}
 
       <ApplicationPreview application={application} onSaveToRiskProfile={saveFieldToRiskProfile} onResolveConflict={resolveFieldConflict} />
+      </>
+      )}
 
       <ConfirmDialog
         open={pendingExport !== null}

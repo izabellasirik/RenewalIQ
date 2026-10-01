@@ -1,12 +1,11 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
-import type { MappedApplication, MappedField } from '../../types';
+import type { MappedApplication } from '../../types';
+import { buildApplicationPrintPlan, printedCellValue } from './printPlan';
 import { applicationTitleFor } from './applicationTitle';
 import { DEFAULT_APPLICATION_BRANDING, type ApplicationBranding } from './branding';
 
-/** Only fields with real data go on an exported application — never a blank or a broker-only placeholder. */
-function hasData(f: MappedField): boolean {
-  return f.status !== 'missing' && !f.isPlaceholder && !!f.value?.trim();
-}
+// What gets printed — fields, sections, table columns and rows — is decided once, in printPlan.ts,
+// which the on-screen Review Application preview reads too.
 
 const PAGE_WIDTH = 612; // US Letter, points
 const PAGE_HEIGHT = 792;
@@ -163,12 +162,14 @@ export async function generateApplicationPdf(
   rule();
   y -= 22;
 
+  const plan = buildApplicationPrintPlan(application);
+
   // --- Scalar sections, two columns ---
-  for (const section of application.sections) {
+  for (const section of plan.sections) {
     // Only fields that have data are printed — an empty field (required or not) gets no row at all,
     // and a section with nothing filled is left out. What's still missing is shown to the broker in
     // the "What's Missing?" panel, not on the application.
-    const fieldsToRender = section.fields.filter(hasData);
+    const fieldsToRender = section.printed;
     if (fieldsToRender.length === 0) continue;
 
     const colWidth = CONTENT_WIDTH / 2;
@@ -233,12 +234,9 @@ export async function generateApplicationPdf(
   }
 
   // --- Table sections ---
-  for (const fullTable of application.tableSections) {
+  for (const table of plan.tables) {
     // Same rule for itemized sections: drop columns that are empty on every row, and empty rows.
-    const filled = (row: (typeof fullTable.rows)[number], key: string) => row.cells[key]?.status !== 'missing' && !!row.cells[key]?.value?.trim();
-    const columns = fullTable.columns.filter((col) => fullTable.rows.some((row) => filled(row, col.key)));
-    const table = { ...fullTable, columns, rows: fullTable.rows.filter((row) => columns.some((col) => filled(row, col.key))) };
-    if (table.columns.length === 0) continue;
+    if (!table.prints) continue;
     const colWidth = CONTENT_WIDTH / table.columns.length;
     const usableWidth = colWidth - TABLE_COLUMN_GUTTER;
 
@@ -259,17 +257,12 @@ export async function generateApplicationPdf(
       y -= 14;
     }
 
-    // An itemized section with no rows at all is omitted entirely — no title, no "No X on file"
-    // placeholder — same "only render what's actually populated" rule as the scalar sections above.
-    if (table.rows.length === 0) continue;
+    // An itemized section with no rows at all is omitted entirely (table.prints above) — no title, no
+    // "No X on file" placeholder — same "only render what's actually populated" rule as the scalar sections.
 
     function layoutTableRow(rowIndex: number) {
       const row = table.rows[rowIndex];
-      const cellLines = table.columns.map((col) => {
-        const cell = row.cells[col.key];
-        const value = cell?.status === 'missing' ? '' : (cell?.value ?? '');
-        return wrapText(font, value, TABLE_VALUE_SIZE, usableWidth);
-      });
+      const cellLines = table.columns.map((col) => wrapText(font, printedCellValue(row, col.key), TABLE_VALUE_SIZE, usableWidth));
       const lineCount = Math.max(1, ...cellLines.map((l) => l.length));
       const height = lineCount * TABLE_LINE_STEP + TABLE_ROW_BOTTOM_PADDING;
       return { cellLines, height };
@@ -329,20 +322,17 @@ function csvEscape(value: string): string {
 export function generateApplicationCsv(application: MappedApplication, accountName: string): string {
   const rows: string[][] = [[applicationTitleFor(accountName, application.templateName)], [`Generated ${new Date(application.generatedAt).toLocaleDateString('en-US')}`]];
 
-  for (const section of application.sections) {
-    const fields = section.fields.filter(hasData);
-    if (fields.length === 0) continue;
+  const plan = buildApplicationPrintPlan(application);
+  for (const section of plan.sections) {
+    if (section.printed.length === 0) continue;
     rows.push([], [section.title], ['Field', 'Value']);
-    for (const field of fields) rows.push([field.targetLabel, field.value]);
+    for (const field of section.printed) rows.push([field.targetLabel, field.value]);
   }
 
-  for (const table of application.tableSections) {
-    const filled = (row: (typeof table.rows)[number], key: string) => row.cells[key]?.status !== 'missing' && !!row.cells[key]?.value?.trim();
-    const columns = table.columns.filter((col) => table.rows.some((row) => filled(row, col.key)));
-    const dataRows = table.rows.filter((row) => columns.some((col) => filled(row, col.key)));
-    if (columns.length === 0 || dataRows.length === 0) continue;
-    rows.push([], [table.title], columns.map((c) => c.label));
-    for (const row of dataRows) rows.push(columns.map((c) => (filled(row, c.key) ? row.cells[c.key]!.value : '')));
+  for (const table of plan.tables) {
+    if (!table.prints) continue;
+    rows.push([], [table.title], table.columns.map((c) => c.label));
+    for (const row of table.rows) rows.push(table.columns.map((c) => printedCellValue(row, c.key)));
   }
 
   return '\uFEFF' + rows.map((r) => r.map(csvEscape).join(',')).join('\r\n');
