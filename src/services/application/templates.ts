@@ -31,10 +31,8 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           // (see FieldMapping.neverFlagMissing), so it never appears in What's Missing just because
           // nobody entered one.
           { targetFieldId: 'dba', targetLabel: 'DBA', riskProfilePath: 'business.dba', required: false, neverFlagMissing: true },
+          // One line: street, city, state and ZIP together (fieldMappingEngine composes it from the Risk Profile).
           { targetFieldId: 'address', targetLabel: 'Address', riskProfilePath: 'business.address', required: true },
-          { targetFieldId: 'city', targetLabel: 'City', riskProfilePath: 'business.city', required: false },
-          { targetFieldId: 'state', targetLabel: 'State', riskProfilePath: 'business.state', required: true },
-          { targetFieldId: 'zip', targetLabel: 'ZIP', riskProfilePath: 'business.zip', required: false },
           { targetFieldId: 'fein', targetLabel: 'FEIN', riskProfilePath: 'business.fein', required: false },
           { targetFieldId: 'years_in_business', targetLabel: 'Years in Business', riskProfilePath: 'business.yearsInBusiness', required: true },
           { targetFieldId: 'annual_revenue', targetLabel: 'Annual Revenue', riskProfilePath: 'business.annualRevenue', format: formatCurrency, required: true },

@@ -7,6 +7,18 @@ interface AddressParts {
   zip: string | null | undefined;
 }
 
+/** One line: line breaks (a multi-line address off a document) become ", ", repeated commas/spaces collapse. */
+export function singleLineAddress(v: string | null | undefined): string {
+  if (typeof v !== 'string') return '';
+  return v
+    .split(/\s*[\r\n]+\s*/)
+    .map((part) => part.replace(/^[\s,]+|[\s,]+$/g, ''))
+    .filter(Boolean)
+    .join(', ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/,\s*,/g, ',');
+}
+
 const clean = (v: string | null | undefined) => (typeof v === 'string' ? v.trim() : '');
 
 /**
@@ -15,7 +27,7 @@ const clean = (v: string | null | undefined) => (typeof v === 'string' ? v.trim(
  * only when the address doesn't already contain them. Nothing is invented.
  */
 export function composeFullAddress(p: AddressParts): string {
-  const address = clean(p.address);
+  const address = singleLineAddress(p.address);
   const city = clean(p.city);
   const state = clean(p.state);
   const zip = clean(p.zip);

@@ -131,3 +131,16 @@ describe('loss runs with no itemized claims: Loss History lists the reports', ()
     expect(t.note).toBeUndefined();
   });
 });
+
+describe('address on the application', () => {
+  it('one Address line with city, state and ZIP — no separate City/State/ZIP rows', () => {
+    const p = createEmptyRiskProfile('a');
+    p.business.address = manualField('12 Main St\nSuite 4');
+    p.business.city = manualField('Newark');
+    p.business.state = manualField('NJ');
+    p.business.zip = manualField('07102');
+    const fields = buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0])).sections.flatMap((s) => s.printed);
+    expect(fields.find((f) => f.targetLabel === 'Address')?.value).toBe('12 Main St, Suite 4, Newark, NJ 07102');
+    expect(fields.some((f) => ['City', 'State', 'ZIP'].includes(f.targetLabel))).toBe(false);
+  });
+});

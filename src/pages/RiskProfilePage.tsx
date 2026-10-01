@@ -24,7 +24,7 @@ import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { computeSubmissionCompleteness } from '../services/application';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
-import { addressComponentsFrom, composeFullAddress } from '../utils/fullAddress';
+import { addressComponentsFrom, composeFullAddress, singleLineAddress } from '../utils/fullAddress';
 import { formatDate } from '../utils/dates';
 import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
@@ -202,7 +202,8 @@ export function RiskProfilePage() {
                       // it at all, and FieldRow crashes on `undefined`. Same fallback
                       // useRiskProfileStats already uses for exactly this reason.
                       field={(f.section === 'business' && f.key === 'address' ? fullAddressField(profile) : getFieldValueByPath(profile, `${f.section}.${f.key}`) ?? emptyField()) as any}
-                      onSave={(value) => {
+                      onSave={(raw) => {
+                        const value = f.section === 'business' && f.key === 'address' && typeof raw === 'string' ? singleLineAddress(raw) : raw;
                         updateField(accountId, f.section, f.key, value);
                         if (f.section === 'business' && f.key === 'address' && typeof value === 'string') {
                           // Keep City/State/ZIP (used by carrier appetite and the application) in step.

@@ -16,6 +16,7 @@ import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { getFieldValueByPath } from '../../utils/riskProfilePath';
 import { buildSubmissionWarnings } from '../extraction/reconciliation';
 import { buildLossRunSummary } from './lossRunSummary';
+import { composeFullAddress } from '../../utils/fullAddress';
 import { formatDuration, isDuration } from '../../utils/duration';
 
 function defaultFormat(value: unknown): string {
@@ -205,7 +206,23 @@ function mapTableSection(profile: RiskProfile, table: ApplicationTableSection): 
  * new ApplicationTemplate (data) to services/application/templates.ts — this function and the
  * extraction pipeline it reads from never change.
  */
-export function mapRiskProfileToApplication(profile: RiskProfile, template: ApplicationTemplate, lossRuns?: LossRun[]): MappedApplication {
+/**
+ * The application prints the address as one line — street, city, state and ZIP — even for an older
+ * account whose city/state/ZIP are stored apart from the street. Only the copy used for mapping
+ * changes; the Risk Profile itself is untouched.
+ */
+function withOneLineAddress(profile: RiskProfile): RiskProfile {
+  const b = profile.business;
+  const str = (f: { value: unknown } | undefined) => (typeof f?.value === 'string' ? f.value : null);
+  if (b.address?.isConflicting) return profile;
+  const full = composeFullAddress({ address: str(b.address), city: str(b.city), state: str(b.state), zip: str(b.zip) });
+  if (!full || full === b.address?.value) return profile;
+  const base = b.address && !b.address.isMissing ? b.address : (b.state && !b.state.isMissing ? b.state : b.city ?? b.address);
+  return { ...profile, business: { ...b, address: { ...base, value: full, isMissing: false, isConflicting: false } as typeof b.address } };
+}
+
+export function mapRiskProfileToApplication(rawProfile: RiskProfile, template: ApplicationTemplate, lossRuns?: LossRun[]): MappedApplication {
+  const profile = withOneLineAddress(rawProfile);
   const sections: MappedApplicationSection[] = template.sections.map((section) => ({
     title: section.title,
     fields: section.fields.map((mapping) => mapField(profile, mapping)),

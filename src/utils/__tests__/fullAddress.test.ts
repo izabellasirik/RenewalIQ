@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addressComponentsFrom, composeFullAddress } from '../fullAddress';
+import { addressComponentsFrom, composeFullAddress, singleLineAddress } from '../fullAddress';
 
 describe('single Address field', () => {
   it('a full address is shown as is', () => {
@@ -15,5 +15,13 @@ describe('single Address field', () => {
     expect(addressComponentsFrom('12 Main St, Newark, NJ 07102')).toEqual({ city: 'Newark', state: 'NJ', zip: '07102' });
     expect(addressComponentsFrom('12 Main St Dallas TX 75001')).toEqual({ state: 'TX' });
     expect(addressComponentsFrom('12 Main St')).toEqual({});
+  });
+});
+
+describe('address on one line', () => {
+  it('a multi-line address becomes one line', () => {
+    expect(singleLineAddress('12 Main St\nSuite 4\r\nNewark, NJ 07102')).toBe('12 Main St, Suite 4, Newark, NJ 07102');
+    expect(singleLineAddress('12 Main St,\n Newark, NJ 07102')).toBe('12 Main St, Newark, NJ 07102');
+    expect(composeFullAddress({ address: '12 Main St\nNewark', city: 'Newark', state: 'NJ', zip: '07102' })).toBe('12 Main St, Newark, NJ 07102');
   });
 });
