@@ -305,18 +305,7 @@ export function RiskProfilePage() {
 
       {tab === 'loss-history' && (
         <SectionCard title="Loss History" description="Each loss run report with its claims — add, edit, or remove reports and claims directly.">
-          {profile.lossHistory.length === 0 && lossRunDocs.length > 0 && (
-            <div className="px-2 pb-4 pt-2 text-center">
-              <p className="text-sm font-medium text-[var(--color-warning-600)]">
-                {lossRunDocs.length === 1 ? 'A loss run document was' : `${lossRunDocs.length} loss run documents were`} uploaded, but no claims could be extracted.
-              </p>
-              <p className="mx-auto mt-1 max-w-md text-xs text-[var(--color-ink-500)]">
-                {lossRunDocs.some((d) => d.warnings?.length)
-                  ? lossRunDocs.flatMap((d) => d.warnings ?? []).join(' ')
-                  : "The document's layout wasn't recognized (expected a claims table, or one labeled claim per block with a date and amount). Try re-uploading a clearer copy, or add claims manually below."}
-              </p>
-            </div>
-          )}
+          {profile.lossHistory.length === 0 && lossRunDocs.length > 0 && <NoClaimsListedNotice docs={lossRunDocs} runs={account?.lossRuns ?? []} />}
           {profile.lossHistory.length > 0 && (
             <InsightStrip
               stats={[
@@ -399,4 +388,45 @@ function fullAddressField(profile: RiskProfile) {
   const full = composeFullAddress({ address: typeof address.value === 'string' ? address.value : null, city: read('city'), state: read('state'), zip: read('zip') });
   if (full === (address.value ?? '')) return address;
   return { ...address, value: full, isMissing: false, confidence: address.isMissing ? (getFieldValueByPath(profile, 'business.state')?.confidence ?? 'manual') : address.confidence };
+}
+
+/**
+ * Loss runs uploaded, no individual claims on the account. Says what was actually found: reports that
+ * state no losses, reports read but with no claims listed (losses unknown), reports that give a claim
+ * count without listing them — and only when nothing could be read at all, that the layout wasn't recognized.
+ */
+function NoClaimsListedNotice({ docs, runs }: { docs: { warnings?: string[] }[]; runs: { claimCount?: number }[] }) {
+  const plural = runs.length !== 1;
+  if (runs.length > 0 && runs.every((r) => r.claimCount === 0)) {
+    return <p className="px-2 pb-4 pt-2 text-center text-sm text-[var(--color-ink-600)]" data-testid="loss-runs-notice">{plural ? 'These loss runs report' : 'This loss run reports'} no losses.</p>;
+  }
+  if (runs.length > 0) {
+    const stated = runs.filter((r) => (r.claimCount ?? 0) > 0);
+    return (
+      <div className="px-2 pb-4 pt-2 text-center" data-testid="loss-runs-notice">
+        <p className="text-sm font-medium text-[var(--color-ink-800)]">
+          {stated.length > 0
+            ? `${plural ? 'The loss runs give' : 'The loss run gives'} a claim count, but the claims aren't listed one by one.`
+            : `${plural ? 'The loss runs were' : 'The loss run was'} read, but no claims are listed on ${plural ? 'them' : 'it'}.`}
+        </p>
+        <p className="mx-auto mt-1 max-w-md text-xs text-[var(--color-ink-500)]">
+          {stated.length > 0
+            ? 'Add the claims below if you need them itemized.'
+            : 'If there were no losses, edit the report below and enter 0 claims — the application will then say "No losses". If there were losses, add them below.'}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="px-2 pb-4 pt-2 text-center" data-testid="loss-runs-notice">
+      <p className="text-sm font-medium text-[var(--color-warning-600)]">
+        {docs.length === 1 ? 'A loss run document was' : `${docs.length} loss run documents were`} uploaded, but nothing could be read from {docs.length === 1 ? 'it' : 'them'}.
+      </p>
+      <p className="mx-auto mt-1 max-w-md text-xs text-[var(--color-ink-500)]">
+        {docs.some((d) => d.warnings?.length)
+          ? docs.flatMap((d) => d.warnings ?? []).join(' ')
+          : "The document's layout wasn't recognized (expected a claims table, or one labeled claim per block with a date and amount). Try re-uploading a clearer copy, or add the report and claims manually below."}
+      </p>
+    </div>
+  );
 }
