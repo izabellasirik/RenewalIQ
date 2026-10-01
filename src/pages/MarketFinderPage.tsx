@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { trackEvent } from '../services/productAnalytics/trackEvent';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, Pencil, Search, Info, Plus, RotateCcw, X } from 'lucide-react';
@@ -261,15 +261,16 @@ export function MarketFinderPage() {
     return [...results].sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.verifiedMatchCount - a.verifiedMatchCount);
   }, [filters, filtersActive, effectiveAppetiteRecords]);
 
-  // Founder Analytics: one "search completed" once the broker stops adjusting filters (not per change).
+  // Founder Analytics: Market Finder updates live, so filter changes alone are not a search. A search
+  // counts as completed only when the broker opens a market from its results — once per set of filters.
   // Market Finder isn't tied to an account; the account counts come from "Add to Quotes".
   const searchSignature = filtersActive ? JSON.stringify(filters) : '';
-  useEffect(() => {
-    if (!searchSignature) return;
-    const t = setTimeout(() => trackEvent('market_search_completed', { metadata: { source: 'market_finder', count: visibleResults.length } }), 2500);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchSignature]);
+  const usedSearches = useRef(new Set<string>());
+  function recordSearchUsed() {
+    if (!searchSignature || usedSearches.current.has(searchSignature)) return;
+    usedSearches.current.add(searchSignature);
+    trackEvent('market_search_completed', { metadata: { source: 'market_finder', count: visibleResults.length } });
+  }
 
   // After an edit (or any appetite change) the open market shows its recalculated verdict.
   useEffect(() => {
@@ -476,6 +477,7 @@ export function MarketFinderPage() {
                           onClick={() => {
                             setBrowsedRecordId(null);
                             setSelected(result);
+                            recordSearchUsed();
                             trackEvent('carrier_match_opened', { metadata: { source: 'market_finder' } });
                             setDrawerOpen(true);
                           }}
