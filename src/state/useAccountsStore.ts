@@ -30,11 +30,10 @@ import type {
   UploadedDocument,
   VehicleEntry,
 } from '../types';
-import { emptyField, ACCOUNT_STAGE_LABELS, AWAITING_CARRIER_STATUSES, MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
+import { emptyField, ACCOUNT_STAGE_LABELS, AWAITING_CARRIER_STATUSES, MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES, quoteOptionFiles } from '../types';
 import { getAccountContacts } from '../services/workflow/contacts';
 import { addBusinessDays, formatShortDate, parseDateKey, todayKey } from '../services/workflow/dates';
 import { carriersFor, findRequirement, forwardedAt, normalizeMissingItems } from '../services/workflow/requirementKey';
-import { CHECKLIST_TEMPLATES, expandTemplate, findTemplateItem } from '../services/workflow/checklistTemplates';
 import { DocumentLinkError } from '../services/ingestion/documentLinks';
 import type { FieldResolution } from '../services/extraction';
 import {
@@ -137,12 +136,7 @@ interface AccountsState {
   setCollaborators: (accountId: string, userIds: string[]) => Promise<{ ok: true } | { ok: false; message: string }>;
   /** The signed-in user whose cloud accounts have finished loading this session (ephemeral) — until then a cloud account's local copy may be stale. */
   cloudHydratedFor: string | null;
-  /**
-   * Gives an account the standard submission checklist if it has never had one (accounts created
-   * before new accounts got it automatically). Never re-adds a checklist the broker emptied (any
-   * past checklist add/remove in its activity), and waits for a cloud account's data to load so an
-   * empty local copy can't overwrite a checklist saved from another device.
-   */
+  /** No-op, kept for callers: the checklist is no longer pre-filled — brokers add what they need, and items a market requests come from Markets & Quotes. */
   ensureChecklist: (accountId: string) => void;
   /**
    * MVRs and loss runs older than the freshness policy (14 days) get an "Updated … " checklist item
@@ -305,8 +299,10 @@ interface AccountsState {
   /** Reschedule the client follow-up for several requested items at once (one request email = one follow-up). */
   setItemsFollowUp: (accountId: string, itemIds: string[], followUpDate: string) => void;
   /** Record one quote from a market (a market can return several), optionally with the quote file. Marks the market Quoted. */
-  addQuoteOption: (accountId: string, quoteId: string, input: { label?: string; premium?: number; notes?: string; file?: File }) => string;
+  addQuoteOption: (accountId: string, quoteId: string, input: { label?: string; premium?: number; notes?: string; file?: File; files?: File[] }) => string;
+  /** Adds the file to the quote (a quote can hold several files). */
   attachQuoteFile: (accountId: string, quoteId: string, optionId: string, file: File) => void;
+  removeQuoteAttachment: (accountId: string, quoteId: string, optionId: string, attachmentId: string) => void;
   selectQuoteOption: (accountId: string, quoteId: string, optionId: string) => void;
   deleteQuoteOption: (accountId: string, quoteId: string, optionId: string) => void;
   deleteQuote: (accountId: string, quoteId: string) => void;
@@ -424,33 +420,6 @@ function withoutAccounts(st: AccountsState, ids: Set<string>): Partial<AccountsS
 }
 
 /**
- * The standard submission checklist a new account starts with (the same template as the checklist's
- * "Start … checklist" button). An item whose document came in with the account — e.g. a loss run
- * uploaded to create it — starts out received and linked to that document.
- */
-function defaultChecklist(accountId: string, profile: RiskProfile | undefined, documents: UploadedDocument[], now: string): MissingItem[] {
-  const template = CHECKLIST_TEMPLATES[0];
-  if (!template) return [];
-  const used = new Set<string>();
-  return expandTemplate(template, profile).map((seed) => {
-    const categories = findTemplateItem(seed.templateKey)?.documentCategories ?? [];
-    const doc = categories.length ? documents.find((d) => !used.has(d.id) && d.status !== 'error' && categories.includes(d.category)) : undefined;
-    if (doc) used.add(doc.id);
-    return {
-      id: generateId('item'),
-      accountId,
-      type: seed.type,
-      label: seed.label,
-      status: doc ? 'received' : 'missing',
-      templateKey: seed.templateKey,
-      ...(doc ? { documentId: doc.id, receivedAt: now } : {}),
-      createdAt: now,
-      updatedAt: now,
-    } satisfies MissingItem;
-  });
-}
-
-/**
  * Whether the UI offers Restore and Delete permanently: an agency admin, or a broker outside any
  * agency (their own accounts). Agents only archive. The database (0021) enforces the same rule.
  */
@@ -460,7 +429,7 @@ export const selectCanManageArchive = (s: Pick<AccountsState, 'agencyAccess'>) =
 function localFileIds(st: AccountsState, accountId: string): string[] {
   return [
     ...(st.documents[accountId] ?? []).map((d) => d.id),
-    ...(st.quotes[accountId] ?? []).flatMap((q) => (q.options ?? []).flatMap((o) => (o.attachment ? [o.attachment.id] : []))),
+    ...(st.quotes[accountId] ?? []).flatMap((q) => (q.options ?? []).flatMap((o) => quoteOptionFiles(o).map((a) => a.id))),
   ];
 }
 
@@ -693,7 +662,15 @@ export const useAccountsStore = create<AccountsState>()(
             ...st.quotes,
             [accountId]: updateInList(st.quotes[accountId], quoteId, (q) => ({
               ...q,
-              options: (q.options ?? []).map((o) => (o.id === optionId && o.attachment?.id === attachmentId ? { ...o, attachment: { ...o.attachment, storagePath: res.data } } : o)),
+              options: (q.options ?? []).map((o) =>
+                o.id !== optionId
+                  ? o
+                  : o.attachment?.id === attachmentId
+                    ? { ...o, attachment: { ...o.attachment, storagePath: res.data } }
+                    : o.attachments?.some((a) => a.id === attachmentId)
+                      ? { ...o, attachments: o.attachments.map((a) => (a.id === attachmentId ? { ...a, storagePath: res.data } : a)) }
+                      : o
+              ),
             })),
           },
         }));
@@ -953,7 +930,7 @@ export const useAccountsStore = create<AccountsState>()(
           riskProfiles: { ...s.riskProfiles, [account.id]: createEmptyRiskProfile(account.id) },
           documents: { ...s.documents, [account.id]: [] },
           // In the same update as the account, so its first cloud save already includes it.
-          missingItems: { ...s.missingItems, [account.id]: defaultChecklist(account.id, undefined, [], account.createdAt) },
+          missingItems: { ...s.missingItems, [account.id]: [] },
           activityLog: appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`),
           activeAccountId: account.id,
           cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
@@ -998,7 +975,7 @@ export const useAccountsStore = create<AccountsState>()(
             accounts: [...s.accounts, account],
             riskProfiles: { ...s.riskProfiles, [account.id]: finalProfile },
             documents: { ...s.documents, [account.id]: finalDocs },
-            missingItems: { ...s.missingItems, [account.id]: defaultChecklist(account.id, finalProfile, finalDocs, account.createdAt) },
+            missingItems: { ...s.missingItems, [account.id]: [] },
             activityLog: log,
             activeAccountId: account.id,
             cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
@@ -2450,13 +2427,16 @@ export const useAccountsStore = create<AccountsState>()(
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         if (!quote) return '';
         const now = new Date().toISOString();
+        const files = [...(input.file ? [input.file] : []), ...(input.files ?? [])];
+        const stored = files.map((file) => ({ file, attachment: { id: generateId('qfile'), name: file.name, sizeBytes: file.size, fileType: inferQuoteFileType(file.name) } }));
         const option: QuoteOption = {
           id: generateId('qopt'),
           label: input.label?.trim() || undefined,
           premium: input.premium,
           notes: input.notes?.trim() || undefined,
           receivedAt: now,
-          ...(input.file ? { attachment: { id: generateId('qfile'), name: input.file.name, sizeBytes: input.file.size, fileType: inferQuoteFileType(input.file.name) } } : {}),
+          ...(stored.length ? { attachment: stored[0].attachment } : {}),
+          ...(stored.length > 1 ? { attachments: stored.slice(1).map((x) => x.attachment) } : {}),
         };
         const options = [...(quote.options ?? []), option];
         const count = options.length;
@@ -2477,10 +2457,10 @@ export const useAccountsStore = create<AccountsState>()(
             s.activityLog,
             accountId,
             'quote_received',
-            `${quote.marketName} quoted${option.premium ? ` ${money(option.premium)}` : ''}${count > 1 || option.label ? ` (${name})` : ''}${option.attachment ? ` — ${option.attachment.name} attached` : ''}.`
+            `${quote.marketName} quoted${option.premium ? ` ${money(option.premium)}` : ''}${count > 1 || option.label ? ` (${name})` : ''}${stored.length ? ` — ${stored.map((x) => x.attachment.name).join(', ')} attached` : ''}.`
           ),
         }));
-        if (input.file && option.attachment) storeQuoteFile(accountId, quoteId, option.id, option.attachment.id, input.file);
+        for (const x of stored) storeQuoteFile(accountId, quoteId, option.id, x.attachment.id, x.file);
         syncNow(accountId);
         trackEvent('quote_added', { accountId, metadata: { source: 'quote_option', count } });
         return option.id;
@@ -2491,21 +2471,41 @@ export const useAccountsStore = create<AccountsState>()(
         const option = quote?.options?.find((o) => o.id === optionId);
         if (!quote || !option) return;
         const attachment = { id: generateId('qfile'), name: file.name, sizeBytes: file.size, fileType: inferQuoteFileType(file.name) };
-        const replaced = option.attachment;
         set((s) => ({
           quotes: {
             ...s.quotes,
             [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
               ...q,
-              options: (q.options ?? []).map((o) => (o.id === optionId ? { ...o, attachment } : o)),
+              options: (q.options ?? []).map((o) => (o.id !== optionId ? o : o.attachment ? { ...o, attachments: [...(o.attachments ?? []), attachment] } : { ...o, attachment })),
               updatedAt: new Date().toISOString(),
             })),
           },
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(s.activityLog, accountId, 'carrier_note_added', `Attached ${file.name} to ${quote.marketName} ${option.label ?? 'quote'}.`),
         }));
-        if (replaced) removeQuoteFile(replaced);
         storeQuoteFile(accountId, quoteId, optionId, attachment.id, file);
+        syncNow(accountId);
+      },
+
+      removeQuoteAttachment: (accountId, quoteId, optionId, attachmentId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        const target = option ? quoteOptionFiles(option).find((a) => a.id === attachmentId) : undefined;
+        if (!quote || !option || !target) return;
+        const rest = quoteOptionFiles(option).filter((a) => a.id !== attachmentId);
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              options: (q.options ?? []).map((o) => (o.id === optionId ? { ...o, attachment: rest[0], attachments: rest.length > 1 ? rest.slice(1) : undefined } : o)),
+              updatedAt: new Date().toISOString(),
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'carrier_note_added', `Removed ${target.name} from ${quote.marketName} ${option.label ?? 'quote'}.`),
+        }));
+        removeQuoteFile(target);
         syncNow(accountId);
       },
 
@@ -2547,14 +2547,14 @@ export const useAccountsStore = create<AccountsState>()(
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(s.activityLog, accountId, 'quote_status_changed', `Removed ${quote.marketName} ${option.label ?? 'quote'}${option.premium ? ` (${money(option.premium)})` : ''}.`),
         }));
-        if (option.attachment) removeQuoteFile(option.attachment);
+        for (const a of quoteOptionFiles(option)) removeQuoteFile(a);
         syncNow(accountId);
       },
 
       deleteQuote: (accountId, quoteId) => {
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         if (!quote) return;
-        for (const o of quote.options ?? []) if (o.attachment) removeQuoteFile(o.attachment);
+        for (const o of quote.options ?? []) for (const a of quoteOptionFiles(o)) removeQuoteFile(a);
         set((s) => ({
           quotes: { ...s.quotes, [accountId]: (s.quotes[accountId] ?? []).filter((q) => q.id !== quoteId) },
           // Items this carrier asked for stay on the checklist (the client may still owe them), just no longer tied to a carrier.
@@ -2755,21 +2755,9 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
-      ensureChecklist: (accountId) => {
-        const s = get();
-        const account = s.accounts.find((a) => a.id === accountId);
-        if (!account || account.archived) return;
-        if ((s.missingItems[accountId] ?? []).length > 0) return;
-        if ((s.activityLog[accountId] ?? []).some((e) => e.type === 'item_added' || e.type === 'item_removed')) return;
-        if (s.cloudAccountIds[accountId] && (!s.currentUserId || s.cloudHydratedFor !== s.currentUserId)) return;
-        const items = defaultChecklist(accountId, s.riskProfiles[accountId], s.documents[accountId] ?? [], new Date().toISOString());
-        if (items.length === 0) return;
-        set((st) => ({
-          missingItems: { ...st.missingItems, [accountId]: items },
-          activityLog: appendEvent(st.activityLog, accountId, 'item_added', 'Started the submission checklist.'),
-        }));
-        syncNow(accountId);
-      },
+      // The checklist starts empty: the broker adds what they need (one by one or from a template), and
+      // items a market asks for are added from Markets & Quotes. Nothing is pre-filled any more.
+      ensureChecklist: () => {},
 
       setCollaborators: async (accountId, userIds) => {
         const s = get();

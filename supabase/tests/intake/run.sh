@@ -16,6 +16,9 @@ psql -q -v ON_ERROR_STOP=1 -d "$DB" \
 # 0029 twice: it must be re-runnable.
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0029_intake_reliability.sql" >/dev/null 2>&1
 psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0029_intake_reliability.sql" >/dev/null 2>&1
+# 0044 (VINs + more contacts) twice as well.
+psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0044_intake_vins_contacts.sql" >/dev/null 2>&1
+psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/0044_intake_vins_contacts.sql" >/dev/null 2>&1
 ACTUAL="$(psql -q -At -d "$DB" -f "$DIR/tests.sql" 2>&1 | sed 's/psql:[^ ]* NOTICE:  //' | grep -E '^Q[0-9]')"
 [ -n "${KEEP_DB:-}" ] || psql -q -d postgres -c "drop database $DB" >/dev/null
 if diff <(cat "$DIR/expected.txt") <(echo "$ACTUAL"); then echo "intake: all $(wc -l < "$DIR/expected.txt") checks passed"; else echo "intake: MISMATCH (see diff above)"; exit 1; fi

@@ -1,6 +1,6 @@
 import { supabase } from './client';
 import type { DuplicateCandidate } from '../intake/duplicateDetection';
-import type { CoverageType, IntakeDocument, IntakeEvent, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../../types';
+import type { CoverageType, IntakeDocument, IntakeEvent, IntakeContact, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../../types';
 import { errorMessage, errorStatus, isTransientError, withRetry, withTimeout } from '../intake/retry';
 import { generateId } from '../../utils/id';
 
@@ -65,6 +65,8 @@ interface IntakeSubmissionRow {
   current_carrier: string | null;
   effective_date: string | null;
   additional_notes: string | null;
+  vin_numbers?: string[] | null;
+  additional_contacts?: IntakeContact[] | null;
   created_at: string;
   imported_at: string | null;
   imported_account_id: string | null;
@@ -97,6 +99,8 @@ function rowToSubmission(row: IntakeSubmissionRow): IntakeSubmission {
     currentCarrier: row.current_carrier,
     effectiveDate: row.effective_date,
     additionalNotes: row.additional_notes,
+    vinNumbers: row.vin_numbers ?? [],
+    additionalContacts: Array.isArray(row.additional_contacts) ? row.additional_contacts : [],
     createdAt: row.created_at,
     importedAt: row.imported_at,
     importedAccountId: row.imported_account_id,
@@ -170,6 +174,10 @@ export interface IntakeAnswers {
   currentCarrier: string;
   effectiveDate: string;
   additionalNotes: string;
+  /** One or more VINs (the form requires at least one). */
+  vinNumbers: string[];
+  /** Contacts beyond the first. */
+  additionalContacts: { name: string; email: string; phone: string }[];
 }
 
 /** Storage rejects some characters in object names (accents, emoji, #, ?, …) — the stored path uses a safe version; the original name is kept in file_name. */

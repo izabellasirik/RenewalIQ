@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { CheckCircle2, Download, Eye, FileText, Loader2, Paperclip, Pencil, Trash2 } from 'lucide-react';
-import type { MarketQuote, QuoteOption } from '../../types';
+import { CheckCircle2, Download, Eye, FileText, Loader2, Paperclip, Pencil, Trash2, X } from 'lucide-react';
+import { quoteOptionFiles, type MarketQuote, type QuoteAttachment, type QuoteOption } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { DocumentPreviewModal, type PreviewableFile } from '../upload/DocumentPreviewModal';
 import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
@@ -39,21 +39,21 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
   const selectQuoteOption = useAccountsStore((s) => s.selectQuoteOption);
   const deleteQuoteOption = useAccountsStore((s) => s.deleteQuoteOption);
   const attachQuoteFile = useAccountsStore((s) => s.attachQuoteFile);
+  const removeQuoteAttachment = useAccountsStore((s) => s.removeQuoteAttachment);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [downloading, setDownloading] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const updateQuoteOption = useAccountsStore((s) => s.updateQuoteOption);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ label: '', premium: '', date: '' });
   const selected = quote.selectedOptionId === option.id;
-  const file = option.attachment ? { id: option.attachment.id, name: option.attachment.name, fileType: option.attachment.fileType, storagePath: option.attachment.storagePath } : null;
+  const files = quoteOptionFiles(option).map((a: QuoteAttachment) => ({ id: a.id, name: a.name, fileType: a.fileType, storagePath: a.storagePath }));
 
-  async function download() {
-    if (!file) return;
-    setDownloading(true);
+  async function download(file: (typeof files)[number]) {
+    setDownloading(file.id);
     setError(null);
     const blob = await loadStoredFile(file);
-    setDownloading(false);
+    setDownloading(null);
     if (blob) saveBlobAs(blob, file.name);
     else setError("File isn't on this device or in your account.");
   }
@@ -105,33 +105,43 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-[var(--color-ink-500)]">
           Received {formatShortDate(option.receivedAt)}
-          {file && (
-            <span className="inline-flex min-w-0 items-center gap-1">
-              · <FileText size={11} className="shrink-0" />
-              <span className="truncate">{file.name}</span>
-            </span>
-          )}
+          {files.length > 1 && <span>· {files.length} files</span>}
         </p>
+        {files.length > 0 && (
+          <ul className="mt-1 flex flex-col gap-0.5" data-testid="quote-files">
+            {files.map((file) => (
+              <li key={file.id} className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-[var(--color-ink-600)]">
+                <FileText size={11} className="shrink-0" />
+                <span className="truncate">{file.name}</span>
+                <button onClick={() => onPreview(file)} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer" aria-label={`View ${file.name}`}>
+                  <Eye size={11} /> View
+                </button>
+                <button onClick={() => download(file)} disabled={downloading === file.id} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer disabled:opacity-50" aria-label={`Download ${file.name}`}>
+                  {downloading === file.id ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} Download
+                </button>
+                <button onClick={() => removeQuoteAttachment(accountId, quote.id, option.id, file.id)} className="rounded-md p-0.5 text-[var(--color-ink-400)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] cursor-pointer" aria-label={`Remove ${file.name}`}>
+                  <X size={11} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         {error && <p className="text-xs text-[var(--color-danger-600)]">{error}</p>}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1">
-        {file ? (
-          <>
-            <button onClick={() => onPreview(file)} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer">
-              <Eye size={12} /> View
-            </button>
-            <button onClick={download} disabled={downloading} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer disabled:opacity-50">
-              {downloading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} Download
-            </button>
-          </>
-        ) : (
-          <>
-            <input ref={fileRef} type="file" className="hidden" onChange={(e) => e.target.files?.[0] && attachQuoteFile(accountId, quote.id, option.id, e.target.files[0])} />
-            <button onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer">
-              <Paperclip size={12} /> Attach file
-            </button>
-          </>
-        )}
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            for (const f of Array.from(e.target.files ?? [])) attachQuoteFile(accountId, quote.id, option.id, f);
+            e.target.value = '';
+          }}
+        />
+        <button onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer">
+          <Paperclip size={12} /> {files.length ? 'Attach more' : 'Attach files'}
+        </button>
         <button
           onClick={() => {
             setDraft({ label: option.label ?? '', premium: option.premium ? String(option.premium) : '', date: normalizeDateKey(option.receivedAt) ?? '' });

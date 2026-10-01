@@ -27,10 +27,8 @@ export const RISK_PROFILE_GROUPS: RiskFieldGroup[] = [
       { key: 'legalEntity', label: 'Legal Entity', type: 'text', section: 'business' },
       { key: 'dba', label: 'DBA', type: 'text', section: 'business', hint: 'Optional — leave blank if the business operates only under its named insured.' },
       { key: 'fein', label: 'FEIN', type: 'text', section: 'business' },
-      { key: 'address', label: 'Address', type: 'textarea', section: 'business' },
-      { key: 'city', label: 'City', type: 'text', section: 'business' },
-      { key: 'state', label: 'State', type: 'text', section: 'business' },
-      { key: 'zip', label: 'ZIP', type: 'text', section: 'business' },
+      // One field for the whole address; city/state/ZIP are kept in step from it (utils/fullAddress.ts).
+      { key: 'address', label: 'Address (full address, city, state, zip)', type: 'textarea', section: 'business' },
       { key: 'yearsInBusiness', label: 'Years in Business', type: 'duration', section: 'business' },
       { key: 'annualRevenue', label: 'Annual Revenue', type: 'currency', section: 'business', hint: 'Used for GL rating and required by most carrier appetite checks.' },
       { key: 'effectiveDate', label: 'Requested Effective Date', type: 'date', section: 'business', hint: 'When the client wants coverage to start.' },

@@ -93,3 +93,32 @@ describe('Review Application = what the download contains', () => {
     expect(flat).not.toMatch(/\b12\b.*Years/); // the conflicting value is not printed
   });
 });
+
+describe('no losses recorded: the loss run reports are still on the application', () => {
+  const run = (over: Record<string, unknown>) => ({ id: 'lr1', carrier: 'Progressive', createdAt: '', updatedAt: '', ...over }) as never;
+
+  it('no claims + a report with 0 claims → "No losses recorded" with only the details the report has', async () => {
+    const p = createEmptyRiskProfile('a');
+    p.business.namedInsured = manualField('Nova Light LLC');
+    const app = mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({ policyNumber: 'PGR-123', reportDate: '2026-09-20', coverageStart: '2023-01-01', coverageEnd: '2026-01-01', claimCount: 0 })]);
+    const plan = buildApplicationPrintPlan(app);
+    expect(plan.lossRuns?.statement).toBe('No losses recorded');
+    expect(plan.lossRuns?.reports[0].fields.map((f) => f.label)).toEqual(['Insurance Company', 'Policy Number', 'Report Date', 'Coverage Period', 'Claims Reported']);
+    const flat = (await pdfText(await generateApplicationPdf(app, 'Nova Light LLC'))).replace(/\s+/g, ' ');
+    for (const v of ['LOSS HISTORY', 'No losses recorded', 'Progressive', 'PGR-123', '09/20/2026']) expect(flat).toContain(v);
+    expect(flat).not.toContain('TOTAL INCURRED'); // not on the report → not printed
+    const csv = generateApplicationCsv(app, 'Nova Light LLC');
+    expect(csv).toContain('No losses recorded');
+    expect(csv).toContain('Policy Number,PGR-123');
+  });
+
+  it('a report that states claims never says "No losses recorded"; itemized claims or no reports → no summary', () => {
+    const p = createEmptyRiskProfile('a');
+    const stated = buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({ claimCount: 2, totalIncurred: 5000 })]));
+    expect(stated.lossRuns?.statement).toBeNull();
+    expect(stated.lossRuns?.reports[0].fields.map((f) => f.label)).toContain('Total Incurred');
+    expect(buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0])).lossRuns).toBeNull();
+    p.lossHistory = [{ id: 'l1', lossDate: '2025-01-01', incurred: 100 } as never];
+    expect(buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({})])).lossRuns).toBeNull();
+  });
+});

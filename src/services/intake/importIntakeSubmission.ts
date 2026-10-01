@@ -1,4 +1,5 @@
-import type { ExtractedFieldResult, IntakeSubmission } from '../../types';
+import type { ExtractedFieldResult, IntakeSubmission, VehicleEntry } from '../../types';
+import { generateId } from '../../utils/id';
 import { createEmptyRiskProfile, mergeIntoRiskProfile } from '../extraction';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { fetchIntakeDocuments, downloadIntakeDocumentFile, markIntakeSubmissionImported } from '../supabase/intakeRepo';
@@ -58,6 +59,38 @@ function buildApplicantFieldResults(submission: IntakeSubmission): ExtractedFiel
   return results;
 }
 
+const intakeSource = (submission: IntakeSubmission) => ({ documentId: `intake:${submission.id}`, documentName: 'Intake form submission' });
+const normVin = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/** The VINs the client listed, as Fleet rows (VIN only — make/model/year come from documents). Skips any already on the list. */
+export function intakeVehicles(submission: IntakeSubmission, existing: VehicleEntry[] = []): VehicleEntry[] {
+  const have = new Set(existing.map((v) => normVin(v.vin ?? '')).filter(Boolean));
+  const out: VehicleEntry[] = [];
+  for (const raw of submission.vinNumbers ?? []) {
+    const vin = normVin(raw);
+    if (!vin || have.has(vin)) continue;
+    have.add(vin);
+    out.push({ id: generateId('veh'), vin, source: intakeSource(submission), fieldConfidence: { vin: 'high' } });
+  }
+  return out;
+}
+
+/** The extra contacts the client listed (anyone named), minus people the account already has (same email, or same name without one). */
+export function intakeExtraContacts(submission: IntakeSubmission, existing: { name: string; email?: string }[] = []) {
+  const seen = existing.map((c) => ({ name: c.name.trim().toLowerCase(), email: c.email?.trim().toLowerCase() }));
+  const out: { name: string; email?: string; phone?: string }[] = [];
+  for (const c of submission.additionalContacts ?? []) {
+    const name = c.name?.trim();
+    if (!name) continue;
+    const email = c.email?.trim() || undefined;
+    const key = { name: name.toLowerCase(), email: email?.toLowerCase() };
+    if (seen.some((x) => (key.email && x.email === key.email) || (!key.email && x.name === key.name))) continue;
+    seen.push(key);
+    out.push({ name, ...(email ? { email } : {}), ...(c.phone?.trim() ? { phone: c.phone.trim() } : {}) });
+  }
+  return out;
+}
+
 export interface ImportResult {
   ok: boolean;
   accountId?: string;
@@ -104,6 +137,7 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   }
 
   const profile = mergeIntoRiskProfile(createEmptyRiskProfile('pending'), buildApplicantFieldResults(submission));
+  profile.vehicles = [...profile.vehicles, ...intakeVehicles(submission, profile.vehicles)];
   const namedInsured = submission.namedInsured?.trim() || 'Untitled Submission';
   const state = deriveDomicileState(submission.operatingStates);
 
@@ -122,6 +156,14 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
     // Saved (and awaited) just below instead — two overlapping saves would race.
     { skipAutoSync: true, source: 'intake' }
   );
+
+  // Further contacts the client listed — added before the save below (no separate sync to race it).
+  const extraContacts = intakeExtraContacts(submission, submission.contactName ? [{ name: submission.contactName, email: submission.contactEmail ?? undefined }] : []);
+  if (extraContacts.length) {
+    useAccountsStore.setState((st) => ({
+      accounts: st.accounts.map((a) => (a.id === accountId ? { ...a, contacts: [...(a.contacts ?? []), ...extraContacts.map((c, i) => ({ ...c, id: generateId('contact'), primary: !a.contacts?.length && i === 0 }))] } : a)),
+    }));
+  }
 
   // The submission is only marked imported once the account and its Risk Profile are actually in
   // the cloud. If that save fails, the new account is removed again and the submission stays
@@ -196,6 +238,14 @@ export async function addIntakeSubmissionToAccount(submission: IntakeSubmission,
   const known = (account.contacts ?? []).some((c) => (email && c.email?.trim().toLowerCase() === email) || (!email && c.name === submission.contactName));
   if (!known && (submission.contactName || submission.contactEmail || submission.contactPhone)) {
     store.addContact(accountId, { name: submission.contactName ?? submission.contactEmail ?? 'Client', email: submission.contactEmail ?? undefined, phone: submission.contactPhone ?? undefined });
+  }
+
+  for (const c of intakeExtraContacts(submission, [...(useAccountsStore.getState().accounts.find((a) => a.id === accountId)?.contacts ?? [])])) store.addContact(accountId, c);
+  // VINs the client listed that the account's Fleet doesn't have yet.
+  for (const v of intakeVehicles(submission, store.riskProfiles[accountId]?.vehicles ?? [])) {
+    const { id: _id, ...entry } = v;
+    void _id;
+    store.addVehicle(accountId, entry);
   }
 
   const notYetUploaded = downloaded.files.length > 0 ? await waitForUploads(accountId, store.addFiles(accountId, downloaded.files), 120_000) : [];

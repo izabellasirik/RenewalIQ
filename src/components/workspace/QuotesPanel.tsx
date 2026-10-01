@@ -198,7 +198,7 @@ function QuoteCard({
   const [followUp, setFollowUp] = useState(addBusinessDays(new Date(), 3));
   const [premium, setPremium] = useState('');
   const [optionLabel, setOptionLabel] = useState('');
-  const [quoteFile, setQuoteFile] = useState<File | null>(null);
+  const [quoteFiles, setQuoteFiles] = useState<File[]>([]);
   const addQuoteOption = useAccountsStore((s) => s.addQuoteOption);
   const [reason, setReason] = useState('');
   const [reqLabel, setReqLabel] = useState('');
@@ -222,7 +222,7 @@ function QuoteCard({
     setFollowUp(addBusinessDays(new Date(), 3));
     setPremium('');
     setOptionLabel('');
-    setQuoteFile(null);
+    setQuoteFiles([]);
     setReason(quote.declineReason ?? '');
     setReqLabel('');
     setNote('');
@@ -236,7 +236,7 @@ function QuoteCard({
   function submitInline(e: FormEvent) {
     e.preventDefault();
     if (form === 'submit') updateQuote(accountId, quote.id, { status: 'submitted', submittedAt: date, followUpDate: followUp || undefined });
-    if (form === 'quote') addQuoteOption(accountId, quote.id, { label: optionLabel, premium: parsePremium(premium), file: quoteFile ?? undefined });
+    if (form === 'quote') addQuoteOption(accountId, quote.id, { label: optionLabel, premium: parsePremium(premium), files: quoteFiles });
     if (form === 'decline') updateQuote(accountId, quote.id, { status: 'declined', declineReason: reason.trim() || undefined });
     if (form === 'note') addQuoteNote(accountId, quote.id, note);
     if (form === 'edit') {
@@ -396,6 +396,13 @@ function QuoteCard({
           )}
         </div>
 
+        {quote.status === 'bound' && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <Button size="sm" variant="secondary" icon={<BadgeDollarSign size={13} />} onClick={() => open('quote')}>
+              Add Quote
+            </Button>
+          </div>
+        )}
         {!closed && (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {quote.status === 'preparing' && (
@@ -407,7 +414,7 @@ function QuoteCard({
               Carrier requested…
             </Button>
             <Button size="sm" variant={quote.status === 'quoted' ? 'primary' : 'secondary'} icon={<BadgeDollarSign size={13} />} onClick={() => open('quote')}>
-              {(quote.options?.length ?? 0) > 0 || quote.status === 'quoted' ? 'Add another quote' : 'Record quote'}
+              Add Quote
             </Button>
             {quote.status === 'quoted' && (
               <Button size="sm" variant="secondary" icon={<ShieldCheck size={13} />} onClick={() => updateQuote(accountId, quote.id, { status: 'bound' })}>
@@ -445,10 +452,12 @@ function QuoteCard({
                   <input value={optionLabel} onChange={(e) => setOptionLabel(e.target.value)} className={inputClass} placeholder="e.g. Option B — $1M CSL, $2,500 ded" />
                 </div>
                 <div className="sm:col-span-3">
-                  <label className={labelClass}>Quote file (optional)</label>
+                  <label className={labelClass}>Quote files (optional — you can pick several)</label>
                   <input
                     type="file"
-                    onChange={(e) => setQuoteFile(e.target.files?.[0] ?? null)}
+                    multiple
+                    aria-label="Quote files"
+                    onChange={(e) => setQuoteFiles(Array.from(e.target.files ?? []))}
                     className="block w-full text-xs text-[var(--color-ink-600)] file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-[var(--color-ink-200)] file:bg-white file:px-2.5 file:py-1.5 file:text-xs file:font-medium file:text-[var(--color-ink-800)] hover:file:bg-[var(--color-ink-50)]"
                   />
                 </div>

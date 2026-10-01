@@ -36,6 +36,13 @@ export interface IntakeLink {
  * FieldValues in the Risk Profile only once a broker imports the submission (see
  * services/intake/importIntakeSubmission.ts), never before.
  */
+/** A further contact the client listed on the intake form. */
+export interface IntakeContact {
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
 export interface IntakeSubmission {
   id: string;
   intakeLinkId: string;
@@ -58,6 +65,10 @@ export interface IntakeSubmission {
   currentCarrier: string | null;
   effectiveDate: string | null;
   additionalNotes: string | null;
+  /** VIN numbers the client listed (0044). */
+  vinNumbers?: string[];
+  /** Contacts beyond the first one (0044). */
+  additionalContacts?: IntakeContact[];
   createdAt: string;
   importedAt: string | null;
   importedAccountId: string | null;

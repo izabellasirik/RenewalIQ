@@ -108,3 +108,11 @@ insert into storage.objects (bucket_id, name) values ('intake-uploads', 'isub_le
 insert into intake_documents (id, intake_submission_id, user_id, file_name, storage_path) values ('idoc_legacy', 'isub_legacy', '00000000-0000-0000-0000-00000000000d', 'a.pdf', 'isub_legacy/idoc_1/a.pdf');
 select 'Q17 legacy client upload + attach: ok';
 reset role;
+
+-- 0044: VIN numbers and additional contacts are saved with the answers (cleaned, capped).
+select pg_temp.as_user('');
+select submission_id as vsid from start_intake_submission('tok-active', '22222222-2222-2222-2222-222222222222',
+  '{"namedInsured":"VIN Co","dotNumber":"765432","contactName":"Ann","contactEmail":"ann@x.com","vinNumbers":["1hgcm82633a004352"," 1HGCM82633A004352 ","3AKJHHDR5LSLA1234",""],"additionalContacts":[{"name":"Bob","email":"bob@x.com","phone":"555-0101"},{},{"name":"  "}]}', 0) \gset
+reset role;
+select 'Q18 VINs saved, cleaned, no duplicates: ' || array_to_string(vin_numbers, ',') || ' | contacts: ' || additional_contacts::text from intake_submissions where id = :'vsid';
+select 'Q18 older answers without VINs still work: ' || (vin_numbers = '{}' and additional_contacts = '[]'::jsonb) from intake_submissions where id = :'sid';

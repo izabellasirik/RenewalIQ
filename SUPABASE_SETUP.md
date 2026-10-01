@@ -284,6 +284,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   read these tables directly; only `founder_analytics_snapshot` returns them, and only when
   `is_founder()` — the signed-in auth user's confirmed email is anism.academy@gmail.com. Additive,
   safe to re-run.
+- **`supabase/migrations/0044_intake_vins_contacts.sql`** — the client intake form's VIN numbers
+  (required on the form, one or more) and additional contacts are saved with the submission
+  (`intake_submissions.vin_numbers`, `additional_contacts`). Re-creates `start_intake_submission`
+  with the same signature and permissions. Needs 0029 first. Additive, safe to re-run. Deploy the
+  app only after this runs: the new form sends these answers, and without 0044 they are dropped.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -371,6 +376,7 @@ from (values
   ('0041_submission_email_queue',     to_regprocedure('public.claim_submission_email_event(text)') is not null),
   ('0042_client_submission_activity', exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'activity_events' and column_name = 'details')),
   ('0043_founder_analytics',          to_regprocedure('public.founder_analytics_snapshot(timestamptz,timestamptz)') is not null),
+  ('0044_intake_vins_contacts',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'intake_submissions' and column_name = 'vin_numbers')),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

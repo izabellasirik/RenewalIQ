@@ -126,57 +126,30 @@ describe('manual follow-ups', () => {
   });
 });
 
-describe('new accounts start with the submission checklist', () => {
-  it('a blank account gets the standard checklist right away', () => {
+describe('the checklist is not pre-filled', () => {
+  it('a new account starts with an empty checklist — the broker adds what they need', async () => {
     const id = store().createAccount('Checklist Co', 'TX');
-    expect(store().missingItems[id].map((i) => i.label)).toEqual(['Application', 'Loss Runs', 'MVRs — all drivers', 'IFTA — last 4 quarters', 'Unit List', 'Driver List']);
-    expect(store().missingItems[id].every((i) => i.status === 'missing')).toBe(true);
-  });
-
-  it('documents uploaded to create the account mark their items received', async () => {
+    expect(store().missingItems[id]).toEqual([]);
     const { createEmptyRiskProfile } = await import('../../extraction/emptyRiskProfile');
     const lossRun = { id: 'doc_lr', name: 'loss_runs.pdf', category: 'loss_run', status: 'processed', fileType: 'pdf', sizeBytes: 1, uploadedAt: '2026-09-24T00:00:00.000Z' };
-    const id = store().createAccountFromExtraction('Docs Co', 'TX', [lossRun] as never, createEmptyRiskProfile('x'));
-    const lr = store().missingItems[id].find((i) => i.label === 'Loss Runs')!;
-    expect(lr.status).toBe('received');
-    expect(lr.documentId).toBe('doc_lr');
-    expect(store().missingItems[id].find((i) => i.label === 'Application')!.status).toBe('missing');
+    const docs = store().createAccountFromExtraction('Docs Co', 'TX', [lossRun] as never, createEmptyRiskProfile('x'));
+    expect(store().missingItems[docs]).toEqual([]);
   });
-});
 
-describe('existing accounts get the checklist when opened', () => {
-  const blankOld = (id: string) => {
+  it('opening an older account with an empty checklist adds nothing', () => {
     useAccountsStore.setState((s) => ({
-      accounts: [...s.accounts, { id, namedInsured: 'Old Co', state: 'TX', status: 'new', archived: false, createdAt: '2026-09-01', updatedAt: '2026-09-01' }],
-      missingItems: { ...s.missingItems, [id]: [] },
+      accounts: [...s.accounts, { id: 'acct_old', namedInsured: 'Old Co', state: 'TX', status: 'new', archived: false, createdAt: '2026-09-01', updatedAt: '2026-09-01' }],
+      missingItems: { ...s.missingItems, acct_old: [] },
     }));
-  };
-
-  it('an old account with no checklist gets one', () => {
-    blankOld('acct_old');
-    store().ensureChecklist('acct_old');
-    expect(store().missingItems.acct_old).toHaveLength(6);
-    store().ensureChecklist('acct_old'); // idempotent
-    expect(store().missingItems.acct_old).toHaveLength(6);
-  });
-
-  it('never re-adds a checklist the broker emptied', () => {
-    blankOld('acct_old');
-    store().ensureChecklist('acct_old');
-    for (const item of [...store().missingItems.acct_old]) store().deleteMissingItem('acct_old', item.id);
     store().ensureChecklist('acct_old');
     expect(store().missingItems.acct_old).toHaveLength(0);
   });
 
-  it("a cloud account waits until the cloud data has loaded", () => {
-    blankOld('acct_cloud');
-    useAccountsStore.setState({ cloudAccountIds: { acct_cloud: true }, currentUserId: 'u1', cloudHydratedFor: null });
-    store().ensureChecklist('acct_cloud');
-    expect(store().missingItems.acct_cloud).toHaveLength(0);
-    useAccountsStore.setState({ cloudHydratedFor: 'u1', currentUserId: null }); // no cloud save in this test
-    useAccountsStore.setState({ currentUserId: 'u1' });
-    store().ensureChecklist('acct_cloud');
-    expect(store().missingItems.acct_cloud).toHaveLength(6);
+  it('a market asking for something still adds it to the checklist automatically', () => {
+    const id = store().createAccount('Carrier Co', 'TX');
+    const q = store().addQuote(id, { marketName: 'Progressive', status: 'submitted' });
+    store().recordCarrierRequest(id, q, { label: 'IFTA — last 4 quarters', type: 'document' });
+    expect(store().missingItems[id].map((i) => [i.label, i.neededByQuoteIds ?? i.neededByQuoteId])).toHaveLength(1);
   });
 });
 
@@ -340,7 +313,8 @@ describe('requesting a document that is not on the checklist yet', () => {
     const { draftClientRequestEmail } = await import('../emailDraft');
     const id = store().createAccount('Blue Ridge Logistics', 'TX');
     const john = store().addContact(id, { name: 'John Smith', email: 'john@blueridge.com' });
-    // The standard checklist already has MVRs, still outstanding: the request is for that row (no duplicate).
+    // MVRs already on the checklist, still outstanding: the request is for that row (no duplicate).
+    store().addMissingItems(id, [{ label: 'MVRs — all drivers', type: 'document', templateKey: 'mvrs' }]);
     const [mvr] = store().addMissingItems(id, [{ label: 'Updated MVR', type: 'document', newCopyOfReceived: true }]);
     expect(store().missingItems[id].find((i) => i.id === mvr)!.label).toBe('MVRs — all drivers');
     // Once received, asking for an updated one adds its own row.
@@ -439,5 +413,24 @@ describe('deductibles per coverage', () => {
     expect(DEDUCTIBLE_COVERAGES).toContain('motor_truck_cargo');
     expect(DEDUCTIBLE_COVERAGES).not.toContain('auto_liability');
     expect(store().activityLog[id].map((e) => e.message)).toContain('Updated deductible for physical damage.');
+  });
+});
+
+describe('quotes on a bound market, several files per quote', () => {
+  it('a bound market takes another quote and stays bound; every file is kept, attached later or removed', () => {
+    const id = store().createAccount('ABC Trucking', 'TX');
+    const q = store().addQuote(id, { marketName: 'Progressive', status: 'bound' });
+    const f = (n: string) => new File(['x'], n, { type: 'application/pdf' });
+    const o = store().addQuoteOption(id, q, { premium: 12000, files: [f('quote.pdf'), f('binder.pdf')] });
+    let quote = store().quotes[id].find((x) => x.id === q)!;
+    expect(quote.status).toBe('bound');
+    const opt = () => store().quotes[id].find((x) => x.id === q)!.options!.find((x) => x.id === o)!;
+    expect([opt().attachment?.name, ...(opt().attachments ?? []).map((a) => a.name)]).toEqual(['quote.pdf', 'binder.pdf']);
+    store().attachQuoteFile(id, q, o, f('endorsement.pdf'));
+    expect(opt().attachments?.map((a) => a.name)).toEqual(['binder.pdf', 'endorsement.pdf']);
+    store().removeQuoteAttachment(id, q, o, opt().attachment!.id);
+    expect([opt().attachment?.name, ...(opt().attachments ?? []).map((a) => a.name)]).toEqual(['binder.pdf', 'endorsement.pdf']);
+    quote = store().quotes[id].find((x) => x.id === q)!;
+    expect(quote.status).toBe('bound');
   });
 });

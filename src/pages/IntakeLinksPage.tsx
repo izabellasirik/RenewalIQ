@@ -508,6 +508,20 @@ function SubmissionCard({
         {submission.effectiveDate && <p><span className="text-[var(--color-ink-400)]">Effective date:</span> {submission.effectiveDate}</p>}
       </div>
 
+      {(submission.vinNumbers?.length ?? 0) > 0 && (
+        <p className="mt-2 text-xs" data-testid="submission-vins">
+          <span className="text-[var(--color-ink-400)]">VIN{submission.vinNumbers!.length === 1 ? '' : `s (${submission.vinNumbers!.length})`}:</span> <span className="font-mono">{submission.vinNumbers!.join(', ')}</span>
+        </p>
+      )}
+      {(submission.additionalContacts?.length ?? 0) > 0 && (
+        <div className="mt-2 text-xs" data-testid="submission-extra-contacts">
+          <span className="text-[var(--color-ink-400)]">Other contacts:</span>
+          {submission.additionalContacts!.map((c, i) => (
+            <p key={i} className="text-[var(--color-ink-700)]">{[c.name, c.email, c.phone].filter(Boolean).join(' · ')}</p>
+          ))}
+        </div>
+      )}
+
       {submission.coverageRequested.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {submission.coverageRequested.map((type) => (

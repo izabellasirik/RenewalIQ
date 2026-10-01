@@ -49,9 +49,18 @@ export interface PlannedTable {
   prints: boolean;
 }
 
+/** Printed under Loss History when there are loss run reports but no itemized claims. */
+export interface PlannedLossRuns {
+  title: string;
+  /** "No losses recorded" — only when no report states a claim. */
+  statement: string | null;
+  reports: { fields: { label: string; value: string }[] }[];
+}
+
 export interface ApplicationPrintPlan {
   sections: PlannedSection[];
   tables: PlannedTable[];
+  lossRuns: PlannedLossRuns | null;
 }
 
 function omittedReason(f: MappedField): OmittedReason {
@@ -76,7 +85,12 @@ export function buildApplicationPrintPlan(application: MappedApplication): Appli
       prints: columns.length > 0 && rows.length > 0,
     };
   });
-  return { sections, tables };
+  const summary = application.lossRunSummary;
+  const lossRuns: PlannedLossRuns | null =
+    summary && (summary.noLossesRecorded || summary.reports.length > 0)
+      ? { title: 'Loss History', statement: summary.noLossesRecorded ? 'No losses recorded' : null, reports: summary.reports }
+      : null;
+  return { sections, tables, lossRuns };
 }
 
 /** A table cell exactly as printed ('' when the row has nothing in that column). */

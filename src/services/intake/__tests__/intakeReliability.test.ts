@@ -50,7 +50,7 @@ describe('retry', () => {
 });
 
 describe('intake draft', () => {
-  const answers = { namedInsured: 'Blue Ridge', contactName: '', contactEmail: '', contactPhone: '', dotNumber: '', mcNumber: '', yearsInBusiness: null, powerUnits: null, driverCount: null, operationType: '', commoditiesHauled: '', operatingRadius: '', operatingStates: '', coverageRequested: [], currentCarrier: '', effectiveDate: '', additionalNotes: '' };
+  const answers = { namedInsured: 'Blue Ridge', contactName: '', contactEmail: '', contactPhone: '', dotNumber: '', mcNumber: '', yearsInBusiness: null, powerUnits: null, driverCount: null, operationType: '', commoditiesHauled: '', operatingRadius: '', operatingStates: '', coverageRequested: [], currentCarrier: '', effectiveDate: '', additionalNotes: '', vinNumbers: [], additionalContacts: [] };
   beforeEach(() => {
     const data = new Map<string, string>();
     vi.stubGlobal('localStorage', {

@@ -47,6 +47,8 @@ const emptyAnswers: IntakeAnswers = {
   currentCarrier: '',
   effectiveDate: '',
   additionalNotes: '',
+  vinNumbers: [''],
+  additionalContacts: [],
 };
 
 function Field({ label, required, error, id, children }: { label: string; required?: boolean; error?: string | null; id?: string; children: React.ReactNode }) {
@@ -62,19 +64,32 @@ function Field({ label, required, error, id, children }: { label: string; requir
   );
 }
 
-type RequiredKey = 'namedInsured' | 'dotNumber' | 'contactName' | 'contactEmail';
+type RequiredKey = 'namedInsured' | 'dotNumber' | 'vinNumbers' | 'contactName' | 'contactEmail' | 'additionalContacts';
 const REQUIRED: { key: RequiredKey; label: string }[] = [
   { key: 'namedInsured', label: 'Company name' },
   { key: 'dotNumber', label: 'DOT number' },
+  { key: 'vinNumbers', label: 'VIN number' },
   { key: 'contactName', label: 'Contact name' },
   { key: 'contactEmail', label: 'Email' },
+  { key: 'additionalContacts', label: 'Additional contacts' },
 ];
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+/** A standard 17-character VIN: letters and digits, never I, O or Q. */
+const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
+const cleanVin = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 /** What's still missing (or invalid), in the order the fields appear. */
 function missingRequired(a: IntakeAnswers): Partial<Record<RequiredKey, string>> {
   const out: Partial<Record<RequiredKey, string>> = {};
-  for (const { key } of REQUIRED) if (!a[key].trim()) out[key] = 'Required';
-  if (!out.contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a.contactEmail.trim())) out.contactEmail = 'Enter a valid email address';
+  for (const key of ['namedInsured', 'dotNumber', 'contactName', 'contactEmail'] as const) if (!a[key].trim()) out[key] = 'Required';
+  if (!out.contactEmail && !EMAIL_RE.test(a.contactEmail.trim())) out.contactEmail = 'Enter a valid email address';
+  const vins = a.vinNumbers.map(cleanVin).filter(Boolean);
+  if (vins.length === 0) out.vinNumbers = 'Required — enter at least one VIN';
+  else if (vins.some((v) => !VIN_RE.test(v))) out.vinNumbers = 'Each VIN is 17 letters and numbers (no I, O or Q) — please check';
+  const contacts = a.additionalContacts.filter((c) => c.name.trim() || c.email.trim() || c.phone.trim());
+  if (contacts.some((c) => !c.name.trim())) out.additionalContacts = 'Add a name for each extra contact, or remove it';
+  else if (contacts.some((c) => c.email.trim() && !EMAIL_RE.test(c.email.trim()))) out.additionalContacts = 'Enter a valid email address for each extra contact';
   return out;
 }
 
@@ -161,7 +176,12 @@ export function IntakeFormPage() {
       if (draft && draftHasContent(draft)) {
         clientTokenRef.current = draft.clientToken;
         if (draft.submissionId && draft.reference) sessionRef.current = { submissionId: draft.submissionId, reference: draft.reference, clientToken: draft.clientToken };
-        setAnswers({ ...emptyAnswers, ...draft.answers });
+        setAnswers({
+          ...emptyAnswers,
+          ...draft.answers,
+          vinNumbers: Array.isArray(draft.answers.vinNumbers) && draft.answers.vinNumbers.length ? draft.answers.vinNumbers : [''],
+          additionalContacts: Array.isArray(draft.answers.additionalContacts) ? draft.answers.additionalContacts : [],
+        });
         setItems(() => draft.files.map((f) => ({ key: f.key, name: f.name, size: f.size, state: f.uploaded ? 'uploaded' : 'missing' })));
         setRestored({ uploaded: draft.files.filter((f) => f.uploaded).length, missing: draft.files.filter((f) => !f.uploaded).length });
       }
@@ -548,6 +568,34 @@ export function IntakeFormPage() {
           <Field label="DOT number" required id="field-dotNumber" error={fieldError('dotNumber')}>
             <input className={inputClass} value={answers.dotNumber} onChange={(e) => set('dotNumber', e.target.value)} />
           </Field>
+          <div className="sm:col-span-2">
+            <Field label="VIN number" required id="field-vinNumbers" error={fieldError('vinNumbers')}>
+              <div className="flex flex-col gap-2" data-testid="vin-list">
+                {answers.vinNumbers.map((vin, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input
+                      className={cn(inputClass, 'font-mono uppercase')}
+                      value={vin}
+                      maxLength={20}
+                      placeholder="17 characters"
+                      aria-label={`VIN ${i + 1}`}
+                      onChange={(e) => set('vinNumbers', answers.vinNumbers.map((v, j) => (j === i ? e.target.value.toUpperCase() : v)))}
+                    />
+                    {answers.vinNumbers.length > 1 && (
+                      <button type="button" onClick={() => set('vinNumbers', answers.vinNumbers.filter((_, j) => j !== i))} className="shrink-0 rounded-md p-2 text-[var(--color-ink-400)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] cursor-pointer" aria-label={`Remove VIN ${i + 1}`}>
+                        <X size={15} />
+                      </button>
+                    )}
+                    {i === answers.vinNumbers.length - 1 && (
+                      <button type="button" onClick={() => set('vinNumbers', [...answers.vinNumbers, ''])} className="shrink-0 rounded-md border border-[var(--color-ink-200)] p-2 text-[var(--color-brand-700)] hover:bg-[var(--color-ink-50)] cursor-pointer" aria-label="Add another VIN">
+                        <Plus size={15} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Field>
+          </div>
           <Field label="MC number (if applicable)">
             <input className={inputClass} value={answers.mcNumber} onChange={(e) => set('mcNumber', e.target.value)} />
           </Field>
@@ -583,6 +631,30 @@ export function IntakeFormPage() {
           <Field label="Phone">
             <input type="tel" className={inputClass} value={answers.contactPhone} onChange={(e) => set('contactPhone', e.target.value)} />
           </Field>
+        </div>
+        <div id="field-additionalContacts" className="flex scroll-mt-24 flex-col gap-3" data-testid="extra-contacts">
+          {answers.additionalContacts.map((c, i) => {
+            const update = (patch: Partial<typeof c>) => set('additionalContacts', answers.additionalContacts.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+            return (
+              <div key={i} className="rounded-lg border border-[var(--color-ink-100)] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-medium text-[var(--color-ink-700)]">Contact {i + 2}</p>
+                  <button type="button" onClick={() => set('additionalContacts', answers.additionalContacts.filter((_, j) => j !== i))} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--color-ink-500)] hover:bg-[var(--color-danger-100)] hover:text-[var(--color-danger-600)] cursor-pointer">
+                    <X size={13} /> Remove
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <input className={inputClass} value={c.name} onChange={(e) => update({ name: e.target.value })} placeholder="Name" aria-label={`Contact ${i + 2} name`} />
+                  <input type="email" className={inputClass} value={c.email} onChange={(e) => update({ email: e.target.value })} placeholder="Email" aria-label={`Contact ${i + 2} email`} />
+                  <input type="tel" className={inputClass} value={c.phone} onChange={(e) => update({ phone: e.target.value })} placeholder="Phone" aria-label={`Contact ${i + 2} phone`} />
+                </div>
+              </div>
+            );
+          })}
+          {fieldError('additionalContacts') && <p className="text-xs font-medium text-[var(--color-danger-600)]">{fieldError('additionalContacts')}</p>}
+          <button type="button" onClick={() => set('additionalContacts', [...answers.additionalContacts, { name: '', email: '', phone: '' }])} className="inline-flex w-fit items-center gap-1.5 rounded-md px-1 py-1 text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
+            <Plus size={14} /> Add another contact
+          </button>
         </div>
 
         <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Coverage</p>

@@ -1,4 +1,5 @@
 import type {
+  LossRun,
   ApplicationStats,
   ApplicationTableSection,
   ApplicationTemplate,
@@ -14,6 +15,7 @@ import type {
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { getFieldValueByPath } from '../../utils/riskProfilePath';
 import { buildSubmissionWarnings } from '../extraction/reconciliation';
+import { buildLossRunSummary } from './lossRunSummary';
 import { formatDuration, isDuration } from '../../utils/duration';
 
 function defaultFormat(value: unknown): string {
@@ -203,13 +205,15 @@ function mapTableSection(profile: RiskProfile, table: ApplicationTableSection): 
  * new ApplicationTemplate (data) to services/application/templates.ts — this function and the
  * extraction pipeline it reads from never change.
  */
-export function mapRiskProfileToApplication(profile: RiskProfile, template: ApplicationTemplate): MappedApplication {
+export function mapRiskProfileToApplication(profile: RiskProfile, template: ApplicationTemplate, lossRuns?: LossRun[]): MappedApplication {
   const sections: MappedApplicationSection[] = template.sections.map((section) => ({
     title: section.title,
     fields: section.fields.map((mapping) => mapField(profile, mapping)),
   }));
 
   const tableSections: MappedTableSection[] = (template.tableSections ?? []).map((table) => mapTableSection(profile, table));
+
+  const lossRunSummary = buildLossRunSummary(profile, lossRuns);
 
   const fieldsNeedingReview =
     sections.reduce((sum, s) => sum + s.fields.filter((f) => f.status === 'missing' || f.status === 'conflict' || f.status === 'needs_review').length, 0) +
@@ -224,6 +228,7 @@ export function mapRiskProfileToApplication(profile: RiskProfile, template: Appl
     tableSections,
     fieldsNeedingReview,
     warnings: buildSubmissionWarnings(profile),
+    ...(lossRunSummary ? { lossRunSummary } : {}),
   };
 }
 

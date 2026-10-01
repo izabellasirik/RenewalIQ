@@ -37,3 +37,5 @@ Q16 owner events for the resumed one: started,abandoned,resumed,completed
 Q16 import recorded: imported
 Q16 another broker reads events: 0
 Q17 legacy client upload + attach: ok
+Q18 VINs saved, cleaned, no duplicates: 1HGCM82633A004352,3AKJHHDR5LSLA1234 | contacts: [{"name": "Bob", "email": "bob@x.com", "phone": "555-0101"}]
+Q18 older answers without VINs still work: true

@@ -292,6 +292,42 @@ export async function generateApplicationPdf(
     y -= 14;
   }
 
+  // --- Loss runs with no itemized claims: "No losses recorded" + what each report states ---
+  if (plan.lossRuns) {
+    const lr = plan.lossRuns;
+    const header = () => {
+      text(lr.title.toUpperCase(), MARGIN, 10, bold, INK_600);
+      y -= 6;
+      rule();
+      y -= 16;
+    };
+    ensureSpace(22 + 40);
+    header();
+    if (lr.statement) {
+      text(lr.statement, MARGIN, VALUE_SIZE + 1, bold, INK_900);
+      y -= 18;
+    }
+    const colWidth = CONTENT_WIDTH / 2;
+    const usableWidth = colWidth - COLUMN_GUTTER;
+    for (const report of lr.reports) {
+      for (let i = 0; i < report.fields.length; i += 2) {
+        const pair = [report.fields[i], report.fields[i + 1]].filter(Boolean);
+        const laid = pair.map((f) => ({ label: wrapText(font, f.label.toUpperCase(), LABEL_SIZE, usableWidth), value: wrapText(font, f.value, VALUE_SIZE, usableWidth) }));
+        const height = Math.max(...laid.map((l) => l.label.length * LABEL_LINE_STEP + GAP_LABEL_VALUE + l.value.length * VALUE_LINE_STEP)) + ROW_BOTTOM_PADDING;
+        ensureSpace(height, header);
+        const rowTop = y;
+        laid.forEach((l, j) => {
+          const x = MARGIN + j * colWidth;
+          drawLines(l.label, x, rowTop, LABEL_SIZE, font, INK_400, LABEL_LINE_STEP);
+          drawLines(l.value, x, rowTop - l.label.length * LABEL_LINE_STEP - GAP_LABEL_VALUE, VALUE_SIZE, font, INK_900, VALUE_LINE_STEP);
+        });
+        y -= height;
+      }
+      y -= 6;
+    }
+    y -= 8;
+  }
+
   // Deliberately no "Missing / Needs Review" section here — this exported PDF is the client-facing
   // application, not an internal QA report. That information (missing required/recommended fields,
   // conflicts, needs-review items, missing recommended documents) lives in the broker UI's
@@ -333,6 +369,16 @@ export function generateApplicationCsv(application: MappedApplication, accountNa
     if (!table.prints) continue;
     rows.push([], [table.title], table.columns.map((c) => c.label));
     for (const row of table.rows) rows.push(table.columns.map((c) => printedCellValue(row, c.key)));
+  }
+
+  if (plan.lossRuns) {
+    rows.push([], [plan.lossRuns.title]);
+    if (plan.lossRuns.statement) rows.push([plan.lossRuns.statement]);
+    plan.lossRuns.reports.forEach((report, i) => {
+      if (i > 0 || plan.lossRuns!.statement) rows.push([]);
+      rows.push(['Field', 'Value']);
+      for (const f of report.fields) rows.push([f.label, f.value]);
+    });
   }
 
   return '\uFEFF' + rows.map((r) => r.map(csvEscape).join(',')).join('\r\n');

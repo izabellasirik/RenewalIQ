@@ -110,20 +110,20 @@ export function ChecklistPanel({ accountId, compact = false, onViewAll }: { acco
           <div className="mt-4">
             <EmptyState
               icon={<ClipboardList size={24} strokeWidth={1.5} />}
-              title="No checklist yet"
-              description="Start from the standard trucking submission checklist, then mark what you already have."
+              title="Nothing on the checklist"
+              description="Add the documents you need for this account. Anything a market asks for in Markets & Quotes is added here automatically."
               action={
                 <div className="flex flex-wrap justify-center gap-2">
-                  {CHECKLIST_TEMPLATES.map((t) => (
-                    <Button key={t.key} size="sm" icon={<ClipboardList size={14} />} onClick={() => startTemplate(t.key)}>
-                      Start {t.label.toLowerCase()} checklist
-                    </Button>
-                  ))}
                   {!compact && (
-                    <Button size="sm" variant="secondary" icon={<Plus size={14} />} onClick={() => setAdding(true)}>
-                      Add item manually
+                    <Button size="sm" icon={<Plus size={14} />} onClick={() => setAdding(true)}>
+                      Add item
                     </Button>
                   )}
+                  {CHECKLIST_TEMPLATES.map((t) => (
+                    <Button key={t.key} size="sm" variant="secondary" icon={<ClipboardList size={14} />} onClick={() => startTemplate(t.key)}>
+                      Use {t.label.toLowerCase()} checklist
+                    </Button>
+                  ))}
                 </div>
               }
             />

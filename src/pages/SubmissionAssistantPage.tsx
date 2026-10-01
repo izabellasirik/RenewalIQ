@@ -45,7 +45,8 @@ export function SubmissionAssistantPage() {
   const closeReview = () => setSearchParams((p) => (p.delete('view'), p));
 
   const template = APPLICATION_TEMPLATES.find((t) => t.id === templateId) ?? APPLICATION_TEMPLATES[0];
-  const application = useMemo(() => (profile ? mapRiskProfileToApplication(profile, template) : null), [profile, template]);
+  const lossRuns = account?.lossRuns;
+  const application = useMemo(() => (profile ? mapRiskProfileToApplication(profile, template, lossRuns) : null), [profile, template, lossRuns]);
   const stats = useMemo(() => (application ? computeApplicationStats(application) : null), [application]);
   const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
 
@@ -168,6 +169,7 @@ export function SubmissionAssistantPage() {
           )}
           <ApplicationReview
             application={application}
+            accountName={account.namedInsured}
             title={applicationTitleFor(account.namedInsured, application.templateName)}
             completenessPercent={completeness.percent}
             missingCount={missingCount}

@@ -123,6 +123,13 @@ export interface MappedTableSection {
   rows: MappedTableRow[];
 }
 
+/** Loss run reports shown on the application when no claims are itemized (only what the reports state). */
+export interface MappedLossRunSummary {
+  /** True when no claim is itemized and no report states a claim or incurred amount. */
+  noLossesRecorded: boolean;
+  reports: { fields: { label: string; value: string }[] }[];
+}
+
 export interface MappedApplication {
   accountId: string;
   templateId: string;
@@ -133,6 +140,8 @@ export interface MappedApplication {
   fieldsNeedingReview: number;
   /** Submission-quality warnings (missing identifiers, fleet/vehicle-count conflicts, unspecified requested limits, new coverage requests) — see services/extraction/reconciliation.ts. */
   warnings: string[];
+  /** Set when there are loss run reports but no itemized claims (see lossRunSummary.ts). */
+  lossRunSummary?: MappedLossRunSummary;
 }
 
 export interface ApplicationStats {

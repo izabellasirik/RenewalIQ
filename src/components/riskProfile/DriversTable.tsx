@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Plus, Pencil, Trash2, User, AlertTriangle, ChevronDown, ChevronRight, StickyNote } from 'lucide-react';
+import { Plus, Pencil, Trash2, User, AlertTriangle, ChevronDown, ChevronRight, StickyNote, Merge } from 'lucide-react';
 import type { DriverEntry, DriverNote } from '../../types';
-import { Button, ConfirmDialog } from '../ui';
+import { Button, ConfirmDialog, Modal } from '../ui';
 import { formatExperience } from '../../utils/duration';
 import { driverExperience, usableCdlIssueDate } from '../../utils/driverExperience';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -185,6 +185,29 @@ export function DriversTable({
   /** The driver whose note box should take the cursor when their row opens via "Notes". */
   const [noteFocusId, setNoteFocusId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DriverEntry | null>(null);
+  /** Drivers ticked for "Merge selected" (any two or more rows the broker knows are one person). */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [mergeKeepId, setMergeKeepId] = useState<string | null>(null);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const selectedDrivers = drivers.filter((d) => selected.has(d.id));
+  const toggleSelected = (id: string) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  function openMerge() {
+    setMergeKeepId(selectedDrivers[0]?.id ?? null);
+    setMergeOpen(true);
+  }
+  function confirmMerge() {
+    if (!onMerge || !mergeKeepId) return;
+    // The kept row takes whatever the others had that it doesn't — nothing it has is overwritten.
+    for (const d of selectedDrivers) if (d.id !== mergeKeepId) onMerge(mergeKeepId, d.id);
+    setMergeOpen(false);
+    setSelected(new Set());
+  }
 
   function startAdd() {
     setDraft(EMPTY_DRAFT);
@@ -269,7 +292,18 @@ export function DriversTable({
           </Button>
         </div>
       ))}
-      <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+        {onMerge && selected.size > 0 && (
+          <span className="mr-auto flex items-center gap-2 text-sm text-[var(--color-ink-600)]" data-testid="driver-selection">
+            {selected.size} selected
+            <Button size="sm" icon={<Merge size={13} />} onClick={openMerge} disabled={selected.size < 2 || editingId !== null} data-testid="merge-selected-drivers">
+              Merge selected
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+              Clear
+            </Button>
+          </span>
+        )}
         <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={startAdd} disabled={editingId !== null}>
           Add driver
         </Button>
@@ -300,7 +334,16 @@ export function DriversTable({
             return (
               <Fragment key={d.id}>
                 <tr className={cn('border-b border-[var(--color-ink-100)] last:border-0', (dupOf.has(d.id) || [...dupOf.values()].includes(d.id)) && 'bg-[var(--color-warning-100)]/25')} data-duplicate={dupOf.has(d.id) || [...dupOf.values()].includes(d.id) ? 'yes' : undefined}>
-                  <td className="py-2.5 align-top">
+                  <td className="whitespace-nowrap py-2.5 align-top">
+                    {onMerge && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(d.id)}
+                        onChange={() => toggleSelected(d.id)}
+                        className="mr-1 align-middle cursor-pointer"
+                        aria-label={`Select ${d.name ?? 'driver'}`}
+                      />
+                    )}
                     <button onClick={() => toggle(d.id)} className="rounded p-0.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer" aria-label={`${open ? 'Hide' : 'Show'} details for ${d.name ?? 'driver'}`} aria-expanded={open}>
                       {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
@@ -396,6 +439,37 @@ export function DriversTable({
           })}
         </tbody>
       </table>
+
+      <Modal
+        open={mergeOpen}
+        onClose={() => setMergeOpen(false)}
+        title={`Merge ${selectedDrivers.length} drivers into one`}
+        subtitle="Choose the row to keep. It takes any details it's missing from the others — nothing it already has is overwritten. Documents and notes are kept. The other rows are removed."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setMergeOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={confirmMerge} disabled={!mergeKeepId} data-testid="confirm-merge-drivers">
+              Merge drivers
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-2" data-testid="merge-drivers-dialog">
+          {selectedDrivers.map((d) => (
+            <label key={d.id} className={cn('flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm', mergeKeepId === d.id ? 'border-[var(--color-brand-500)] bg-[var(--color-brand-50)]/50' : 'border-[var(--color-ink-100)]')}>
+              <input type="radio" name="merge-keep" className="mt-1" checked={mergeKeepId === d.id} onChange={() => setMergeKeepId(d.id)} />
+              <span>
+                <span className="font-medium text-[var(--color-ink-900)]">{d.name ?? 'Unnamed driver'}</span>
+                <span className="block text-xs text-[var(--color-ink-500)]">
+                  {[d.dob ? `DOB ${dateCell(d.dob)}` : null, d.licenseNumber ? `License ${d.licenseNumber}` : null, d.licenseState, d.isManual ? 'Manual' : d.source?.documentName].filter(Boolean).join(' · ') || 'No other details'}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </Modal>
 
       <ConfirmDialog
         open={!!deleteTarget}

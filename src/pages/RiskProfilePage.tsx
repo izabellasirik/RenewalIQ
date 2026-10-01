@@ -24,10 +24,11 @@ import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { computeSubmissionCompleteness } from '../services/application';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
+import { addressComponentsFrom, composeFullAddress } from '../utils/fullAddress';
 import { formatDate } from '../utils/dates';
 import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
-import { emptyField } from '../types';
+import { emptyField, type RiskProfile } from '../types';
 import { cn } from '../utils/cn';
 
 /** Yes/No fields that also keep typed details (saved as `<key>Details`), with the box's hint. */
@@ -200,8 +201,18 @@ export function RiskProfilePage() {
                       // account created before "Requested Effective Date" was added) has no key for
                       // it at all, and FieldRow crashes on `undefined`. Same fallback
                       // useRiskProfileStats already uses for exactly this reason.
-                      field={(getFieldValueByPath(profile, `${f.section}.${f.key}`) ?? emptyField()) as any}
-                      onSave={(value) => updateField(accountId, f.section, f.key, value)}
+                      field={(f.section === 'business' && f.key === 'address' ? fullAddressField(profile) : getFieldValueByPath(profile, `${f.section}.${f.key}`) ?? emptyField()) as any}
+                      onSave={(value) => {
+                        updateField(accountId, f.section, f.key, value);
+                        if (f.section === 'business' && f.key === 'address' && typeof value === 'string') {
+                          // Keep City/State/ZIP (used by carrier appetite and the application) in step.
+                          const parts = addressComponentsFrom(value);
+                          for (const k of ['city', 'state', 'zip'] as const) {
+                            const v = parts[k];
+                            if (v && v !== getFieldValueByPath(profile, `business.${k}`)?.value) updateField(accountId, 'business', k, v);
+                          }
+                        }
+                      }}
                       onResolve={(resolution) => resolveField(accountId, f.section, f.key, resolution)}
                       autoExpand={highlightFieldId === `field-${f.section}-${f.key}`}
                       {...(DETAIL_FIELDS[f.key]
@@ -374,4 +385,17 @@ export function RiskProfilePage() {
       />
     </PageContainer>
   );
+}
+
+/** The single Address field: the stored address plus any city/state/ZIP held separately (older accounts). */
+function fullAddressField(profile: RiskProfile) {
+  const address = getFieldValueByPath(profile, 'business.address') ?? emptyField();
+  if (address.isConflicting) return address;
+  const read = (k: string) => {
+    const v = getFieldValueByPath(profile, `business.${k}`)?.value;
+    return typeof v === 'string' ? v : null;
+  };
+  const full = composeFullAddress({ address: typeof address.value === 'string' ? address.value : null, city: read('city'), state: read('state'), zip: read('zip') });
+  if (full === (address.value ?? '')) return address;
+  return { ...address, value: full, isMissing: false, confidence: address.isMissing ? (getFieldValueByPath(profile, 'business.state')?.confidence ?? 'manual') : address.confidence };
 }

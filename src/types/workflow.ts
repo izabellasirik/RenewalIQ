@@ -149,7 +149,15 @@ export interface QuoteOption {
   notes?: string;
   /** The quote date — when it was received; editable. */
   receivedAt: string;
+  /** The first file attached (older quotes have only this one). */
   attachment?: QuoteAttachment;
+  /** Further files on the same quote. */
+  attachments?: QuoteAttachment[];
+}
+
+/** Every file on a quote, first attached first. */
+export function quoteOptionFiles(option: Pick<QuoteOption, 'attachment' | 'attachments'>): QuoteAttachment[] {
+  return [...(option.attachment ? [option.attachment] : []), ...(option.attachments ?? [])];
 }
 
 export interface MarketQuote {
