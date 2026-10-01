@@ -82,14 +82,14 @@ export function CoverageSection({
             <FieldRow
               label="Current Limit"
               valueType="text"
-              field={line.currentLimit ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false }}
+              field={limitDisplay(line.currentLimit ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false })}
               onSave={(value) => onSave(line.type, 'currentLimit', normalizeCurrencyText(value))}
               onResolve={(resolution) => onResolve(line.type, 'currentLimit', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
             />
             <FieldRow
               label="Requested Limit"
               valueType="text"
-              field={line.requestedLimit}
+              field={limitDisplay(line.requestedLimit)}
               onSave={(value) => onSave(line.type, 'requestedLimit', normalizeCurrencyText(value))}
               onResolve={(resolution) => onResolve(line.type, 'requestedLimit', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
             />
@@ -97,7 +97,7 @@ export function CoverageSection({
               <FieldRow
                 label="Deductible"
                 valueType="text"
-                field={line.deductible ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false }}
+                field={limitDisplay(line.deductible ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false })}
                 onSave={(value) => onSave(line.type, 'deductible', normalizeCurrencyText(value))}
                 onResolve={(resolution) => onResolve(line.type, 'deductible', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
               />
@@ -119,4 +119,9 @@ export function CoverageSection({
       />
     </div>
   );
+}
+
+/** Shows a stored limit the way it's saved from now on ("$1,000,000/$2,000,000"); the stored value isn't changed until the broker saves. */
+function limitDisplay<F extends { value: unknown }>(field: F): F {
+  return typeof field.value === 'string' ? { ...field, value: normalizeCurrencyText(field.value) } : field;
 }

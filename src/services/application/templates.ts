@@ -2,6 +2,10 @@ import { driverExperience } from '../../utils/driverExperience';
 import type { ApplicationTemplate, DriverEntry, LossEntry, VehicleEntry } from '../../types';
 import { COVERAGE_LABELS, DEDUCTIBLE_COVERAGES } from '../../types';
 import { formatCurrency, formatDateMDY, formatNewVenture, formatStatus } from './formatters';
+import { normalizeCurrencyText } from '../../utils/currency';
+
+/** A limit/deductible as printed: "$1,000,000/$2,000,000", never run together. */
+const formatLimit = (v: unknown) => (typeof v === 'string' ? normalizeCurrencyText(v) : typeof v === 'number' ? normalizeCurrencyText(String(v)) : '');
 import { formatExperience } from '../../utils/duration';
 
 const CURRENT_POLICY_COVERAGE_TYPES = ['auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability'] as const;
@@ -68,6 +72,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           targetFieldId: `current_coverage_${type}`,
           targetLabel: `${COVERAGE_LABELS[type]} (Current Limit)`,
           riskProfilePath: `coverage.${type}.currentLimit`,
+          format: formatLimit,
           required: false,
           // Never a completeness gap: a new-business or no-current-coverage account legitimately
           // has nothing to report here, and there's no reliable signal in the Risk Profile to tell
@@ -83,6 +88,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           targetFieldId: `coverage_${type}`,
           targetLabel: `${COVERAGE_LABELS[type]} (Requested Limit)`,
           riskProfilePath: `coverage.${type}.requestedLimit`,
+          format: formatLimit,
         })),
       },
       {
@@ -91,6 +97,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           targetFieldId: `deductible_${type}`,
           targetLabel: `${COVERAGE_LABELS[type]} (Deductible)`,
           riskProfilePath: `coverage.${type}.deductible`,
+          format: formatLimit,
           required: false,
           // Informational — a blank deductible is never a completeness gap.
           neverFlagMissing: true,

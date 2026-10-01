@@ -27,7 +27,7 @@ describe('the application CSV a broker shares', () => {
 
   it('only filled-in data — a coverage requested without a limit is left out', () => {
     const csv = generateApplicationCsv(application(), 'ABC Trucking');
-    expect(csv).toContain('"1,000,000"');
+    expect(csv).toContain('"$1,000,000"');
     expect(csv).not.toContain('limit not specified');
     expect(csv).not.toContain('Cargo');
     expect(csv).not.toMatch(/,\r\n|,$/m); // no field row with an empty value

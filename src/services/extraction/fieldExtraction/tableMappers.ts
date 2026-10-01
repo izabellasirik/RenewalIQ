@@ -1,3 +1,4 @@
+import { normalizeCurrencyText } from '../../../utils/currency';
 import type { CoverageType, DriverEntry, LossStatus, VehicleEntry } from '../../../types';
 import type { RawTable } from '../../ingestion';
 import { parseCount, parseMoney } from './money';
@@ -388,8 +389,9 @@ export function mapCoverageTable(table: RawTable): MappedCoverageRow[] {
     if (!label || !limitRaw) return;
     const alias = COVERAGE_TYPE_ALIASES.find((a) => a.match.test(label));
     if (!alias) return;
-    const limitValue = parseMoney(limitRaw.replace(/[^\d.,km]/gi, ''));
-    const requestedLimit = limitValue !== null ? `$${limitValue.toLocaleString('en-US')}` : limitRaw;
+    // A split limit ("$1,000,000/$2,000,000") keeps its parts — stripping the "/" would run them together into one huge number.
+    const limitValue = limitRaw.includes('/') ? null : parseMoney(limitRaw.replace(/[^\d.,km]/gi, ''));
+    const requestedLimit = limitValue !== null ? `$${limitValue.toLocaleString('en-US')}` : normalizeCurrencyText(limitRaw);
     results.push({ row: i, coverageType: alias.type, requestedLimit });
   });
   return results;

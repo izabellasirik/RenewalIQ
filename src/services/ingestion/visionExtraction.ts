@@ -1,3 +1,4 @@
+import { normalizeCurrencyText } from '../../utils/currency';
 import type { Confidence, DocumentCategory, DriverEntry, LossStatus, VehicleEntry } from '../../types';
 import { decodeOriented, drawToCanvas } from './imageUtils';
 import { supabase, isSupabaseConfigured } from '../supabase/client';
@@ -195,7 +196,7 @@ function asCoverageType(raw: unknown): string | null {
 function asCoverageLimit(raw: unknown): string | null {
   const n = asMoney(raw);
   if (n !== null) return `$${n.toLocaleString('en-US')}`;
-  return typeof raw === 'string' && raw.trim().length > 0 && raw.trim().length <= 40 ? raw.trim() : null;
+  return typeof raw === 'string' && raw.trim().length > 0 && raw.trim().length <= 40 ? normalizeCurrencyText(raw) : null;
 }
 
 function validateScalarFields(raw: unknown): VisionScalarField[] {
