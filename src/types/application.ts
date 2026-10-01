@@ -123,11 +123,12 @@ export interface MappedTableSection {
   rows: MappedTableRow[];
 }
 
-/** Loss run reports shown on the application when no claims are itemized (only what the reports state). */
+/** Loss run reports shown as the Loss History table when no claims are itemized (only what the reports state). */
 export interface MappedLossRunSummary {
-  /** True when no claim is itemized and no report states a claim or incurred amount. */
-  noLossesRecorded: boolean;
-  reports: { fields: { label: string; value: string }[] }[];
+  /** Every report explicitly says there were no losses. */
+  allReportNoLosses: boolean;
+  columns: { key: string; label: string }[];
+  rows: { id: string; cells: Record<string, string> }[];
 }
 
 export interface MappedApplication {

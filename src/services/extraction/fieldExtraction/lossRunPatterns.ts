@@ -2,6 +2,7 @@ import type { LossRun } from '../../../types';
 import type { TextLine } from './textLines';
 import { normalizeDateKey } from '../../workflow/dates';
 import { parseAmount } from './tableMappers';
+import { cleanCarrierName } from '../../../utils/carrierName';
 
 /**
  * Reads a loss run's own summary — who issued it, when it was valued, and for each policy on it:
@@ -54,6 +55,11 @@ export function looksLikeLossRun(text: string, hasLossRows: boolean): boolean {
 }
 
 function findCarrier(lines: TextLine[]): string | undefined {
+  const found = findCarrierRaw(lines);
+  return found ? cleanCarrierName(found) || undefined : undefined;
+}
+
+function findCarrierRaw(lines: TextLine[]): string | undefined {
   for (const l of lines) {
     const m = l.text.match(CARRIER_LABEL_RE);
     if (m && m[1] && !NOT_CARRIER_RE.test(m[1])) return titleCase(clean(m[1]).replace(/\s{2,}.*/, ''));

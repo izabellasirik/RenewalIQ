@@ -47,20 +47,13 @@ export interface PlannedTable {
   rows: MappedTableRow[];
   /** Whether the table appears on the application at all. */
   prints: boolean;
-}
-
-/** Printed under Loss History when there are loss run reports but no itemized claims. */
-export interface PlannedLossRuns {
-  title: string;
-  /** "No losses recorded" — only when no report states a claim. */
-  statement: string | null;
-  reports: { fields: { label: string; value: string }[] }[];
+  /** A line printed under the title (e.g. "No losses reported"). */
+  note?: string;
 }
 
 export interface ApplicationPrintPlan {
   sections: PlannedSection[];
   tables: PlannedTable[];
-  lossRuns: PlannedLossRuns | null;
 }
 
 function omittedReason(f: MappedField): OmittedReason {
@@ -85,12 +78,22 @@ export function buildApplicationPrintPlan(application: MappedApplication): Appli
       prints: columns.length > 0 && rows.length > 0,
     };
   });
+  // Loss runs on file but no itemized claims: Loss History lists the reports instead (see lossRunSummary.ts).
   const summary = application.lossRunSummary;
-  const lossRuns: PlannedLossRuns | null =
-    summary && (summary.noLossesRecorded || summary.reports.length > 0)
-      ? { title: 'Loss History', statement: summary.noLossesRecorded ? 'No losses recorded' : null, reports: summary.reports }
-      : null;
-  return { sections, tables, lossRuns };
+  if (summary) {
+    const i = application.tableSections.findIndex((t) => t.source === 'losses');
+    if (i !== -1 && !tables[i].prints) {
+      tables[i] = {
+        title: tables[i].title,
+        columns: summary.columns,
+        omittedColumns: [],
+        rows: summary.rows.map((r) => ({ id: r.id, cells: Object.fromEntries(Object.entries(r.cells).map(([k, v]) => [k, v ? { value: v, status: 'auto_filled' as const } : { value: '', status: 'missing' as const }])) })),
+        prints: true,
+        ...(summary.allReportNoLosses ? { note: 'No losses reported' } : {}),
+      };
+    }
+  }
+  return { sections, tables };
 }
 
 /** A table cell exactly as printed ('' when the row has nothing in that column). */

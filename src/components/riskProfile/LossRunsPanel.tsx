@@ -6,6 +6,7 @@ import { useAccountsStore } from '../../state/useAccountsStore';
 import { formatShortDate } from '../../services/workflow/dates';
 import { inputClass, labelClass, linkButtonClass } from '../workspace/formStyles';
 import { LossHistoryTable } from './LossHistoryTable';
+import { cleanCarrierName } from '../../utils/carrierName';
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
 
@@ -113,7 +114,7 @@ function LossRunCard({
         <FileClock size={16} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />
         <div className="min-w-0 flex-1">
           <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--color-ink-900)]">
-            {run.carrier}
+            {cleanCarrierName(run.carrier)}
             {run.policyNumber && <span className="font-mono text-xs font-normal text-[var(--color-ink-500)]">Policy {run.policyNumber}</span>}
             {badge}
           </p>
@@ -122,7 +123,7 @@ function LossRunCard({
             {(run.coverageStart || run.coverageEnd) && ` · Coverage ${run.coverageStart ? formatShortDate(run.coverageStart) : '?'} – ${run.coverageEnd ? formatShortDate(run.coverageEnd) : '?'}`}
           </p>
           <p className="mt-0.5 text-xs text-[var(--color-ink-700)]">
-            {t.claims === null ? 'Claims not recorded' : `${t.claims} claim${t.claims === 1 ? '' : 's'}`}
+            {t.claims === null ? 'Losses not stated on this report — edit to enter the claim count (0 = no losses)' : t.claims === 0 ? 'No losses' : `${t.claims} claim${t.claims === 1 ? '' : 's'}`}
             {t.incurred !== null && ` · ${money(t.incurred)} incurred`}
             {t.paid !== null && ` · ${money(t.paid)} paid`}
             {t.reserve !== null && ` · ${money(t.reserve)} reserve`}

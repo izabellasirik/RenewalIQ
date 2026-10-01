@@ -94,31 +94,40 @@ describe('Review Application = what the download contains', () => {
   });
 });
 
-describe('no losses recorded: the loss run reports are still on the application', () => {
+describe('loss runs with no itemized claims: Loss History lists the reports', () => {
   const run = (over: Record<string, unknown>) => ({ id: 'lr1', carrier: 'Progressive', createdAt: '', updatedAt: '', ...over }) as never;
+  const lossTable = (plan: ReturnType<typeof buildApplicationPrintPlan>) => plan.tables.find((t) => t.title === 'Loss History')!;
+  const cells = (plan: ReturnType<typeof buildApplicationPrintPlan>) => lossTable(plan).rows.map((r) => Object.fromEntries(lossTable(plan).columns.map((c) => [c.label, printedCellValue(r, c.key)])));
 
-  it('no claims + a report with 0 claims → "No losses recorded" with only the details the report has', async () => {
+  it('a report that says 0 claims → "No losses reported", as one table with only the columns the report has', async () => {
     const p = createEmptyRiskProfile('a');
     p.business.namedInsured = manualField('Nova Light LLC');
-    const app = mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({ policyNumber: 'PGR-123', reportDate: '2026-09-20', coverageStart: '2023-01-01', coverageEnd: '2026-01-01', claimCount: 0 })]);
+    const app = mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({ carrier: 'Cover Whale Insurance Solutions, Inc. | Page 1 of 1', policyNumber: 'CW1EIC-703861-00', reportDate: '2026-07-17', claimCount: 0 })]);
     const plan = buildApplicationPrintPlan(app);
-    expect(plan.lossRuns?.statement).toBe('No losses recorded');
-    expect(plan.lossRuns?.reports[0].fields.map((f) => f.label)).toEqual(['Insurance Company', 'Policy Number', 'Report Date', 'Coverage Period', 'Claims Reported']);
+    expect(lossTable(plan)).toMatchObject({ prints: true, note: 'No losses reported' });
+    expect(cells(plan)).toEqual([{ 'Insurance Company': 'Cover Whale Insurance Solutions, Inc.', 'Policy Number': 'CW1EIC-703861-00', 'Report Date': '07/17/2026', Losses: 'No losses' }]);
     const flat = (await pdfText(await generateApplicationPdf(app, 'Nova Light LLC'))).replace(/\s+/g, ' ');
-    for (const v of ['LOSS HISTORY', 'No losses recorded', 'Progressive', 'PGR-123', '09/20/2026']) expect(flat).toContain(v);
-    expect(flat).not.toContain('TOTAL INCURRED'); // not on the report → not printed
-    const csv = generateApplicationCsv(app, 'Nova Light LLC');
-    expect(csv).toContain('No losses recorded');
-    expect(csv).toContain('Policy Number,PGR-123');
+    for (const v of ['LOSS HISTORY', 'No losses reported', 'Cover Whale Insurance Solutions, Inc.', 'CW1EIC-703861-00', '07/17/2026']) expect(flat).toContain(v);
+    expect(flat).not.toContain('Page 1 of 1');
+    expect(flat).not.toContain('COVERAGE PERIOD'); // not on the report → no column
+    expect(generateApplicationCsv(app, 'Nova Light LLC')).toContain('No losses reported');
   });
 
-  it('a report that states claims never says "No losses recorded"; itemized claims or no reports → no summary', () => {
+  it('a report that doesn\'t state its claims never says "No losses"', () => {
     const p = createEmptyRiskProfile('a');
+    const silent = buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({ policyNumber: 'X1' })]));
+    expect(lossTable(silent).note).toBeUndefined();
+    expect(cells(silent)[0].Losses).toBe('Not stated on report');
     const stated = buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({ claimCount: 2, totalIncurred: 5000 })]));
-    expect(stated.lossRuns?.statement).toBeNull();
-    expect(stated.lossRuns?.reports[0].fields.map((f) => f.label)).toContain('Total Incurred');
-    expect(buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0])).lossRuns).toBeNull();
+    expect(cells(stated)[0].Losses).toBe('2 claims, $5,000 incurred');
+  });
+
+  it('itemized claims → the normal claims table; no reports → nothing invented', () => {
+    const p = createEmptyRiskProfile('a');
+    expect(lossTable(buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0]))).prints).toBe(false);
     p.lossHistory = [{ id: 'l1', lossDate: '2025-01-01', incurred: 100 } as never];
-    expect(buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({})])).lossRuns).toBeNull();
+    const t = lossTable(buildApplicationPrintPlan(mapRiskProfileToApplication(p, APPLICATION_TEMPLATES[0], [run({})])));
+    expect(t.columns.map((c) => c.label)).toContain('Loss Date');
+    expect(t.note).toBeUndefined();
   });
 });
