@@ -289,6 +289,11 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   (`intake_submissions.vin_numbers`, `additional_contacts`). Re-creates `start_intake_submission`
   with the same signature and permissions. Needs 0029 first. Additive, safe to re-run. Deploy the
   app only after this runs: the new form sends these answers, and without 0044 they are dropped.
+- **`supabase/migrations/0045_request_link_up_front.sql`** — "Request a document" shows the real
+  secure link in the email as soon as the dialog opens: the app makes the link's random token, and
+  `create_document_request` (re-created with one optional `p_token`) uses it when the broker copies,
+  opens Gmail or marks it sent. Tokens stay unique. Needs 0030. Without it the app still works (the
+  database makes the token and the link in the email is swapped when the request is created).
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -377,6 +382,7 @@ from (values
   ('0042_client_submission_activity', exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'activity_events' and column_name = 'details')),
   ('0043_founder_analytics',          to_regprocedure('public.founder_analytics_snapshot(timestamptz,timestamptz)') is not null),
   ('0044_intake_vins_contacts',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'intake_submissions' and column_name = 'vin_numbers')),
+  ('0045_request_link_up_front',      to_regprocedure('public.create_document_request(text,uuid,jsonb,text,jsonb,date,timestamptz,uuid)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

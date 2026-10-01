@@ -8,11 +8,13 @@ import { addBusinessDays, todayKey } from '../../services/workflow/dates';
 import type { MissingItem } from '../../types';
 import { inputClass, labelClass } from './formStyles';
 import { isSupabaseConfigured } from '../../services/supabase/client';
+import { requestLink } from '../../services/supabase/documentRequestsRepo';
 import { splitDriverMvrs } from '../../services/workflow/driverRequirements';
 import { EMPTY_DRIVERS } from '../../utils/emptyArrays';
 
 /** Stands in for the secure link in the draft until it's created (on the first copy / open / send). */
-const LINK_PLACEHOLDER = '[secure upload link — added when you copy or send this]';
+/** The link's token: a cryptographically random v4 UUID (the app always runs on https or localhost). */
+const newToken = () => crypto.randomUUID();
 const newKey = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
 
 /**
@@ -34,6 +36,9 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
   const createClientRequest = useAccountsStore((s) => s.createClientRequest);
   const canLink = useAccountsStore((s) => isSupabaseConfigured && !!s.currentUserId && !!s.cloudAccountIds[accountId]);
   const clientKey = useRef(newKey());
+  // The secure link's token, made now so the email shows the real link from the start. The request
+  // itself is only created (with this token) when the broker copies, opens Gmail or marks it sent.
+  const linkToken = useRef(newToken());
   // The checklist item "+ Request document" adds (made once, when the link or request needs it).
   const newItemId = useRef<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
@@ -85,6 +90,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     setInstructions('');
     setCopied(false);
     clientKey.current = newKey();
+    linkToken.current = newToken();
     newItemId.current = null;
     splitIds.current = null;
     setLink(null);
@@ -104,7 +110,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
       effectiveDate,
       carrierNamesByQuoteId: Object.fromEntries(quotes.map((q) => [q.id, q.marketName])),
       brokerName: account.assignedBroker?.name,
-      uploadLink: link ?? (canLink ? LINK_PLACEHOLDER : undefined),
+      uploadLink: link ?? (canLink ? requestLink(linkToken.current) : undefined),
     });
     setSubject(draft.subject);
     setBody(draft.body);
@@ -150,13 +156,15 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     if (link) return { body };
     setLinkBusy(true);
     setLinkError(null);
-    const res = await createClientRequest(accountId, { clientKey: clientKey.current, itemIds: requestItemIds(), contactId: contactId || undefined, followUpDate: followUpDate || undefined, requestedOn });
+    const shown = requestLink(linkToken.current);
+    const res = await createClientRequest(accountId, { clientKey: clientKey.current, itemIds: requestItemIds(), contactId: contactId || undefined, followUpDate: followUpDate || undefined, requestedOn, token: linkToken.current });
     setLinkBusy(false);
     if (!res.ok) {
       setLinkError(res.message);
       return null;
     }
-    const withLink = body.includes(LINK_PLACEHOLDER) ? body.replace(LINK_PLACEHOLDER, res.link) : `${body}\n\nUpload securely here:\n${res.link}`;
+    // Normally the same link the email already shows; if the broker removed it, it's added back.
+    const withLink = body.includes(shown) ? body.split(shown).join(res.link) : body.includes(res.link) ? body : `${body}\n\nUpload securely here:\n${res.link}`;
     setLink(res.link);
     setBody(withLink);
     return { body: withLink };
@@ -217,6 +225,13 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     const opts = { contactId: contactId || undefined, followUpDate: followUpDate || undefined, requestedOn };
     markItemsRequested(accountId, requestItemIds(), newDocument ? { ...opts, instructions } : opts);
     onClose();
+  }
+
+  /** Text selected and copied straight from the email: the link in it must work, so the request is created now. */
+  function activateOnManualCopy() {
+    if (!canLink || link || linkBusy) return;
+    if (newDocument && !docName.trim()) return;
+    void ensureLink();
   }
 
   async function copyLinkOnly() {
@@ -379,7 +394,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
           <label className={labelClass} htmlFor="req-body">
             Email
           </label>
-          <textarea id="req-body" value={body} onChange={(e) => setBody(e.target.value)} rows={11} className={`${inputClass} font-[inherit] leading-relaxed`} />
+          <textarea id="req-body" value={body} onChange={(e) => setBody(e.target.value)} onCopy={activateOnManualCopy} rows={11} className={`${inputClass} font-[inherit] leading-relaxed`} />
         </div>
         {canLink && (
           <div className="rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)] px-3 py-2 text-xs text-[var(--color-ink-600)]">
@@ -399,7 +414,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
             ) : (
               <p className="flex items-center gap-1.5">
                 <Link2 size={13} className="text-[var(--color-brand-700)]" />
-                A secure upload link for exactly these items is added when you copy, open or send this.
+                The secure upload link in the email is for exactly these items. It becomes active when you copy the email, open it in Gmail, or mark it sent.
               </p>
             )}
             {linkError && <p className="mt-1 text-[var(--color-danger-600)]">Couldn’t create the link: {linkError}</p>}

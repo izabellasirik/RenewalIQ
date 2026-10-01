@@ -138,27 +138,30 @@ export interface NewRequestInput {
   items: { missingItemId: string; label: string; instructions?: string }[];
   nextFollowUp?: string;
   requestedAt?: string;
+  /** The link's token, made when the request dialog opened so the email could show the real link (0045). */
+  token?: string;
 }
+
+/** 0045 not applied yet: the function doesn't take p_token. */
+const isMissingTokenParam = (error: { code?: string; message?: string }) => error.code === 'PGRST202' || /Could not find the function|p_token/i.test(error.message ?? '');
 
 export async function createDocumentRequest(input: NewRequestInput): Promise<RepoResult<{ id: string; token: string }>> {
   if (!supabase) return fail(NOT_CONFIGURED);
   try {
     const data = await withRetry(async () => {
-      const { data, error } = await withTimeout(
-        Promise.resolve(
-          supabase!.rpc('create_document_request', {
-            p_submission_id: input.accountId,
-            p_client_key: input.clientKey,
-            p_contact: input.contact ?? {},
-            p_channel: input.channel ?? 'email',
-            p_items: input.items,
-            p_next_follow_up: input.nextFollowUp || null,
-            p_requested_at: input.requestedAt ?? null,
-          })
-        ),
-        TIMEOUT,
-        'Creating the request'
-      );
+      const args = {
+        p_submission_id: input.accountId,
+        p_client_key: input.clientKey,
+        p_contact: input.contact ?? {},
+        p_channel: input.channel ?? 'email',
+        p_items: input.items,
+        p_next_follow_up: input.nextFollowUp || null,
+        p_requested_at: input.requestedAt ?? null,
+      };
+      const rpc = (withToken: boolean) => withTimeout(Promise.resolve(supabase!.rpc('create_document_request', withToken ? { ...args, p_token: input.token } : args)), TIMEOUT, 'Creating the request');
+      let { data, error } = await rpc(!!input.token);
+      // Without 0045 the database makes the token itself; the caller swaps the link in the email.
+      if (error && input.token && isMissingTokenParam(error)) ({ data, error } = await rpc(false));
       if (error) throw Object.assign(new Error(isMissingRequestsSchema(error) ? 'Secure request links need migration 0030_document_requests.sql in Supabase.' : error.message), { code: error.code });
       return data as { id: string; token: string };
     });

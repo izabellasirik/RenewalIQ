@@ -264,7 +264,7 @@ interface AccountsState {
   /** Creates the request and its secure link (same clientKey → same request). Cloud accounts only. */
   createClientRequest: (
     accountId: string,
-    input: { clientKey: string; itemIds: string[]; contactId?: string; followUpDate?: string; requestedOn?: string }
+    input: { clientKey: string; itemIds: string[]; contactId?: string; followUpDate?: string; requestedOn?: string; token?: string }
   ) => Promise<{ ok: true; requestId: string; link: string } | { ok: false; message: string }>;
   /** The broker sent a follow-up (outstanding items only) and picked the next date. */
   followUpClientRequest: (requestId: string, nextFollowUp: string) => Promise<{ ok: boolean; message?: string }>;
@@ -2857,7 +2857,7 @@ export const useAccountsStore = create<AccountsState>()(
         });
       },
 
-      createClientRequest: async (accountId, { clientKey, itemIds, contactId, followUpDate, requestedOn }) => {
+      createClientRequest: async (accountId, { clientKey, itemIds, contactId, followUpDate, requestedOn, token }) => {
         const s = get();
         const account = s.accounts.find((a) => a.id === accountId);
         if (!account) return { ok: false, message: 'Account not found.' };
@@ -2873,6 +2873,7 @@ export const useAccountsStore = create<AccountsState>()(
           items: items.map((i) => ({ missingItemId: i.id, label: i.label, instructions: i.instructions })),
           nextFollowUp: followUpDate,
           requestedAt: requestedOn && requestedOn !== todayKey() && onDate ? new Date(onDate.setHours(12)).toISOString() : undefined,
+          token,
         });
         if (!res.ok) return res;
         await get().loadDocumentRequests([accountId]);

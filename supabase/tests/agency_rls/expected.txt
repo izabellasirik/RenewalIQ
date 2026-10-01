@@ -348,3 +348,7 @@ FA9 bad answer refused: false
 FA9 broker reads answers: 0 rows
 FA10 founder snapshot: events=true users have names=true brokerages=Agency timeSaved=1
 FA11 unconfirmed founder email denied
+LK1 request created with the link the email already showed: true
+LK2 a token can never be reused
+LK3 without a token the database still makes one: true
+LK4 other agency still denied

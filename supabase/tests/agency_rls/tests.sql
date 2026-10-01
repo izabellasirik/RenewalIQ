@@ -1005,3 +1005,14 @@ set role authenticated;
 select pg_temp.as_user('00000000-0000-0000-0000-000000000099');
 do $$ begin perform founder_analytics_snapshot(now() - interval '1 day', now() + interval '1 day'); raise notice 'FA11 unconfirmed founder email: ALLOWED (BAD)'; exception when others then raise notice 'FA11 unconfirmed founder email denied'; end $$;
 reset role;
+
+\echo '== 0045: the request link is made when the dialog opens'
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'LK1 request created with the link the email already showed: ' || ((create_document_request('acct_r1', 'aaaaaaaa-0000-0000-0000-0000000000f1', '{}', 'email', '[{"missingItemId":"mi_lk","label":"2025 IFTA"}]', null, null, 'bbbbbbbb-1111-4111-8111-000000000001'))->>'token' = 'bbbbbbbb-1111-4111-8111-000000000001');
+do $$ begin perform create_document_request('acct_r1', gen_random_uuid(), '{}', 'email', '[{"missingItemId":"mi_lk2","label":"x"}]', null, null, 'bbbbbbbb-1111-4111-8111-000000000001'); raise notice 'LK2 reusing a token: ALLOWED (BAD)'; exception when others then raise notice 'LK2 a token can never be reused'; end $$;
+select 'LK3 without a token the database still makes one: ' || ((create_document_request('acct_r1', 'aaaaaaaa-0000-0000-0000-0000000000f2', '{}', 'email', '[{"missingItemId":"mi_lk3","label":"x"}]', null))->>'token' is not null);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform create_document_request('acct_r1', gen_random_uuid(), '{}', 'email', '[{"missingItemId":"x","label":"x"}]', null, null, gen_random_uuid()); raise notice 'LK4 other agency creates: ALLOWED (BAD)'; exception when others then raise notice 'LK4 other agency still denied'; end $$;
+reset role;
+
