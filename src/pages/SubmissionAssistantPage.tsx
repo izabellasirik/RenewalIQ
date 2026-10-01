@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { offerTimeSavedQuestion } from '../services/productAnalytics/timeSaved';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, FileSearch, FileSpreadsheet } from 'lucide-react';
+import { Compass, ListChecks, TriangleAlert, CircleCheck, CircleHelp, Download, FileSpreadsheet } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, OverflowMenu, ConfirmDialog } from '../components/ui';
@@ -38,11 +38,10 @@ export function SubmissionAssistantPage() {
   const [pendingExport, setPendingExport] = useState<ExportKind | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [whatsMissingOpen, setWhatsMissingOpen] = useState(false);
-  // "Review Application": what the download will contain, before downloading (?view=review, so Back works).
+  // "Download Application" opens the PDF preview first (?view=review, so the browser's Back returns here).
   const [searchParams, setSearchParams] = useSearchParams();
   const reviewing = searchParams.get('view') === 'review';
   const openReview = () => setSearchParams((p) => (p.set('view', 'review'), p));
-  const closeReview = () => setSearchParams((p) => (p.delete('view'), p));
 
   const template = APPLICATION_TEMPLATES.find((t) => t.id === templateId) ?? APPLICATION_TEMPLATES[0];
   const lossRuns = account?.lossRuns;
@@ -137,7 +136,7 @@ export function SubmissionAssistantPage() {
 
   return (
     <PageContainer
-      title={`Submission Assistant — ${account.namedInsured}`}
+      title={reviewing ? undefined : `Submission Assistant — ${account.namedInsured}`}
       actions={
         reviewing ? undefined : (
         <>
@@ -149,8 +148,8 @@ export function SubmissionAssistantPage() {
               { key: 'csv', label: 'Export as CSV', icon: <FileSpreadsheet size={14} />, onSelect: () => guardExport('csv') },
             ]}
           />
-          <Button icon={<FileSearch size={15} />} onClick={openReview} className="print:hidden" data-testid="review-application">
-            Review Application
+          <Button icon={<Download size={15} />} onClick={openReview} className="print:hidden" data-testid="review-application">
+            Download Application
           </Button>
           <Button variant="secondary" icon={<Compass size={15} />} onClick={() => navigate(`/accounts/${accountId}/carrier-appetite`)} className="print:hidden">
             Carrier Appetite
@@ -171,12 +170,7 @@ export function SubmissionAssistantPage() {
             application={application}
             accountName={account.namedInsured}
             title={applicationTitleFor(account.namedInsured, application.templateName)}
-            completenessPercent={completeness.percent}
-            missingCount={missingCount}
-            needsReviewCount={completeness.needsReview.length}
-            conflictCount={completeness.conflicts.length}
             downloading={exportingPdf}
-            onBack={closeReview}
             onDownload={() => guardExport('pdf')}
           />
         </>

@@ -152,6 +152,8 @@ export async function generateApplicationPdf(
   // unwrapped single drawText call here would run a long company name past the page's right edge,
   // clipped rather than overlapping other text, but still a "long text" failure the same fix belongs to.
   const title = applicationTitleFor(accountName, application.templateName);
+  // Shown as the file's name in a browser's PDF viewer (the preview), instead of a random id.
+  doc.setTitle(title, { showInWindowTitleBar: true });
   const titleLines = wrapText(bold, title, 16, CONTENT_WIDTH);
   drawLines(titleLines, MARGIN, y, 16, bold, INK_900, 19);
   y -= titleLines.length * 19 + 4;
