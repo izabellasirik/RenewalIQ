@@ -7,6 +7,7 @@ import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess'
 import type { OcrWordLine } from '../../services/ingestion/ocr';
 import { renderOcrTextLayer } from './ocrTextLayer';
 import { fileSha256 } from '../../services/ingestion/aiReadContext';
+import type { TranscriptLine } from '../../services/ingestion/visionTranscript';
 import { placeTranscript, savedTranscript, transcribePhoto, transcriptUnavailableReason, TRANSCRIPT_UNAVAILABLE_MESSAGES } from '../../services/ingestion/visionTranscript';
 import { useAccountsStore } from '../../state/useAccountsStore';
 
@@ -156,16 +157,21 @@ function PdfPages({
           onOcr?.('ai-reading');
           const scannedNumbers = scanned.map((sp) => sp.number);
           onAi?.({ status: 'pending', scanned: scannedNumbers, pages: {} });
-          const { openOcrSession, prepareForOcr } = await import('../../services/ingestion/ocr');
           const uid = useAccountsStore.getState().currentUserId;
           const aiPages: Record<number, string> = {};
-          const session = await openOcrSession().catch(() => null);
-          try {
-            for (const sp of scanned.slice(0, MAX_AI_PAGES)) {
-              if (cancelled) break;
+          const read = new Map<number, TranscriptLine[]>();
+          const pages = scanned.slice(0, MAX_AI_PAGES);
+          const draw = async (sp: (typeof pages)[number], lines: TranscriptLine[], ocr?: { lines: OcrWordLine[]; ocrWidth: number }) => {
+            sp.pageDiv.querySelectorAll('.textLayer').forEach((n) => n.remove());
+            await renderOcrTextLayer(sp.pageDiv, placeTranscript(lines, { width: sp.width, height: sp.height }, ocr), { width: sp.width, height: sp.height }, sp.width);
+          };
+          // 1. The AI text goes on each page as soon as it's there — a reading already made shows at
+          //    once. Pages not read yet are read a few at a time.
+          let next = 0;
+          const readPages = async () => {
+            while (next < pages.length && !cancelled) {
+              const sp = pages[next++];
               const key = `${cacheKey}:p${sp.number}`;
-              const prepared = prepareForOcr(sp.canvas);
-              const layout = session ? session.wordLines(prepared).then((lines) => ({ lines, ocrWidth: prepared.width })) : Promise.resolve(null);
               let lines = savedTranscript(key);
               if (!lines) {
                 // Rendered fresh at the reader's preferred size (the on-screen canvas is smaller).
@@ -178,21 +184,37 @@ function PdfPages({
                 const pageBlob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/jpeg', 0.92));
                 lines = pageBlob ? await transcribePhoto(key, pageBlob, uid, { ...aiContext, sourceKind: 'scanned_pdf_page', page: sp.number, sourceHash: await fileSha256(blob) }) : null;
               }
-              const ocr = await within(layout, 8000);
               if (cancelled || !lines) continue;
-              const placed = placeTranscript(lines, { width: sp.width, height: sp.height }, ocr ?? undefined);
-              sp.pageDiv.querySelectorAll('.textLayer').forEach((n) => n.remove());
-              await renderOcrTextLayer(sp.pageDiv, placed, { width: sp.width, height: sp.height }, sp.width);
+              read.set(sp.number, lines);
+              await draw(sp, lines);
               aiPages[sp.number] = lines.map((l) => l.text).join('\n');
               onAi?.({ status: 'pending', scanned: scannedNumbers, pages: { ...aiPages } });
             }
-          } finally {
-            await session?.close();
-          }
+          };
+          await Promise.all([readPages(), readPages(), readPages()]);
           if (cancelled) return;
           const any = Object.keys(aiPages).length > 0;
           onAi?.({ status: any ? 'done' : 'failed', scanned: scannedNumbers, pages: { ...aiPages } });
           onOcr?.(any ? 'ready-ai' : 'ai-failed');
+          // 2. Afterwards, unseen: the on-device reading finds where each printed word sits, and each
+          //    AI line is moved exactly over its words — never while the broker is selecting.
+          if (!any) return;
+          const { openOcrSession, prepareForOcr } = await import('../../services/ingestion/ocr');
+          const session = await openOcrSession().catch(() => null);
+          if (!session) return;
+          try {
+            for (const sp of pages) {
+              const lines = read.get(sp.number);
+              if (cancelled) break;
+              if (!lines) continue;
+              const prepared = prepareForOcr(sp.canvas);
+              const words = await within(session.wordLines(prepared), 20000);
+              if (cancelled) break;
+              if (words && !selectingIn(sp.pageDiv)) await draw(sp, lines, { lines: words, ocrWidth: prepared.width });
+            }
+          } finally {
+            await session.close();
+          }
         }
       } catch (err) {
         if (cancelled) return;
@@ -228,6 +250,12 @@ export interface AiReading {
 /** Waits for a promise at most `ms`, then gives up (null) — the AI reading never waits long on the layout helper. */
 function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+}
+
+/** True while the broker has text selected inside `el` — the text layer is then left alone. */
+function selectingIn(el: Element): boolean {
+  const sel = window.getSelection();
+  return !!sel && sel.rangeCount > 0 && !sel.isCollapsed && !!sel.anchorNode && el.contains(sel.anchorNode);
 }
 
 /** OCR word boxes for a photo, cached per document for this session (reading takes a few seconds). */
@@ -295,17 +323,26 @@ function SelectableImage({ url, name, blob, cacheKey, aiContext, onOcr, onAi }: 
         onOcr('ai-failed');
         return;
       }
-      const ocr = await within(layout, 6000);
       const el = wrap.current;
       if (cancelled || !el) return;
-      const pageSize = ocr?.page ?? (await imageSize(blob));
+      const pageSize = await imageSize(blob);
+      if (cancelled) return;
       page.current = pageSize;
       el.style.setProperty('--total-scale-factor', String(el.clientWidth / pageSize.width));
-      el.querySelectorAll('.textLayer').forEach((n) => n.remove());
-      const n = await renderOcrTextLayer(el, placeTranscript(lines, pageSize, ocr ? { lines: ocr.lines, ocrWidth: ocr.ocrWidth } : undefined), pageSize, pageSize.width);
+      const draw = (ocr?: { lines: OcrWordLine[]; ocrWidth: number }) => {
+        el.querySelectorAll('.textLayer').forEach((n) => n.remove());
+        return renderOcrTextLayer(el, placeTranscript(lines, pageSize, ocr), pageSize, pageSize.width);
+      };
+      // The AI text is selectable at once — a reading already made shows the moment the preview opens.
+      const n = await draw();
       if (cancelled) return;
       onAi({ status: 'done', imageText: lines.map((l) => l.text).join('\n') });
       onOcr(n ? 'ready-ai' : 'none');
+      // Afterwards, unseen: each line is moved exactly over its printed words once the on-device
+      // reading has found them — never while the broker is selecting.
+      const ocr = await within(layout, 30000);
+      if (cancelled || !ocr || selectingIn(el)) return;
+      await draw({ lines: ocr.lines, ocrWidth: ocr.ocrWidth });
     })();
     return () => {
       cancelled = true;
