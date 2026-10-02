@@ -1060,7 +1060,7 @@ export const useAccountsStore = create<AccountsState>()(
           const file = files[i];
           // Already read (a client upload checked before import): reuse that read, re-keyed to this document.
           const preRead = opts?.preRead?.[i];
-          (preRead ? Promise.resolve(rekeyRead(preRead, doc.id, doc.name)) : readDocumentFile(file, doc.id, doc.name, get().currentUserId))
+          (preRead ? Promise.resolve(rekeyRead(preRead, doc.id, doc.name)) : readDocumentFile(file, doc.id, doc.name, get().currentUserId, { accountId }))
             .then(async ({ raw, results, review, rejectedCount, documentCategory, candidateNotes, visionResult, isImageSource }) => {
 
               const fieldsExtracted = countExtractedFields(results);
@@ -3056,7 +3056,7 @@ export const useAccountsStore = create<AccountsState>()(
               const readId = `req_${f.id}`;
               let read: DocumentRead | null = null;
               try {
-                read = await readDocumentFile(dl.data, readId, f.fileName, get().currentUserId);
+                read = await readDocumentFile(dl.data, readId, f.fileName, get().currentUserId, { accountId });
               } catch {
                 read = null; // unreadable — held for review below
               }

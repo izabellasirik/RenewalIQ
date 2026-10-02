@@ -7,7 +7,7 @@ import { IdentityResolutionStep, type IdentitySuggestion } from '../components/n
 import { Button, Card, CardBody } from '../components/ui';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { sampleAccount } from '../data/sampleAccounts';
-import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit, extractInsuranceFields, gateExtraction } from '../services/extraction';
+import { createEmptyRiskProfile, mergeIntoRiskProfile, applyManualEdit } from '../services/extraction';
 import { generateId } from '../utils/id';
 import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { US_STATES } from '../utils/usStates';
@@ -134,7 +134,7 @@ export function NewAccountPage() {
   async function processQueue() {
     setMode('processing');
     setPhase('Reading files…');
-    const { parseFile } = await import('../services/ingestion');
+    const { readDocumentFile } = await import('../services/ingestion/readDocument');
     if (!draft.current) draft.current = { profile: createEmptyRiskProfile('pending'), docs: [], files: [], failures: [] };
     const d = draft.current;
 
@@ -155,14 +155,15 @@ export function NewAccountPage() {
       };
       setPhase(isImageSource ? `Reading image ${file.name}…` : `Reading ${file.name}…`);
       try {
-        const raw = await parseFile(file);
-        const scanned = isImageSource || raw.ocrConfidence !== undefined;
-        // Same gate as every other upload: only validated values go into the new account.
-        const gate = gateExtraction({ results: extractInsuranceFields(raw, { documentId: docId, documentName: file.name, isImageSource: scanned }), text: raw.text, fileName: file.name, scanned });
-        const results = gate.applied;
-        // Empty extractable text alongside a warning means nothing was actually read — surface
-        // that as a failure rather than a quietly-successful "0 fields extracted".
-        if (raw.text.trim().length === 0 && raw.warnings.length > 0) {
+        // The same reader as every other upload (native text → AI → OCR fallback held for review),
+        // and the same gate: only validated values go into the new account.
+        const read = await readDocumentFile(file, docId, file.name, useAccountsStore.getState().currentUserId);
+        const { raw, classification } = read;
+        const results = read.results;
+        const gate = { review: read.review, rejected: read.rejectedCount, classification };
+        // Nothing read at all (no text, no AI reading) alongside a warning — surface that as a
+        // failure rather than a quietly-successful "0 fields extracted".
+        if (raw.text.trim().length === 0 && raw.warnings.length > 0 && results.length === 0 && read.review.length === 0) {
           d.failures.push({ name: file.name, message: raw.warnings.join(' ') });
           d.docs.push({ ...base, status: 'error', warnings: raw.warnings, previewDataUrl: raw.imagePreviewDataUrl });
           d.files.push(file);
@@ -173,7 +174,7 @@ export function NewAccountPage() {
         // A link was downloaded: keep the real document for preview/upload, not the shortcut.
         d.files.push(raw.linkedFile ?? file);
         const contentCategory =
-          gate.classification.certainty !== 'low' ? gate.classification.category : isImageSource && raw.text ? inferCategoryFromText(raw.text) : base.category === 'other' ? inferCategoryFromResults(results) : null;
+          read.documentCategory ?? (isImageSource && raw.text ? inferCategoryFromText(raw.text) : base.category === 'other' ? inferCategoryFromResults(results) : null);
         d.docs.push({
           ...base,
           category: contentCategory ?? base.category,

@@ -294,6 +294,16 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   `create_document_request` (re-created with one optional `p_token`) uses it when the broker copies,
   opens Gmail or marks it sent. Tokens stay unique. Needs 0030. Without it the app still works (the
   database makes the token and the link in the email is swapped when the request is created).
+- **`supabase/migrations/0046_ai_usage.sql`** — AI reads are kept and priced. `ai_read_cache` stores
+  every successful AI read of a photo or scanned page (per brokerage, file and page) so the same page
+  is never paid for twice — reopening a preview, refreshing, another device or a re-upload reuse it —
+  and doubles as the lock that stops two requests for one page both calling the AI.
+  `ai_usage_events` logs each request: brokerage, user, account, document, page, operation, model,
+  Anthropic's token counts, cost in USD, success, and whether it came from the cache. Both tables are
+  readable only by the `extract-document-vision` Edge Function (service role); `founder_ai_usage()`
+  feeds Founder Analytics → AI Usage & Cost and refuses anyone but the founder. Prices live in
+  `supabase/functions/extract-document-vision/pricing.ts`. Without 0046 AI reads still work, uncached
+  and unlogged (the function logs the database error and carries on).
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -383,6 +393,7 @@ from (values
   ('0043_founder_analytics',          to_regprocedure('public.founder_analytics_snapshot(timestamptz,timestamptz)') is not null),
   ('0044_intake_vins_contacts',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'intake_submissions' and column_name = 'vin_numbers')),
   ('0045_request_link_up_front',      to_regprocedure('public.create_document_request(text,uuid,jsonb,text,jsonb,date,timestamptz,uuid)') is not null),
+  ('0046_ai_usage',                   to_regprocedure('public.founder_ai_usage(text)') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

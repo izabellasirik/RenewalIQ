@@ -39,4 +39,6 @@ export interface RawDocument {
   linkedFile?: File;
   /** Image documents only — Tesseract's overall mean-confidence score (0-100) for the recognized text, so downstream code can scale field confidence to actual image/OCR quality rather than treating OCR text like verbatim embedded PDF text. */
   ocrConfidence?: number;
+  /** PDF only — pages with no embedded text (scans), up to the OCR limit; these are the pages the AI reads. */
+  scannedPages?: number[];
 }

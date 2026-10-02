@@ -6,6 +6,7 @@ import { isValidVin } from '../extraction/fieldExtraction/tableMappers';
 import { normalizeClassToken, normalizeDate, normalizeIdToken, normalizePlainName } from '../extraction/fieldExtraction/idDocumentPatterns';
 import { parseStateName } from '../../utils/usStates';
 import { parseMoney, parseCount } from '../extraction/fieldExtraction/money';
+import { fileSha256, type AiReadContext } from './aiReadContext';
 
 /**
  * Sends the image itself to a vision-capable model (via a Supabase Edge Function that holds the
@@ -65,16 +66,48 @@ export interface VisionLossEntry {
   reserved: number;
   incurred: number;
   status: LossStatus;
+  claimNumber?: string;
+  description?: string;
+  /** The policy this claim is listed under, when the report covers more than one. */
+  policyNumber?: string;
   confidence: Confidence;
+  /** Scanned PDFs: the page it was read on. */
+  page?: number;
 }
+
+/** What a loss run states about one policy it covers — becomes a LossRun record. */
+export interface VisionLossRun {
+  carrier?: string;
+  policyNumber?: string;
+  reportDate?: string;
+  coverageStart?: string;
+  coverageEnd?: string;
+  claimCount?: number;
+  totalPaid?: number;
+  totalReserve?: number;
+  totalIncurred?: number;
+  /** The report explicitly says there were no losses for this policy. */
+  noLosses?: boolean;
+  page?: number;
+}
+
+export type VisionDriver = Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'conflicts'> & { page?: number };
+export type VisionVehicle = Omit<VehicleEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'conflicts'> & { page?: number };
 
 export interface VisionExtractionResult {
   documentType: DocumentCategory;
   documentTypeConfidence: Confidence;
   scalarFields: VisionScalarField[];
-  driver?: Omit<DriverEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'conflicts'>;
-  vehicle?: Omit<VehicleEntry, 'id' | 'source' | 'isManual' | 'lastUpdatedAt' | 'conflicts'>;
+  /** The one driver a license/MVR is about. */
+  driver?: VisionDriver;
+  /** Every driver on a schedule or list. */
+  drivers?: VisionDriver[];
+  /** The one vehicle a registration/title is about. */
+  vehicle?: VisionVehicle;
+  /** Every vehicle on a schedule or list. */
+  vehicles?: VisionVehicle[];
   lossEntries?: VisionLossEntry[];
+  lossRuns?: VisionLossRun[];
   /** Anything readable that doesn't map to a known field — never silently discarded, surfaced to the broker as a note rather than forced into the wrong place. */
   candidateNotes?: string;
 }
@@ -238,6 +271,12 @@ function validateDriver(raw: unknown): VisionExtractionResult['driver'] | undefi
   if (issueDate) { entry.issueDate = issueDate; fieldConfidence.issueDate = asConfidence(confMap.issueDate); }
   const expirationDate = typeof r.expirationDate === 'string' ? normalizeDate(r.expirationDate) : null;
   if (expirationDate) { entry.expirationDate = expirationDate; fieldConfidence.expirationDate = asConfidence(confMap.expirationDate); }
+  const cdlOriginalIssueDate = typeof r.cdlOriginalIssueDate === 'string' ? normalizeDate(r.cdlOriginalIssueDate) : null;
+  if (cdlOriginalIssueDate) { entry.cdlOriginalIssueDate = cdlOriginalIssueDate; fieldConfidence.cdlOriginalIssueDate = asConfidence(confMap.cdlOriginalIssueDate); }
+  const hireDate = typeof r.hireDate === 'string' ? normalizeDate(r.hireDate) : null;
+  if (hireDate) { entry.hireDate = hireDate; fieldConfidence.hireDate = asConfidence(confMap.hireDate); }
+  const violations = asTrimmedString(r.violations);
+  if (violations) { entry.violations = violations; fieldConfidence.violations = asConfidence(confMap.violations); }
   const restrictions = asTrimmedString(r.restrictions);
   if (restrictions && restrictions.length <= 40) { entry.restrictions = restrictions.toUpperCase(); fieldConfidence.restrictions = asConfidence(confMap.restrictions); }
   const endorsements = asTrimmedString(r.endorsements);
@@ -283,6 +322,9 @@ function validateLossEntries(raw: unknown): VisionLossEntry[] | undefined {
     const paid = asMoney(r.paid);
     const incurred = asMoney(r.incurred);
     if (!lossDate || paid === null || incurred === null) continue;
+    const claimNumber = asTrimmedString(r.claimNumber);
+    const description = asTrimmedString(r.description);
+    const policyNumber = asTrimmedString(r.policyNumber);
     results.push({
       lossDate,
       claimType: asTrimmedString(r.claimType) ?? 'Unspecified',
@@ -290,21 +332,60 @@ function validateLossEntries(raw: unknown): VisionLossEntry[] | undefined {
       reserved: asMoney(r.reserved) ?? 0,
       incurred,
       status: r.status === 'open' ? 'open' : 'closed',
+      ...(claimNumber && claimNumber.length <= 40 ? { claimNumber } : {}),
+      ...(description ? { description } : {}),
+      ...(policyNumber && policyNumber.length <= 40 ? { policyNumber } : {}),
       confidence: asConfidence(r.confidence),
     });
   }
   return results.length > 0 ? results : undefined;
 }
 
+function validateLossRuns(raw: unknown): VisionLossRun[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const results: VisionLossRun[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Record<string, unknown>;
+    const run: VisionLossRun = {};
+    const carrier = asTrimmedString(r.carrier);
+    if (carrier) run.carrier = carrier;
+    const policyNumber = asTrimmedString(r.policyNumber);
+    if (policyNumber && policyNumber.length <= 40) run.policyNumber = policyNumber;
+    for (const k of ['reportDate', 'coverageStart', 'coverageEnd'] as const) {
+      const d = typeof r[k] === 'string' ? normalizeDate(r[k] as string) : null;
+      if (d) run[k] = d;
+    }
+    const claimCount = asNonNegativeCount(r.claimCount);
+    if (claimCount !== null) run.claimCount = claimCount;
+    for (const k of ['totalPaid', 'totalReserve', 'totalIncurred'] as const) {
+      const n = asMoney(r[k]);
+      if (n !== null) run[k] = n;
+    }
+    if (r.noLosses === true) run.noLosses = true;
+    if (Object.keys(run).length > 0) results.push(run);
+  }
+  return results.length > 0 ? results : undefined;
+}
+
+function validateList<T>(raw: unknown, validate: (item: unknown) => T | undefined): T[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const items = raw.map(validate).filter((x): x is T => x !== undefined);
+  return items.length > 0 ? items : undefined;
+}
+
 /** Validates a raw Edge Function response into a trustworthy VisionExtractionResult, or null if the shape is unusable — every leaf value goes through the same format rules an OCR-matched value would. */
-function validateVisionResponse(raw: unknown): VisionExtractionResult | null {
+export function validateVisionResponse(raw: unknown): VisionExtractionResult | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const documentType = typeof r.documentType === 'string' && (DOCUMENT_TYPES as string[]).includes(r.documentType) ? (r.documentType as DocumentCategory) : 'other';
   const scalarFields = validateScalarFields(r.scalarFields);
   const driver = validateDriver(r.driver);
   const vehicle = validateVehicle(r.vehicle);
+  const drivers = validateList(r.drivers, validateDriver);
+  const vehicles = validateList(r.vehicles, validateVehicle);
   const lossEntries = validateLossEntries(r.lossEntries);
+  const lossRuns = validateLossRuns(r.lossRuns);
   const candidateNotes = typeof r.candidateNotes === 'string' && r.candidateNotes.trim().length > 0 ? r.candidateNotes.trim().slice(0, 500) : undefined;
 
   return {
@@ -312,8 +393,11 @@ function validateVisionResponse(raw: unknown): VisionExtractionResult | null {
     documentTypeConfidence: asConfidence(r.documentTypeConfidence),
     scalarFields,
     driver,
+    ...(drivers ? { drivers } : {}),
     vehicle,
+    ...(vehicles ? { vehicles } : {}),
     lossEntries,
+    ...(lossRuns ? { lossRuns } : {}),
     candidateNotes,
   };
 }
@@ -346,20 +430,46 @@ async function resizeToBase64(file: File): Promise<{ base64: string; mimeType: s
  * signed in, function not deployed, provider error, malformed response) resolves to null so the
  * caller always has on-device OCR to fall back to.
  */
-export async function extractViaVision(file: File, currentUserId: string | null): Promise<VisionExtractionResult | null> {
+export async function extractViaVision(file: File, currentUserId: string | null, context: Omit<AiReadContext, 'sourceKind'> = {}): Promise<VisionExtractionResult | null> {
   if (!isVisionExtractionAvailable(currentUserId) || !supabase) return null;
-
   try {
     const encoded = await resizeToBase64(file);
     if (!encoded) return null;
-
-    const { data, error } = await supabase.functions.invoke('extract-document-vision', {
-      body: { imageBase64: encoded.base64, mimeType: encoded.mimeType, fileName: file.name },
-    });
-    if (error || !data) return null;
-
-    return validateVisionResponse(data);
+    const sourceHash = context.sourceHash ?? (await fileSha256(file));
+    return await extractImageViaVision(encoded.base64, encoded.mimeType, file.name, currentUserId, { ...context, sourceKind: 'photo', ...(sourceHash ? { sourceHash } : {}) });
   } catch {
     return null;
   }
+}
+
+/** Reads in flight, by file and page: the same page asked for twice at once is one request. */
+const inFlight = new Map<string, Promise<VisionExtractionResult | null>>();
+
+/**
+ * The same read for an image already encoded (a scanned PDF page — see renderPdfPagesForVision).
+ * The server keeps every successful read and returns it again instead of making a new paid call.
+ * Never throws; null on any failure.
+ */
+export function extractImageViaVision(imageBase64: string, mimeType: string, fileName: string, currentUserId: string | null, context?: AiReadContext): Promise<VisionExtractionResult | null> {
+  if (!isVisionExtractionAvailable(currentUserId) || !supabase) return Promise.resolve(null);
+  const client = supabase;
+  const key = context?.sourceHash ? `${context.sourceHash}:${context.page ?? 0}` : null;
+  const pending = key ? inFlight.get(key) : undefined;
+  if (pending) return pending;
+  const job = (async () => {
+    try {
+      const { data, error } = await client.functions.invoke('extract-document-vision', {
+        body: { imageBase64, mimeType, fileName, ...(context ? { context } : {}) },
+      });
+      if (error || !data) return null;
+      return validateVisionResponse(data);
+    } catch {
+      return null;
+    }
+  })();
+  if (key) {
+    inFlight.set(key, job);
+    void job.finally(() => inFlight.delete(key));
+  }
+  return job;
 }

@@ -6,6 +6,7 @@ import type { RawDocument } from '../../services/ingestion/types';
 import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
 import type { OcrWordLine } from '../../services/ingestion/ocr';
 import { renderOcrTextLayer } from './ocrTextLayer';
+import { fileSha256 } from '../../services/ingestion/aiReadContext';
 import { placeTranscript, savedTranscript, transcribePhoto, transcriptUnavailableReason, TRANSCRIPT_UNAVAILABLE_MESSAGES } from '../../services/ingestion/visionTranscript';
 import { useAccountsStore } from '../../state/useAccountsStore';
 
@@ -21,7 +22,7 @@ type Content =
 const MAX_TABLE_ROWS = 500;
 
 /** What the viewer needs — an uploaded document, or a quote attachment shaped like one. `loadBlob` fetches files that live elsewhere (e.g. a client's intake upload). */
-export type PreviewableFile = Pick<UploadedDocument, 'id' | 'name' | 'fileType' | 'storagePath' | 'previewDataUrl'> & { loadBlob?: () => Promise<Blob | null> };
+export type PreviewableFile = Pick<UploadedDocument, 'id' | 'name' | 'fileType' | 'storagePath' | 'previewDataUrl'> & { accountId?: string; loadBlob?: () => Promise<Blob | null> };
 
 async function render(doc: PreviewableFile, blob: Blob): Promise<Content> {
   const file = new File([blob], doc.name, { type: blob.type });
@@ -74,12 +75,15 @@ const AI_PAGE_LONG_EDGE = 1568;
 function PdfPages({
   blob,
   cacheKey,
+  aiContext,
   onTextInfo,
   onOcr,
   onAi,
 }: {
   blob: Blob;
   cacheKey: string;
+  /** Who the AI reading is for (document/account) — the server reuses a page it already read. */
+  aiContext?: { documentId?: string; accountId?: string };
   onTextInfo?: (info: PdfTextInfo) => void;
   onOcr?: (state: OcrState) => void;
   /** The AI reading of the scanned pages, as it progresses. */
@@ -172,7 +176,7 @@ function PdfPages({
                 c.height = Math.round(vp.height);
                 await sp.page.render({ canvas: c, viewport: vp }).promise;
                 const pageBlob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/jpeg', 0.92));
-                lines = pageBlob ? await transcribePhoto(key, pageBlob, uid) : null;
+                lines = pageBlob ? await transcribePhoto(key, pageBlob, uid, { ...aiContext, sourceKind: 'scanned_pdf_page', page: sp.number, sourceHash: await fileSha256(blob) }) : null;
               }
               const ocr = await within(layout, 8000);
               if (cancelled || !lines) continue;
@@ -260,7 +264,7 @@ async function imageSize(blob: Blob) {
 }
 
 /** A photo with its text laid invisibly over it (AI reading when available, else on-device OCR), so the text can be selected right on the image. */
-function SelectableImage({ url, name, blob, cacheKey, onOcr, onAi }: { url: string; name: string; blob: Blob | null; cacheKey: string; onOcr: (s: OcrState) => void; onAi: (r: AiReading) => void }) {
+function SelectableImage({ url, name, blob, cacheKey, aiContext, onOcr, onAi }: { url: string; name: string; blob: Blob | null; cacheKey: string; aiContext?: { documentId?: string; accountId?: string }; onOcr: (s: OcrState) => void; onAi: (r: AiReading) => void }) {
   const wrap = useRef<HTMLDivElement>(null);
   const page = useRef<{ width: number; height: number } | null>(null);
 
@@ -281,7 +285,7 @@ function SelectableImage({ url, name, blob, cacheKey, onOcr, onAi }: { url: stri
     onAi({ status: 'pending' });
     // Only the AI reading is shown. The on-device reading runs alongside, unseen, purely so each AI
     // line can be laid exactly over its printed words (see placeTranscript).
-    const ai = transcribePhoto(cacheKey, blob, useAccountsStore.getState().currentUserId);
+    const ai = fileSha256(blob).then((sourceHash) => transcribePhoto(cacheKey, blob, useAccountsStore.getState().currentUserId, { ...aiContext, sourceKind: 'photo', ...(sourceHash ? { sourceHash } : {}) }));
     const layout = readImageWords(cacheKey, blob);
     (async () => {
       const lines = await ai;
@@ -572,10 +576,10 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                     {ocr === 'error' && 'Couldn’t make the text on this document selectable.'}
                   </p>
                 )}
-                {content.kind === 'image' && <SelectableImage key={attempt} url={content.url} name={doc.name} blob={blob} cacheKey={`${doc.id}:${blob?.size ?? 0}`} onOcr={setOcr} onAi={setAi} />}
+                {content.kind === 'image' && <SelectableImage key={attempt} url={content.url} name={doc.name} blob={blob} cacheKey={`${doc.id}:${blob?.size ?? 0}`} aiContext={{ documentId: doc.id, accountId: doc.accountId }} onOcr={setOcr} onAi={setAi} />}
                 {content.kind === 'pdf' && (
                   <div className="p-3 sm:p-4">
-                    <PdfPages key={attempt} blob={content.blob} cacheKey={`${doc.id}:${content.blob.size}`} onTextInfo={setPdfText} onOcr={setOcr} onAi={setAi} />
+                    <PdfPages key={attempt} blob={content.blob} cacheKey={`${doc.id}:${content.blob.size}`} aiContext={{ documentId: doc.id, accountId: doc.accountId }} onTextInfo={setPdfText} onOcr={setOcr} onAi={setAi} />
                   </div>
                 )}
                 {content.kind === 'html' && (

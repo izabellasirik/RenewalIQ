@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Loader2, Lock, RotateCcw } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, CardHeader, EmptyState, Modal } from '../components/ui';
+import { AiUsageSection } from '../components/founder/AiUsageSection';
 import { checkIsFounder, fetchFounderSnapshot, setAccountAnalyticsMode } from '../services/productAnalytics/founderRepo';
 import { FEATURES, FUNNEL_STAGES, FounderView, type FeatureKey, type FounderFilters, type FounderSnapshot } from '../services/productAnalytics/founderMetrics';
 import { WORKFLOW_LABELS, TIME_SAVED_OPTIONS } from '../services/productAnalytics/timeSaved';
@@ -149,6 +150,7 @@ function FounderDashboard() {
       {snapshot?.truncated && <p className="text-xs text-[var(--color-warning-600)]">More than 50,000 events in this range — showing the first 50,000. Narrow the date range.</p>}
       {!view && !error && <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]"><Loader2 size={15} className="animate-spin" /> Loading…</p>}
       {view && <Dashboard view={view} onBroker={setBrokerOpen} onAccount={setAccountOpen} />}
+      {view && <AiUsageSection />}
 
       {view && brokerOpen && <BrokerDetail view={view} userId={brokerOpen} onClose={() => setBrokerOpen(null)} onAccount={(a) => (setBrokerOpen(null), setAccountOpen(a))} />}
       {view && accountOpen && (

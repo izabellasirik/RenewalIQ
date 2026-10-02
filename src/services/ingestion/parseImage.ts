@@ -35,7 +35,12 @@ const MIN_READABLE_CHARS = 6;
 
 const UNREADABLE_MESSAGE = "We couldn't reliably read this image. Try uploading a clearer photo or review the fields manually.";
 
-export async function parseImage(file: File): Promise<RawDocument> {
+export interface ParseImageOptions {
+  /** Run OCR now (default true). False: only decode and make the preview — the AI reads the photo first and OCR runs only if it can't (readDocument.ts). */
+  ocr?: boolean;
+}
+
+export async function parseImage(file: File, options: ParseImageOptions = {}): Promise<RawDocument> {
   const warnings: string[] = [];
 
   let bitmap: ImageBitmap;
@@ -50,6 +55,7 @@ export async function parseImage(file: File): Promise<RawDocument> {
   let ocrCanvas: HTMLCanvasElement;
   try {
     imagePreviewDataUrl = drawToCanvas(bitmap, PREVIEW_MAX_DIMENSION).toDataURL('image/jpeg', PREVIEW_QUALITY);
+    if (options.ocr === false) return { documentName: file.name, fileType: 'image', text: '', warnings, imagePreviewDataUrl };
     // Grayscale, contrast-stretched and sized for OCR (small license photos are enlarged) — see ocr.ts.
     ocrCanvas = prepareForOcr(bitmap);
   } finally {

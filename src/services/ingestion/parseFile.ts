@@ -24,18 +24,23 @@ const UNSUPPORTED_IMAGE_EXTENSIONS = ['heic', 'heif'];
  * instead — or throws DocumentLinkError ("Document could not be accessed — upload the file
  * directly."), so a link is never read as if it were the document.
  */
-export async function parseFile(file: File): Promise<RawDocument> {
+export interface ParseFileOptions {
+  /** Run on-device OCR on photos and scanned PDF pages now (default true). False when the AI reads them first — see readDocument.ts. */
+  ocr?: boolean;
+}
+
+export async function parseFile(file: File, options: ParseFileOptions = {}): Promise<RawDocument> {
   const link = await detectDocumentLink(file);
   if (link) {
     const fetched = await fetchLinkedDocument(link, file.name);
     if (await detectDocumentLink(fetched)) throw new DocumentLinkError(link, 'The link pointed to another link.');
-    const raw = await parseByType(fetched);
+    const raw = await parseByType(fetched, options);
     return { ...raw, sourceUrl: link, linkedFile: fetched };
   }
-  return parseByType(file);
+  return parseByType(file, options);
 }
 
-async function parseByType(file: File): Promise<RawDocument> {
+async function parseByType(file: File, options: ParseFileOptions): Promise<RawDocument> {
   const ext = file.name.split('.').pop()?.toLowerCase();
   if (ext && UNSUPPORTED_IMAGE_EXTENSIONS.includes(ext)) {
     throw new Error(`.${ext.toUpperCase()} photos aren't supported yet — please export or re-save this as a JPG, PNG, or WEBP and upload again.`);
@@ -44,7 +49,7 @@ async function parseByType(file: File): Promise<RawDocument> {
   const fileType = inferFileType(file.name);
   switch (fileType) {
     case 'pdf':
-      return parsePdf(file);
+      return parsePdf(file, { ocrScannedPages: options.ocr !== false });
     case 'docx':
       return parseDocx(file);
     case 'xlsx':
@@ -52,7 +57,7 @@ async function parseByType(file: File): Promise<RawDocument> {
     case 'csv':
       return parseCsv(file);
     case 'image':
-      return parseImage(file);
+      return parseImage(file, { ocr: options.ocr !== false });
     case 'txt':
     case 'other':
       return parseText(file);

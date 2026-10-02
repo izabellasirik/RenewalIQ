@@ -26,7 +26,7 @@ const LOSS_RUN = /\bloss\s+runs?\b|\bclaims?\s+history\b|\bloss\s+history\b|\blo
 
 /** How many of these results are table rows (a schedule's shape). */
 function tableRows(results: ExtractedFieldResult[], fieldPath: 'drivers' | 'vehicles'): number {
-  return results.filter((r) => r.fieldPath === fieldPath && r.extractionMethod === 'deterministic_import').length;
+  return results.filter((r) => r.fieldPath === fieldPath && (r.extractionMethod === 'deterministic_import' || r.rowOrigin === 'table')).length;
 }
 
 export function classifyDocument(input: { text: string; fileName: string; visionCategory?: DocumentCategory | null; results: ExtractedFieldResult[] }): DocumentClassification {

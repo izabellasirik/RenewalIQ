@@ -31,3 +31,35 @@ export async function setAccountAnalyticsMode(accountId: string, mode: 'auto' | 
   const { error } = await supabase.rpc('set_account_analytics_mode', { p_account_id: accountId, p_mode: mode });
   return error ? { ok: false, message: error.message } : { ok: true };
 }
+
+/** AI Usage & Cost (0046) — founder only; the database refuses everyone else. */
+export interface FounderAiUsage {
+  timezone: string;
+  costToday: number;
+  costWeek: number;
+  costMonth: number;
+  documentsMonth: number;
+  scannedPagesMonth: number;
+  paidCallsMonth: number;
+  failedCallsMonth: number;
+  cachedReadsMonth: number;
+  tokensMonth: number;
+  avgCostPerDocumentMonth: number | null;
+  topDocumentMonth: { documentId: string; fileName: string | null; accountId: string | null; cost: number; calls: number } | null;
+  byModel: { model: string; calls: number; inputTokens: number; outputTokens: number; cost: number }[];
+  byOperation: { operation: string; calls: number; cached: number; cost: number }[];
+  bySource: { source: string; calls: number; cost: number }[];
+  byBrokerage: { orgId: string | null; name: string; calls: number; documents: number; cost: number }[];
+  daily: { day: string; cost: number; calls: number }[];
+}
+
+export async function fetchFounderAiUsage(timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone): Promise<{ ok: true; data: FounderAiUsage } | { ok: false; message: string }> {
+  if (!supabase) return { ok: false, message: 'Cloud is not configured.' };
+  try {
+    const { data, error } = await supabase.rpc('founder_ai_usage', { p_tz: timeZone });
+    if (error) return { ok: false, message: error.message };
+    return { ok: true, data: data as FounderAiUsage };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'Could not load AI usage.' };
+  }
+}

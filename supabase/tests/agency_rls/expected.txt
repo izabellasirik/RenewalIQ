@@ -352,3 +352,19 @@ LK1 request created with the link the email already showed: true
 LK2 a token can never be reused
 LK3 without a token the database still makes one: true
 LK4 other agency still denied
+AI1 first request claims the page: claimed
+AI1 same page while in flight: busy
+AI2 reopened / refreshed: hit result=loss_run
+AI3 failed call frees the page: claimed
+AI3 next request tries again: claimed
+AI4 abandoned claim taken over: claimed
+AI5 total tokens stored: 0,3000,2500
+AI6 broker sees AI usage rows: 0
+AI6 broker sees cached AI reads: 0
+AI6 broker writes usage: no access
+AI6 broker claims cache: no access
+AI7 broker denied AI cost: Founder Analytics is not available for this account.
+AI7 agency admin denied AI cost too
+AI7 anonymous denied AI cost
+AI8 founder: today=0.043500 month=0.043500 docs=2 pages=2 paid=4 failed=1 cached=1 top=loss run.pdf models=claude-sonnet-5 trendDays=30 brokerages=Agency,No brokerage ops=structured_extraction:3/1,transcription:1/0
+AI8 bad time zone falls back: UTC

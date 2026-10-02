@@ -1,6 +1,7 @@
 import { decodeOriented, drawToCanvas } from './imageUtils';
 import { supabase, isSupabaseConfigured } from '../supabase/client';
 import type { OcrWordLine } from './ocr';
+import type { AiReadContext } from './aiReadContext';
 
 /**
  * "Select text on the photo", read by the AI vision reader (the same Edge Function that already
@@ -124,7 +125,7 @@ export const TRANSCRIPT_UNAVAILABLE_MESSAGES: Record<TranscriptUnavailable, stri
 };
 
 /** The AI transcription of a photo, or null when it isn't available (see transcriptUnavailableReason). Never throws. */
-export function transcribePhoto(key: string, blob: Blob, currentUserId: string | null): Promise<TranscriptLine[] | null> {
+export function transcribePhoto(key: string, blob: Blob, currentUserId: string | null, context?: AiReadContext): Promise<TranscriptLine[] | null> {
   const cached = memory.get(key);
   if (cached) return cached;
   const saved = stored()[key]?.lines;
@@ -151,7 +152,7 @@ export function transcribePhoto(key: string, blob: Blob, currentUserId: string |
         bitmap.close();
       }
       if (!base64) return fail('failed');
-      const { data, error } = await supabase.functions.invoke('extract-document-vision', { body: { imageBase64: base64, mimeType: 'image/jpeg', mode: 'transcribe' } });
+      const { data, error } = await supabase.functions.invoke('extract-document-vision', { body: { imageBase64: base64, mimeType: 'image/jpeg', mode: 'transcribe', ...(context ? { context } : {}) } });
       if (error) {
         const status = (error as { context?: { status?: number } }).context?.status;
         let body: unknown = '';

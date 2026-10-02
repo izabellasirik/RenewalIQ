@@ -34,6 +34,8 @@ export interface GateInput {
   scanned: boolean;
   /** The vision model's own read of what the document is, for photos. */
   visionCategory?: DocumentCategory | null;
+  /** The results are the AI's reading of the image itself; `text` is only OCR of it, never used to second-guess them. */
+  aiRead?: boolean;
 }
 
 /** Counts a schedule's rows produce — recomputed from the rows that were actually applied. */
@@ -75,7 +77,7 @@ export function gateExtraction(input: GateInput, now = new Date()): GateResult {
   // A driving record or a license is about its license holder. Anyone else it names — an examiner,
   // an employer's contact, someone in a table of associated persons — is never its driver.
   const oneDriverDocument = category === 'mvr' || category === 'driver_license';
-  const subject = oneDriverDocument ? documentSubjectIdentity(input.text) : null;
+  const subject = oneDriverDocument && !input.aiRead ? documentSubjectIdentity(input.text) : null;
   const licenseKey = (v: unknown) => (typeof v === 'string' ? v.toUpperCase().replace(/[^A-Z0-9]/g, '') : '');
   const docNoun = category === 'mvr' ? 'driving record' : 'driver’s license';
   const notTheSubject = (r: ExtractedFieldResult): string | null => {
@@ -90,16 +92,18 @@ export function gateExtraction(input: GateInput, now = new Date()): GateResult {
   for (const r of input.results) {
     if (ROW_DERIVED.has(r.fieldPath) && r.extractionMethod === 'deterministic_import') continue; // recomputed below
     if (r.fieldPath === 'drivers' || r.fieldPath === 'vehicles') {
-      const ctx: EntityContext = { origin: r.extractionMethod === 'deterministic_import' ? 'table' : 'card', scanned: input.scanned, uncertainDocument };
+      const ctx: EntityContext = { origin: r.extractionMethod === 'deterministic_import' || r.rowOrigin === 'table' ? 'table' : 'card', scanned: input.scanned, uncertainDocument };
       const verdict = r.fieldPath === 'drivers' ? assessDriver(r.value as never, ctx, now) : assessVehicle(r.value as never, ctx, now);
       if (verdict.verdict === 'reject') rejected++;
       else if (verdict.verdict === 'review') hold(r, verdict.reason);
+      else if (r.holdReason) hold(r, r.holdReason);
       else if (r.fieldPath === 'drivers' && notTheSubject(r)) hold(r, notTheSubject(r)!);
       else (r.fieldPath === 'drivers' ? drivers : vehicles).push(r);
       continue;
     }
     if (r.fieldPath === 'lossHistory' || r.fieldPath === 'lossRun' || r.fieldPath === 'coverageLine') {
-      applied.push(r); // claims need a real date and amounts to be read at all (lossPatterns / tableMappers)
+      if (r.holdReason && r.fieldPath !== 'lossRun') hold(r, r.holdReason);
+      else applied.push(r); // claims need a real date and amounts to be read at all (lossPatterns / tableMappers)
       continue;
     }
     const verdict = assessScalar(r);
@@ -107,8 +111,8 @@ export function gateExtraction(input: GateInput, now = new Date()): GateResult {
       rejected++;
       continue;
     }
-    if (verdict.verdict === 'review') {
-      hold(r, verdict.reason);
+    if (verdict.verdict === 'review' || r.holdReason) {
+      hold(r, r.holdReason ?? (verdict as { reason: string }).reason);
       continue;
     }
     // A license, MVR, title or registration names a person's or an owner's details, not the
@@ -141,8 +145,8 @@ export function gateExtraction(input: GateInput, now = new Date()): GateResult {
 
   // Schedule counts, from the rows that were applied — never from the rows the reader found.
   const src = input.results.find((r) => r.source)?.source;
-  const tableVehicles = keptVehicles.filter((r) => r.extractionMethod === 'deterministic_import');
-  const tableDrivers = keptDrivers.filter((r) => r.extractionMethod === 'deterministic_import');
+  const tableVehicles = keptVehicles.filter((r) => r.extractionMethod === 'deterministic_import' || r.rowOrigin === 'table');
+  const tableDrivers = keptDrivers.filter((r) => r.extractionMethod === 'deterministic_import' || r.rowOrigin === 'table');
   if (src && tableVehicles.length) {
     applied.push({ fieldPath: 'transportation.fleetSize', value: tableVehicles.length, confidence: 'high', extractionMethod: 'deterministic_import', source: { documentId: src.documentId, documentName: src.documentName, excerpt: `${plural(tableVehicles.length, 'vehicle')} listed` } });
     const types = Array.from(new Set(tableVehicles.map((r) => (r.value as { bodyType?: string }).bodyType).filter((t): t is string => !!t)));

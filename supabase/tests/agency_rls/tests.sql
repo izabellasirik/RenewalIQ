@@ -1016,3 +1016,52 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
 do $$ begin perform create_document_request('acct_r1', gen_random_uuid(), '{}', 'email', '[{"missingItemId":"x","label":"x"}]', null, null, gen_random_uuid()); raise notice 'LK4 other agency creates: ALLOWED (BAD)'; exception when others then raise notice 'LK4 other agency still denied'; end $$;
 reset role;
 
+
+\echo '== 0046: AI reads cached once, usage priced, AI cost founder-only'
+reset role;
+update auth.users set email_confirmed_at = now() where id = '00000000-0000-0000-0000-000000000099';
+grant select on agencies to service_role; -- (as on Supabase; this stub only grants to authenticated)
+-- The Edge Function (service role): claim → call → complete; a second request waits, then reuses.
+set role service_role;
+select 'AI1 first request claims the page: ' || (ai_read_claim('k_page1', 'scope_a', 'structured_extraction')->>'state');
+select 'AI1 same page while in flight: ' || (ai_read_claim('k_page1', 'scope_a', 'structured_extraction')->>'state');
+select ai_read_complete('k_page1', '{"documentType":"loss_run"}', 'claude-sonnet-5');
+select 'AI2 reopened / refreshed: ' || (ai_read_claim('k_page1', 'scope_a', 'structured_extraction')->>'state') || ' result=' || (ai_read_claim('k_page1', 'scope_a', 'structured_extraction')->'result'->>'documentType');
+select 'AI3 failed call frees the page: ' || (ai_read_claim('k_fail', 'scope_a', 'transcription')->>'state');
+select ai_read_release('k_fail');
+select 'AI3 next request tries again: ' || (ai_read_claim('k_fail', 'scope_a', 'transcription')->>'state');
+update ai_read_cache set claimed_at = now() - interval '10 minutes' where cache_key = 'k_fail';
+select 'AI4 abandoned claim taken over: ' || (ai_read_claim('k_fail', 'scope_a', 'transcription')->>'state');
+insert into ai_usage_events (organization_id, user_id, account_id, document_id, file_name, page_number, operation, source_kind, model, input_tokens, output_tokens, cost_usd, succeeded, from_cache)
+values ((select id from agencies where name = 'Agency'), '00000000-0000-0000-0000-00000000000a', 'acct_y_dot', 'doc_scan', 'loss run.pdf', 1, 'structured_extraction', 'scanned_pdf_page', 'claude-sonnet-5', 2000, 1000, 0.021, true, false),
+       ((select id from agencies where name = 'Agency'), '00000000-0000-0000-0000-00000000000a', 'acct_y_dot', 'doc_scan', 'loss run.pdf', 2, 'structured_extraction', 'scanned_pdf_page', 'claude-sonnet-5', 2000, 500, 0.0135, true, false),
+       ((select id from agencies where name = 'Agency'), '00000000-0000-0000-0000-00000000000a', 'acct_y_dot', 'doc_scan', 'loss run.pdf', 1, 'structured_extraction', 'scanned_pdf_page', 'claude-sonnet-5', 0, 0, 0, true, true),
+       ((select id from agencies where name = 'Agency'), '00000000-0000-0000-0000-00000000000a', 'acct_y_dot', 'doc_photo', 'license.jpg', null, 'transcription', 'photo', 'claude-sonnet-5', 1500, 300, 0.009, true, false),
+       (null, '00000000-0000-0000-0000-00000000000a', null, 'doc_photo2', 'x.jpg', null, 'structured_extraction', 'photo', 'claude-sonnet-5', 0, 0, 0, false, false);
+select 'AI5 total tokens stored: ' || string_agg(total_tokens::text, ',' order by page_number nulls last, total_tokens) from ai_usage_events where document_id = 'doc_scan';
+reset role;
+-- Brokers, admins and anonymous visitors never see AI costs or cached reads.
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ declare n integer; begin select count(*) into n from ai_usage_events; raise notice 'AI6 broker sees AI usage rows: %', n; exception when others then raise notice 'AI6 broker reads ai_usage_events: no access'; end $$;
+do $$ declare n integer; begin select count(*) into n from ai_read_cache; raise notice 'AI6 broker sees cached AI reads: %', n; exception when others then raise notice 'AI6 broker reads ai_read_cache: no access'; end $$;
+do $$ begin insert into ai_usage_events (operation, succeeded) values ('transcription', true); raise notice 'AI6 broker writes usage: ALLOWED (BAD)'; exception when others then raise notice 'AI6 broker writes usage: no access'; end $$;
+do $$ begin perform ai_read_claim('k_x', 'scope_a', 'transcription'); raise notice 'AI6 broker claims cache: ALLOWED (BAD)'; exception when others then raise notice 'AI6 broker claims cache: no access'; end $$;
+do $$ begin perform founder_ai_usage('UTC'); raise notice 'AI7 broker reads AI cost: ALLOWED (BAD)'; exception when others then raise notice 'AI7 broker denied AI cost: %', sqlerrm; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin perform founder_ai_usage('UTC'); raise notice 'AI7 agency admin reads AI cost: ALLOWED (BAD)'; exception when others then raise notice 'AI7 agency admin denied AI cost too'; end $$;
+reset role;
+set role anon;
+do $$ begin perform founder_ai_usage('UTC'); raise notice 'AI7 anonymous reads AI cost: ALLOWED (BAD)'; exception when others then raise notice 'AI7 anonymous denied AI cost'; end $$;
+reset role;
+-- The founder's view
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000099');
+select 'AI8 founder: today=' || (v->>'costToday') || ' month=' || (v->>'costMonth') || ' docs=' || (v->>'documentsMonth') || ' pages=' || (v->>'scannedPagesMonth')
+       || ' paid=' || (v->>'paidCallsMonth') || ' failed=' || (v->>'failedCallsMonth') || ' cached=' || (v->>'cachedReadsMonth')
+       || ' top=' || (v->'topDocumentMonth'->>'fileName') || ' models=' || (v->'byModel'->0->>'model') || ' trendDays=' || jsonb_array_length(v->'daily')
+       || ' brokerages=' || (select string_agg(b->>'name', ',' order by b->>'name') from jsonb_array_elements(v->'byBrokerage') b)
+       || ' ops=' || (select string_agg(o->>'operation' || ':' || (o->>'calls') || '/' || (o->>'cached'), ',' order by o->>'operation') from jsonb_array_elements(v->'byOperation') o)
+  from founder_ai_usage('America/New_York') v;
+select 'AI8 bad time zone falls back: ' || (founder_ai_usage('Not/AZone')->>'timezone');
+reset role;
