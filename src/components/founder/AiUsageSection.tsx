@@ -56,7 +56,8 @@ export function AiUsageSection() {
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     const res = await fetchFounderAiUsage();
-    if (!res.ok) return setError(res.message);
+    // The database doesn't have 0046 yet: say what to do rather than show PostgREST's message.
+    if (!res.ok) return setError(/founder_ai_usage|schema cache|PGRST202/i.test(res.message) ? 'AI usage tracking isn’t set up in the database yet — run supabase/migrations/0046_ai_usage.sql in the Supabase SQL Editor, then refresh.' : res.message);
     setError(null);
     setData(res.data);
   }, []);

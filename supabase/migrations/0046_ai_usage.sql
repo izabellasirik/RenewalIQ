@@ -197,3 +197,6 @@ end;
 $$;
 revoke all on function public.founder_ai_usage(text) from public, anon;
 grant execute on function public.founder_ai_usage(text) to authenticated;
+
+-- Let the API see the new functions right away.
+notify pgrst, 'reload schema';

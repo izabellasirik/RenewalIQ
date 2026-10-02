@@ -146,11 +146,12 @@ function FounderDashboard() {
         </label>
       </div>
 
+      <AiUsageSection />
+
       {error && <p className="rounded-lg border border-[var(--color-danger-300)] bg-[var(--color-danger-100)]/40 px-4 py-3 text-sm text-[var(--color-danger-700)]">{error}</p>}
       {snapshot?.truncated && <p className="text-xs text-[var(--color-warning-600)]">More than 50,000 events in this range — showing the first 50,000. Narrow the date range.</p>}
       {!view && !error && <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]"><Loader2 size={15} className="animate-spin" /> Loading…</p>}
       {view && <Dashboard view={view} onBroker={setBrokerOpen} onAccount={setAccountOpen} />}
-      {view && <AiUsageSection />}
 
       {view && brokerOpen && <BrokerDetail view={view} userId={brokerOpen} onClose={() => setBrokerOpen(null)} onAccount={(a) => (setBrokerOpen(null), setAccountOpen(a))} />}
       {view && accountOpen && (
