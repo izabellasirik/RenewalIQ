@@ -92,7 +92,29 @@ function remember(key: string, lines: TranscriptLine[]) {
   }
 }
 
-/** The AI transcription of a photo, or null when it isn't available (not signed in, function not deployed, provider error). Never throws. */
+/** A reading already saved for this key (this session or this device), without calling anything. */
+export function savedTranscript(key: string): TranscriptLine[] | null {
+  return stored()[key]?.lines ?? null;
+}
+
+/** Why the last AI reading wasn't used — shown in the preview so a fallback is never silent. */
+export type TranscriptUnavailable = 'not-signed-in' | 'function-outdated' | 'function-missing' | 'failed';
+let lastUnavailable: TranscriptUnavailable | null = null;
+/** Set once the Edge Function answered like the old version (no transcribe mode): not asked again this session. */
+let functionOutdated = false;
+
+export function transcriptUnavailableReason(): TranscriptUnavailable | null {
+  return lastUnavailable;
+}
+
+export const TRANSCRIPT_UNAVAILABLE_MESSAGES: Record<TranscriptUnavailable, string> = {
+  'not-signed-in': 'AI reading needs you to be signed in — showing the on-device reading, which is often wrong on photos.',
+  'function-outdated': 'AI reading isn’t switched on yet: the "extract-document-vision" Supabase function needs redeploying. Showing the on-device reading, which is often wrong on photos.',
+  'function-missing': 'AI reading isn’t available: the "extract-document-vision" Supabase function isn’t deployed or its API key isn’t set. Showing the on-device reading.',
+  failed: 'The AI reading didn’t work this time — showing the on-device reading. Reopen the preview to try again.',
+};
+
+/** The AI transcription of a photo, or null when it isn't available (see transcriptUnavailableReason). Never throws. */
 export function transcribePhoto(key: string, blob: Blob, currentUserId: string | null): Promise<TranscriptLine[] | null> {
   const cached = memory.get(key);
   if (cached) return cached;
@@ -102,8 +124,13 @@ export function transcribePhoto(key: string, blob: Blob, currentUserId: string |
     memory.set(key, p);
     return p;
   }
-  const job = (async () => {
-    if (!isSupabaseConfigured || !supabase || !currentUserId) return null;
+  const job = (async (): Promise<TranscriptLine[] | null> => {
+    const fail = (why: TranscriptUnavailable) => {
+      lastUnavailable = why;
+      return null;
+    };
+    if (!isSupabaseConfigured || !supabase || !currentUserId) return fail('not-signed-in');
+    if (functionOutdated) return fail('function-outdated');
     try {
       const bitmap = await decodeOriented(new File([blob], 'photo', { type: blob.type }));
       let base64: string | undefined;
@@ -112,14 +139,24 @@ export function transcribePhoto(key: string, blob: Blob, currentUserId: string |
       } finally {
         bitmap.close();
       }
-      if (!base64) return null;
+      if (!base64) return fail('failed');
       const { data, error } = await supabase.functions.invoke('extract-document-vision', { body: { imageBase64: base64, mimeType: 'image/jpeg', mode: 'transcribe' } });
-      if (error || !data) return null;
+      if (error) {
+        const status = (error as { context?: { status?: number } }).context?.status;
+        return fail(status === 404 || status === 503 ? 'function-missing' : 'failed');
+      }
+      if (data && typeof data === 'object' && !('lines' in data) && ('documentType' in data || 'scalarFields' in data)) {
+        // The deployed function predates transcribe mode: it ran a normal extraction instead.
+        functionOutdated = true;
+        return fail('function-outdated');
+      }
       const lines = validateTranscript(data);
-      if (lines) remember(key, lines);
+      if (!lines) return fail('failed');
+      lastUnavailable = null;
+      remember(key, lines);
       return lines;
     } catch {
-      return null;
+      return fail('failed');
     }
   })();
   memory.set(key, job);

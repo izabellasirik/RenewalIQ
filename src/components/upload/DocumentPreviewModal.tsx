@@ -6,7 +6,7 @@ import type { RawDocument } from '../../services/ingestion/types';
 import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
 import type { OcrWordLine } from '../../services/ingestion/ocr';
 import { renderOcrTextLayer } from './ocrTextLayer';
-import { placeTranscript, transcribePhoto, type TranscriptLine } from '../../services/ingestion/visionTranscript';
+import { placeTranscript, savedTranscript, transcribePhoto, transcriptUnavailableReason, TRANSCRIPT_UNAVAILABLE_MESSAGES, type TranscriptLine } from '../../services/ingestion/visionTranscript';
 import { useAccountsStore } from '../../state/useAccountsStore';
 
 type Content =
@@ -66,7 +66,25 @@ export interface PdfTextInfo {
  * triggers a download — with pdf.js's text layer on top, so the PDF's own text can be selected and
  * copied exactly where it sits on the page.
  */
-function PdfPages({ blob, onTextInfo, onOcr }: { blob: Blob; onTextInfo?: (info: PdfTextInfo) => void; onOcr?: (state: OcrState) => void }) {
+/** Scanned pages read by AI per preview, at most — beyond this they keep the on-device reading. */
+const MAX_AI_PAGES = 25;
+/** Long edge a scanned page is rendered at for the AI reader (its sweet spot for detailed text). */
+const AI_PAGE_LONG_EDGE = 1568;
+
+function PdfPages({
+  blob,
+  cacheKey,
+  onTextInfo,
+  onOcr,
+  onAiPages,
+}: {
+  blob: Blob;
+  cacheKey: string;
+  onTextInfo?: (info: PdfTextInfo) => void;
+  onOcr?: (state: OcrState) => void;
+  /** Page number → the AI reading of that scanned page, as it arrives. */
+  onAiPages?: (pages: Record<number, string>) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,7 +110,7 @@ function PdfPages({ blob, onTextInfo, onOcr }: { blob: Blob; onTextInfo?: (info:
         const width = Math.min(container.clientWidth || 800, 1000);
         let pagesWithText = 0;
         // Scanned pages (no text of their own): OCR'd after all pages are on screen, so their text is selectable too.
-        const scanned: { pageDiv: HTMLDivElement; canvas: HTMLCanvasElement; width: number; height: number }[] = [];
+        const scanned: { pageDiv: HTMLDivElement; canvas: HTMLCanvasElement; width: number; height: number; number: number; page: Awaited<ReturnType<typeof pdf.getPage>>; ocr?: { lines: OcrWordLine[]; ocrWidth: number } }[] = [];
         for (let i = 1; i <= pdf.numPages && !cancelled; i++) {
           const page = await pdf.getPage(i);
           const base = page.getViewport({ scale: 1 });
@@ -124,7 +142,7 @@ function PdfPages({ blob, onTextInfo, onOcr }: { blob: Blob; onTextInfo?: (info:
             await new pdfjs.TextLayer({ textContentSource: text, container: layer, viewport: cssViewport }).render();
           } else {
             pageDiv.style.setProperty('--total-scale-factor', String(cssScale));
-            scanned.push({ pageDiv, canvas, width: base.width, height: base.height });
+            scanned.push({ pageDiv, canvas, width: base.width, height: base.height, number: i, page });
           }
         }
         if (!cancelled) onTextInfo?.({ pages: pdf.numPages, pagesWithText });
@@ -138,12 +156,40 @@ function PdfPages({ blob, onTextInfo, onOcr }: { blob: Blob; onTextInfo?: (info:
               if (cancelled) break;
               const prepared = prepareForOcr(sp.canvas);
               const lines = await session.wordLines(prepared);
+              sp.ocr = { lines, ocrWidth: prepared.width };
               if (!cancelled) words += await renderOcrTextLayer(sp.pageDiv, lines, { width: sp.width, height: sp.height }, prepared.width);
             }
           } finally {
             await session.close();
           }
-          if (!cancelled) onOcr?.(words ? 'ready' : 'none');
+          // Then each scanned page read by AI (far better on poor scans), replacing its OCR layer.
+          if (cancelled) return;
+          onOcr?.('ai-reading');
+          const uid = useAccountsStore.getState().currentUserId;
+          const aiPages: Record<number, string> = {};
+          for (const sp of scanned.slice(0, MAX_AI_PAGES)) {
+            if (cancelled) break;
+            const key = `${cacheKey}:p${sp.number}`;
+            let lines = savedTranscript(key);
+            if (!lines) {
+              // Rendered fresh at the reader's preferred size (the on-screen canvas is smaller).
+              const base = sp.page.getViewport({ scale: 1 });
+              const vp = sp.page.getViewport({ scale: AI_PAGE_LONG_EDGE / Math.max(base.width, base.height) });
+              const c = document.createElement('canvas');
+              c.width = Math.round(vp.width);
+              c.height = Math.round(vp.height);
+              await sp.page.render({ canvas: c, viewport: vp }).promise;
+              const pageBlob = await new Promise<Blob | null>((res) => c.toBlob(res, 'image/jpeg', 0.92));
+              lines = pageBlob ? await transcribePhoto(key, pageBlob, uid) : null;
+            }
+            if (cancelled || !lines) continue;
+            const placed = placeTranscript(lines, { width: sp.width, height: sp.height }, sp.ocr);
+            sp.pageDiv.querySelectorAll('.textLayer').forEach((n) => n.remove());
+            await renderOcrTextLayer(sp.pageDiv, placed, { width: sp.width, height: sp.height }, sp.width);
+            aiPages[sp.number] = lines.map((l) => l.text).join('\n');
+            onAiPages?.({ ...aiPages });
+          }
+          if (!cancelled) onOcr?.(Object.keys(aiPages).length ? 'ready-ai' : words ? 'ready' : 'none');
         }
       } catch (err) {
         if (cancelled) return;
@@ -157,7 +203,7 @@ function PdfPages({ blob, onTextInfo, onOcr }: { blob: Blob; onTextInfo?: (info:
       void task?.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blob]);
+  }, [blob, cacheKey]);
 
   if (error) return <p className="p-6 text-center text-sm text-[var(--color-danger-600)]">{error}</p>;
   return <div ref={ref} className="min-h-40" data-testid="pdf-pages" />;
@@ -271,7 +317,7 @@ const readTextCache = new Map<string, Promise<RawDocument>>();
  * broker can select and copy it. For viewing only — it is never applied to the Risk Profile, never
  * passes through extraction, and is labelled as an OCR read that may contain mistakes.
  */
-function ExtractedTextPanel({ doc, blob }: { doc: PreviewableFile; blob: Blob }) {
+function ExtractedTextPanel({ doc, blob, aiPages }: { doc: PreviewableFile; blob: Blob; /** Scanned PDF pages read by AI (page number → text). */ aiPages?: Record<number, string> | null }) {
   const [state, setState] = useState<{ kind: 'reading' } | { kind: 'done'; raw: RawDocument } | { kind: 'error'; message: string }>({ kind: 'reading' });
 
   useEffect(() => {
@@ -310,9 +356,19 @@ function ExtractedTextPanel({ doc, blob }: { doc: PreviewableFile; blob: Blob })
   }, [doc.id, doc.fileType, blob]);
 
   const raw = state.kind === 'done' ? state.raw : null;
-  const pages = aiLines ? [] : (raw?.pages?.filter((p) => p.text.trim()) ?? []);
-  const text = aiLines ? aiLines.map((l) => l.text).join('\n') : (raw?.text.trim() ?? '');
-  const confidence = aiLines ? undefined : raw?.ocrConfidence;
+  const hasAiPages = !!aiPages && Object.keys(aiPages).length > 0;
+  // A scanned PDF: each page the AI read replaces that page's on-device text.
+  const pdfPages = hasAiPages
+    ? (() => {
+        const byNumber = new Map((raw?.pages ?? []).map((p) => [p.pageNumber, p.text] as const));
+        for (const [n, t] of Object.entries(aiPages!)) byNumber.set(Number(n), t);
+        return [...byNumber.entries()].sort((a, b) => a[0] - b[0]).map(([pageNumber, text]) => ({ pageNumber, text })).filter((p) => p.text.trim());
+      })()
+    : null;
+  const pages = aiLines ? [] : (pdfPages ?? raw?.pages?.filter((p) => p.text.trim()) ?? []);
+  const text = aiLines ? aiLines.map((l) => l.text).join('\n') : pdfPages ? pdfPages.map((p) => p.text).join('\n\n') : (raw?.text.trim() ?? '');
+  const confidence = aiLines || hasAiPages ? undefined : raw?.ocrConfidence;
+  const usingAi = !!aiLines || hasAiPages;
   const partial = confidence !== undefined && confidence < 60;
 
   return (
@@ -321,7 +377,7 @@ function ExtractedTextPanel({ doc, blob }: { doc: PreviewableFile; blob: Blob })
         <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-600)]">
           Extracted text
           <span className="rounded-full bg-[var(--color-warning-100)] px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-[var(--color-warning-600)]" data-testid="text-source">
-            {aiLines ? 'AI reading · not verified' : 'OCR · not verified'}
+            {usingAi ? 'AI reading · not verified' : 'OCR · not verified'}
           </span>
         </p>
         <p className="mt-1 text-xs text-[var(--color-ink-500)]">
@@ -334,18 +390,18 @@ function ExtractedTextPanel({ doc, blob }: { doc: PreviewableFile; blob: Blob })
         )}
       </div>
       <div className="flex-1 overflow-auto p-4 scrollbar-thin">
-        {state.kind === 'reading' && !aiLines && (
+        {state.kind === 'reading' && !usingAi && (
           <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
             <Loader2 size={14} className="animate-spin" /> Reading text… (can take a few seconds)
           </p>
         )}
-        {state.kind === 'error' && !aiLines && <p className="text-sm text-[var(--color-danger-600)]">{state.message}</p>}
-        {(state.kind === 'done' || aiLines) && !text && (
+        {state.kind === 'error' && !usingAi && <p className="text-sm text-[var(--color-danger-600)]">{state.message}</p>}
+        {(state.kind === 'done' || usingAi) && !text && (
           <p className="text-sm text-[var(--color-ink-500)]" data-testid="no-extracted-text">
             No text could be read from this document. Use the original on the left.
           </p>
         )}
-        {(state.kind === 'done' || aiLines) && text && (
+        {(state.kind === 'done' || usingAi) && text && (
           <div className="select-text whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-[var(--color-ink-800)]" data-testid="extracted-text">
             {pages.length > 1
               ? pages.map((p) => (
@@ -368,6 +424,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
   const [sheet, setSheet] = useState(0);
   const [pdfText, setPdfText] = useState<PdfTextInfo | null>(null);
   const [ocr, setOcr] = useState<OcrState | null>(null);
+  const [aiPages, setAiPages] = useState<Record<number, string> | null>(null);
 
   useEffect(() => {
     if (!doc) return;
@@ -378,6 +435,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
     setSheet(0);
     setPdfText(null);
     setOcr(null);
+    setAiPages(null);
     (async () => {
       const b = doc.loadBlob ? await doc.loadBlob() : await loadStoredFile(doc);
       if (cancelled) return;
@@ -492,7 +550,12 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                       </>
                     )}
                     {ocr === 'ready-ai' && 'Drag across the text on the document to select it, then copy (Ctrl/⌘ + C). Read by AI — check it against the original.'}
-                    {ocr === 'ready' && 'Drag across the text on the document to select it, then copy (Ctrl/⌘ + C). Read by OCR — check it against the original.'}
+                    {ocr === 'ready' && (
+                      <span>
+                        {transcriptUnavailableReason() && <span className="block font-medium text-[var(--color-warning-600)]" data-testid="ai-unavailable">{TRANSCRIPT_UNAVAILABLE_MESSAGES[transcriptUnavailableReason()!]}</span>}
+                        Drag across the text on the document to select it, then copy (Ctrl/⌘ + C). Read by on-device OCR — check it against the original.
+                      </span>
+                    )}
                     {ocr === 'none' && 'No text could be read on this document to select.'}
                     {ocr === 'error' && 'Couldn’t make the text on this document selectable.'}
                   </p>
@@ -500,7 +563,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                 {content.kind === 'image' && <SelectableImage url={content.url} name={doc.name} blob={blob} cacheKey={`${doc.id}:${blob?.size ?? 0}`} onOcr={setOcr} />}
                 {content.kind === 'pdf' && (
                   <div className="p-3 sm:p-4">
-                    <PdfPages blob={content.blob} onTextInfo={setPdfText} onOcr={setOcr} />
+                    <PdfPages blob={content.blob} cacheKey={`${doc.id}:${content.blob.size}`} onTextInfo={setPdfText} onOcr={setOcr} onAiPages={setAiPages} />
                   </div>
                 )}
                 {content.kind === 'html' && (
@@ -522,7 +585,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                     <div className={`flex min-h-0 flex-1 flex-col ${showText ? 'lg:border-r lg:border-[var(--color-ink-100)]' : ''}`}>{original}</div>
                     {showText && (
                       <div className="flex max-h-[45%] min-h-0 flex-col border-t border-[var(--color-ink-100)] lg:max-h-none lg:w-[380px] lg:border-t-0">
-                        <ExtractedTextPanel doc={doc} blob={blob!} />
+                        <ExtractedTextPanel doc={doc} blob={blob!} aiPages={aiPages} />
                       </div>
                     )}
                   </div>
