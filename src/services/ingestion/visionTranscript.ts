@@ -117,10 +117,10 @@ export function transcriptUnavailableReason(): TranscriptUnavailable | null {
 }
 
 export const TRANSCRIPT_UNAVAILABLE_MESSAGES: Record<TranscriptUnavailable, string> = {
-  'not-signed-in': 'AI reading needs you to be signed in — showing the on-device reading, which is often wrong on photos.',
-  'function-outdated': 'AI reading isn’t switched on yet: the "extract-document-vision" Supabase function needs redeploying. Showing the on-device reading, which is often wrong on photos.',
-  'function-missing': 'AI reading isn’t available: the "extract-document-vision" Supabase function isn’t deployed or its API key isn’t set. Showing the on-device reading.',
-  failed: 'The AI reading didn’t work this time — showing the on-device reading. Reopen the preview to try again.',
+  'not-signed-in': 'AI reading needs you to be signed in.',
+  'function-outdated': 'AI reading isn’t switched on yet: the "extract-document-vision" Supabase function needs redeploying.',
+  'function-missing': 'AI reading isn’t available: the "extract-document-vision" Supabase function isn’t deployed or its API key isn’t set.',
+  failed: 'The AI reading didn’t work this time.',
 };
 
 /** The AI transcription of a photo, or null when it isn't available (see transcriptUnavailableReason). Never throws. */
