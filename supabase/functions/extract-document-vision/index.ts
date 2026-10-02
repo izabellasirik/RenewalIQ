@@ -11,7 +11,7 @@
 // anonymous request never reaches here, and never reaches the metered Anthropic API. Deploy and
 // invoke this normally; do not add --no-verify-jwt.
 //
-// Deployed automatically by .github/workflows/deploy-extract-document-vision.yml whenever this
+// Deployed automatically (GitHub Action .github/workflows/deploy-extract-document-vision.yml) whenever this
 // folder changes on the production branch. Manual deployment, if ever needed:
 //   supabase functions deploy extract-document-vision
 //   supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
