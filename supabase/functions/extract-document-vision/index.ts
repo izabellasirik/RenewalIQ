@@ -173,6 +173,48 @@ Read the image and call the extracted_submission_data tool with what you can act
 8. business.fein: ONLY include this if the value is clearly labeled FEIN, EIN, "Employer Identification Number", "Federal Tax ID", or (on a W-9) the "Employer identification number" box specifically — never the adjacent "Social Security Number" box on the same form, even though both are 9 digits. It must read as exactly 9 digits (formatted either XX-XXXXXXX or as 9 plain digits); if you cannot clearly read all 9 digits or the label is ambiguous, omit the field rather than guessing. Never copy a DOT number, MC number, phone number, or any other digit string into this field just because it is 9 digits long.
 9. coverage.*.currentLimit / coverage.*.requestedLimit: a split limit (per occurrence / aggregate, e.g. "$1,000,000/$2,000,000" or "1M/2M") must be returned as a string exactly as shown, keeping the "/" between the amounts — never as one number, and never with the amounts run together.`;
 
+// --------------------------------------------------------------------------------------------
+// mode: "transcribe" — the document preview's "select text on the photo". Plain transcription of
+// every printed line with its position; nothing here is extracted into the account.
+// --------------------------------------------------------------------------------------------
+const TRANSCRIBE_TOOL = {
+  name: 'transcribed_text',
+  description: 'Every line of printed text visible in the image, in reading order, each with its bounding box.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      lines: {
+        type: 'array',
+        description: 'One entry per printed line of text, top to bottom, left to right.',
+        items: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'The line exactly as printed.' },
+            box: {
+              type: 'array',
+              description: 'Bounding box [x0, y0, x1, y1] of this line, in thousandths of the image width (x) and height (y): 0 is the left/top edge, 1000 the right/bottom edge.',
+              items: { type: 'number' },
+              minItems: 4,
+              maxItems: 4,
+            },
+          },
+          required: ['text', 'box'],
+        },
+      },
+    },
+    required: ['lines'],
+  },
+} as const;
+
+const TRANSCRIBE_PROMPT = `You transcribe the printed text in a photo or scan of a document (often a driver's license, ID card, registration, declarations page or loss run, photographed with a phone).
+
+Call the transcribed_text tool with every line of printed text you can read, in reading order (top to bottom, then left to right). Rules:
+1. Copy each line exactly as printed — same characters, digits, punctuation, capitalization and spacing. Do not correct, reformat, expand abbreviations or translate. Field labels printed on the card (e.g. "4d DLN", "3 DOB") are part of the line.
+2. Never guess. If a character or word can't be read with confidence, leave that word out of the line; if the whole line is unreadable, leave the line out.
+3. Text that sits side by side on one visual row but in clearly separate columns is separate lines.
+4. Skip signatures, handwriting that is only a scribble, and decorative background patterns.
+5. For each line give its bounding box as [x0, y0, x1, y1] in thousandths of the image width and height (0 = left/top edge, 1000 = right/bottom edge), tight around the line's text.`;
+
 function corsHeaders(): HeadersInit {
   return {
     'Access-Control-Allow-Origin': '*',
@@ -201,7 +243,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Vision extraction is not configured on this project yet.' }, 503);
   }
 
-  let body: { imageBase64?: string; mimeType?: string; fileName?: string };
+  let body: { imageBase64?: string; mimeType?: string; fileName?: string; mode?: string };
   try {
     body = await req.json();
   } catch {
@@ -209,6 +251,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const { imageBase64, mimeType, fileName } = body;
+  const transcribe = body.mode === 'transcribe';
   if (!imageBase64 || typeof imageBase64 !== 'string') return jsonResponse({ error: 'imageBase64 is required' }, 400);
   if (imageBase64.length > MAX_BASE64_LENGTH) return jsonResponse({ error: 'Image is too large' }, 400);
   if (!mimeType || !ALLOWED_MIME_TYPES.has(mimeType)) return jsonResponse({ error: 'Unsupported image type' }, 400);
@@ -227,15 +270,20 @@ Deno.serve(async (req: Request) => {
       body: JSON.stringify({
         model,
         max_tokens: MAX_TOKENS,
-        system: SYSTEM_PROMPT,
-        tools: [RESPONSE_TOOL],
-        tool_choice: { type: 'tool', name: RESPONSE_TOOL.name },
+        system: transcribe ? TRANSCRIBE_PROMPT : SYSTEM_PROMPT,
+        tools: [transcribe ? TRANSCRIBE_TOOL : RESPONSE_TOOL],
+        tool_choice: { type: 'tool', name: transcribe ? TRANSCRIBE_TOOL.name : RESPONSE_TOOL.name },
         messages: [
           {
             role: 'user',
             content: [
               { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageBase64 } },
-              { type: 'text', text: `Extract everything you can read from this image${fileName ? ` (uploaded as "${fileName}" — do not use the filename to infer document type, only what's visibly on the image)` : ''}.` },
+              {
+                type: 'text',
+                text: transcribe
+                  ? 'Transcribe every line of printed text in this image, with its bounding box.'
+                  : `Extract everything you can read from this image${fileName ? ` (uploaded as "${fileName}" — do not use the filename to infer document type, only what's visibly on the image)` : ''}.`,
+              },
             ],
           },
         ],

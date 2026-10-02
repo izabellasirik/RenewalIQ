@@ -6,6 +6,8 @@ import type { RawDocument } from '../../services/ingestion/types';
 import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
 import type { OcrWordLine } from '../../services/ingestion/ocr';
 import { renderOcrTextLayer } from './ocrTextLayer';
+import { placeTranscript, transcribePhoto, type TranscriptLine } from '../../services/ingestion/visionTranscript';
+import { useAccountsStore } from '../../state/useAccountsStore';
 
 type Content =
   | { kind: 'loading' }
@@ -161,7 +163,7 @@ function PdfPages({ blob, onTextInfo, onOcr }: { blob: Blob; onTextInfo?: (info:
   return <div ref={ref} className="min-h-40" data-testid="pdf-pages" />;
 }
 
-export type OcrState = 'reading' | 'ready' | 'none' | 'error';
+export type OcrState = 'reading' | 'ready' | 'ai-reading' | 'ready-ai' | 'none' | 'error';
 
 /** OCR word boxes for a photo, cached per document for this session (reading takes a few seconds). */
 const imageWordsCache = new Map<string, Promise<{ page: { width: number; height: number }; ocrWidth: number; lines: OcrWordLine[] }>>();
@@ -189,7 +191,14 @@ function readImageWords(key: string, blob: Blob) {
   return job;
 }
 
-/** A photo with its OCR'd text laid invisibly over it, so the text can be selected right on the image. */
+async function imageSize(blob: Blob) {
+  const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+  const size = { width: bitmap.width, height: bitmap.height };
+  bitmap.close();
+  return size;
+}
+
+/** A photo with its text laid invisibly over it (AI reading when available, else on-device OCR), so the text can be selected right on the image. */
 function SelectableImage({ url, name, blob, cacheKey, onOcr }: { url: string; name: string; blob: Blob | null; cacheKey: string; onOcr: (s: OcrState) => void }) {
   const wrap = useRef<HTMLDivElement>(null);
   const page = useRef<{ width: number; height: number } | null>(null);
@@ -208,18 +217,35 @@ function SelectableImage({ url, name, blob, cacheKey, onOcr }: { url: string; na
     if (!blob) return;
     let cancelled = false;
     onOcr('reading');
+    // Both at once: the on-device reading is quick and shows first; the AI reading (far better on
+    // licenses and ID cards) replaces it when it arrives.
+    const ai = transcribePhoto(cacheKey, blob, useAccountsStore.getState().currentUserId);
+    const draw = async (lines: Parameters<typeof renderOcrTextLayer>[1], pageSize: { width: number; height: number }, ocrWidth: number) => {
+      const el = wrap.current;
+      if (cancelled || !el) return 0;
+      page.current = pageSize;
+      el.style.setProperty('--total-scale-factor', String(el.clientWidth / pageSize.width));
+      el.querySelectorAll('.textLayer').forEach((n) => n.remove());
+      return renderOcrTextLayer(el, lines, pageSize, ocrWidth);
+    };
     (async () => {
+      let ocr: Awaited<ReturnType<typeof readImageWords>> | null = null;
       try {
-        const res = await readImageWords(cacheKey, blob);
-        const el = wrap.current;
-        if (cancelled || !el) return;
-        page.current = res.page;
-        el.style.setProperty('--total-scale-factor', String(el.clientWidth / res.page.width));
-        el.querySelectorAll('.textLayer').forEach((n) => n.remove());
-        const words = await renderOcrTextLayer(el, res.lines, res.page, res.ocrWidth);
-        if (!cancelled) onOcr(words ? 'ready' : 'none');
+        ocr = await readImageWords(cacheKey, blob);
+        const words = await draw(ocr.lines, ocr.page, ocr.ocrWidth);
+        if (!cancelled && words >= 0) onOcr('ai-reading');
       } catch {
-        if (!cancelled) onOcr('error');
+        if (!cancelled) onOcr('ai-reading');
+      }
+      const lines = await ai;
+      if (cancelled) return;
+      if (lines) {
+        const pageSize = ocr?.page ?? (await imageSize(blob));
+        const placed = placeTranscript(lines, pageSize, ocr ? { lines: ocr.lines, ocrWidth: ocr.ocrWidth } : undefined);
+        const n = await draw(placed, pageSize, pageSize.width);
+        if (!cancelled) onOcr(n ? 'ready-ai' : 'none');
+      } else if (!cancelled) {
+        onOcr(ocr?.lines.length ? 'ready' : ocr ? 'none' : 'error');
       }
     })();
     return () => {
@@ -271,10 +297,22 @@ function ExtractedTextPanel({ doc, blob }: { doc: PreviewableFile; blob: Blob })
     };
   }, [doc.id, doc.name, doc.fileType, blob]);
 
+  // Photos: the AI reading, when there is one, replaces the on-device OCR text.
+  const [aiLines, setAiLines] = useState<TranscriptLine[] | null>(null);
+  useEffect(() => {
+    setAiLines(null);
+    if (doc.fileType !== 'image') return;
+    let cancelled = false;
+    void transcribePhoto(`${doc.id}:${blob.size}`, blob, useAccountsStore.getState().currentUserId).then((l) => !cancelled && setAiLines(l));
+    return () => {
+      cancelled = true;
+    };
+  }, [doc.id, doc.fileType, blob]);
+
   const raw = state.kind === 'done' ? state.raw : null;
-  const pages = raw?.pages?.filter((p) => p.text.trim()) ?? [];
-  const text = raw?.text.trim() ?? '';
-  const confidence = raw?.ocrConfidence;
+  const pages = aiLines ? [] : (raw?.pages?.filter((p) => p.text.trim()) ?? []);
+  const text = aiLines ? aiLines.map((l) => l.text).join('\n') : (raw?.text.trim() ?? '');
+  const confidence = aiLines ? undefined : raw?.ocrConfidence;
   const partial = confidence !== undefined && confidence < 60;
 
   return (
@@ -282,7 +320,9 @@ function ExtractedTextPanel({ doc, blob }: { doc: PreviewableFile; blob: Blob })
       <div className="border-b border-[var(--color-ink-100)] px-4 py-2.5">
         <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-600)]">
           Extracted text
-          <span className="rounded-full bg-[var(--color-warning-100)] px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-[var(--color-warning-600)]">OCR · not verified</span>
+          <span className="rounded-full bg-[var(--color-warning-100)] px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-[var(--color-warning-600)]" data-testid="text-source">
+            {aiLines ? 'AI reading · not verified' : 'OCR · not verified'}
+          </span>
         </p>
         <p className="mt-1 text-xs text-[var(--color-ink-500)]">
           Read automatically from the original — it can contain mistakes. Check it against the document. Copying it doesn’t add anything to the Risk Profile.
@@ -294,18 +334,18 @@ function ExtractedTextPanel({ doc, blob }: { doc: PreviewableFile; blob: Blob })
         )}
       </div>
       <div className="flex-1 overflow-auto p-4 scrollbar-thin">
-        {state.kind === 'reading' && (
+        {state.kind === 'reading' && !aiLines && (
           <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]">
             <Loader2 size={14} className="animate-spin" /> Reading text… (can take a few seconds)
           </p>
         )}
-        {state.kind === 'error' && <p className="text-sm text-[var(--color-danger-600)]">{state.message}</p>}
-        {state.kind === 'done' && !text && (
+        {state.kind === 'error' && !aiLines && <p className="text-sm text-[var(--color-danger-600)]">{state.message}</p>}
+        {(state.kind === 'done' || aiLines) && !text && (
           <p className="text-sm text-[var(--color-ink-500)]" data-testid="no-extracted-text">
             No text could be read from this document. Use the original on the left.
           </p>
         )}
-        {state.kind === 'done' && text && (
+        {(state.kind === 'done' || aiLines) && text && (
           <div className="select-text whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-[var(--color-ink-800)]" data-testid="extracted-text">
             {pages.length > 1
               ? pages.map((p) => (
@@ -446,6 +486,12 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                         <Loader2 size={12} className="animate-spin" /> Making the text on this document selectable…
                       </>
                     )}
+                    {ocr === 'ai-reading' && (
+                      <>
+                        <Loader2 size={12} className="animate-spin" /> You can select text now — reading it with AI for better accuracy…
+                      </>
+                    )}
+                    {ocr === 'ready-ai' && 'Drag across the text on the document to select it, then copy (Ctrl/⌘ + C). Read by AI — check it against the original.'}
                     {ocr === 'ready' && 'Drag across the text on the document to select it, then copy (Ctrl/⌘ + C). Read by OCR — check it against the original.'}
                     {ocr === 'none' && 'No text could be read on this document to select.'}
                     {ocr === 'error' && 'Couldn’t make the text on this document selectable.'}
