@@ -128,3 +128,33 @@ export async function ocrCanvases(canvases: HTMLCanvasElement[]): Promise<OcrPag
     await worker?.terminate();
   }
 }
+
+/** One OCR'd line of words, each with its box in the OCR canvas's pixels (y grows downwards). */
+export interface OcrWordLine {
+  words: { text: string; x0: number; y0: number; x1: number; y1: number }[];
+}
+
+/**
+ * An OCR engine kept open for several images (the preview's selectable-text layer reads a photo or
+ * each scanned page with one engine). Word boxes only — nothing here feeds extraction.
+ */
+export async function openOcrSession(): Promise<{ wordLines: (canvas: HTMLCanvasElement) => Promise<OcrWordLine[]>; close: () => Promise<void> }> {
+  const worker = await createWorker('eng', undefined, workerOptions());
+  return {
+    async wordLines(canvas) {
+      const { data } = await worker.recognize(canvas, {}, { blocks: true });
+      const lines: OcrWordLine[] = [];
+      for (const block of data.blocks ?? [])
+        for (const para of block.paragraphs ?? [])
+          for (const line of para.lines ?? []) {
+            const words = ((line as TessLine).words ?? [])
+              .filter((w) => w.text.trim())
+              .map((w) => ({ text: w.text.trim(), ...w.bbox }))
+              .sort((a, b) => a.x0 - b.x0);
+            if (words.length) lines.push({ words });
+          }
+      return lines;
+    },
+    close: () => worker.terminate().then(() => undefined),
+  };
+}

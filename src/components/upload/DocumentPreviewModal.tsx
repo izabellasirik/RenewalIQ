@@ -4,6 +4,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import type { UploadedDocument } from '../../types';
 import type { RawDocument } from '../../services/ingestion/types';
 import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
+import type { OcrWordLine } from '../../services/ingestion/ocr';
+import { renderOcrTextLayer } from './ocrTextLayer';
 
 type Content =
   | { kind: 'loading' }
@@ -62,7 +64,7 @@ export interface PdfTextInfo {
  * triggers a download — with pdf.js's text layer on top, so the PDF's own text can be selected and
  * copied exactly where it sits on the page.
  */
-function PdfPages({ blob, onTextInfo }: { blob: Blob; onTextInfo?: (info: PdfTextInfo) => void }) {
+function PdfPages({ blob, onTextInfo, onOcr }: { blob: Blob; onTextInfo?: (info: PdfTextInfo) => void; onOcr?: (state: OcrState) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,6 +89,8 @@ function PdfPages({ blob, onTextInfo }: { blob: Blob; onTextInfo?: (info: PdfTex
         container.replaceChildren(holder);
         const width = Math.min(container.clientWidth || 800, 1000);
         let pagesWithText = 0;
+        // Scanned pages (no text of their own): OCR'd after all pages are on screen, so their text is selectable too.
+        const scanned: { pageDiv: HTMLDivElement; canvas: HTMLCanvasElement; width: number; height: number }[] = [];
         for (let i = 1; i <= pdf.numPages && !cancelled; i++) {
           const page = await pdf.getPage(i);
           const base = page.getViewport({ scale: 1 });
@@ -116,11 +120,34 @@ function PdfPages({ blob, onTextInfo }: { blob: Blob; onTextInfo?: (info: PdfTex
             layer.style.setProperty('--total-scale-factor', String(cssScale));
             pageDiv.appendChild(layer);
             await new pdfjs.TextLayer({ textContentSource: text, container: layer, viewport: cssViewport }).render();
+          } else {
+            pageDiv.style.setProperty('--total-scale-factor', String(cssScale));
+            scanned.push({ pageDiv, canvas, width: base.width, height: base.height });
           }
         }
         if (!cancelled) onTextInfo?.({ pages: pdf.numPages, pagesWithText });
+        if (!cancelled && scanned.length) {
+          onOcr?.('reading');
+          const { openOcrSession, prepareForOcr } = await import('../../services/ingestion/ocr');
+          const session = await openOcrSession();
+          let words = 0;
+          try {
+            for (const sp of scanned) {
+              if (cancelled) break;
+              const prepared = prepareForOcr(sp.canvas);
+              const lines = await session.wordLines(prepared);
+              if (!cancelled) words += await renderOcrTextLayer(sp.pageDiv, lines, { width: sp.width, height: sp.height }, prepared.width);
+            }
+          } finally {
+            await session.close();
+          }
+          if (!cancelled) onOcr?.(words ? 'ready' : 'none');
+        }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not render this PDF.');
+        if (cancelled) return;
+        // Pages already on screen stay; only the selectable-text step failed.
+        if (holder.childElementCount) onOcr?.('error');
+        else setError(err instanceof Error ? err.message : 'Could not render this PDF.');
       }
     })();
     return () => {
@@ -132,6 +159,82 @@ function PdfPages({ blob, onTextInfo }: { blob: Blob; onTextInfo?: (info: PdfTex
 
   if (error) return <p className="p-6 text-center text-sm text-[var(--color-danger-600)]">{error}</p>;
   return <div ref={ref} className="min-h-40" data-testid="pdf-pages" />;
+}
+
+export type OcrState = 'reading' | 'ready' | 'none' | 'error';
+
+/** OCR word boxes for a photo, cached per document for this session (reading takes a few seconds). */
+const imageWordsCache = new Map<string, Promise<{ page: { width: number; height: number }; ocrWidth: number; lines: OcrWordLine[] }>>();
+
+function readImageWords(key: string, blob: Blob) {
+  let job = imageWordsCache.get(key);
+  if (!job) {
+    job = (async () => {
+      const { openOcrSession, prepareForOcr } = await import('../../services/ingestion/ocr');
+      // The same orientation the <img> shows (EXIF applied).
+      const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
+      const page = { width: bitmap.width, height: bitmap.height };
+      const canvas = prepareForOcr(bitmap);
+      bitmap.close();
+      const session = await openOcrSession();
+      try {
+        return { page, ocrWidth: canvas.width, lines: await session.wordLines(canvas) };
+      } finally {
+        await session.close();
+      }
+    })();
+    imageWordsCache.set(key, job);
+    job.catch(() => imageWordsCache.delete(key));
+  }
+  return job;
+}
+
+/** A photo with its OCR'd text laid invisibly over it, so the text can be selected right on the image. */
+function SelectableImage({ url, name, blob, cacheKey, onOcr }: { url: string; name: string; blob: Blob | null; cacheKey: string; onOcr: (s: OcrState) => void }) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const page = useRef<{ width: number; height: number } | null>(null);
+
+  // The layer is laid out in image pixels; this keeps it matched to the image's displayed size.
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const fit = () => page.current && el.style.setProperty('--total-scale-factor', String(el.clientWidth / page.current.width));
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!blob) return;
+    let cancelled = false;
+    onOcr('reading');
+    (async () => {
+      try {
+        const res = await readImageWords(cacheKey, blob);
+        const el = wrap.current;
+        if (cancelled || !el) return;
+        page.current = res.page;
+        el.style.setProperty('--total-scale-factor', String(el.clientWidth / res.page.width));
+        el.querySelectorAll('.textLayer').forEach((n) => n.remove());
+        const words = await renderOcrTextLayer(el, res.lines, res.page, res.ocrWidth);
+        if (!cancelled) onOcr(words ? 'ready' : 'none');
+      } catch {
+        if (!cancelled) onOcr('error');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blob, cacheKey]);
+
+  return (
+    <div className="p-4">
+      <div ref={wrap} className="pdf-page mx-auto w-fit max-w-full" data-testid="selectable-image">
+        <img src={url} alt={name} className="block max-w-full select-none" draggable={false} />
+      </div>
+    </div>
+  );
 }
 
 /** Text read for viewing only, cached per document for this session. */
@@ -224,6 +327,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
   const [blob, setBlob] = useState<Blob | null>(null);
   const [sheet, setSheet] = useState(0);
   const [pdfText, setPdfText] = useState<PdfTextInfo | null>(null);
+  const [ocr, setOcr] = useState<OcrState | null>(null);
 
   useEffect(() => {
     if (!doc) return;
@@ -233,6 +337,7 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
     setBlob(null);
     setSheet(0);
     setPdfText(null);
+    setOcr(null);
     (async () => {
       const b = doc.loadBlob ? await doc.loadBlob() : await loadStoredFile(doc);
       if (cancelled) return;
@@ -334,10 +439,22 @@ export function DocumentPreviewModal({ doc, onClose }: { doc: PreviewableFile | 
                     <p className="max-w-md text-sm text-[var(--color-ink-600)]">{content.message}</p>
                   </div>
                 )}
-                {content.kind === 'image' && <img src={content.url} alt={doc.name} className="mx-auto block max-w-full p-4" />}
+                {ocr && (
+                  <p className="flex items-center gap-1.5 border-b border-[var(--color-ink-100)] bg-[var(--color-brand-50)] px-4 py-1.5 text-xs text-[var(--color-ink-600)]" data-testid="ocr-select-status">
+                    {ocr === 'reading' && (
+                      <>
+                        <Loader2 size={12} className="animate-spin" /> Making the text on this document selectable…
+                      </>
+                    )}
+                    {ocr === 'ready' && 'Drag across the text on the document to select it, then copy (Ctrl/⌘ + C). Read by OCR — check it against the original.'}
+                    {ocr === 'none' && 'No text could be read on this document to select.'}
+                    {ocr === 'error' && 'Couldn’t make the text on this document selectable.'}
+                  </p>
+                )}
+                {content.kind === 'image' && <SelectableImage url={content.url} name={doc.name} blob={blob} cacheKey={`${doc.id}:${blob?.size ?? 0}`} onOcr={setOcr} />}
                 {content.kind === 'pdf' && (
                   <div className="p-3 sm:p-4">
-                    <PdfPages blob={content.blob} onTextInfo={setPdfText} />
+                    <PdfPages blob={content.blob} onTextInfo={setPdfText} onOcr={setOcr} />
                   </div>
                 )}
                 {content.kind === 'html' && (
