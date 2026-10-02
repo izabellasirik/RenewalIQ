@@ -22,12 +22,21 @@ const MAX_LINES = 400;
 export function validateTranscript(raw: unknown): TranscriptLine[] | null {
   const lines = (raw as { lines?: unknown } | null)?.lines;
   if (!Array.isArray(lines)) return null;
-  const out: TranscriptLine[] = [];
-  for (const l of lines.slice(0, MAX_LINES)) {
+  const num = (n: unknown) => (typeof n === 'number' ? n : typeof n === 'string' && n.trim() !== '' ? Number(n) : NaN);
+  const parsed = lines.slice(0, MAX_LINES).map((l) => {
     const text = typeof (l as { text?: unknown })?.text === 'string' ? (l as { text: string }).text.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
     const box = (l as { box?: unknown })?.box;
-    if (!text || !Array.isArray(box) || box.length !== 4 || !box.every((n) => typeof n === 'number' && Number.isFinite(n))) continue;
-    const [a, b, c, d] = (box as number[]).map((n) => Math.min(1000, Math.max(0, n)) / 1000);
+    const nums = Array.isArray(box) && box.length === 4 ? box.map(num) : null;
+    return { text, nums: nums && nums.every(Number.isFinite) ? nums : null };
+  });
+  // Asked for thousandths; a reply in fractions (every value ≤ 1) is read as fractions rather than
+  // turning every line into a speck that gets thrown away.
+  const all = parsed.flatMap((p) => p.nums ?? []);
+  const scale = all.length && Math.max(...all) <= 1.5 ? 1 : 1000;
+  const out: TranscriptLine[] = [];
+  for (const { text, nums } of parsed) {
+    if (!text || !nums) continue;
+    const [a, b, c, d] = nums.map((n) => Math.min(scale, Math.max(0, n)) / scale);
     const x0 = Math.min(a, c), x1 = Math.max(a, c), y0 = Math.min(b, d), y1 = Math.max(b, d);
     if (x1 - x0 < 0.003 || y1 - y0 < 0.003) continue;
     out.push({ text, box: { x0, y0, x1, y1 } });
@@ -125,8 +134,10 @@ export function transcribePhoto(key: string, blob: Blob, currentUserId: string |
     return p;
   }
   const job = (async (): Promise<TranscriptLine[] | null> => {
-    const fail = (why: TranscriptUnavailable) => {
+    const fail = (why: TranscriptUnavailable, detail?: unknown) => {
       lastUnavailable = why;
+      // Visible in the browser console, so a fallback can always be traced to its cause.
+      console.warn(`[RenewalIQ] AI reading not used (${why})`, detail ?? '');
       return null;
     };
     if (!isSupabaseConfigured || !supabase || !currentUserId) return fail('not-signed-in');
@@ -143,20 +154,26 @@ export function transcribePhoto(key: string, blob: Blob, currentUserId: string |
       const { data, error } = await supabase.functions.invoke('extract-document-vision', { body: { imageBase64: base64, mimeType: 'image/jpeg', mode: 'transcribe' } });
       if (error) {
         const status = (error as { context?: { status?: number } }).context?.status;
-        return fail(status === 404 || status === 503 ? 'function-missing' : 'failed');
+        let body: unknown = '';
+        try {
+          body = await (error as { context?: Response }).context?.clone().text();
+        } catch {
+          // no body
+        }
+        return fail(status === 404 || status === 503 ? 'function-missing' : 'failed', { status, message: (error as Error).message, body });
       }
       if (data && typeof data === 'object' && !('lines' in data) && ('documentType' in data || 'scalarFields' in data)) {
         // The deployed function predates transcribe mode: it ran a normal extraction instead.
         functionOutdated = true;
-        return fail('function-outdated');
+        return fail('function-outdated', 'the function answered with an extraction, not a transcription');
       }
       const lines = validateTranscript(data);
-      if (!lines) return fail('failed');
+      if (!lines) return fail('failed', { reply: JSON.stringify(data).slice(0, 500) });
       lastUnavailable = null;
       remember(key, lines);
       return lines;
-    } catch {
-      return fail('failed');
+    } catch (err) {
+      return fail('failed', err);
     }
   })();
   memory.set(key, job);

@@ -20,6 +20,9 @@ describe('AI transcription for the preview', () => {
       { text: 'out of range', box: { x0: 0, y0: 0.01, x1: 1, y1: 0.06 } },
     ]);
     expect(validateTranscript({ lines: [] })).toBeNull();
+    // A reply in fractions instead of thousandths, or numbers sent as strings, still reads.
+    expect(validateTranscript({ lines: [{ text: 'CLASS A', box: [0.3, 0.15, 0.8, 0.2] }] })).toEqual([{ text: 'CLASS A', box: { x0: 0.3, y0: 0.15, x1: 0.8, y1: 0.2 } }]);
+    expect(validateTranscript({ lines: [{ text: 'CLASS A', box: ['300', '150', '800', '200'] }] })?.[0].box).toEqual({ x0: 0.3, y0: 0.15, x1: 0.8, y1: 0.2 });
     expect(validateTranscript('nope')).toBeNull();
   });
 
