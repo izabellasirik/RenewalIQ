@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Building2, ClipboardList, Clock, FileText } from 'lucide-react';
+import { Building2, ClipboardList, Clock, FilePlus2, FileText } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
-import { Badge, Card, CardBody, EmptyState, Tabs } from '../components/ui';
+import { Badge, Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { AccountInfoCard } from '../components/workspace/AccountInfoCard';
 import { AccountStageSelect } from '../components/workspace/AccountStageSelect';
 import { ContactsCard } from '../components/workspace/ContactsCard';
@@ -14,6 +14,7 @@ import { ClientRequestsCard } from '../components/workspace/ClientRequestsCard';
 import { ReviewFlagsPanel } from '../components/riskProfile/ReviewFlagsPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
 import { ActionList } from '../components/workspace/ActionList';
+import { AddMissingDocumentsDialog } from '../components/workspace/AddMissingDocumentsDialog';
 import { DoneTasks } from '../components/workspace/DoneTasks';
 import { NotesPanel } from '../components/workspace/NotesPanel';
 import { QUOTE_STATUS_TONE } from '../components/workspace/quoteStatus';
@@ -69,6 +70,7 @@ export function AccountWorkspacePage() {
   const addFiles = useAccountsStore((s) => s.addFiles);
   const deleteDocument = useAccountsStore((s) => s.deleteDocument);
   const [showSystemEvents, setShowSystemEvents] = useState(false);
+  const [addingDocs, setAddingDocs] = useState(false);
 
   const waiting = useMemo(() => summarizeWaiting(items, quotes), [items, quotes]);
   const workflowEvents = useMemo(() => activity.filter((e) => WORKFLOW_EVENT_TYPES.has(e.type)), [activity]);
@@ -120,7 +122,12 @@ export function AccountWorkspacePage() {
           <div className="flex min-w-0 flex-col gap-5 lg:col-span-2">
             <Card id="needs-attention" className="scroll-mt-24">
               <CardBody className="pt-5">
-                <h3 className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">Action required</h3>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Action required</h3>
+                  <Button size="sm" variant="secondary" icon={<FilePlus2 size={14} />} onClick={() => setAddingDocs(true)}>
+                    Add missing documents
+                  </Button>
+                </div>
                 <ActionList actions={actions.now} emptyText="Nothing needs you right now — every follow-up is scheduled and nothing is waiting to be sent." />
                 {actions.upcoming.length > 0 && (
                   <>
@@ -131,6 +138,7 @@ export function AccountWorkspacePage() {
                 <DoneTasks accountId={accountId} doneActions={doneActions} followUps={followUps} />
               </CardBody>
             </Card>
+            <AddMissingDocumentsDialog accountId={accountId} open={addingDocs} onClose={() => setAddingDocs(false)} />
             {/* Follow-ups right under "Action required"; the checklist itself lives on its own tab. */}
             <FollowUpsCard accountId={accountId} />
             {/* Open client document requests only — the full history is on the Checklist tab. */}
