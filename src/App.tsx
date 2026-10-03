@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { RouterProvider } from 'react-router-dom';
 import { router } from './router';
 import { supabase } from './services/supabase/client';
+import { isPublicLinkPath } from './services/publicLinks';
 import { useAccountsStore } from './state/useAccountsStore';
 
 /**
@@ -21,18 +22,22 @@ function useBrokerCloudBootstrap() {
 
     supabase.auth.getSession().then(({ data }) => {
       const userId = data.session?.user.id ?? null;
-      setCurrentUserId(userId);
+      setCurrentUserId(userId, data.session?.user.email ?? null);
       if (userId) hydrateCloudSubmissions();
     });
 
     const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') return; // handled entirely on /login, not a normal session change
       const userId = session?.user.id ?? null;
-      setCurrentUserId(userId);
+      setCurrentUserId(userId, session?.user.email ?? null);
       // Only re-pull on an actual sign-in — NOT on every event this fires for (e.g. TOKEN_REFRESHED
       // every ~hour while a tab stays open). Re-fetching then would risk racing an edit whose
       // syncNow push hasn't landed yet and overwriting it with the slightly-stale cloud read.
       if (event === 'SIGNED_IN' && userId) hydrateCloudSubmissions();
+      // Signing out (here or in another tab) lands on the sign-in page — except on a public client
+      // link (/r, /i, …): a broker's stale or revoked session in this browser also fires SIGNED_OUT
+      // on load, and that must never pull a client off their upload / intake form.
+      if (event === 'SIGNED_OUT' && !isPublicLinkPath(router.state.location.pathname)) router.navigate('/login', { replace: true });
     });
 
     return () => subscription.subscription.unsubscribe();

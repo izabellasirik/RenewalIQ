@@ -13,6 +13,7 @@ for (const group of RISK_PROFILE_GROUPS) {
 // Derived fields not in the editable form config but still real scalar paths.
 SCALAR_LABELS['business.city'] = 'City';
 SCALAR_LABELS['business.zip'] = 'ZIP';
+SCALAR_LABELS['business.state'] = 'State';
 
 /** Human-readable label for any ExtractedFieldResult.fieldPath — the same vocabulary the Risk Profile page itself uses, so "View extracted data" never shows a raw dotted path to a broker. */
 export function fieldPathLabel(fieldPath: string): string {
@@ -47,9 +48,10 @@ export const DRIVER_FIELD_LABELS: Record<string, string> = {
   isCDL: 'CDL',
   issueDate: 'Issue Date',
   expirationDate: 'Expiration Date',
+  cdlOriginalIssueDate: 'CDL Since (original CDL issue date)',
   restrictions: 'Restrictions',
   endorsements: 'Endorsements',
-  yearsExperience: 'Years Experience',
+  yearsExperience: 'Experience',
   violations: 'Violations',
 };
 

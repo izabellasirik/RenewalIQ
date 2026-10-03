@@ -1,4 +1,4 @@
-import { CircleCheck, CircleHelp, ChevronRight, Clock, NotebookPen, CircleX, ShieldQuestion } from 'lucide-react';
+import { CircleCheck, CircleHelp, ChevronRight, Clock, NotebookPen, CircleX, Pencil, ShieldQuestion } from 'lucide-react';
 import type { MatchReason, MatchResult } from '../../types';
 import { Card, CardBody, Badge, VerdictBadge } from '../ui';
 import { AvailableThroughTag } from './AvailableThroughTag';
@@ -12,7 +12,7 @@ function verdictIcon(verdict: MatchResult['verdict']) {
   return CircleCheck;
 }
 
-export function MarketCard({ result, onClick }: { result: MatchResult; onClick: () => void }) {
+export function MarketCard({ result, onClick, onEdit }: { result: MatchResult; onClick: () => void; /** Agency admins: edit this market's appetite (only passed when the user may). */ onEdit?: () => void }) {
   const failed = result.reasons.filter((r) => r.status === 'fail').slice(0, MAX_LISTED);
   const matched = result.reasons.filter((r) => r.status === 'pass').slice(0, MAX_LISTED);
   const needsVerification = result.reasons.filter((r): r is MatchReason => r.status === 'warning' && !!r.isDataGap).slice(0, MAX_LISTED);
@@ -30,7 +30,22 @@ export function MarketCard({ result, onClick }: { result: MatchResult; onClick: 
               <VerdictBadge verdict={result.verdict} />
             </div>
           </div>
-          <VIcon size={20} className="shrink-0 text-[var(--color-ink-300)]" />
+          <div className="flex shrink-0 items-center gap-1">
+            {onEdit && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+                }}
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer"
+                aria-label={`Edit ${result.marketName}`}
+              >
+                <Pencil size={12} /> Edit
+              </button>
+            )}
+            <VIcon size={20} className="text-[var(--color-ink-300)]" />
+          </div>
         </div>
 
         {result.availableThrough && (

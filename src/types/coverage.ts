@@ -23,4 +23,18 @@ export interface CoverageLine {
   type: CoverageType;
   currentLimit?: FieldValue<string>;
   requestedLimit: FieldValue<string>;
+  /** This coverage's deductible (e.g. Physical Damage, Cargo) — one per coverage, not account-wide. */
+  deductible?: FieldValue<string>;
+  /**
+   * The documents that put this coverage line on the account. Absent for a line the broker added —
+   * such a line is never removed when a document is. An extracted line whose documents are all
+   * removed, and that has no values left, goes away with them.
+   */
+  sources?: string[];
 }
+
+/** The editable values of a coverage line. */
+export type CoverageField = 'currentLimit' | 'requestedLimit' | 'deductible';
+
+/** Coverages that carry a deductible (shown only on these). */
+export const DEDUCTIBLE_COVERAGES: CoverageType[] = ['physical_damage', 'motor_truck_cargo', 'trailer_interchange', 'warehouse_legal_liability', 'general_liability'];

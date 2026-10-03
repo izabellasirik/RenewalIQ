@@ -1,0 +1,173 @@
+import {
+  PlusCircle,
+  Archive,
+  ArchiveRestore,
+  Copy,
+  UploadCloud,
+  ScanLine,
+  Trash2,
+  CheckCircle2,
+  RotateCcw,
+  Pencil,
+  GitMerge,
+  DollarSign,
+  Compass,
+  Clock,
+  ListPlus,
+  UserPlus,
+  UserCog,
+  UserMinus,
+  Mail,
+  CalendarClock,
+  PackageCheck,
+  Ban,
+  Send,
+  Building2,
+  FileQuestion,
+  StickyNote,
+  BadgeDollarSign,
+  XCircle,
+  ArrowRightLeft,
+  ShieldCheck,
+  Flag,
+  Inbox,
+  ExternalLink,
+  type LucideIcon,
+} from 'lucide-react';
+import type { ActivityEvent, ActivityEventType } from '../../types';
+import { formatDate } from '../../utils/dates';
+import { cn } from '../../utils/cn';
+import { useAccountsStore } from '../../state/useAccountsStore';
+
+const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
+  account_created: PlusCircle,
+  account_duplicated: Copy,
+  document_uploaded: UploadCloud,
+  document_processed: ScanLine,
+  document_deleted: Trash2,
+  field_completed: CheckCircle2,
+  field_corrected: Pencil,
+  conflict_resolved: GitMerge,
+  coverage_edited: DollarSign,
+  coverage_added: ListPlus,
+  coverage_deleted: Trash2,
+  record_added: ListPlus,
+  record_edited: Pencil,
+  record_deleted: Trash2,
+  matching_run: Compass,
+  account_updated: Pencil,
+  account_archived: Archive,
+  account_restored: ArchiveRestore,
+  stage_changed: Flag,
+  broker_assigned: UserCog,
+  contact_added: UserPlus,
+  contact_updated: UserCog,
+  contact_removed: UserMinus,
+  item_added: ListPlus,
+  item_requested: Mail,
+  follow_up_scheduled: CalendarClock,
+  follow_up_completed: CheckCircle2,
+  action_done: CheckCircle2,
+  action_reopened: RotateCcw,
+  item_received: PackageCheck,
+  item_waived: Ban,
+  item_removed: Trash2,
+  item_sent_to_carrier: Send,
+  market_added: Building2,
+  market_removed: Trash2,
+  submission_sent: Send,
+  carrier_requested_item: FileQuestion,
+  carrier_note_added: StickyNote,
+  quote_received: BadgeDollarSign,
+  carrier_declined: XCircle,
+  quote_status_changed: ArrowRightLeft,
+  policy_bound: ShieldCheck,
+  request_follow_up: Mail,
+  request_completed: CheckCircle2,
+  request_cancelled: Ban,
+  client_submitted: Inbox,
+  email_draft_opened: ExternalLink,
+};
+
+const EVENT_TONE: Partial<Record<ActivityEventType, string>> = {
+  item_received: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
+  quote_received: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
+  policy_bound: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
+  carrier_declined: 'bg-[var(--color-danger-100)] text-[var(--color-danger-600)]',
+  carrier_requested_item: 'bg-[var(--color-warning-100)] text-[var(--color-warning-600)]',
+  item_requested: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
+  submission_sent: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
+  item_sent_to_carrier: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
+  client_submitted: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
+};
+
+/** A client submission: exactly what arrived — names as uploaded, who (as given), the reference. */
+function ClientSubmissionFacts({ details }: { details: NonNullable<ActivityEvent['details']> }) {
+  return (
+    <div className="mt-1 rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)]/60 px-3 py-2 text-xs text-[var(--color-ink-700)]" data-testid="client-submission-facts">
+      {details.accountName && <p className="font-semibold text-[var(--color-ink-900)]">{details.accountName}</p>}
+      <p>
+        {details.files.length} file{details.files.length === 1 ? '' : 's'} received
+      </p>
+      {details.files.length > 0 && (
+        <ul className="mt-0.5 list-disc pl-4">
+          {details.files.map((f, i) => (
+            <li key={`${f}-${i}`} className="break-all">
+              {f}
+            </li>
+          ))}
+        </ul>
+      )}
+      {details.clientEmail && <p className="mt-1">Submitted by: {details.clientEmail}{details.clientName ? ` (${details.clientName})` : ''} — as entered on the form</p>}
+      {!details.clientEmail && details.linkSentTo && <p className="mt-1">Through the secure link sent to: {details.linkSentTo}</p>}
+      {details.reference && <p>Reference: {details.reference}</p>}
+    </div>
+  );
+}
+
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  return `${formatDate(iso)} · ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+/** Newest-first vertical timeline. Unknown event types (e.g. from a newer client via cloud sync) fall back to a clock icon rather than crashing. */
+export function ActivityTimeline({ events }: { events: ActivityEvent[] }) {
+  const sorted = [...events].sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+  const currentUserId = useAccountsStore((s) => s.currentUserId);
+  const members = useAccountsStore((s) => s.agencyMembers);
+  // Who did it: "You", the agency member's current name, or the name saved with the event.
+  const actorOf = (e: ActivityEvent): string | null => {
+    if (e.type === 'client_submitted') return 'Client';
+    if (!e.actorId && !e.actorName) return null;
+    if (e.actorId && e.actorId === currentUserId) return 'You';
+    return members.find((m) => m.userId === e.actorId)?.name ?? e.actorName ?? null;
+  };
+  return (
+    <ol className="flex flex-col gap-1">
+      {sorted.map((event, i) => {
+        const Icon = EVENT_ICON[event.type] ?? Clock;
+        return (
+          <li key={event.id} className="relative flex gap-3 pb-5 pl-1 last:pb-0">
+            {i < sorted.length - 1 && <span className="absolute left-[15px] top-7 h-full w-px bg-[var(--color-ink-100)]" />}
+            <span className={cn('z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full', EVENT_TONE[event.type] ?? 'bg-[var(--color-ink-50)] text-[var(--color-ink-500)]')}>
+              <Icon size={15} />
+            </span>
+            <div className="min-w-0 pt-1">
+              <p className="break-words text-sm text-[var(--color-ink-800)]">{event.message}</p>
+              {event.type === 'client_submitted' && event.details && <ClientSubmissionFacts details={event.details} />}
+              <p className="mt-0.5 text-xs text-[var(--color-ink-400)]">
+                {formatTimestamp(event.timestamp)}
+                {actorOf(event) && (
+                  <>
+                    {' · '}
+                    <span className="font-medium text-[var(--color-ink-600)]">{actorOf(event)}</span>
+                  </>
+                )}
+              </p>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}

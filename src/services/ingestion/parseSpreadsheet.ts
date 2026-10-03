@@ -66,8 +66,10 @@ export async function parseSpreadsheet(file: File): Promise<RawDocument> {
   workbook.eachSheet((sheet) => {
     const rows: string[][] = [];
     sheet.eachRow((row) => {
+      // row.values is sparse — empty cells are holes (Google Sheets exports skip them), and .map()
+      // keeps holes, so every cell is visited with Array.from to make each one a string.
       const values = (row.values as ExcelJS.CellValue[]).slice(1);
-      rows.push(values.map(cellToString));
+      rows.push(Array.from(values, cellToString));
     });
     const [headers, ...dataRows] = rows;
     if (!headers || headers.every((h) => h === '')) return;

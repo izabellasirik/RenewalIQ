@@ -1,4 +1,5 @@
-import type { Confidence, FieldConflict, FieldSource } from './common';
+import type { DurationValue } from '../utils/duration';
+import type { Confidence, FieldConflict, FieldSource, ReviewFlag } from './common';
 
 export interface DriverEntry {
   id: string;
@@ -17,7 +18,27 @@ export interface DriverEntry {
   expirationDate?: string;
   restrictions?: string;
   endorsements?: string;
-  yearsExperience?: number;
+  /** A figure as stated on a document or typed before CDL Since existed. Not shown or used for experience any more — experience is always today − cdlOriginalIssueDate (utils/driverExperience.ts). */
+  yearsExperience?: DurationValue;
+  /** Legacy: experience was counted from the CURRENT license's issue date (a renewal date, not experience). No longer used — see cdlOriginalIssueDate. */
+  experienceFromIssueDate?: boolean;
+  /**
+   * When the driver was FIRST issued a commercial (CDL) license — as printed on an MVR, a license
+   * record or a driver schedule ("Original CDL Issue Date"). Driving experience is counted from it,
+   * kept current (see utils/driverExperience.ts). Never the DOB or the current license's issue/renewal date.
+   */
+  cdlOriginalIssueDate?: string;
+  /** Details another document filled in on this driver (field → document id) — removed with that document. */
+  filledFrom?: Record<string, string>;
+  /** Where cdlOriginalIssueDate was read (document, page, text); absent when the broker typed it. */
+  cdlOriginalIssueSource?: import('./common').FieldSource;
+
+  /** Date of hire with this company, YYYY-MM-DD. */
+  hireDate?: string;
+  /** Date of this driver's current MVR report, YYYY-MM-DD — used for the freshness check. */
+  mvrReportDate?: string;
+  /** Driver-specific notes (not account notes): dated, with author; editable. */
+  notes?: DriverNote[];
   violations?: string;
   /**
    * Per-field confidence for values read off a document (a license photo, most commonly) where
@@ -31,7 +52,20 @@ export interface DriverEntry {
   conflicts?: Partial<Record<string, FieldConflict[]>>;
   /** Absent for a broker-added row (isManual: true) — there is no document to point to. */
   source?: FieldSource;
+  /** Other documents that listed this same row (besides `source`) — see FieldValue.support. */
+  support?: FieldSource[];
+  /** Kept for review after its source document was removed — see ReviewFlag. */
+  reviewFlag?: ReviewFlag;
   /** True for a row the broker added or edited directly, rather than one extracted from a document. Deleting a document never removes or alters a manual row. */
   isManual?: boolean;
   lastUpdatedAt?: string;
+}
+
+export interface DriverNote {
+  id: string;
+  text: string;
+  createdAt: string;
+  authorName?: string;
+  updatedAt?: string;
+  updatedByName?: string;
 }

@@ -1,4 +1,13 @@
 import type { Account, RiskProfile } from '../../types';
+import { formatDuration, toParts } from '../../utils/duration';
+
+/** "3-year", "8-month", "16+-year" → reads naturally before "operation". */
+function adjectiveAge(v: unknown): string {
+  const p = toParts(v);
+  if (!p) return '';
+  if (p.years === 0) return `${p.months}-month`;
+  return `${p.years}${p.orMore ? '+' : ''}-year`;
+}
 
 interface SnapshotChip {
   label: string;
@@ -28,7 +37,7 @@ function buildChips(profile: RiskProfile): SnapshotChip[] {
     chips.push({ label: num ? `${num}-mile Radius` : transportation.operatingRadius.value });
   }
   if (!business.yearsInBusiness.isMissing && business.yearsInBusiness.value !== null) {
-    chips.push({ label: `${business.yearsInBusiness.value} Year${business.yearsInBusiness.value === 1 ? '' : 's'} in Business` });
+    chips.push({ label: `${formatDuration(business.yearsInBusiness.value)} in Business` });
   }
 
   return chips;
@@ -38,7 +47,7 @@ function buildChips(profile: RiskProfile): SnapshotChip[] {
 function buildSummarySentence(profile: RiskProfile, namedInsured: string): string | null {
   const { transportation, business } = profile;
 
-  const yearsClause = !business.yearsInBusiness.isMissing && business.yearsInBusiness.value !== null ? ` ${business.yearsInBusiness.value}-year` : '';
+  const yearsClause = !business.yearsInBusiness.isMissing && business.yearsInBusiness.value !== null ? ` ${adjectiveAge(business.yearsInBusiness.value)}` : '';
   const commodities = !transportation.commoditiesHauled.isMissing ? transportation.commoditiesHauled.value : null;
   const haulingClause = commodities && commodities.length > 0 ? ` hauling ${commodities.join(', ').toLowerCase()}` : '';
   const radius = !transportation.operatingRadius.isMissing ? transportation.operatingRadius.value : null;

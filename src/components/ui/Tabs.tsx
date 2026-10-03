@@ -16,7 +16,7 @@ export function Tabs({ items, active, onChange }: { items: TabItem[]; active: st
             key={item.key}
             onClick={() => onChange(item.key)}
             className={cn(
-              'relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors cursor-pointer',
+              'relative flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-3 text-sm font-medium transition-colors cursor-pointer',
               isActive ? 'text-[var(--color-brand-800)]' : 'text-[var(--color-ink-500)] hover:text-[var(--color-ink-800)]'
             )}
           >

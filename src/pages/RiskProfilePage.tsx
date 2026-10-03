@@ -1,30 +1,43 @@
 import { useEffect, useMemo, useState } from 'react';
+import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowRight, ListChecks, TrendingUp, TrendingDown, Minus, Trash2 } from 'lucide-react';
+import { ArrowRight, ListChecks, TrendingUp, TrendingDown, Minus, Archive as ArchiveIcon } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Button, ProgressBar, Tabs, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../components/ui';
 import { SectionCard } from '../components/riskProfile/SectionCard';
 import { FieldRow } from '../components/riskProfile/FieldRow';
 import { ConflictBanner } from '../components/riskProfile/ConflictBanner';
+import { ReviewFlagsPanel } from '../components/riskProfile/ReviewFlagsPanel';
 import { MissingFieldsPanel } from '../components/riskProfile/MissingFieldsPanel';
 import { InsightStrip } from '../components/riskProfile/InsightStrip';
 import { AccountSummary } from '../components/riskProfile/AccountSummary';
 import { VehiclesTable } from '../components/riskProfile/VehiclesTable';
 import { DriversTable } from '../components/riskProfile/DriversTable';
-import { LossHistoryTable } from '../components/riskProfile/LossHistoryTable';
+import { LossRunsPanel } from '../components/riskProfile/LossRunsPanel';
+import { FreshnessBadge } from '../components/riskProfile/FreshnessBadge';
 import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
-import { useAccountsStore } from '../state/useAccountsStore';
+import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
+import { archiveConfirmText } from '../components/dashboard/AccountCard';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
 import { computeSubmissionCompleteness } from '../services/application';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
+import { addressComponentsFrom, composeFullAddress, singleLineAddress } from '../utils/fullAddress';
 import { formatDate } from '../utils/dates';
 import { EMPTY_DOCUMENTS } from '../utils/emptyArrays';
 import { getFieldValueByPath } from '../utils/riskProfilePath';
-import { emptyField } from '../types';
+import { emptyField, type RiskProfile } from '../types';
 import { cn } from '../utils/cn';
+
+/** Yes/No fields that also keep typed details (saved as `<key>Details`), with the box's hint. */
+const DETAIL_FIELDS: Record<string, string> = {
+  telematics: 'Provider / details, e.g. Samsara on all power units',
+  dashcams: 'Provider / details, e.g. road- and driver-facing, all trucks',
+};
+import { formatExperience } from '../utils/duration';
+import { AssignedAgent } from '../components/workspace/AssignedAgent';
 
 const TREND_ICON = { increasing: TrendingUp, decreasing: TrendingDown, stable: Minus, insufficient_data: Minus };
 const TREND_LABEL = { increasing: 'Increasing', decreasing: 'Decreasing', stable: 'Stable', insufficient_data: 'Not enough data' };
@@ -53,38 +66,32 @@ export function RiskProfilePage() {
   const addDriver = useAccountsStore((s) => s.addDriver);
   const updateDriver = useAccountsStore((s) => s.updateDriver);
   const deleteDriver = useAccountsStore((s) => s.deleteDriver);
+  const mergeDrivers = useAccountsStore((s) => s.mergeDrivers);
   const addLoss = useAccountsStore((s) => s.addLoss);
   const updateLoss = useAccountsStore((s) => s.updateLoss);
   const deleteLoss = useAccountsStore((s) => s.deleteLoss);
-  const deleteAccountPermanently = useAccountsStore((s) => s.deleteAccountPermanently);
+  const archiveAccount = useAccountsStore((s) => s.archiveAccount);
+  const canManageArchive = useAccountsStore(selectCanManageArchive);
+  const ensureFreshnessItems = useAccountsStore((s) => s.ensureFreshnessItems);
+  const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
+  // A report date entered here immediately adds / clears the "Updated MVR / loss run" checklist item.
+  useEffect(() => {
+    ensureFreshnessItems(accountId);
+  }, [accountId, cloudHydratedFor, account?.lossRuns, profile?.drivers, ensureFreshnessItems]);
   const [tab, setTab] = useState<TabKey>('details');
   const [highlightFieldId, setHighlightFieldId] = useState<string | null>(null);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [whatsMissingOpen, setWhatsMissingOpen] = useState(false);
   const completeness = useMemo(() => (profile ? computeSubmissionCompleteness(profile, documents) : null), [profile, documents]);
-
-  async function confirmDelete() {
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      const result = await deleteAccountPermanently(accountId);
-      if (!result.ok) {
-        // A cloud-backed submission whose cloud deletion failed — local state is untouched (see
-        // deleteAccountPermanently), so the submission is still here and still safe to retry.
-        setDeleting(false);
-        setDeleteConfirmOpen(false);
-        setDeleteError(result.message ?? "Something went wrong deleting this submission. It hasn't been removed — try again.");
-        return;
-      }
-      navigate('/');
-    } catch {
-      setDeleting(false);
-      setDeleteConfirmOpen(false);
-      setDeleteError("Something went wrong deleting this submission. It hasn't been removed — try again.");
-    }
-  }
+  // Founder Analytics: the Risk Profile was looked at (once a day) / reached 100% (once).
+  const hasAccount = !!account;
+  useEffect(() => {
+    if (hasAccount) trackEvent('risk_profile_reviewed', { accountId, dedupeKey: `rp_reviewed:${accountId}:${dayKey()}` });
+  }, [accountId, hasAccount]);
+  const fullyComplete = completeness?.percent === 100;
+  useEffect(() => {
+    if (fullyComplete) trackEvent('risk_profile_completed', { accountId, dedupeKey: `rp_completed:${accountId}` });
+  }, [accountId, fullyComplete]);
 
   function focusField(section: 'business' | 'transportation', key: string) {
     const id = `field-${section}-${key}`;
@@ -100,8 +107,12 @@ export function RiskProfilePage() {
   // field that needs resolving, reusing this page's existing scroll-to-and-highlight behavior
   // instead of duplicating a conflict resolver elsewhere.
   useEffect(() => {
-    const target = (location.state as { focusField?: { section: 'business' | 'transportation'; key: string } } | null)?.focusField;
-    if (target) focusField(target.section, target.key);
+    const state = location.state as { focusField?: { section: 'business' | 'transportation'; key: string }; tab?: TabKey } | null;
+    if (state?.focusField) focusField(state.focusField.section, state.focusField.key);
+    else if (state?.tab) {
+      setTab(state.tab);
+      requestAnimationFrame(() => document.getElementById('risk-profile-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
@@ -120,61 +131,55 @@ export function RiskProfilePage() {
   return (
     <PageContainer
       title={`Risk Profile — ${account.namedInsured}`}
-      description="Unified, editable view of everything extracted from uploaded documents. Every value shows its confidence and source."
+      // Who owns this account, right under the title — the same control as the Workspace (admins can reassign here).
+      description={<AssignedAgent account={account} />}
       actions={
         <>
           <Button variant="secondary" icon={<ListChecks size={15} />} onClick={() => setWhatsMissingOpen(true)}>
             What's missing?
           </Button>
-          <OverflowMenu
-            items={
-              [
-                {
-                  key: 'delete',
-                  label: 'Delete submission',
-                  icon: <Trash2 size={14} />,
-                  tone: 'danger',
-                  onSelect: () => {
-                    setDeleteError(null);
-                    setDeleteConfirmOpen(true);
-                  },
-                },
-              ] satisfies OverflowMenuItem[]
-            }
-          />
+          {/* Archive only — Restore / Delete permanently live on the Archived view of Accounts. */}
+          {!account.archived && (
+            <OverflowMenu items={[{ key: 'archive', label: 'Archive account', icon: <ArchiveIcon size={14} />, onSelect: () => setArchiveConfirmOpen(true) }] satisfies OverflowMenuItem[]} />
+          )}
         </>
       }
     >
       <AccountSummary account={account} profile={profile} />
 
-      <div className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3">
+      {/* The one submission-completeness number (same as Submission Assistant and What's Missing). */}
+      <button
+        onClick={() => setWhatsMissingOpen(true)}
+        className="flex items-center gap-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3 text-left hover:border-[var(--color-brand-300,var(--color-ink-200))] cursor-pointer"
+      >
         <div className="flex-1">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-[var(--color-ink-700)]">Profile Completeness</span>
-            <span className="text-[var(--color-ink-500)]">
-              {stats.filled} of {stats.total} fields
-            </span>
+            <span className="font-medium text-[var(--color-ink-700)]">Submission completeness</span>
+            <span className="font-semibold text-[var(--color-ink-900)]">{completeness.percent}% · What's missing?</span>
           </div>
-          <ProgressBar value={(stats.filled / Math.max(stats.total, 1)) * 100} className="mt-1.5" />
+          <ProgressBar value={completeness.percent} className="mt-1.5" />
         </div>
-      </div>
+      </button>
 
       <ConflictBanner count={stats.conflicting.length} />
+      <ReviewFlagsPanel accountId={accountId} />
       <MissingFieldsPanel
         fields={stats.missing.map((m) => ({ label: m.field.label, section: m.field.section, key: m.field.key }))}
         onFieldClick={focusField}
       />
 
-      <Tabs
-        items={[
-          { key: 'details', label: 'Business & Transportation' },
-          { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
-          { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
-          { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
-        ]}
-        active={tab}
-        onChange={(k) => setTab(k as TabKey)}
-      />
+      <div id="risk-profile-tabs" className="scroll-mt-20">
+        <Tabs
+          items={[
+            { key: 'details', label: 'Business & Transportation' },
+            { key: 'fleet', label: 'Fleet', count: profile.vehicles.length },
+            { key: 'drivers', label: 'Drivers', count: profile.drivers.length },
+            { key: 'loss-history', label: 'Loss History', count: profile.lossHistory.length },
+          ]}
+          active={tab}
+          onChange={(k) => setTab(k as TabKey)}
+        />
+      </div>
 
       {tab === 'details' && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -196,10 +201,28 @@ export function RiskProfilePage() {
                       // account created before "Requested Effective Date" was added) has no key for
                       // it at all, and FieldRow crashes on `undefined`. Same fallback
                       // useRiskProfileStats already uses for exactly this reason.
-                      field={(getFieldValueByPath(profile, `${f.section}.${f.key}`) ?? emptyField()) as any}
-                      onSave={(value) => updateField(accountId, f.section, f.key, value)}
+                      field={(f.section === 'business' && f.key === 'address' ? fullAddressField(profile) : getFieldValueByPath(profile, `${f.section}.${f.key}`) ?? emptyField()) as any}
+                      onSave={(raw) => {
+                        const value = f.section === 'business' && f.key === 'address' && typeof raw === 'string' ? singleLineAddress(raw) : raw;
+                        updateField(accountId, f.section, f.key, value);
+                        if (f.section === 'business' && f.key === 'address' && typeof value === 'string') {
+                          // Keep City/State/ZIP (used by carrier appetite and the application) in step.
+                          const parts = addressComponentsFrom(value);
+                          for (const k of ['city', 'state', 'zip'] as const) {
+                            const v = parts[k];
+                            if (v && v !== getFieldValueByPath(profile, `business.${k}`)?.value) updateField(accountId, 'business', k, v);
+                          }
+                        }
+                      }}
                       onResolve={(resolution) => resolveField(accountId, f.section, f.key, resolution)}
                       autoExpand={highlightFieldId === `field-${f.section}-${f.key}`}
+                      {...(DETAIL_FIELDS[f.key]
+                        ? {
+                            details: (getFieldValueByPath(profile, `transportation.${f.key}Details`)?.value as string | null | undefined) ?? null,
+                            onSaveDetails: (text: string) => updateField(accountId, 'transportation', `${f.key}Details`, text || null),
+                            detailsPlaceholder: DETAIL_FIELDS[f.key],
+                          }
+                        : {})}
                     />
                   </div>
                 ))}
@@ -253,8 +276,8 @@ export function RiskProfilePage() {
                 { label: 'Driver Count', value: String(driverSummary.driverCount) },
                 { label: 'Min. Age', value: driverSummary.minDriverAge !== null ? String(driverSummary.minDriverAge) : '—' },
                 { label: 'Avg. Age', value: driverSummary.averageDriverAge !== null ? driverSummary.averageDriverAge.toFixed(1) : '—' },
-                { label: 'Min. Experience', value: driverSummary.minExperience !== null ? `${driverSummary.minExperience} yrs` : '—' },
-                { label: 'Avg. Experience', value: driverSummary.averageExperience !== null ? `${driverSummary.averageExperience.toFixed(1)} yrs` : '—' },
+                { label: 'Min. Experience', value: driverSummary.minExperience !== null ? formatExperience(driverSummary.minExperience) : '—' },
+                { label: 'Avg. Experience', value: driverSummary.averageExperience !== null ? formatExperience(driverSummary.averageExperience) : '—' },
                 {
                   label: 'Violations',
                   value: `${driverSummary.violations.driversWithViolations} of ${driverSummary.violations.totalDrivers} drivers`,
@@ -270,28 +293,19 @@ export function RiskProfilePage() {
             />
           )}
           <DriversTable
+            accountId={accountId}
             drivers={profile.drivers}
             onAdd={(entry) => addDriver(accountId, entry)}
             onUpdate={(id, patch) => updateDriver(accountId, id, patch)}
             onDelete={(id) => deleteDriver(accountId, id)}
+            onMerge={(keepId, dropId) => mergeDrivers(accountId, keepId, dropId)}
           />
         </SectionCard>
       )}
 
       {tab === 'loss-history' && (
-        <SectionCard title="Loss History" description="Consolidated from uploaded loss run documents — add, edit, or remove claims directly.">
-          {profile.lossHistory.length === 0 && lossRunDocs.length > 0 && (
-            <div className="px-2 pb-4 pt-2 text-center">
-              <p className="text-sm font-medium text-[var(--color-warning-600)]">
-                {lossRunDocs.length === 1 ? 'A loss run document was' : `${lossRunDocs.length} loss run documents were`} uploaded, but no claims could be extracted.
-              </p>
-              <p className="mx-auto mt-1 max-w-md text-xs text-[var(--color-ink-500)]">
-                {lossRunDocs.some((d) => d.warnings?.length)
-                  ? lossRunDocs.flatMap((d) => d.warnings ?? []).join(' ')
-                  : "The document's layout wasn't recognized (expected a claims table, or one labeled claim per block with a date and amount). Try re-uploading a clearer copy, or add claims manually below."}
-              </p>
-            </div>
-          )}
+        <SectionCard title="Loss History" description="Each loss run report with its claims — add, edit, or remove reports and claims directly.">
+          {profile.lossHistory.length === 0 && lossRunDocs.length > 0 && <NoClaimsListedNotice docs={lossRunDocs} runs={account?.lossRuns ?? []} />}
           {profile.lossHistory.length > 0 && (
             <InsightStrip
               stats={[
@@ -319,11 +333,13 @@ export function RiskProfilePage() {
               }
             />
           )}
-          <LossHistoryTable
+          <LossRunsPanel
+            accountId={accountId}
             losses={profile.lossHistory}
-            onAdd={(entry) => addLoss(accountId, entry)}
-            onUpdate={(id, patch) => updateLoss(accountId, id, patch)}
-            onDelete={(id) => deleteLoss(accountId, id)}
+            onAddLoss={(entry) => addLoss(accountId, entry)}
+            onUpdateLoss={(id, patch) => updateLoss(accountId, id, patch)}
+            onDeleteLoss={(id) => deleteLoss(accountId, id)}
+            freshness={(run) => <FreshnessBadge kind="loss_run" reportDate={run.reportDate} />}
           />
         </SectionCard>
       )}
@@ -336,21 +352,21 @@ export function RiskProfilePage() {
 
 
       <ConfirmDialog
-        open={deleteConfirmOpen}
-        onCancel={() => setDeleteConfirmOpen(false)}
-        onConfirm={confirmDelete}
-        title="Delete this submission?"
-        description={`This will permanently remove ${account.namedInsured} and its associated submission data. This action cannot be undone.`}
-        confirmLabel="Delete submission"
-        confirming={deleting}
+        open={archiveConfirmOpen}
+        onCancel={() => setArchiveConfirmOpen(false)}
+        onConfirm={() => {
+          archiveAccount(accountId);
+          setArchiveConfirmOpen(false);
+          navigate('/');
+        }}
+        title={`Archive ${account.namedInsured}?`}
+        description={archiveConfirmText(canManageArchive)}
+        confirmLabel="Archive account"
+        variant="default"
       />
-      {deleteError && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-4 py-2.5 text-sm text-[var(--color-danger-700)] shadow-lg">
-          {deleteError}
-        </div>
-      )}
 
       <WhatsMissingPanel
+        accountId={accountId}
         open={whatsMissingOpen}
         onClose={() => setWhatsMissingOpen(false)}
         completeness={completeness}
@@ -358,5 +374,59 @@ export function RiskProfilePage() {
         onUpdateCoverage={(coverageType, field, value) => updateCoverage(accountId, coverageType, field, value)}
       />
     </PageContainer>
+  );
+}
+
+/** The single Address field: the stored address plus any city/state/ZIP held separately (older accounts). */
+function fullAddressField(profile: RiskProfile) {
+  const address = getFieldValueByPath(profile, 'business.address') ?? emptyField();
+  if (address.isConflicting) return address;
+  const read = (k: string) => {
+    const v = getFieldValueByPath(profile, `business.${k}`)?.value;
+    return typeof v === 'string' ? v : null;
+  };
+  const full = composeFullAddress({ address: typeof address.value === 'string' ? address.value : null, city: read('city'), state: read('state'), zip: read('zip') });
+  if (full === (address.value ?? '')) return address;
+  return { ...address, value: full, isMissing: false, confidence: address.isMissing ? (getFieldValueByPath(profile, 'business.state')?.confidence ?? 'manual') : address.confidence };
+}
+
+/**
+ * Loss runs uploaded, no individual claims on the account. Says what was actually found: reports that
+ * state no losses, reports read but with no claims listed (losses unknown), reports that give a claim
+ * count without listing them — and only when nothing could be read at all, that the layout wasn't recognized.
+ */
+function NoClaimsListedNotice({ docs, runs }: { docs: { warnings?: string[] }[]; runs: { claimCount?: number }[] }) {
+  const plural = runs.length !== 1;
+  if (runs.length > 0 && runs.every((r) => r.claimCount === 0)) {
+    return <p className="px-2 pb-4 pt-2 text-center text-sm text-[var(--color-ink-600)]" data-testid="loss-runs-notice">{plural ? 'These loss runs report' : 'This loss run reports'} no losses.</p>;
+  }
+  if (runs.length > 0) {
+    const stated = runs.filter((r) => (r.claimCount ?? 0) > 0);
+    return (
+      <div className="px-2 pb-4 pt-2 text-center" data-testid="loss-runs-notice">
+        <p className="text-sm font-medium text-[var(--color-ink-800)]">
+          {stated.length > 0
+            ? `${plural ? 'The loss runs give' : 'The loss run gives'} a claim count, but the claims aren't listed one by one.`
+            : `${plural ? 'The loss runs were' : 'The loss run was'} read, but no claims are listed on ${plural ? 'them' : 'it'}.`}
+        </p>
+        <p className="mx-auto mt-1 max-w-md text-xs text-[var(--color-ink-500)]">
+          {stated.length > 0
+            ? 'Add the claims below if you need them itemized.'
+            : 'If there were no losses, edit the report below and enter 0 claims — the application will then say "No losses". If there were losses, add them below.'}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="px-2 pb-4 pt-2 text-center" data-testid="loss-runs-notice">
+      <p className="text-sm font-medium text-[var(--color-warning-600)]">
+        {docs.length === 1 ? 'A loss run document was' : `${docs.length} loss run documents were`} uploaded, but nothing could be read from {docs.length === 1 ? 'it' : 'them'}.
+      </p>
+      <p className="mx-auto mt-1 max-w-md text-xs text-[var(--color-ink-500)]">
+        {docs.some((d) => d.warnings?.length)
+          ? docs.flatMap((d) => d.warnings ?? []).join(' ')
+          : "The document's layout wasn't recognized (expected a claims table, or one labeled claim per block with a date and amount). Try re-uploading a clearer copy, or add the report and claims manually below."}
+      </p>
+    </div>
   );
 }

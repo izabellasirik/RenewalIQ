@@ -72,7 +72,7 @@ export function FeedbackWidget() {
         Feedback
       </button>
 
-      <Drawer open={open} onClose={resetAndClose} title="Send Feedback" subtitle="General feedback about Renewal IQ — bugs, ideas, anything on your mind.">
+      <Drawer open={open} onClose={resetAndClose} title="Send Feedback" subtitle="General feedback about RenewalIQ — bugs, ideas, anything on your mind.">
         {submitState.status === 'success' ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <CheckCircle2 size={32} className="text-[var(--color-success-500)]" />

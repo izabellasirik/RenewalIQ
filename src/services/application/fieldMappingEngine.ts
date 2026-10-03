@@ -1,4 +1,5 @@
 import type {
+  LossRun,
   ApplicationStats,
   ApplicationTableSection,
   ApplicationTemplate,
@@ -14,10 +15,14 @@ import type {
 import { CONFIDENCE_ORDER } from '../../utils/confidence';
 import { getFieldValueByPath } from '../../utils/riskProfilePath';
 import { buildSubmissionWarnings } from '../extraction/reconciliation';
+import { buildLossRunSummary } from './lossRunSummary';
+import { composeFullAddress } from '../../utils/fullAddress';
+import { formatDuration, isDuration } from '../../utils/duration';
 
 function defaultFormat(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.join(', ');
+  if (isDuration(value)) return formatDuration(value);
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number' && value >= 1000) return value.toLocaleString('en-US');
   return String(value);
@@ -43,11 +48,31 @@ function coverageRequestedOverride(profile: RiskProfile, path: string, base: Map
   return {
     ...base,
     value: 'Requested — limit not specified',
+    isPlaceholder: true,
     status: 'needs_review',
     reviewReason: isNewCoverage
       ? 'Requested this renewal; not on the current policy — confirm the desired limit with the client.'
       : 'Requested by the client, but no limit was specified — confirm the desired limit.',
   };
+}
+
+/**
+ * A coverage type nobody has requested or reported for this submission at all — no CoverageLine
+ * exists for it in profile.coverage, which (see types/coverage.ts) only ever contains lines that
+ * were genuinely extracted, imported, or broker-added, never a default/placeholder set. This is the
+ * "nobody mentioned it" case coverageRequestedOverride's own comment calls out as distinct from
+ * "requested but blank" — marked neverFlagMissing so it can never appear in What's Missing, the
+ * Limits & Coverage workflow-nav checkmark, or the exported application's completeness math as an
+ * outstanding gap. Returns null when a line exists (applicable — handled by
+ * coverageRequestedOverride or the generic mapper below) or the path isn't a coverage path at all.
+ */
+function coverageNotApplicableOverride(profile: RiskProfile, path: string, base: MappedFieldBase): MappedField | null {
+  const match = path.match(/^coverage\.([a-z_]+)\.(currentLimit|requestedLimit|deductible)$/);
+  if (!match) return null;
+  const line = profile.coverage.find((c) => c.type === (match[1] as CoverageType));
+  if (line) return null;
+
+  return { ...base, value: '', status: 'missing', neverFlagMissing: true, reviewReason: 'Not requested for this submission.' };
 }
 
 /**
@@ -85,7 +110,7 @@ function mapField(profile: RiskProfile, mapping: FieldMapping): MappedField {
     return { ...base, value: '', status: 'missing', reviewReason: 'Not tracked in the Risk Profile yet — enter manually.' };
   }
 
-  const coverageOverride = coverageRequestedOverride(profile, mapping.riskProfilePath, base);
+  const coverageOverride = coverageRequestedOverride(profile, mapping.riskProfilePath, base) ?? coverageNotApplicableOverride(profile, mapping.riskProfilePath, base);
   if (coverageOverride) return coverageOverride;
 
   const field = getFieldValueByPath(profile, mapping.riskProfilePath);
@@ -181,13 +206,31 @@ function mapTableSection(profile: RiskProfile, table: ApplicationTableSection): 
  * new ApplicationTemplate (data) to services/application/templates.ts — this function and the
  * extraction pipeline it reads from never change.
  */
-export function mapRiskProfileToApplication(profile: RiskProfile, template: ApplicationTemplate): MappedApplication {
+/**
+ * The application prints the address as one line — street, city, state and ZIP — even for an older
+ * account whose city/state/ZIP are stored apart from the street. Only the copy used for mapping
+ * changes; the Risk Profile itself is untouched.
+ */
+function withOneLineAddress(profile: RiskProfile): RiskProfile {
+  const b = profile.business;
+  const str = (f: { value: unknown } | undefined) => (typeof f?.value === 'string' ? f.value : null);
+  if (b.address?.isConflicting) return profile;
+  const full = composeFullAddress({ address: str(b.address), city: str(b.city), state: str(b.state), zip: str(b.zip) });
+  if (!full || full === b.address?.value) return profile;
+  const base = b.address && !b.address.isMissing ? b.address : (b.state && !b.state.isMissing ? b.state : b.city ?? b.address);
+  return { ...profile, business: { ...b, address: { ...base, value: full, isMissing: false, isConflicting: false } as typeof b.address } };
+}
+
+export function mapRiskProfileToApplication(rawProfile: RiskProfile, template: ApplicationTemplate, lossRuns?: LossRun[]): MappedApplication {
+  const profile = withOneLineAddress(rawProfile);
   const sections: MappedApplicationSection[] = template.sections.map((section) => ({
     title: section.title,
     fields: section.fields.map((mapping) => mapField(profile, mapping)),
   }));
 
   const tableSections: MappedTableSection[] = (template.tableSections ?? []).map((table) => mapTableSection(profile, table));
+
+  const lossRunSummary = buildLossRunSummary(profile, lossRuns);
 
   const fieldsNeedingReview =
     sections.reduce((sum, s) => sum + s.fields.filter((f) => f.status === 'missing' || f.status === 'conflict' || f.status === 'needs_review').length, 0) +
@@ -202,6 +245,7 @@ export function mapRiskProfileToApplication(profile: RiskProfile, template: Appl
     tableSections,
     fieldsNeedingReview,
     warnings: buildSubmissionWarnings(profile),
+    ...(lossRunSummary ? { lossRunSummary } : {}),
   };
 }
 

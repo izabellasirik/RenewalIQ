@@ -1,6 +1,7 @@
 import type { Confidence } from '../../../types';
 import { parseCount, parseMoney } from './money';
 import { parseStateList, parseStateFromPhrase } from '../../../utils/usStates';
+import { stateFromAddress } from './addressPatterns';
 
 export type ScalarCoerce = (raw: string) => unknown | null;
 
@@ -145,13 +146,18 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
     groups: [
       {
         confidence: 'high',
-        patterns: [/(?:mailing|business|physical|principal)\s+address\s*:\s*(.+)/i, /^address\s*:\s*(.+)/i, /(?:business|company)\s+location\s*:\s*(.+)/i],
+        patterns: [
+          /(?:mailing|business|physical|principal|garaging|street|insured(?:'s)?|applicant(?:'s)?|company|home)\s+address\s*:\s*(.+)/i,
+          /^address\s*:\s*(.+)/i,
+          /(?:business|company)\s+location\s*:\s*(.+)/i,
+          /principal place of business\s*:\s*(.+)/i,
+        ],
       },
     ],
   },
   {
     fieldPath: 'business.state',
-    coerce: parseStateFromPhrase,
+    coerce: (raw) => parseStateFromPhrase(raw) ?? stateFromAddress(raw),
     groups: [
       {
         confidence: 'high',
@@ -159,7 +165,18 @@ export const SCALAR_FIELD_PATTERNS: ScalarFieldPattern[] = [
           /(?:domicile|mailing|home|principal|operating)\s+state\s*:\s*(.+)/i,
           /state of (?:domicile|incorporation|formation)\s*:\s*(.+)/i,
           /^state\s*:\s*(.+)/i,
+          /domiciled in\s*:?\s*(.+)/i,
+          /base (?:state|jurisdiction)\s*:\s*(.+)/i,
         ],
+      },
+      {
+        // "City, State, Zip: Chicago, IL 60601"
+        confidence: 'high',
+        patterns: [/city\s*[,/]?\s*state\s*[,/&]?\s*(?:and\s+)?zip(?:\s*code)?\s*:\s*(.+)/i],
+      },
+      {
+        confidence: 'medium',
+        patterns: [/garaging state\s*:\s*(.+)/i],
       },
     ],
   },

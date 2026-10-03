@@ -6,6 +6,7 @@ import { parseSpreadsheet } from './parseSpreadsheet';
 import { parseCsv } from './parseCsv';
 import { parseText } from './parseText';
 import { parseImage } from './parseImage';
+import { DocumentLinkError, detectDocumentLink, fetchLinkedDocument } from './documentLinks';
 
 /**
  * HEIC/HEIF (the default format for recent iPhone photos) isn't decodable by any browser API used
@@ -17,8 +18,29 @@ import { parseImage } from './parseImage';
  */
 const UNSUPPORTED_IMAGE_EXTENSIONS = ['heic', 'heif'];
 
-/** Dispatches a File to the parser for its type. Unrecognized extensions fall back to plain text. */
-export async function parseFile(file: File): Promise<RawDocument> {
+/**
+ * Dispatches a File to the parser for its type. Unrecognized extensions fall back to plain text.
+ * A file that's only a link to the real document (see documentLinks.ts) is downloaded and parsed
+ * instead — or throws DocumentLinkError ("Document could not be accessed — upload the file
+ * directly."), so a link is never read as if it were the document.
+ */
+export interface ParseFileOptions {
+  /** Run on-device OCR on photos and scanned PDF pages now (default true). False when the AI reads them first — see readDocument.ts. */
+  ocr?: boolean;
+}
+
+export async function parseFile(file: File, options: ParseFileOptions = {}): Promise<RawDocument> {
+  const link = await detectDocumentLink(file);
+  if (link) {
+    const fetched = await fetchLinkedDocument(link, file.name);
+    if (await detectDocumentLink(fetched)) throw new DocumentLinkError(link, 'The link pointed to another link.');
+    const raw = await parseByType(fetched, options);
+    return { ...raw, sourceUrl: link, linkedFile: fetched };
+  }
+  return parseByType(file, options);
+}
+
+async function parseByType(file: File, options: ParseFileOptions): Promise<RawDocument> {
   const ext = file.name.split('.').pop()?.toLowerCase();
   if (ext && UNSUPPORTED_IMAGE_EXTENSIONS.includes(ext)) {
     throw new Error(`.${ext.toUpperCase()} photos aren't supported yet — please export or re-save this as a JPG, PNG, or WEBP and upload again.`);
@@ -27,7 +49,7 @@ export async function parseFile(file: File): Promise<RawDocument> {
   const fileType = inferFileType(file.name);
   switch (fileType) {
     case 'pdf':
-      return parsePdf(file);
+      return parsePdf(file, { ocrScannedPages: options.ocr !== false });
     case 'docx':
       return parseDocx(file);
     case 'xlsx':
@@ -35,7 +57,7 @@ export async function parseFile(file: File): Promise<RawDocument> {
     case 'csv':
       return parseCsv(file);
     case 'image':
-      return parseImage(file);
+      return parseImage(file, { ocr: options.ocr !== false });
     case 'txt':
     case 'other':
       return parseText(file);

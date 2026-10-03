@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleX, TriangleAlert, Trash2 } from 'lucide-react';
+import { FileText, FileSpreadsheet, Image as ImageIcon, Loader2, CircleCheck, CircleAlert, CircleX, TriangleAlert, Trash2, Eye, Download } from 'lucide-react';
 import { motion } from 'framer-motion';
-import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType } from '../../types';
+import type { RiskProfile, UploadedDocument, DriverEntry, VehicleEntry, LossEntry, CoverageType, CoverageField } from '../../types';
 import { DOCUMENT_CATEGORY_LABELS } from '../../types';
 import { previewDocumentRemovalImpact } from '../../services/extraction';
 import { Badge, ConfirmDialog } from '../ui';
-import { ImagePreviewModal } from './ImagePreviewModal';
+import { DocumentPreviewModal } from './DocumentPreviewModal';
+import { downloadDocument } from '../../services/documents/downloadDocuments';
 import { DocumentExtractionDetail } from './DocumentExtractionDetail';
+import { licenseReadIssue } from '../../services/extraction/licenseReadability';
 
 function fileIcon(doc: UploadedDocument) {
   if (doc.fileType === 'image') return ImageIcon;
@@ -16,6 +18,9 @@ function fileIcon(doc: UploadedDocument) {
 function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(0)} KB`;
 }
+
+/** Read but not applied — waiting for the broker. */
+const pendingReview = (doc: UploadedDocument) => (doc.reviewCandidates ?? []).filter((c) => !c.ignored).length;
 
 export function DocumentList({
   documents,
@@ -32,7 +37,7 @@ export function DocumentList({
   profile?: RiskProfile;
   onDelete?: (documentId: string) => void;
   onUpdateField?: (section: 'business' | 'transportation', key: string, value: unknown) => void;
-  onUpdateCoverage?: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
+  onUpdateCoverage?: (coverageType: CoverageType, field: CoverageField, value: string) => void;
   onUpdateVehicle?: (id: string, patch: Partial<VehicleEntry>) => void;
   onUpdateDriver?: (id: string, patch: Partial<DriverEntry>) => void;
   onUpdateLoss?: (id: string, patch: Partial<LossEntry>) => void;
@@ -40,6 +45,7 @@ export function DocumentList({
   const [previewDoc, setPreviewDoc] = useState<UploadedDocument | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UploadedDocument | null>(null);
   const [detailDoc, setDetailDoc] = useState<UploadedDocument | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   if (documents.length === 0) return null;
 
@@ -59,7 +65,7 @@ export function DocumentList({
         {documents.map((doc) => {
           const Icon = fileIcon(doc);
           const isImage = doc.fileType === 'image';
-          const canPreview = isImage && !!doc.previewDataUrl;
+          const hasThumb = isImage && !!doc.previewDataUrl;
           return (
             <motion.li
               key={doc.id}
@@ -67,35 +73,46 @@ export function DocumentList({
               animate={{ opacity: 1, y: 0 }}
               className="flex items-center gap-3 rounded-lg border border-[var(--color-ink-100)] bg-white px-4 py-3"
             >
-              {canPreview ? (
-                <button
-                  onClick={() => setPreviewDoc(doc)}
-                  className="h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-[var(--color-ink-100)] cursor-pointer"
-                  aria-label={`View ${doc.name}`}
-                >
-                  <img src={doc.previewDataUrl} alt="" className="h-full w-full object-cover" />
-                </button>
-              ) : (
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--color-ink-50)] text-[var(--color-ink-500)]">
-                  <Icon size={17} />
-                </div>
-              )}
+              <button
+                onClick={() => setPreviewDoc(doc)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)] text-[var(--color-ink-500)] hover:border-[var(--color-brand-500)] cursor-pointer"
+                aria-label={`Preview ${doc.name}`}
+                title="Preview"
+              >
+                {hasThumb ? <img src={doc.previewDataUrl} alt="" className="h-full w-full object-cover" /> : <Icon size={17} />}
+              </button>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">
+                <button onClick={() => setPreviewDoc(doc)} className="block max-w-full truncate text-left text-sm font-medium text-[var(--color-ink-800)] hover:text-[var(--color-brand-700)] hover:underline cursor-pointer" title="Preview">
                   {doc.name}
-                  {canPreview && (
-                    <button onClick={() => setPreviewDoc(doc)} className="ml-2 text-xs font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
-                      View image
-                    </button>
-                  )}
-                </p>
+                </button>
                 <p className="text-xs text-[var(--color-ink-400)]">
                   {DOCUMENT_CATEGORY_LABELS[doc.category]} · {formatSize(doc.sizeBytes)}
                 </p>
-                {doc.warnings && doc.warnings.length > 0 && (
-                  <p className={`mt-1 flex items-start gap-1 text-xs ${doc.status === 'error' ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-warning-600)]'}`}>
-                    <TriangleAlert size={12} className="mt-0.5 shrink-0" />
-                    {doc.warnings.join(' ')}
+                {licenseReadIssue(doc) ? (
+                  // An unreadable license: what's wrong and what happens next — never blank fields without a word.
+                  <div className="mt-1.5 rounded-md border border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/40 px-2.5 py-1.5 text-xs text-[var(--color-ink-700)]">
+                    <p className="flex items-center gap-1 font-semibold text-[var(--color-warning-600)]">
+                      <TriangleAlert size={12} className="shrink-0" />
+                      {licenseReadIssue(doc)!.title}
+                    </p>
+                    {licenseReadIssue(doc)!.reason && <p className="mt-0.5">Reason: {licenseReadIssue(doc)!.reason}</p>}
+                    <p className="mt-0.5 text-[var(--color-ink-500)]">Nothing was guessed from it. “Clearer driver license” is on the checklist — request it from the client there.</p>
+                  </div>
+                ) : (
+                  doc.warnings &&
+                  doc.warnings.length > 0 && (
+                    <p className={`mt-1 flex items-start gap-1 text-xs ${doc.status === 'error' ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-warning-600)]'}`}>
+                      <TriangleAlert size={12} className="mt-0.5 shrink-0" />
+                      {doc.warnings.join(' ')}
+                    </p>
+                  )
+                )}
+                {doc.sourceUrl && (
+                  <p className="mt-0.5 truncate text-xs text-[var(--color-ink-400)]" title={doc.sourceUrl}>
+                    From link:{' '}
+                    <a href={doc.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-[var(--color-brand-700)]">
+                      {doc.sourceUrl}
+                    </a>
                   </p>
                 )}
               </div>
@@ -115,10 +132,17 @@ export function DocumentList({
                   className="cursor-pointer"
                   aria-label={`View extracted data for ${doc.name}`}
                 >
-                  <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'} className="hover:opacity-80">
-                    <CircleCheck size={12} />
-                    {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted · View
-                  </Badge>
+                  {pendingReview(doc) > 0 ? (
+                    <Badge tone="warning" className="hover:opacity-80">
+                      <CircleAlert size={12} />
+                      {pendingReview(doc)} to review · View
+                    </Badge>
+                  ) : (
+                    <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'} className="hover:opacity-80">
+                      <CircleCheck size={12} />
+                      {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted · View
+                    </Badge>
+                  )}
                 </button>
               ) : (
                 <Badge tone={doc.warnings && doc.warnings.length > 0 ? 'warning' : 'success'}>
@@ -126,6 +150,22 @@ export function DocumentList({
                   {doc.fieldsExtracted ?? 0} field{doc.fieldsExtracted === 1 ? '' : 's'} extracted
                 </Badge>
               )}
+              <button
+                onClick={() => setPreviewDoc(doc)}
+                className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-brand-700)] cursor-pointer"
+                aria-label={`Preview ${doc.name}`}
+                title="Preview"
+              >
+                <Eye size={15} />
+              </button>
+              <button
+                onClick={() => void downloadDocument(doc).then((ok) => !ok && setDownloadError(doc.id))}
+                className="shrink-0 rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-brand-700)] cursor-pointer"
+                aria-label={`Download ${doc.name}`}
+                title={downloadError === doc.id ? 'This file isn’t available to download' : 'Download'}
+              >
+                <Download size={15} className={downloadError === doc.id ? 'text-[var(--color-danger-600)]' : undefined} />
+              </button>
               {onDelete && (
                 <button
                   onClick={() => setDeleteTarget(doc)}
@@ -140,13 +180,13 @@ export function DocumentList({
         })}
       </ul>
 
-      <ImagePreviewModal open={!!previewDoc} onClose={() => setPreviewDoc(null)} src={previewDoc?.previewDataUrl ?? ''} name={previewDoc?.name ?? ''} />
+      <DocumentPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />
 
       {profile && (
         <DocumentExtractionDetail
           open={!!detailDoc}
           onClose={() => setDetailDoc(null)}
-          document={detailDoc}
+          document={detailDoc ? (documents.find((d) => d.id === detailDoc.id) ?? detailDoc) : null}
           profile={profile}
           onUpdateField={onUpdateField}
           onUpdateCoverage={onUpdateCoverage}
@@ -165,9 +205,12 @@ export function DocumentList({
         }}
         title="Delete this file?"
         description={
-          impactParts.length > 0
-            ? `Removing this file may affect information extracted from it: ${impactParts.join(', ')} that depended only on ${deleteTarget?.name} will be removed or updated. Values also confirmed by you or supported by another document will be kept.`
-            : `Removing this file may affect information extracted from it. Nothing currently in the Risk Profile depends only on ${deleteTarget?.name ?? 'this file'}.`
+          (impactParts.length > 0
+            ? `${impactParts.join(', ')} that came only from ${deleteTarget?.name} will be removed. Values you typed, and anything another document also shows, stay.`
+            : `Nothing in the Risk Profile depends only on ${deleteTarget?.name ?? 'this file'}.`) +
+          (impact?.flagged
+            ? ` ${impact.flagged} item${impact.flagged === 1 ? '' : 's'} you edited or confirmed will be kept and marked for review instead of removed.`
+            : '')
         }
         confirmLabel="Delete file"
       />
