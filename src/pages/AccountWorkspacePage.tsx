@@ -15,6 +15,7 @@ import { ReviewFlagsPanel } from '../components/riskProfile/ReviewFlagsPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
 import { ActionList } from '../components/workspace/ActionList';
 import { AddMissingDocumentsDialog } from '../components/workspace/AddMissingDocumentsDialog';
+import { MissingDocumentsPanel } from '../components/workspace/MissingDocumentsPanel';
 import { DoneTasks } from '../components/workspace/DoneTasks';
 import { NotesPanel } from '../components/workspace/NotesPanel';
 import { QUOTE_STATUS_TONE } from '../components/workspace/quoteStatus';
@@ -139,6 +140,8 @@ export function AccountWorkspacePage() {
               </CardBody>
             </Card>
             <AddMissingDocumentsDialog accountId={accountId} open={addingDocs} onClose={() => setAddingDocs(false)} />
+            {/* Everything the account still needs from the client, and where each document stands. */}
+            <MissingDocumentsPanel accountId={accountId} onOpenChecklist={() => setTab('checklist')} />
             {/* Follow-ups right under "Action required"; the checklist itself lives on its own tab. */}
             <FollowUpsCard accountId={accountId} />
             {/* Open client document requests only — the full history is on the Checklist tab. */}

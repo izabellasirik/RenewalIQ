@@ -255,7 +255,14 @@ interface AccountsState {
   /** The broker sent the client a request (the email itself is sent outside Renewal IQ). */
   /** `requestedOn` (YYYY-MM-DD) records when the request went out when it wasn't today; `instructions` updates the client-facing note. */
   markItemsRequested: (accountId: string, itemIds: string[], opts: { contactId?: string; followUpDate?: string; requestedOn?: string; instructions?: string }) => void;
-  markItemReceived: (accountId: string, itemId: string, opts?: { documentId?: string }) => void;
+  /** `automatic`: matched by the system (a client upload), so it waits for the broker to verify it. */
+  markItemReceived: (accountId: string, itemId: string, opts?: { documentId?: string; automatic?: boolean }) => void;
+  /** The broker checked a received document. */
+  verifyItem: (accountId: string, itemId: string) => void;
+  /** Doesn't apply to this account — with the reason, for the record. */
+  markItemNotApplicable: (accountId: string, itemId: string, reason: string) => void;
+  /** When the document expires (YYYY-MM-DD), or undefined to clear. */
+  setItemExpiry: (accountId: string, itemId: string, expiresOn: string | undefined) => void;
 
   // --- Client document requests (0030) — a secure link per request; the checklist item stays the requirement
   /** Requests for each account, from the server (never persisted locally). */
@@ -2056,6 +2063,10 @@ export const useAccountsStore = create<AccountsState>()(
               status: 'received' as const,
               receivedAt: now,
               documentId: opts?.documentId ?? i.documentId,
+              // Matched by the system → waits for the broker; marked by the broker → checked by them.
+              ...(opts?.automatic
+                ? { verification: 'pending' as const, verifiedAt: undefined, verifiedBy: undefined }
+                : { verification: 'verified' as const, verifiedAt: now, verifiedBy: s.currentUserEmail ?? undefined }),
               updatedAt: now,
             })),
           },
@@ -2064,11 +2075,55 @@ export const useAccountsStore = create<AccountsState>()(
             s.activityLog,
             accountId,
             'item_received',
-            `Received ${item.label}${doc ? ` (${doc.name})` : ''}.${waiting.length ? ` Ready to send to ${waiting.map((q) => q.marketName).join(', ')}.` : ''}`
+            `Received ${item.label}${doc ? ` (${doc.name})` : ''}${opts?.automatic ? ' — matched automatically, waiting for your check' : ''}.${waiting.length ? ` Ready to send to ${waiting.map((q) => q.marketName).join(', ')}.` : ''}`
           ),
         }));
         syncNow(accountId);
         settleOpenRequests(accountId, [itemId], 'satisfied');
+        trackEvent('requested_document_received', { accountId, metadata: { source: opts?.automatic ? 'client_upload' : 'broker' } });
+      },
+
+      verifyItem: (accountId, itemId) => {
+        const item = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!item || item.status !== 'received' || item.verification === 'verified') return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: { ...s.missingItems, [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, verification: 'verified' as const, verifiedAt: now, verifiedBy: s.currentUserEmail ?? undefined, updatedAt: now })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'item_verified', `Checked and accepted ${item.label}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
+        trackEvent('requirement_verified', { accountId });
+      },
+
+      markItemNotApplicable: (accountId, itemId, reason) => {
+        const item = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        const why = reason.trim();
+        if (!item || !why) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: {
+            ...s.missingItems,
+            [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, status: 'waived' as const, waiveKind: 'not_applicable' as const, waiveReason: why.slice(0, 300), updatedAt: now })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'item_not_applicable', `Marked "${item.label}" not applicable — ${why.slice(0, 300)}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
+        settleOpenRequests(accountId, [itemId], 'waived');
+        trackEvent('requirement_not_applicable', { accountId });
+      },
+
+      setItemExpiry: (accountId, itemId, expiresOn) => {
+        const item = (get().missingItems[accountId] ?? []).find((i) => i.id === itemId);
+        if (!item || (item.expiresOn ?? undefined) === (expiresOn || undefined)) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          missingItems: { ...s.missingItems, [accountId]: updateInList(s.missingItems[accountId], itemId, (i) => ({ ...i, expiresOn: expiresOn || undefined, updatedAt: now })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'account_updated', expiresOn ? `${item.label} expires ${formatShortDate(expiresOn)}.` : `Cleared the expiry date of ${item.label}.`),
+        }));
+        syncNow(accountId);
       },
 
       setItemStatus: (accountId, itemId, status) => {
@@ -2104,8 +2159,8 @@ export const useAccountsStore = create<AccountsState>()(
             ...s.missingItems,
             [accountId]: updateInList(s.missingItems[accountId], itemId, (i) =>
               status === 'missing'
-                ? { ...i, status, receivedAt: undefined, requestedAt: undefined, followUpDate: undefined, forwardedTo: undefined, forwardedToCarrierAt: undefined, updatedAt: now }
-                : { ...i, status, updatedAt: now }
+                ? { ...i, status, receivedAt: undefined, requestedAt: undefined, followUpDate: undefined, forwardedTo: undefined, forwardedToCarrierAt: undefined, verification: undefined, verifiedAt: undefined, verifiedBy: undefined, waiveKind: undefined, waiveReason: undefined, updatedAt: now }
+                : { ...i, status, ...(status === 'waived' ? { waiveKind: 'waived' as const } : {}), updatedAt: now }
             ),
           },
           accounts: touchAccount(s.accounts, accountId),
@@ -3107,7 +3162,7 @@ export const useAccountsStore = create<AccountsState>()(
                   await waitForProcessed(accountId, documentId, 180_000);
                   const done = await requestsRepo.completeRequestFile(f.id, documentId, 'satisfied', undefined, target.id);
                   const targetMissing = (get().missingItems[accountId] ?? []).find((m) => m.id === target.missingItemId);
-                  if (done.ok && targetMissing && targetMissing.status !== 'received') get().markItemReceived(accountId, targetMissing.id, { documentId });
+                  if (done.ok && targetMissing && targetMissing.status !== 'received') get().markItemReceived(accountId, targetMissing.id, { documentId, automatic: true });
                 } else {
                   await requestsRepo.completeRequestFile(f.id, null, 'needs_review', placement.outcome === 'needs_review' ? placement.note : 'Uploaded without choosing an item — choose which item it is.');
                 }
@@ -3126,7 +3181,7 @@ export const useAccountsStore = create<AccountsState>()(
                 const [documentId] = get().addFiles(accountId, [dl.data], { fromClientRequest: req.contactName ?? 'the client', preRead: [read] });
                 await waitForProcessed(accountId, documentId, 180_000);
                 const done = await requestsRepo.completeRequestFile(f.id, documentId, 'satisfied');
-                if (done.ok && missing && missing.status !== 'received') get().markItemReceived(accountId, missing.id, { documentId });
+                if (done.ok && missing && missing.status !== 'received') get().markItemReceived(accountId, missing.id, { documentId, automatic: true });
               } else {
                 // Held outside the account until the broker looks at it — nothing imported, nothing to undo.
                 await requestsRepo.completeRequestFile(f.id, null, 'needs_review', decision.outcome === 'needs_review' ? decision.note : `Couldn't read this file — check it's the ${item.label}.`);

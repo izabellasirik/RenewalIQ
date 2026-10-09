@@ -4,6 +4,7 @@ import { Button, Modal } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { CHECKLIST_TEMPLATES, expandTemplate } from '../../services/workflow/checklistTemplates';
+import { suggestedRequirements } from '../../services/workflow/missingDocuments';
 import { RequestItemsDialog } from './RequestItemsDialog';
 import { inputClass, labelClass } from './formStyles';
 import { cn } from '../../utils/cn';
@@ -28,10 +29,12 @@ export function AddMissingDocumentsDialog({ accountId, open, onClose }: { accoun
   const [custom, setCustom] = useState('');
   const [requestIds, setRequestIds] = useState<string[] | null>(null);
 
-  // Common documents not already on the checklist (MVRs one per driver on the Risk Profile).
+  // Common documents not already on the checklist, from what the Risk Profile shows: MVRs and
+  // licenses per driver, medical certificates for CDL drivers, registrations per vehicle.
   const suggestions = useMemo(() => {
     const onChecklist = new Set(items.filter((i) => i.status !== 'waived').flatMap((i) => [i.templateKey, norm(i.label)]).filter(Boolean));
-    return CHECKLIST_TEMPLATES.flatMap((t) => expandTemplate(t, profile)).filter((s) => !onChecklist.has(s.templateKey) && !onChecklist.has(norm(s.label)));
+    const all = [...CHECKLIST_TEMPLATES.flatMap((t) => expandTemplate(t, profile)), ...suggestedRequirements(profile)];
+    return all.filter((s, i) => !onChecklist.has(s.templateKey) && !onChecklist.has(norm(s.label)) && all.findIndex((x) => x.templateKey === s.templateKey) === i);
   }, [items, profile]);
 
   const isPicked = (label: string) => picked.some((p) => norm(p.label) === norm(label));

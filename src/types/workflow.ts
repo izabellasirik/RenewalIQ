@@ -99,6 +99,19 @@ export interface MissingItem {
   forwardedToCarrierAt?: string;
   /** An uploaded document (UploadedDocument.id) that satisfies this item. */
   documentId?: string;
+  /**
+   * Received documents only: 'pending' when it was matched automatically (a client upload the
+   * system matched) and nobody has checked it yet; 'verified' once the broker has — or when the
+   * broker marked it received themselves. Absent on items from before this existed (= not checked).
+   */
+  verification?: 'pending' | 'verified';
+  verifiedAt?: string;
+  verifiedBy?: string;
+  /** Waived items: 'not_applicable' (doesn't apply to this account, with a reason) or a plain waiver. */
+  waiveKind?: 'waived' | 'not_applicable';
+  waiveReason?: string;
+  /** YYYY-MM-DD the document expires (a medical certificate, a registration) — set by the broker. */
+  expiresOn?: string;
   createdAt: string;
   updatedAt: string;
 }
