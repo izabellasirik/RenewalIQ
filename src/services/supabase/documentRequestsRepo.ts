@@ -3,6 +3,7 @@ import type { DocumentRequest, DocumentRequestFile, DocumentRequestItem } from '
 import { storageSafeName } from './intakeRepo';
 import { clientRequestUrl } from '../publicLinks';
 import { errorMessage, errorStatus, withRetry, withTimeout } from '../intake/retry';
+import { precheckUpload, rejectedFileError, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
 
 /**
  * Client document requests (0030). Broker functions run signed in and are checked by the database
@@ -313,15 +314,20 @@ export async function uploadRequestFile(
   onRetry?: (attempt: number, reason: string) => void
 ): Promise<PublicRequestView> {
   if (!supabase) throw new Error(NOT_CONFIGURED);
+  const pre = await precheckUpload(file);
+  if (!pre.ok) throw rejectedFileError(pre.reason);
   const path = `${folder}/${fileKey}/${storageSafeName(file.name)}`;
   const timeout = 60_000 + Math.ceil(file.size / 50_000) * 1000;
   return withRetry(
     async () => {
-      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined })), timeout, `Uploading ${file.name}`);
+      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, file, { contentType: storageContentType(file) })), timeout, `Uploading ${file.name}`);
       if (up.error && !isAlreadyThere(up.error)) {
-        if (errorStatus(up.error) === 413 || /too large|exceeded the maximum/i.test(up.error.message)) throw Object.assign(new Error(`${file.name} is too large to upload.`), { status: 413 });
+        if (errorStatus(up.error) === 413 || /too large|exceeded the maximum/i.test(up.error.message)) throw Object.assign(new Error(`${file.name} is too large to upload (25 MB at most).`), { status: 413 });
         throw up.error;
       }
+      // The server reads the stored file and checks it really is what its name says (0048).
+      const checked = await verifyUploadOnServer('intake-uploads', path);
+      if (checked.status === 'rejected') throw rejectedFileError(checked.message);
       const { data, error } = await withTimeout(
         Promise.resolve(supabase!.rpc('attach_document_request_file', { p_token: token, p_item_id: itemId, p_file_key: fileKey, p_file_name: file.name, p_storage_path: path, p_size: file.size })),
         TIMEOUT,

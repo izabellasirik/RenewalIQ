@@ -26,7 +26,7 @@ for m in 0014_activity_actor_name 0017_profile_contact_fields 0018_agency_invita
   psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/$m.sql" >/dev/null 2>&1
   psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$MIG/$m.sql" >/dev/null 2>&1
 done
-ACTUAL="$(psql -q -d "$DB" -v MIG="$MIG" -f "$DIR/tests.sql" 2>&1 | sed 's/psql:[^ ]* NOTICE:  //' | grep -E '^(L|T|N|X|A|S|F|U|P|I|G|C|K|M|R|D|E|H|J|Q|W|V|O|Y|Z|B|FA|LK|AI|S|Q|G|AQ|backfill)[0-9 ]')"
+ACTUAL="$(psql -q -d "$DB" -v MIG="$MIG" -f "$DIR/tests.sql" 2>&1 | sed 's/psql:[^ ]* NOTICE:  //' | grep -E '^(L|T|N|X|A|S|F|U|P|I|G|C|K|M|R|D|E|H|J|Q|W|V|O|Y|Z|B|FA|LK|AI|S|Q|G|AQ|U|backfill)[0-9 ]')"
 # AI quota under real concurrency: 20 connections at once, limit 5 → exactly 5 allowed (0047).
 for i in $(seq 1 20); do
   psql -q -At -d "$DB" -c "set role service_role; select ai_quota_take('00000000-0000-0000-0000-0000000000c9', null, 5, 1000)->>'allowed'" > "/tmp/aq_$$_$i" 2>&1 &

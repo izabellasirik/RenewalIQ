@@ -1154,3 +1154,34 @@ set role authenticated;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
 do $$ begin perform founder_analytics_snapshot(now() - interval '1 day', now()); raise notice 'F2 agency admin reads snapshot v2: ALLOWED (BAD)'; exception when others then raise notice 'F2 snapshot v2 still founder-only'; end $$;
 reset role;
+
+\echo '== 0048: upload limits; client uploads verified on the server before they count'
+reset role;
+\i :MIG/0048_upload_limits_and_verification.sql
+select 'U1 bucket limits: ' || string_agg(id || '=' || file_size_limit || ' bytes, ' || array_length(allowed_mime_types, 1) || ' types, html allowed=' || ('text/html' = any(allowed_mime_types)), '; ' order by id) from storage.buckets where id in ('submission-documents', 'intake-uploads');
+select token as tk47, (select i.id from document_request_items i where i.request_id = :'rq47' order by i.position limit 1) as it47 from document_requests where id = :'rq47' \gset
+select set_config('my.tk47', :'tk47', false) is not null as _a, set_config('my.it47', :'it47', false) is not null as _b \gset
+insert into storage.objects (bucket_id, name) values ('intake-uploads', :'tk47' || '/key-u001/lease.pdf'), ('intake-uploads', :'tk47' || '/key-u002/ifta.pdf'), ('intake-uploads', :'tk47' || '/key-u003/w9.pdf');
+set role anon;
+select 'U2 switch off: an unchecked file attaches as before: ' || ((attach_document_request_file(:'tk47', :'it47', 'key-u001', 'lease.pdf', :'tk47' || '/key-u001/lease.pdf', 10))->>'status' is not null);
+reset role;
+update app_settings set value = 'true' where key = 'require_upload_verification';
+set role anon;
+do $$ begin perform attach_document_request_file(current_setting('my.tk47')::uuid, current_setting('my.it47'), 'key-u002', 'ifta.pdf', current_setting('my.tk47') || '/key-u002/ifta.pdf', 10); raise notice 'U3 switch on, unchecked file attached: ALLOWED (BAD)'; exception when others then raise notice 'U3 switch on, unchecked file refused: %', sqlerrm; end $$;
+do $$ begin insert into upload_verifications (bucket_id, object_name, kind) values ('intake-uploads', current_setting('my.tk47') || '/key-u002/ifta.pdf', 'pdf'); raise notice 'U4 client marks own file verified: ALLOWED (BAD)'; exception when others then raise notice 'U4 client cannot mark files verified'; end $$;
+reset role;
+set role service_role;
+insert into upload_verifications (bucket_id, object_name, kind, size_bytes) values ('intake-uploads', :'tk47' || '/key-u003/w9.pdf', 'pdf', 10);
+reset role;
+set role anon;
+select 'U5 switch on, server-checked file attaches: ' || ((attach_document_request_file(:'tk47', :'it47', 'key-u003', 'w9.pdf', :'tk47' || '/key-u003/w9.pdf', 10))->>'status' is not null);
+reset role;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ declare n integer; begin select count(*) into n from upload_verifications; raise notice 'U6 agency admin sees verifications: %', n; exception when others then raise notice 'U6 agency admin sees verifications: no access'; end $$;
+do $$ begin update app_settings set value = 'false' where key = 'require_upload_verification'; if found then raise notice 'U6 agency admin turned enforcement off: ALLOWED (BAD)'; else raise notice 'U6 agency admin cannot change the switch'; end if; exception when others then raise notice 'U6 agency admin cannot change the switch'; end $$;
+reset role;
+-- Intake uploads: the same rule on intake_documents
+do $$ begin insert into intake_documents (id, intake_submission_id, user_id, file_name, storage_path, size_bytes) select 'idoc_u48', s.id, s.user_id, 'x.pdf', s.id || '/k/x.pdf', 1 from intake_submissions s limit 1; raise notice 'U7 unchecked intake file recorded: ALLOWED (BAD)'; exception when others then raise notice 'U7 unchecked intake file refused: %', sqlerrm; end $$;
+update app_settings set value = 'false' where key = 'require_upload_verification';
+select 'U8 switch back off: ' || (value::text) from app_settings where key = 'require_upload_verification';

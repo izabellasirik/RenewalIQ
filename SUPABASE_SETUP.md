@@ -304,6 +304,22 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   feeds Founder Analytics → AI Usage & Cost and refuses anyone but the founder. Prices live in
   `supabase/functions/extract-document-vision/pricing.ts`. Without 0046 AI reads still work, uncached
   and unlogged (the function logs the database error and carries on).
+- **`supabase/migrations/0047_requests_sent_quota_agencies.sql`** — client requests record whether
+  they were actually sent: copying the email or opening it in Gmail only *prepares* the request;
+  "Mark as sent" (`mark_document_request_sent`) records when it went out. Every request made before
+  this runs becomes **unconfirmed** (never assumed sent) and keeps its follow-ups. Also: AI reading
+  quota counters for the Edge Function (`ai_quota_take` / `ai_quota_release`, service role only),
+  `create_my_agency` (an owner with a confirmed email who isn't in an agency creates one and becomes
+  its admin — brokers still join only by invitation), Founder Analytics snapshot v2 (meaningful
+  first/last activity, agency members and open invitations) and event names for the missing-documents
+  workflow. Without it the app falls back to the old behaviour.
+- **`supabase/migrations/0048_upload_limits_and_verification.sql`** — both storage buckets accept
+  files up to 25 MB and only PDF, JPEG, PNG, WebP, HEIC/HEIF, Word, Excel, CSV and text.
+  `upload_verifications` records client uploads whose real contents `api/verify-upload` checked
+  (service role only). The switch `app_settings.require_upload_verification` starts **false**; after
+  the app with `api/verify-upload` is deployed and `SUPABASE_SERVICE_ROLE_KEY` is set on Vercel, turn
+  it on so an unchecked client upload can't be recorded:
+  `update public.app_settings set value = 'true' where key = 'require_upload_verification';`
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -394,6 +410,8 @@ from (values
   ('0044_intake_vins_contacts',       exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'intake_submissions' and column_name = 'vin_numbers')),
   ('0045_request_link_up_front',      to_regprocedure('public.create_document_request(text,uuid,jsonb,text,jsonb,date,timestamptz,uuid)') is not null),
   ('0046_ai_usage',                   to_regprocedure('public.founder_ai_usage(text)') is not null),
+  ('0047_requests_sent_quota_agencies', to_regprocedure('public.mark_document_request_sent(text,timestamptz,date)') is not null),
+  ('0048_upload_limits_and_verification', to_regclass('public.upload_verifications') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

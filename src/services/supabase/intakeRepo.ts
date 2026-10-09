@@ -1,3 +1,4 @@
+import { precheckUpload, rejectedFileError, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
 import { supabase } from './client';
 import type { DuplicateCandidate } from '../intake/duplicateDetection';
 import type { CoverageType, IntakeDocument, IntakeEvent, IntakeContact, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../../types';
@@ -246,16 +247,21 @@ const isAlreadyThere = (error: unknown) => errorStatus(error) === 409 || /alread
  */
 export async function uploadIntakeFile(session: IntakeSession, fileKey: string, file: File, onRetry?: (attempt: number, reason: string) => void): Promise<void> {
   if (!supabase) throw new Error(NOT_CONFIGURED_MESSAGE);
+  const pre = await precheckUpload(file);
+  if (!pre.ok) throw rejectedFileError(pre.reason);
   const path = intakeFilePath(session.submissionId, fileKey, file.name);
   // Generous for a slow phone connection: a minute plus ~50 KB/s.
   const timeout = 60_000 + Math.ceil(file.size / 50_000) * 1000;
   await withRetry(
     async () => {
-      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined })), timeout, `Uploading ${file.name}`);
+      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, file, { contentType: storageContentType(file) })), timeout, `Uploading ${file.name}`);
       if (up.error && !isAlreadyThere(up.error)) {
-        if (errorStatus(up.error) === 413 || /too large|exceeded the maximum/i.test(up.error.message)) throw Object.assign(new Error(`${file.name} is too large to upload.`), { status: 413 });
+        if (errorStatus(up.error) === 413 || /too large|exceeded the maximum/i.test(up.error.message)) throw Object.assign(new Error(`${file.name} is too large to upload (25 MB at most).`), { status: 413 });
         throw up.error;
       }
+      // The server reads the stored file and checks it really is what its name says (0048).
+      const checked = await verifyUploadOnServer('intake-uploads', path);
+      if (checked.status === 'rejected') throw rejectedFileError(checked.message);
       const { error } = await withTimeout(
         Promise.resolve(
           supabase!.rpc('attach_intake_document', {
@@ -357,8 +363,10 @@ export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, fil
       for (let attempt = 0; attempt < 2 && !attached; attempt++) {
         const documentId = generateId('idoc');
         const path = `${submissionId}/${documentId}/${storageSafeName(file.name)}`;
-        const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, file);
+        if (!(await precheckUpload(file)).ok) break;
+        const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, file, { contentType: storageContentType(file) });
         if (uploadErr) continue;
+        if ((await verifyUploadOnServer('intake-uploads', path)).status === 'rejected') break;
         const { error: rowErr } = await supabase.from('intake_documents').insert({
           id: documentId,
           intake_submission_id: submissionId,

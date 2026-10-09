@@ -396,4 +396,13 @@ G7 can invite brokers to their agency: true
 G8 anonymous denied
 F1 snapshot v2: members listed=4 owner without activity listed=1 re-open is not meaningful=true open invitations=newbroker@freshfreight.com unaffiliated=5
 F2 snapshot v2 still founder-only
+U1 bucket limits: intake-uploads=26214400 bytes, 12 types, html allowed=false; submission-documents=26214400 bytes, 12 types, html allowed=false
+U2 switch off: an unchecked file attaches as before: true
+U3 switch on, unchecked file refused: This file hasn't been checked yet — upload it again.
+U4 client cannot mark files verified
+U5 switch on, server-checked file attaches: true
+U6 agency admin sees verifications: no access
+U6 agency admin cannot change the switch
+U7 unchecked intake file refused: This file hasn't been checked yet — upload it again.
+U8 switch back off: false
 AQ1 20 concurrent reads, limit 5, allowed: 5
