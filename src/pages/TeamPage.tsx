@@ -4,9 +4,11 @@ import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, EmptyState, Modal, Skeleton } from '../components/ui';
 import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { useAccountsStore } from '../state/useAccountsStore';
+import { trackEvent } from '../services/productAnalytics/trackEvent';
 import { formatShortDate } from '../services/workflow/dates';
 import {
   createInvitation,
+  createMyAgency,
   fetchOpenInvitations,
   fetchTeam,
   invitationLink,
@@ -67,6 +69,14 @@ export function TeamPage() {
     if (!res.ok) setError(res.message);
     await load();
     if (res.ok) hydrate();
+  }
+
+  if (!access && currentUserId) {
+    return (
+      <PageContainer title="Set up your agency">
+        <CreateAgencyCard onCreated={hydrate} />
+      </PageContainer>
+    );
   }
 
   if (!access || access.role !== 'admin') {
@@ -425,5 +435,60 @@ function InviteDialog({ open, agencyName, onClose, onCreated }: { open: boolean;
         </form>
       )}
     </Modal>
+  );
+}
+
+/**
+ * For an agency owner who signed up on their own: create the agency's workspace and become its
+ * admin, then invite brokers. Brokers don't create agencies — they join by invitation.
+ */
+function CreateAgencyCard({ onCreated }: { onCreated: () => Promise<void> | void }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (name.trim().length < 2) return;
+    setBusy(true);
+    setError(null);
+    const res = await createMyAgency(name.trim());
+    if (!res.ok) {
+      setBusy(false);
+      return setError(res.message);
+    }
+    trackEvent('agency_created');
+    await onCreated();
+    setBusy(false);
+  }
+
+  return (
+    <Card className="max-w-xl" data-testid="create-agency">
+      <CardBody className="flex flex-col gap-4 pt-5">
+        <div>
+          <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Create your agency’s workspace</h3>
+          <p className="mt-1 text-sm text-[var(--color-ink-600)]">
+            You’ll be its admin: you invite your brokers, choose their roles and see the agency’s accounts. Accounts you already created stay yours — you can share any of them with the agency later.
+          </p>
+        </div>
+        <form onSubmit={submit} className="flex flex-col gap-3">
+          <div>
+            <label className={labelClass} htmlFor="agency-name">
+              Agency name
+            </label>
+            <input id="agency-name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} placeholder="e.g. DXP Services" maxLength={120} autoFocus />
+          </div>
+          {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
+          <div>
+            <Button type="submit" disabled={busy || name.trim().length < 2}>
+              {busy ? 'Creating…' : 'Create agency'}
+            </Button>
+          </div>
+        </form>
+        <p className="rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-xs text-[var(--color-ink-600)]">
+          Is your agency already on Renewal IQ? Don’t create a new one — ask its admin to invite you. Brokers join an agency only through an invitation.
+        </p>
+      </CardBody>
+    </Card>
   );
 }

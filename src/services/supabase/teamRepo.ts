@@ -206,3 +206,22 @@ export function clearPendingInvite(): void {
     // convenience only
   }
 }
+
+/**
+ * Self-service (0047): a signed-in owner with a confirmed email who isn't in any agency creates one
+ * and becomes its admin. The database refuses anyone already in an agency; brokers join only by
+ * invitation. Returns the new agency's id.
+ */
+export async function createMyAgency(name: string): Promise<RepoResult<string>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('create_my_agency', { p_name: name });
+    if (error) {
+      if (error.code === 'PGRST202' || /create_my_agency/.test(error.message ?? '')) return fail({ message: 'Creating an agency needs migration 0047 in Supabase.' }, 'Could not create the agency.');
+      return fail(error, 'Could not create the agency.');
+    }
+    return { ok: true, data: data as string };
+  } catch (err) {
+    return fail(err, 'Could not create the agency.');
+  }
+}

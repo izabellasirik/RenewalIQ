@@ -1,6 +1,7 @@
 import { NavLink, useParams } from 'react-router-dom';
 import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { isSupabaseConfigured } from '../../services/supabase/client';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, StepStatusDot } from './WorkflowSteps';
 import { BrandLogo } from '../branding/Logo';
@@ -64,6 +65,8 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
   const account = accounts.find((a) => a.id === accountId);
   const steps = useWorkflowStatus(account?.id);
   const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
+  // Signed in to the cloud but in no agency: an owner can set one up (brokers join by invitation).
+  const canCreateAgency = useAccountsStore((s) => !!s.currentUserId && !s.agencyAccess && isSupabaseConfigured);
   const isReviewer = useIsReviewer();
   const isFounder = useIsFounder();
   const pendingIntake = useAccountsStore((s) => s.pendingIntakeCount);
@@ -200,6 +203,23 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
           >
             <Inbox size={17} />
             Feedback & Updates
+          </NavLink>
+        )}
+
+        {canCreateAgency && (
+          <NavLink
+            to="/team"
+            className={({ isActive }) =>
+              cn(
+                navItemClass,
+                isActive
+                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+              )
+            }
+          >
+            <Users size={17} />
+            Set up agency
           </NavLink>
         )}
 
