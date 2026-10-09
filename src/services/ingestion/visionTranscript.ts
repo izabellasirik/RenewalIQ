@@ -108,7 +108,7 @@ export function savedTranscript(key: string): TranscriptLine[] | null {
 }
 
 /** Why the last AI reading wasn't used — shown in the preview so a fallback is never silent. */
-export type TranscriptUnavailable = 'not-signed-in' | 'function-outdated' | 'function-missing' | 'failed';
+export type TranscriptUnavailable = 'not-signed-in' | 'function-outdated' | 'function-missing' | 'daily-limit' | 'failed';
 let lastUnavailable: TranscriptUnavailable | null = null;
 /** Set once the Edge Function answered like the old version (no transcribe mode): not asked again this session. */
 let functionOutdated = false;
@@ -121,6 +121,7 @@ export const TRANSCRIPT_UNAVAILABLE_MESSAGES: Record<TranscriptUnavailable, stri
   'not-signed-in': 'AI reading needs you to be signed in.',
   'function-outdated': 'AI reading isn’t switched on yet: the "extract-document-vision" Supabase function needs redeploying.',
   'function-missing': 'AI reading isn’t available: the "extract-document-vision" Supabase function isn’t deployed or its API key isn’t set.',
+  'daily-limit': 'Today’s limit for AI document reading has been reached. It resets at midnight UTC.',
   failed: 'The AI reading didn’t work this time.',
 };
 
@@ -161,7 +162,7 @@ export function transcribePhoto(key: string, blob: Blob, currentUserId: string |
         } catch {
           // no body
         }
-        return fail(status === 404 || status === 503 ? 'function-missing' : 'failed', { status, message: (error as Error).message, body });
+        return fail(status === 429 ? 'daily-limit' : status === 404 || status === 503 ? 'function-missing' : 'failed', { status, message: (error as Error).message, body });
       }
       if (data && typeof data === 'object' && !('lines' in data) && ('documentType' in data || 'scalarFields' in data)) {
         // The deployed function predates transcribe mode: it ran a normal extraction instead.

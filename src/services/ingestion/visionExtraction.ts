@@ -442,6 +442,27 @@ export async function extractViaVision(file: File, currentUserId: string | null,
   }
 }
 
+let quotaRefusal: { message: string; at: number } | null = null;
+
+/** The daily AI reading limit was reached (HTTP 429 from the function, 0047) — remembered so the upload can say why OCR was used. */
+async function noteQuotaRefusal(error: unknown) {
+  const res = (error as { context?: Response }).context;
+  if (res?.status !== 429) return;
+  let message = 'The daily limit for AI document reading has been reached.';
+  try {
+    const body = (await res.clone().json()) as { error?: string };
+    if (body?.error) message = body.error;
+  } catch {
+    // keep the generic message
+  }
+  quotaRefusal = { message, at: Date.now() };
+}
+
+/** Why the AI reading was refused in the last few minutes because of the daily limit, if it was. */
+export function recentQuotaRefusal(): string | null {
+  return quotaRefusal && Date.now() - quotaRefusal.at < 5 * 60_000 ? quotaRefusal.message : null;
+}
+
 /** Reads in flight, by file and page: the same page asked for twice at once is one request. */
 const inFlight = new Map<string, Promise<VisionExtractionResult | null>>();
 
@@ -461,7 +482,11 @@ export function extractImageViaVision(imageBase64: string, mimeType: string, fil
       const { data, error } = await client.functions.invoke('extract-document-vision', {
         body: { imageBase64, mimeType, fileName, ...(context ? { context } : {}) },
       });
-      if (error || !data) return null;
+      if (error) {
+        await noteQuotaRefusal(error);
+        return null;
+      }
+      if (!data) return null;
       return validateVisionResponse(data);
     } catch {
       return null;

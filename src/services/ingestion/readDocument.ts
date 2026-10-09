@@ -1,7 +1,7 @@
 import type { DocumentCategory, ExtractedFieldResult, ReviewCandidate } from '../../types';
 import { extractInsuranceFields, gateExtraction, holdOcrResults, mergeVisionPages, visionToResults, type DocumentClassification } from '../extraction';
 import { fileSha256 } from './aiReadContext';
-import { extractImageViaVision, extractViaVision, isVisionExtractionAvailable, type VisionExtractionResult } from './visionExtraction';
+import { extractImageViaVision, extractViaVision, isVisionExtractionAvailable, recentQuotaRefusal, type VisionExtractionResult } from './visionExtraction';
 import type { RawDocument } from './types';
 
 /**
@@ -59,7 +59,7 @@ export async function readDocumentFile(file: File, documentId: string, documentN
       const { parseImage } = await import('./parseImage');
       raw = { ...(await parseImage(source)), ...(raw.sourceUrl ? { sourceUrl: raw.sourceUrl, linkedFile: raw.linkedFile } : {}) };
       read = holdOcrResults(extractInsuranceFields(raw, { ...meta, isImageSource: true }));
-      raw = { ...raw, warnings: [...raw.warnings, OCR_FALLBACK_NOTICE] };
+      raw = { ...raw, warnings: [...raw.warnings, recentQuotaRefusal() ?? OCR_FALLBACK_NOTICE] };
     }
   } else if (scannedPages.length > 0) {
     const eligible = scannedPages.slice(0, MAX_AI_SCANNED_PAGES);
@@ -82,6 +82,7 @@ export async function readDocumentFile(file: File, documentId: string, documentN
     if (scannedPages.length > MAX_AI_SCANNED_PAGES) {
       notes.push(`This PDF has ${scannedPages.length} scanned pages. Only the first ${MAX_AI_SCANNED_PAGES} were read automatically — pages ${scannedPages[MAX_AI_SCANNED_PAGES]}–${scannedPages[scannedPages.length - 1]} were not read. Check them against the file.`);
     }
+    if (ocrPages.length && recentQuotaRefusal()) notes.push(recentQuotaRefusal()!);
     if (ocrPages.length) {
       notes.push(`${ocrPages.length === 1 ? 'Scanned page' : 'Scanned pages'} ${ocrPages.join(', ')} couldn’t be read by AI and ${ocrPages.length === 1 ? 'was' : 'were'} read by on-device text recognition instead — anything from ${ocrPages.length === 1 ? 'it' : 'them'} needs review.`);
     }

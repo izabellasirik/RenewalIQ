@@ -66,8 +66,9 @@ describe('AI read: once per page, then reused', () => {
     const b = handleRead(request(), { store, callModel, configuredModel: 'claude-sonnet-5', sleep });
     const [ra, rb] = await Promise.all([a, b]);
     expect(callModel).toHaveBeenCalledTimes(1);
-    expect(ra).toMatchObject({ status: 200, fromCache: false });
-    expect(rb).toMatchObject({ status: 200, fromCache: true });
+    // Whichever claimed the page first paid for it; the other waited and reused it.
+    expect([ra, rb].map((r) => r.status)).toEqual([200, 200]);
+    expect([ra, rb].map((r) => (r as { fromCache: boolean }).fromCache).sort()).toEqual([false, true]);
   });
 
   it('a failed call is logged, not cached — the next request tries again', async () => {

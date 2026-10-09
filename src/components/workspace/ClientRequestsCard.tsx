@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Ban, Check, CheckCircle2, ChevronDown, ChevronRight, Clock, Copy, ExternalLink, FileSearch, Inbox, Loader2, Mail, RefreshCw, Undo2, X } from 'lucide-react';
+import { Ban, Check, CheckCircle2, ChevronDown, ChevronRight, Clock, Copy, ExternalLink, FileSearch, Inbox, Loader2, Mail, RefreshCw, Send, Undo2, X } from 'lucide-react';
 import type { DocumentRequest, DocumentRequestFile, DocumentRequestItem } from '../../types';
-import { DOCUMENT_REQUEST_STATUS_LABELS, isOpenRequest, outstandingRequestItems } from '../../types';
-import { Badge, Button, Card, CardBody, ConfirmDialog, Modal, type BadgeTone } from '../ui';
+import { isOpenRequest, outstandingRequestItems } from '../../types';
+import { REQUEST_PROGRESS, requestProgress } from '../../services/requests/requestStatus';
+import { Badge, Button, Card, CardBody, ConfirmDialog, Modal } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { formatShortDate } from '../../services/workflow/dates';
@@ -13,7 +14,6 @@ import { DateInput } from './DateInput';
 import { FollowUpRequestDialog } from './FollowUpRequestDialog';
 import { smallInputClass } from './formStyles';
 
-const STATUS_TONE: Record<DocumentRequest['status'], BadgeTone> = { waiting: 'warning', partial: 'info', complete: 'success', cancelled: 'neutral' };
 
 /**
  * Client document requests on this account (0030): what each asked for, what's come in, what
@@ -110,7 +110,10 @@ function RequestBlock({ accountId, request: r, onUndone }: { accountId: string; 
   const { documents } = useAccountWorkflow(accountId);
   const cancelClientRequest = useAccountsStore((s) => s.cancelClientRequest);
   const rescheduleClientRequest = useAccountsStore((s) => s.rescheduleClientRequest);
+  const markClientRequestSent = useAccountsStore((s) => s.markClientRequestSent);
   const [followingUp, setFollowingUp] = useState(false);
+  const progress = requestProgress(r);
+  const prepared = r.deliveryStatus === 'prepared';
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +136,9 @@ function RequestBlock({ accountId, request: r, onUndone }: { accountId: string; 
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--color-ink-900)]">
-            <Badge tone={STATUS_TONE[r.status]}>{DOCUMENT_REQUEST_STATUS_LABELS[r.status]}</Badge>
+            <Badge tone={REQUEST_PROGRESS[progress].tone} data-testid="request-progress" data-progress={progress}>
+              {REQUEST_PROGRESS[progress].label}
+            </Badge>
             {openNow && (
               <span data-testid="request-remaining">
                 {outstanding.length} item{outstanding.length === 1 ? '' : 's'} remaining
@@ -141,14 +146,25 @@ function RequestBlock({ accountId, request: r, onUndone }: { accountId: string; 
             )}
           </p>
           <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">
-            {r.contactName ? `To ${r.contactName} · ` : ''}Requested {formatShortDate(r.requestedAt)}
+            {r.contactName ? `To ${r.contactName} · ` : ''}
+            {prepared ? `Prepared ${formatShortDate(r.requestedAt)} — not marked sent` : r.deliveryStatus === 'sent' ? `Sent ${formatShortDate(r.sentAt ?? r.requestedAt)}` : `Requested ${formatShortDate(r.requestedAt)} (sending unconfirmed)`}
             {r.followUpCount > 0 && ` · Followed up ${r.followUpCount}× (last ${formatShortDate(r.lastFollowUpAt)})`}
             {r.closedAt && ` · ${r.status === 'complete' ? 'Completed' : 'Closed'} ${formatShortDate(r.closedAt)}`}
           </p>
         </div>
         {openNow && (
           <div className="flex flex-wrap items-center gap-1.5">
-            {outstanding.length > 0 && (
+            {prepared && (
+              <Button size="sm" icon={<Send size={13} />} onClick={() => void markClientRequestSent(r.id).then((res) => !res.ok && setError(res.message ?? 'Could not record it.'))}>
+                Mark as sent
+              </Button>
+            )}
+            {r.deliveryStatus === 'unconfirmed' && (
+              <Button size="sm" variant="secondary" icon={<Check size={13} />} title="Record that this request really was sent" onClick={() => void markClientRequestSent(r.id, { sentOn: r.requestedAt.slice(0, 10) }).then((res) => !res.ok && setError(res.message ?? 'Could not record it.'))}>
+                Confirm sent
+              </Button>
+            )}
+            {outstanding.length > 0 && !prepared && (
               <Button size="sm" icon={<Mail size={13} />} onClick={() => setFollowingUp(true)}>
                 Follow up
               </Button>
@@ -187,7 +203,7 @@ function RequestBlock({ accountId, request: r, onUndone }: { accountId: string; 
         </div>
       )}
 
-      {openNow && outstanding.length > 0 && (
+      {openNow && outstanding.length > 0 && !prepared && (
         <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-ink-600)]">
           Next follow-up
           <DateInput

@@ -41,6 +41,8 @@ interface RequestRow {
   channel: DocumentRequest['channel'];
   status: DocumentRequest['status'];
   requested_at: string;
+  sent_at?: string | null;
+  delivery_status?: DocumentRequest['deliveryStatus'] | null;
   last_follow_up_at: string | null;
   follow_up_count: number;
   next_follow_up: string | null;
@@ -82,6 +84,9 @@ function toRequest(r: RequestRow): DocumentRequest {
     contactEmail: r.contact_email ?? undefined,
     channel: r.channel,
     status: r.status,
+    // Before 0047 there's no delivery status: those requests were never confirmed as sent.
+    deliveryStatus: r.delivery_status ?? 'unconfirmed',
+    sentAt: r.sent_at ?? undefined,
     requestedAt: r.requested_at,
     lastFollowUpAt: r.last_follow_up_at ?? undefined,
     followUpCount: r.follow_up_count,
@@ -183,6 +188,16 @@ async function call(fn: string, args: Record<string, unknown>): Promise<RepoResu
   } catch (err) {
     return fail(errorMessage(err));
   }
+}
+
+/**
+ * The broker sent the request (or confirms an older one was sent). Before 0047 there is no
+ * delivery status to set — the old behaviour (every request counts as requested) stays.
+ */
+export async function markRequestSent(requestId: string, sentAt?: string, nextFollowUp?: string): Promise<RepoResult<{ recorded: boolean }>> {
+  const res = await call('mark_document_request_sent', { p_request_id: requestId, p_sent_at: sentAt ?? null, p_next_follow_up: nextFollowUp || null });
+  if (!res.ok && /mark_document_request_sent|PGRST202|schema cache/i.test(res.message)) return { ok: true, data: { recorded: false } };
+  return res.ok ? { ok: true, data: { recorded: true } } : res;
 }
 
 export const recordRequestFollowUp = (requestId: string, nextFollowUp: string | null) => call('record_document_request_follow_up', { p_request_id: requestId, p_next_follow_up: nextFollowUp });

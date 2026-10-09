@@ -270,6 +270,8 @@ interface AccountsState {
   followUpClientRequest: (requestId: string, nextFollowUp: string) => Promise<{ ok: boolean; message?: string }>;
   rescheduleClientRequest: (requestId: string, nextFollowUp: string) => Promise<{ ok: boolean; message?: string }>;
   cancelClientRequest: (requestId: string) => Promise<{ ok: boolean; message?: string }>;
+  /** The broker sent the request (or confirms an older, unconfirmed one was sent) — 0047. `sentOn`: YYYY-MM-DD, default today. */
+  markClientRequestSent: (requestId: string, opts?: { sentOn?: string; followUpDate?: string }) => Promise<{ ok: boolean; message?: string }>;
   /** The broker's decision on an upload that needed review. */
   resolveRequestUpload: (requestId: string, fileId: string, action: 'satisfy' | 'reject' | 'reassign', targetRequestItemId?: string) => Promise<{ ok: boolean; message?: string }>;
   /** Imports the account's new client uploads (each file once, across tabs) and matches them to what was asked. */
@@ -2877,7 +2879,35 @@ export const useAccountsStore = create<AccountsState>()(
         });
         if (!res.ok) return res;
         await get().loadDocumentRequests([accountId]);
+        // The link exists; whether the email went out is only known once the broker says so.
+        trackEvent('document_request_prepared', { accountId, metadata: { count: items.length } });
         return { ok: true, requestId: res.data.id, link: requestsRepo.requestLink(res.data.token) };
+      },
+
+      markClientRequestSent: async (requestId, opts = {}) => {
+        const r = findRequest(requestId);
+        if (!r) return { ok: false, message: 'Request not found.' };
+        const onDate = parseDateKey(opts.sentOn ?? '');
+        const sentAt = opts.sentOn && opts.sentOn !== todayKey() && onDate ? new Date(onDate.setHours(12)).toISOString() : undefined;
+        const res = await requestsRepo.markRequestSent(requestId, sentAt, opts.followUpDate);
+        if (!res.ok) return res;
+        const confirming = r.deliveryStatus === 'unconfirmed';
+        // The checklist items it asks for are now actually requested (from the dialog they already are).
+        const stillMissing = (get().missingItems[r.accountId] ?? []).filter((i) => i.status === 'missing' && r.items.some((x) => x.missingItemId === i.id && x.status === 'requested'));
+        if (stillMissing.length) get().markItemsRequested(r.accountId, stillMissing.map((i) => i.id), { contactId: r.contactId, followUpDate: opts.followUpDate ?? r.nextFollowUp, requestedOn: opts.sentOn });
+        set((s) => ({
+          activityLog: appendEvent(
+            s.activityLog,
+            r.accountId,
+            'request_sent',
+            `${confirming ? 'Confirmed the request was sent' : 'Marked the request as sent'}${r.contactName ? ` to ${r.contactName}` : ''}${opts.sentOn && opts.sentOn !== todayKey() ? ` on ${formatShortDate(opts.sentOn)}` : ''}: ${r.items.map((i) => i.label).join(', ')}.`
+          ),
+          accounts: touchAccount(s.accounts, r.accountId),
+        }));
+        syncNow(r.accountId);
+        trackEvent('document_request_sent', { accountId: r.accountId, metadata: { count: r.items.length, source: confirming ? 'confirmed' : 'marked_sent' } });
+        await get().loadDocumentRequests([r.accountId]);
+        return { ok: true };
       },
 
       followUpClientRequest: async (requestId, nextFollowUp) => {

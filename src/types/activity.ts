@@ -46,6 +46,11 @@ export type ActivityEventType =
   | 'request_follow_up'
   | 'request_completed'
   | 'request_cancelled'
+  // 0047: the broker said the request was actually sent (or confirmed an older one was)
+  | 'request_sent'
+  // Missing documents: marked not applicable (with a reason) / a received document checked by the broker
+  | 'item_not_applicable'
+  | 'item_verified'
   // A client's submission, as recorded by the database (0042) — facts only, see ClientSubmissionDetails.
   | 'client_submitted'
   // The broker opened an RQ-drafted email in Gmail's compose window. Not "sent": RQ can't see that.
@@ -83,6 +88,9 @@ export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<Acti
   'request_follow_up',
   'request_completed',
   'request_cancelled',
+  'request_sent',
+  'item_not_applicable',
+  'item_verified',
   'client_submitted',
   'email_draft_opened',
 ]);

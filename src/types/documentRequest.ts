@@ -7,6 +7,13 @@ export type DocumentRequestStatus = 'waiting' | 'partial' | 'complete' | 'cancel
 export type DocumentRequestItemStatus = 'requested' | 'uploaded' | 'needs_review' | 'satisfied' | 'waived';
 export type DocumentRequestFileMatch = 'pending' | 'satisfied' | 'needs_review' | 'rejected' | 'reassigned' | 'withdrawn';
 
+/**
+ * 0047: whether the request actually went out. 'prepared' = the link exists (email copied or
+ * opened in Gmail) but nobody said it was sent; 'sent' = the broker marked it sent; 'unconfirmed'
+ * = made before this was tracked, so delivery was never confirmed.
+ */
+export type DocumentRequestDelivery = 'prepared' | 'sent' | 'unconfirmed';
+
 export const DOCUMENT_REQUEST_STATUS_LABELS: Record<DocumentRequestStatus, string> = {
   waiting: 'Waiting on client',
   partial: 'Partly received',
@@ -54,6 +61,10 @@ export interface DocumentRequest {
   contactEmail?: string;
   channel: 'email' | 'text' | 'phone' | 'other';
   status: DocumentRequestStatus;
+  /** 0047 — absent before it runs (read as 'unconfirmed'). */
+  deliveryStatus: DocumentRequestDelivery;
+  /** When the broker said it was sent (0047). */
+  sentAt?: string;
   requestedAt: string;
   lastFollowUpAt?: string;
   followUpCount: number;

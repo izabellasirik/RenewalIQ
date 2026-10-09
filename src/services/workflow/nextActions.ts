@@ -34,6 +34,8 @@ export interface ActionItem {
   followUpId?: string;
   /** A client document request (0030) — its follow-up, or an upload waiting for review. */
   requestId?: string;
+  /** The request's link exists but nobody has said it was sent (0047) — resolved by "Mark as sent". */
+  requestPrepared?: boolean;
 }
 
 export interface AccountWorkflowInput {
@@ -122,13 +124,31 @@ function deriveAllAccountActions(input: AccountWorkflowInput, today: string): De
     const outstanding = outstandingRequestItems(r);
     const who = r.contactName ? ` from ${r.contactName}` : ' from client';
     const labels = outstanding.map((i) => i.label);
+    const listed = `${labels.slice(0, 2).join(', ')}${labels.length > 2 ? ` +${labels.length - 2} more` : ''}`;
+    // Copied or opened in Gmail, never marked sent: no follow-up clock until the broker says it went.
+    if (r.deliveryStatus === 'prepared') {
+      if (outstanding.length > 0) {
+        now.push({
+          ...base,
+          id: `docreq-prepared-${r.id}`,
+          kind: 'action_required',
+          title: `Request${r.contactName ? ` to ${r.contactName}` : ''} not marked as sent`,
+          detail: `Prepared ${formatShortDate(r.requestedAt)} · ${listed} — mark it sent once the email has gone out`,
+          overdue: false,
+          tab: 'checklist',
+          requestId: r.id,
+          requestPrepared: true,
+        });
+      }
+      continue;
+    }
     if (outstanding.length > 0 && r.nextFollowUp) {
       placeDated({
         ...base,
         id: `docreq-${r.id}`,
         kind: 'client_follow_up',
         title: `${outstanding.length} item${outstanding.length === 1 ? '' : 's'} still needed${who}`,
-        detail: `${describeDue(r.nextFollowUp, today)} · Requested ${formatShortDate(r.requestedAt)} · ${labels.slice(0, 2).join(', ')}${labels.length > 2 ? ` +${labels.length - 2} more` : ''}`,
+        detail: `${describeDue(r.nextFollowUp, today)} · Requested ${formatShortDate(r.requestedAt)}${r.deliveryStatus === 'unconfirmed' ? ' (sending unconfirmed)' : ''} · ${listed}`,
         dueDate: r.nextFollowUp,
         tab: 'checklist',
         requestId: r.id,

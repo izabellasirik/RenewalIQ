@@ -78,6 +78,7 @@ function ActionRow({
     else if (opens) navigate(href);
   }
   const markItemSentToCarrier = useAccountsStore((s) => s.markItemSentToCarrier);
+  const markClientRequestSent = useAccountsStore((s) => s.markClientRequestSent);
   const updateMissingItem = useAccountsStore((s) => s.updateMissingItem);
   const updateQuote = useAccountsStore((s) => s.updateQuote);
   const [rescheduling, setRescheduling] = useState(false);
@@ -130,6 +131,11 @@ function ActionRow({
         {carrierRequestPending && (
           <Button size="sm" icon={<Mail size={13} />} onClick={() => onRequest({ accountId: action.accountId, itemId: action.itemId! })}>
             Request from client
+          </Button>
+        )}
+        {action.requestPrepared && action.requestId && (
+          <Button size="sm" icon={<Send size={13} />} onClick={() => void markClientRequestSent(action.requestId!)}>
+            Mark as sent
           </Button>
         )}
         {requestFollowUp && (

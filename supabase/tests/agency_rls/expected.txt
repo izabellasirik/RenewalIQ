@@ -346,7 +346,7 @@ FA8 intake imported (trigger): 1 account=acct_y_name
 FA9 time saved recorded once: true,true
 FA9 bad answer refused: false
 FA9 broker reads answers: 0 rows
-FA10 founder snapshot: events=true users have names=true brokerages=Agency timeSaved=1
+FA10 founder snapshot: events=true users have names=true brokerages=Agency,Other Agency timeSaved=1
 FA11 unconfirmed founder email denied
 LK1 request created with the link the email already showed: true
 LK2 a token can never be reused
@@ -368,3 +368,32 @@ AI7 agency admin denied AI cost too
 AI7 anonymous denied AI cost
 AI8 founder: today=0.043500 month=0.043500 docs=2 pages=2 paid=4 failed=1 cached=1 top=loss run.pdf models=claude-sonnet-5 trendDays=30 brokerages=Agency,No brokerage ops=structured_extraction:3/1,transcription:1/0
 AI8 bad time zone falls back: UTC
+S1 historical request after 0047: unconfirmed sent_at=none
+S2 a new request starts: prepared sent_at=none
+S3 broker without access denied: Request not found.
+S3 other agency denied: Request not found.
+S3 still prepared: prepared
+S4 owner marks it sent: sent
+S4 stored: sent sent=2026-10-02 15:00 requested=2026-10-02 next=2026-10-07
+S5 confirm an unconfirmed one, a future date is clamped: true
+S6 anonymous denied
+Q1 broker limit 2: true,true,user_daily_limit
+Q2 limit reached: false
+Q2 a failed read frees its slot: true
+Q3 agency limit 4 counts paid reads of every broker today (cached + yesterday free): true,agency_daily_limit
+Q4 broker cannot touch quotas
+Q4 broker sees quota holds: no access
+G1 unconfirmed email denied: Confirm your email address first.
+G2 already in an agency: You already belong to an agency.
+G3 name validated: Enter your agency's name (2–120 characters).
+G4 owner creates their agency: true
+G4 owner is its admin: admin agency=Fresh Freight Agency name=Olive Owner
+G5 only one agency per owner: You already belong to an agency.
+G6 sees only their own agency: Fresh Freight Agency
+G6 sees no other agency's accounts: 0
+G6 sees no other agency's people: Olive Owner
+G7 can invite brokers to their agency: true
+G8 anonymous denied
+F1 snapshot v2: members listed=4 owner without activity listed=1 re-open is not meaningful=true open invitations=newbroker@freshfreight.com unaffiliated=5
+F2 snapshot v2 still founder-only
+AQ1 20 concurrent reads, limit 5, allowed: 5

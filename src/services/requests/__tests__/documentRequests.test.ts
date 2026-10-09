@@ -23,6 +23,8 @@ function request(accountId: string, items: DocumentRequestItem[], extra: Partial
     contactName: 'Pat Client',
     channel: 'email',
     status: 'waiting',
+    deliveryStatus: 'sent',
+    sentAt: '2026-09-20T12:00:00Z',
     requestedAt: '2026-09-20T12:00:00Z',
     followUpCount: 0,
     nextFollowUp: '2026-09-28',

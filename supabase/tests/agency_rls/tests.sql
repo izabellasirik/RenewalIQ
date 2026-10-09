@@ -1065,3 +1065,92 @@ select 'AI8 founder: today=' || (v->>'costToday') || ' month=' || (v->>'costMont
   from founder_ai_usage('America/New_York') v;
 select 'AI8 bad time zone falls back: ' || (founder_ai_usage('Not/AZone')->>'timezone');
 reset role;
+
+\echo '== 0047: requests are sent only when the broker says so; quotas; self-service agencies; snapshot v2'
+reset role;
+-- A database from before 0047: an existing request with no delivery status at all.
+alter table document_requests drop constraint if exists document_requests_delivery_status_check;
+alter table document_requests alter column delivery_status drop not null;
+alter table document_requests alter column delivery_status drop default;
+update document_requests set delivery_status = null, sent_at = null where id = :'rq1';
+\i :MIG/0047_requests_sent_quota_agencies.sql
+select 'S1 historical request after 0047: ' || delivery_status || ' sent_at=' || coalesce(sent_at::text, 'none') from document_requests where id = :'rq1';
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select r->>'id' as rq47 from (select create_document_request('acct_r1', 'aaaaaaaa-0000-0000-0000-000000000047', '{}', 'email', '[{"missingItemId":"mi_47","label":"2025 IFTA"}]', '2026-10-06') r) x \gset
+select 'S2 a new request starts: ' || delivery_status || ' sent_at=' || coalesce(sent_at::text, 'none') from document_requests where id = :'rq47';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+do $$ begin perform mark_document_request_sent((select id from document_requests where client_key = 'aaaaaaaa-0000-0000-0000-000000000047'), null, null); raise notice 'S3 other broker marks it sent: ALLOWED (BAD)'; exception when others then raise notice 'S3 broker without access denied: %', sqlerrm; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+do $$ begin perform mark_document_request_sent((select id from public.document_requests where client_key = 'aaaaaaaa-0000-0000-0000-000000000047'), null, null); raise notice 'S3 other agency marks it sent: ALLOWED (BAD)'; exception when others then raise notice 'S3 other agency denied: %', sqlerrm; end $$;
+reset role;
+select 'S3 still prepared: ' || delivery_status from document_requests where id = :'rq47';
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'S4 owner marks it sent: ' || (mark_document_request_sent(:'rq47', '2026-10-02 15:00+00', '2026-10-07')->>'deliveryStatus');
+select 'S4 stored: ' || delivery_status || ' sent=' || to_char(sent_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI') || ' requested=' || to_char(requested_at at time zone 'UTC', 'YYYY-MM-DD') || ' next=' || next_follow_up from document_requests where id = :'rq47';
+select 'S5 confirm an unconfirmed one, a future date is clamped: ' || ((mark_document_request_sent(:'rq1', now() + interval '3 days', null)->>'sentAt')::timestamptz <= now() + interval '1 second');
+reset role;
+set role anon;
+do $$ begin perform mark_document_request_sent('x', null, null); raise notice 'S6 anonymous marks sent: ALLOWED (BAD)'; exception when others then raise notice 'S6 anonymous denied'; end $$;
+reset role;
+
+-- AI quotas (service role = the Edge Function)
+set role service_role;
+select 'Q1 broker limit 2: ' || (ai_quota_take('00000000-0000-0000-0000-0000000000a1', null, 2, 1000)->>'allowed') || ',' || (ai_quota_take('00000000-0000-0000-0000-0000000000a1', null, 2, 1000)->>'allowed') || ',' || (ai_quota_take('00000000-0000-0000-0000-0000000000a1', null, 2, 1000)->>'reason');
+select (ai_quota_take('00000000-0000-0000-0000-0000000000a2', null, 1, 1000)->>'holdId') as hold \gset
+select 'Q2 limit reached: ' || (ai_quota_take('00000000-0000-0000-0000-0000000000a2', null, 1, 1000)->>'allowed');
+select ai_quota_release(:'hold');
+select 'Q2 a failed read frees its slot: ' || (ai_quota_take('00000000-0000-0000-0000-0000000000a2', null, 1, 1000)->>'allowed');
+reset role;
+insert into ai_usage_events (organization_id, user_id, operation, succeeded, from_cache) select (select id from agencies where name = 'Other Agency'), '00000000-0000-0000-0000-0000000000a3', 'structured_extraction', true, false from generate_series(1, 3);
+insert into ai_usage_events (organization_id, user_id, operation, succeeded, from_cache) select (select id from agencies where name = 'Other Agency'), '00000000-0000-0000-0000-0000000000a4', 'transcription', true, true from generate_series(1, 5);
+insert into ai_usage_events (organization_id, user_id, operation, succeeded, from_cache, occurred_at) select (select id from agencies where name = 'Other Agency'), '00000000-0000-0000-0000-0000000000a4', 'transcription', true, false, now() - interval '2 days' from generate_series(1, 5);
+set role service_role;
+select 'Q3 agency limit 4 counts paid reads of every broker today (cached + yesterday free): ' || (ai_quota_take('00000000-0000-0000-0000-0000000000a4', (select id from agencies where name = 'Other Agency'), 200, 4)->>'allowed') || ',' || (ai_quota_take('00000000-0000-0000-0000-0000000000a4', (select id from agencies where name = 'Other Agency'), 200, 4)->>'reason');
+reset role;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin perform ai_quota_take('00000000-0000-0000-0000-00000000000a', null, 1000000, 1000000); raise notice 'Q4 broker grants itself quota: ALLOWED (BAD)'; exception when others then raise notice 'Q4 broker cannot touch quotas'; end $$;
+do $$ declare n integer; begin select count(*) into n from ai_quota_holds; raise notice 'Q4 broker sees quota holds: %', n; exception when others then raise notice 'Q4 broker sees quota holds: no access'; end $$;
+reset role;
+
+-- Self-service agencies
+insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+  ('00000000-0000-0000-0000-0000000000e1', 'unconfirmed@newco.com', null, '{}'),
+  ('00000000-0000-0000-0000-0000000000e2', 'owner@freshfreight.com', now(), '{"full_name":"Olive Owner"}');
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000e1');
+do $$ begin perform create_my_agency('Unconfirmed Co'); raise notice 'G1 unconfirmed email creates agency: ALLOWED (BAD)'; exception when others then raise notice 'G1 unconfirmed email denied: %', sqlerrm; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin perform create_my_agency('Roman Side Agency'); raise notice 'G2 existing agency member creates another: ALLOWED (BAD)'; exception when others then raise notice 'G2 already in an agency: %', sqlerrm; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000e2');
+do $$ begin perform create_my_agency('x'); raise notice 'G3 one-letter name: ALLOWED (BAD)'; exception when others then raise notice 'G3 name validated: %', sqlerrm; end $$;
+select 'G4 owner creates their agency: ' || (create_my_agency('  Fresh   Freight Agency ') is not null);
+select 'G4 owner is its admin: ' || role || ' agency=' || (select name from agencies where id = agency_id) || ' name=' || coalesce(display_name, '-') from profiles where user_id = '00000000-0000-0000-0000-0000000000e2';
+do $$ begin perform create_my_agency('Second Agency'); raise notice 'G5 second agency: ALLOWED (BAD)'; exception when others then raise notice 'G5 only one agency per owner: %', sqlerrm; end $$;
+select 'G6 sees only their own agency: ' || string_agg(name, ',') from agencies;
+select 'G6 sees no other agency''s accounts: ' || count(*) from submissions;
+select 'G6 sees no other agency''s people: ' || string_agg(coalesce(display_name, email), ',') from profiles;
+select 'G7 can invite brokers to their agency: ' || (create_agency_invitation('newbroker@freshfreight.com', 'agent') is not null);
+reset role;
+set role anon;
+do $$ begin perform create_my_agency('Anon Agency'); raise notice 'G8 anonymous creates agency: ALLOWED (BAD)'; exception when others then raise notice 'G8 anonymous denied'; end $$;
+reset role;
+
+-- Founder snapshot v2
+insert into product_events (event_name, user_id, organization_id, account_id, occurred_at) values
+  ('account_opened_on_later_day', '00000000-0000-0000-0000-00000000000b', (select id from agencies where name = 'Agency'), 'acct_b1', now() - interval '1 hour');
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-000000000099');
+select 'F1 snapshot v2: members listed=' || (select count(*) from jsonb_array_elements(v->'users') u where u->>'orgId' is not null)
+       || ' owner without activity listed=' || (select count(*) from jsonb_array_elements(v->'users') u where u->>'email' = 'owner@freshfreight.com' and u->>'firstMeaningful' is null)
+       || ' re-open is not meaningful=' || (select coalesce(u->>'lastMeaningful', 'none') <> to_char(now(), 'YYYY') from jsonb_array_elements(v->'users') u where u->>'id' = '00000000-0000-0000-0000-00000000000b')
+       || ' open invitations=' || (select string_agg(i->>'email', ',' order by i->>'email') from jsonb_array_elements(v->'invitations') i where i->>'email' like '%freshfreight%')
+       || ' unaffiliated=' || (v->>'unaffiliatedSignups')
+  from founder_analytics_snapshot(now() - interval '30 days', now() + interval '1 day') v;
+reset role;
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+do $$ begin perform founder_analytics_snapshot(now() - interval '1 day', now()); raise notice 'F2 agency admin reads snapshot v2: ALLOWED (BAD)'; exception when others then raise notice 'F2 snapshot v2 still founder-only'; end $$;
+reset role;

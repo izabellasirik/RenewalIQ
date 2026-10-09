@@ -9,6 +9,7 @@ const renderPdfPagesForVision = vi.fn();
 const ocrPdfPages = vi.fn();
 const extractViaVision = vi.fn();
 const extractImageViaVision = vi.fn();
+let quotaMessage: string | null = null;
 
 vi.mock('../index', () => ({ parseFile: (...a: unknown[]) => parseFile(...a) }));
 vi.mock('../parseImage', () => ({ parseImage: (...a: unknown[]) => parseImage(...a) }));
@@ -21,6 +22,7 @@ vi.mock('../visionExtraction', () => ({
   extractViaVision: (...a: unknown[]) => extractViaVision(...a),
   extractImageViaVision: (...a: unknown[]) => extractImageViaVision(...a),
   isVisionExtractionAvailable: (uid: string | null) => !!uid,
+  recentQuotaRefusal: () => quotaMessage,
 }));
 
 const { readDocumentFile, MAX_AI_SCANNED_PAGES, OCR_FALLBACK_NOTICE } = await import('../readDocument');
@@ -39,6 +41,7 @@ const scheduleDriver = (name: string, licenseNumber: string) => ({ name, dob: '0
 
 beforeEach(() => {
   vi.clearAllMocks();
+  quotaMessage = null;
   renderPdfPagesForVision.mockImplementation(async (_f: File, pages: number[]) => pages.map((page) => ({ page, base64: `img${page}` })));
 });
 
@@ -73,6 +76,18 @@ describe('reading order: native text → AI → OCR fallback', () => {
     expect(read.review.every((c) => c.reason === OCR_FALLBACK_HOLD_REASON && c.confidence === 'low')).toBe(true);
     expect(read.review.find((c) => c.fieldPath === 'transportation.dotNumber')?.value).toBe('3141592');
     expect(read.raw.warnings).toContain(OCR_FALLBACK_NOTICE);
+  });
+
+  it('photo: the daily AI limit was reached → OCR, held for review, and the broker is told why', async () => {
+    parseFile.mockResolvedValue({ documentName: 'card.jpg', fileType: 'image', text: '', warnings: [] } satisfies RawDocument);
+    extractViaVision.mockImplementation(async () => {
+      quotaMessage = 'You’ve reached today’s limit for AI document reading.';
+      return null;
+    });
+    parseImage.mockResolvedValue({ documentName: 'card.jpg', fileType: 'image', text: BUSINESS_TEXT, warnings: [], ocrConfidence: 80 });
+    const read = await readDocumentFile(photo, 'doc_q', 'card.jpg', 'user_1');
+    expect(read.raw.warnings).toContain('You’ve reached today’s limit for AI document reading.');
+    expect(read.review.every((c) => c.reason === OCR_FALLBACK_HOLD_REASON)).toBe(true);
   });
 
   it('scanned PDF (no native text): every page is read by the AI and combined; OCR never runs', async () => {

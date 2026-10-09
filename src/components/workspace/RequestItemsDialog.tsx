@@ -42,6 +42,9 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
   // The checklist item "+ Request document" adds (made once, when the link or request needs it).
   const newItemId = useRef<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
+  /** The request the secure link belongs to, once made — "Mark as sent" records its sending. */
+  const requestId = useRef<string | null>(null);
+  const markClientRequestSent = useAccountsStore((s) => s.markClientRequestSent);
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
   const addMissingItems = useAccountsStore((s) => s.addMissingItems);
@@ -91,6 +94,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     setCopied(false);
     clientKey.current = newKey();
     linkToken.current = newToken();
+    requestId.current = null;
     newItemId.current = null;
     splitIds.current = null;
     setLink(null);
@@ -165,6 +169,7 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     }
     // Normally the same link the email already shows; if the broker removed it, it's added back.
     const withLink = body.includes(shown) ? body.split(shown).join(res.link) : body.includes(res.link) ? body : `${body}\n\nUpload securely here:\n${res.link}`;
+    requestId.current = res.requestId;
     setLink(res.link);
     setBody(withLink);
     return { body: withLink };
@@ -224,6 +229,11 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     if (!(await ensureLink())) return; // no link, no "sent" — the error says why
     const opts = { contactId: contactId || undefined, followUpDate: followUpDate || undefined, requestedOn };
     markItemsRequested(accountId, requestItemIds(), newDocument ? { ...opts, instructions } : opts);
+    // Copying or opening the draft only prepared the request; this is the broker saying it went out.
+    if (requestId.current) {
+      const sent = await markClientRequestSent(requestId.current, { sentOn: requestedOn, followUpDate: followUpDate || undefined });
+      if (!sent.ok) return setLinkError(sent.message ?? 'Could not record that the request was sent.');
+    }
     onClose();
   }
 
