@@ -90,3 +90,12 @@ auto-deployed Edge Function):
 3. M-2 account-deletion cleanup + M-4 audit log (one migration, RLS-tested).
 4. M-1 bucket limits (needs the allowed file-type list agreed first; production config).
 5. Low items as convenient.
+
+## Remediation status (2026-10-09)
+
+| # | Status |
+|---|---|
+| H-1 | **Built, tested, held for approval.** Per-broker (200) and per-agency (1,000) daily limits on paid AI reads, enforced atomically in the database (`ai_quota_take`, 0047; a 20-connection race test allows exactly the limit). Cached re-reads are free and never blocked; if the quota can't be checked the read goes through, so existing work isn't interrupted. Brokers over the limit get a clear message and the upload still completes via on-device reading, held for review. The Edge Function change is **not committed** — pushing it deploys to production. |
+| M-1 | **Built (0048, not yet applied).** 25 MB and an allow-list on both buckets; contents checked by real file signature in the browser and again on the server (`api/verify-upload`), mismatches deleted; a database switch then refuses any unchecked client upload. |
+| M-2, M-3, M-4, M-5, L-1…L-6 | Open — next phases. |
+| Self-service agencies | `create_my_agency` (0047): confirmed email, not already in an agency, one per owner; brokers join only by invitation. Covered by SQL tests including another agency's data staying invisible. |
