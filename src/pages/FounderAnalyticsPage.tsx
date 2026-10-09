@@ -168,6 +168,55 @@ function FounderDashboard() {
   );
 }
 
+/** Agency members and invitations: who has started using Renewal IQ, and who hasn't yet. */
+function AdoptionCard({ view }: { view: FounderView }) {
+  const a = view.adoption();
+  return (
+    <Card data-testid="founder-adoption">
+      <CardHeader className="pb-2">
+        <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Broker adoption</h3>
+        <p className="text-xs text-[var(--color-ink-500)]">Agency members who have done at least one real action ever, and the people who haven’t started yet. Your own account is never counted.</p>
+      </CardHeader>
+      <CardBody className="flex flex-col gap-3 pt-0">
+        {!a.complete && <p className="text-xs text-[var(--color-warning-600)]">Run migration 0047 to list members and invitations with no activity — until then only brokers with activity are known.</p>}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Agency members" value={a.eligibleMembers} testId="adoption-members" />
+          <Stat label="Activated" value={a.activatedMembers} hint="at least one real action" testId="adoption-activated" />
+          <Stat label="Invited, not joined" value={a.invitations.length} testId="adoption-invited" />
+          <Stat label="Signed up, no agency" value={a.unaffiliatedSignups} hint="never active" testId="adoption-unaffiliated" />
+        </div>
+        {(a.notActivated.length > 0 || a.invitations.length > 0) && (
+          <ul className="flex flex-col divide-y divide-[var(--color-ink-50)] text-sm" data-testid="adoption-not-active">
+            {a.notActivated.map((m) => (
+              <li key={m.userId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="min-w-0">
+                  <span className="font-medium text-[var(--color-ink-800)]">{m.name}</span>
+                  <span className="block text-xs text-[var(--color-ink-500)]">
+                    {m.brokerage}
+                    {m.role === 'admin' ? ' · Admin' : ''}
+                  </span>
+                </span>
+                <span className="text-xs text-[var(--color-ink-500)]">Joined {when(m.joinedAt)} · no activity yet</span>
+              </li>
+            ))}
+            {a.invitations.map((i) => (
+              <li key={`${i.orgId}:${i.email}`} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="min-w-0">
+                  <span className="font-medium text-[var(--color-ink-800)]">{i.email}</span>
+                  <span className="block text-xs text-[var(--color-ink-500)]">{i.brokerage}</span>
+                </span>
+                <span className="text-xs text-[var(--color-ink-500)]">
+                  Invited {when(i.createdAt)} · {i.status === 'expired' ? 'invitation expired' : 'not accepted yet'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
 function Stat({ label, value, hint, testId }: { label: string; value: string | number; hint?: string; testId?: string }) {
   return (
     <div className="rounded-xl border border-[var(--color-ink-100)] bg-white px-4 py-3 [box-shadow:var(--shadow-card)]" data-testid={testId}>
@@ -194,7 +243,8 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
         <Stat label="Active brokers" value={k.activeBrokers} testId="kpi-brokers" />
         <Stat label="Weekly active accounts" value={k.weeklyActiveAccounts} hint={`last week: ${k.weeklyActiveAccountsLastWeek}`} testId="kpi-waa" />
         <Stat label="New real accounts" value={k.newRealAccounts} testId="kpi-new-accounts" />
-        <Stat label="Returning brokers" value={k.returningBrokers} hint="active this week and last" testId="kpi-returning" />
+        <Stat label="Weekly active brokers" value={k.weeklyActiveBrokers} hint="a real action in the last 7 days" testId="kpi-weekly-brokers" />
+        <Stat label="Returning brokers" value={k.returningBrokers} hint="active this week and the week before" testId="kpi-returning" />
         <Stat label="Market Finder accounts" value={k.marketFinderAccounts} hint={`${k.marketFinderSearches} account-free searches`} testId="kpi-market-finder" />
         <Stat label="Applications reviewed / downloaded" value={`${k.applicationsReviewed} / ${k.applicationsDownloaded}`} hint="accounts" testId="kpi-applications" />
         <Stat label="Markets added" value={k.marketsAdded} testId="kpi-markets" />
@@ -241,41 +291,91 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
       <Card>
         <CardHeader className="pb-2">
           <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Brokers</h3>
+          <p className="text-xs text-[var(--color-ink-500)]">
+            Only real work counts as activity — re-opening an account doesn’t, and neither do test/demo accounts. “This week” is the last 7 days of the range; returning = active this week
+            and the 7 days before.
+          </p>
         </CardHeader>
-        <CardBody className="overflow-x-auto pt-0">
+        <CardBody className="pt-0">
           {brokers.length === 0 ? (
             <p className="py-4 text-sm text-[var(--color-ink-500)]">No broker activity in this range.</p>
           ) : (
-            <table className="min-w-full border-collapse" data-testid="founder-brokers">
-              <thead>
-                <tr>
-                  {['Broker', 'Brokerage', 'Real accounts', 'Active days', 'Last active', 'Main features used', 'Returned this week'].map((h) => (
-                    <th key={h} className={th}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
+            <>
+              {/* Phones: one card per broker. */}
+              <ul className="flex flex-col gap-2 md:hidden" data-testid="founder-brokers-cards">
                 {brokers.map((b) => (
-                  <tr key={b.userId} className="cursor-pointer hover:bg-[var(--color-ink-50)]" onClick={() => onBroker(b.userId)}>
-                    <td className={td}>
-                      <span className="font-medium text-[var(--color-brand-800)] hover:underline">{b.name}</span>
-                      {b.email && b.email !== b.name && <span className="block text-xs text-[var(--color-ink-400)]">{b.email}</span>}
-                    </td>
-                    <td className={td}>{b.brokerage}</td>
-                    <td className={td}>{b.realAccounts}</td>
-                    <td className={td}>{b.activeDays}</td>
-                    <td className={td}>{when(b.lastActive)}</td>
-                    <td className={td}>{b.mainFeatures.join(', ') || '—'}</td>
-                    <td className={td}>{b.returnedThisWeek ? <Badge tone="success">Yes</Badge> : <span className="text-[var(--color-ink-400)]">No</span>}</td>
-                  </tr>
+                  <li key={b.userId}>
+                    <button onClick={() => onBroker(b.userId)} className="w-full cursor-pointer rounded-lg border border-[var(--color-ink-100)] p-3 text-left">
+                      <span className="flex items-start justify-between gap-2">
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium text-[var(--color-brand-800)]">{b.name}</span>
+                          <span className="block truncate text-xs text-[var(--color-ink-500)]">{b.brokerage}</span>
+                        </span>
+                        {b.returningFromPreviousWeek ? <Badge tone="success">Returning</Badge> : b.activeThisWeek ? <Badge tone="info">Active this week</Badge> : null}
+                      </span>
+                      <span className="mt-2 grid grid-cols-3 gap-2 text-xs text-[var(--color-ink-600)]">
+                        <span>
+                          <span className="block font-semibold text-[var(--color-ink-900)]">{b.activeDays}</span>active days
+                        </span>
+                        <span>
+                          <span className="block font-semibold text-[var(--color-ink-900)]">{b.daysActiveThisWeek}</span>this week
+                        </span>
+                        <span>
+                          <span className="block font-semibold text-[var(--color-ink-900)]">{b.realAccounts}</span>accounts
+                        </span>
+                      </span>
+                      <span className="mt-2 block text-xs text-[var(--color-ink-500)]">
+                        First {when(b.firstActivity)} · Last {when(b.lastActivity)}
+                      </span>
+                    </button>
+                  </li>
                 ))}
-              </tbody>
-            </table>
+              </ul>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="min-w-full border-collapse" data-testid="founder-brokers">
+                  <thead>
+                    <tr>
+                      {['Broker', 'Brokerage', 'Real accounts', 'Active days', 'Days this week', 'Returning', 'First activity', 'Last activity', 'Main features used'].map((h) => (
+                        <th key={h} className={th}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {brokers.map((b) => (
+                      <tr key={b.userId} className="cursor-pointer hover:bg-[var(--color-ink-50)]" onClick={() => onBroker(b.userId)}>
+                        <td className={td}>
+                          <span className="font-medium text-[var(--color-brand-800)] hover:underline">{b.name}</span>
+                          {b.email && b.email !== b.name && <span className="block text-xs text-[var(--color-ink-400)]">{b.email}</span>}
+                        </td>
+                        <td className={td}>{b.brokerage}</td>
+                        <td className={td}>{b.realAccounts}</td>
+                        <td className={td}>{b.activeDays}</td>
+                        <td className={td}>{b.daysActiveThisWeek || <span className="text-[var(--color-ink-400)]">—</span>}</td>
+                        <td className={td} data-testid="broker-returning">
+                          {b.returningFromPreviousWeek ? (
+                            <Badge tone="success">Yes</Badge>
+                          ) : b.activeThisWeek ? (
+                            <span className="text-xs text-[var(--color-ink-500)]">New this week</span>
+                          ) : (
+                            <span className="text-xs text-[var(--color-ink-400)]">Not active this week</span>
+                          )}
+                        </td>
+                        <td className={td}>{when(b.firstActivity)}</td>
+                        <td className={td}>{when(b.lastActivity)}</td>
+                        <td className={td}>{b.mainFeatures.join(', ') || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </CardBody>
       </Card>
+
+      <AdoptionCard view={view} />
 
       <Card>
         <CardHeader className="pb-2">

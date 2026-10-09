@@ -106,7 +106,7 @@ describe('Founder Analytics numbers', () => {
   it('broker table and detail', () => {
     const rows = view().brokers();
     const roman = rows.find((r) => r.userId === 'u1')!;
-    expect(roman).toMatchObject({ brokerage: 'Adriatic Agency', realAccounts: 1, returnedThisWeek: true });
+    expect(roman).toMatchObject({ brokerage: 'Adriatic Agency', realAccounts: 1, activeThisWeek: true, returningFromPreviousWeek: true });
     expect(roman.mainFeatures[0]).toBeDefined();
     const d = view().brokerDetail('u1');
     expect(d.activeWeeks).toBeGreaterThanOrEqual(2);
@@ -141,5 +141,64 @@ describe('Founder Analytics numbers', () => {
     expect(app.measuredCount).toBe(1);
     expect(app.medianRqMinutes).toBe(12);
     expect(app.medianSavedMinutes).toBe(45 - 12);
+  });
+
+  describe('retention (the "multiple active days but Returned = No" bug)', () => {
+    const D = 86400000;
+    const to = new Date('2026-10-15T00:00:00');
+    const at = (d: number) => new Date(to.getTime() - d * D - 3 * 3600000).toISOString();
+    const user = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: id, email: `${id}@x.com`, orgId: 'org', isFounder: false, firstSeen: null, lastSeen: null, ...extra });
+    const e = (id: string, u: string, d: number, name: ProductEventName = 'document_uploaded'): SnapshotEvent => ({ id, name, at: at(d), userId: u, orgId: 'org', accountId: 'acc', metadata: {} });
+    const make = (events: SnapshotEvent[], extra: Partial<FounderSnapshot> = {}) =>
+      new FounderView(
+        { events, users: [user('NEW'), user('LAPSED'), user('BACK'), user('OPENER'), user('IDLE', { role: 'agent', joinedAt: at(20) }), user('FOUNDER', { isFounder: true })], orgs: [{ id: 'org', name: 'DXP' }], accounts: [{ id: 'acc', name: 'Acc', orgId: 'org', createdAt: null, isTest: false, flag: null }], timeSaved: [], ...extra },
+        { from: new Date(to.getTime() - 30 * D), to, accounts: 'real', includeFounder: false }
+      );
+    const events = [
+      // NEW: started this week, active on 3 days — active this week, not "returning"
+      e('n1', 'NEW', 1), e('n2', 'NEW', 3), e('n3', 'NEW', 5),
+      // LAPSED: 4 active days two to three weeks ago, nothing this week
+      e('l1', 'LAPSED', 9), e('l2', 'LAPSED', 12), e('l3', 'LAPSED', 15), e('l4', 'LAPSED', 20),
+      // BACK: active last week and this week — returning
+      e('b1', 'BACK', 8), e('b2', 'BACK', 2),
+      // OPENER: only re-opened an account this week — not active
+      e('o1', 'OPENER', 1, 'account_opened_on_later_day'), e('o2', 'OPENER', 10),
+    ];
+
+    it('separates active days, this week and returning, so none of them reads as a contradiction', () => {
+      const rows = Object.fromEntries(make(events).brokers().map((r) => [r.userId, r]));
+      expect(rows.NEW).toMatchObject({ activeDays: 3, daysActiveThisWeek: 3, activeThisWeek: true, returningFromPreviousWeek: false });
+      expect(rows.LAPSED).toMatchObject({ activeDays: 4, daysActiveThisWeek: 0, activeThisWeek: false, returningFromPreviousWeek: false });
+      expect(rows.BACK).toMatchObject({ activeDays: 2, daysActiveThisWeek: 1, activeThisWeek: true, returningFromPreviousWeek: true });
+      expect(rows.OPENER).toMatchObject({ activeDays: 1, daysActiveThisWeek: 0, activeThisWeek: false });
+    });
+
+    it('re-opening an account is not activity anywhere', () => {
+      const v = make(events);
+      expect(v.activeBrokersIn(v.thisWeek).has('OPENER')).toBe(false);
+      expect(v.kpis()).toMatchObject({ weeklyActiveBrokers: 2, returningBrokers: 1 });
+    });
+
+    it('first and most recent meaningful activity come from the database when it knows them', () => {
+      const v = make(events, { users: [user('NEW', { firstMeaningful: '2026-09-01T10:00:00.000Z', lastMeaningful: at(1) })] } as Partial<FounderSnapshot>);
+      const row = v.brokers().find((r) => r.userId === 'NEW')!;
+      expect(row.firstActivity).toBe('2026-09-01T10:00:00.000Z');
+      expect(row.lastActivity).toBe(at(1));
+    });
+
+    it('lists members who never did anything, open invitations and unaffiliated sign-ups — never the founder', () => {
+      const v = make(events, {
+        invitations: [{ orgId: 'org', email: 'pending@dxp.com', role: 'agent', createdAt: at(4), status: 'open' }],
+        unaffiliatedSignups: 2,
+      });
+      const a = v.adoption();
+      expect(a.complete).toBe(true);
+      expect(a.notActivated.map((m) => m.userId)).toEqual(['IDLE']);
+      expect(a.eligibleMembers).toBe(5); // NEW, LAPSED, BACK, OPENER, IDLE — not FOUNDER
+      expect(a.activatedMembers).toBe(4);
+      expect(a.invitations.map((i) => i.email)).toEqual(['pending@dxp.com']);
+      expect(a.unaffiliatedSignups).toBe(2);
+      expect(make(events).adoption().complete).toBe(false); // before 0047
+    });
   });
 });

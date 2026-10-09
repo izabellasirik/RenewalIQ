@@ -33,7 +33,15 @@ export type ProductEventName =
   | 'quote_added'
   | 'quote_updated'
   | 'follow_up_created'
-  | 'follow_up_completed';
+  | 'follow_up_completed'
+  // 0047 — before it runs, these are refused quietly by the database (never an error in the app).
+  | 'requirements_added'
+  | 'document_request_prepared'
+  | 'document_request_sent'
+  | 'requested_document_received'
+  | 'requirement_verified'
+  | 'requirement_not_applicable'
+  | 'agency_created';
 
 export type ProductEventMetadata = Partial<Record<'source' | 'count' | 'method' | 'status' | 'workflow' | 'fields' | 'stage', string | number | boolean>>;
 

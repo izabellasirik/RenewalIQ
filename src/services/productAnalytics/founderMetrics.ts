@@ -30,6 +30,19 @@ export interface SnapshotUser {
   isFounder: boolean;
   firstSeen: string | null;
   lastSeen: string | null;
+  /** 0047: agency role and when they joined (agency members are listed even with no activity). */
+  role?: 'agent' | 'admin' | null;
+  joinedAt?: string | null;
+  /** 0047: first/last meaningful action ever — re-opening an account and test/demo accounts don't count. */
+  firstMeaningful?: string | null;
+  lastMeaningful?: string | null;
+}
+export interface SnapshotInvitation {
+  orgId: string;
+  email: string;
+  role: string;
+  createdAt: string;
+  status: 'open' | 'expired';
 }
 export interface SnapshotOrg {
   id: string;
@@ -58,6 +71,9 @@ export interface FounderSnapshot {
   orgs: SnapshotOrg[];
   accounts: SnapshotAccount[];
   timeSaved: SnapshotTimeSaved[];
+  /** 0047: open invitations, and people who signed up but never joined/created an agency nor did anything. */
+  invitations?: SnapshotInvitation[];
+  unaffiliatedSignups?: number;
   truncated?: boolean;
 }
 
@@ -130,9 +146,16 @@ export const EVENT_LABELS: Record<ProductEventName, [string, string]> = {
   quote_updated: ['Quote updated', 'quote updates'],
   follow_up_created: ['Follow-up created', 'follow-ups created'],
   follow_up_completed: ['Follow-up completed', 'follow-ups completed'],
+  requirements_added: ['Missing documents added', 'missing-document lists'],
+  document_request_prepared: ['Client request prepared', 'client requests prepared'],
+  document_request_sent: ['Client request sent', 'client requests sent'],
+  requested_document_received: ['Requested document received', 'requested documents received'],
+  requirement_verified: ['Document verified', 'documents verified'],
+  requirement_not_applicable: ['Requirement marked not applicable', 'requirements marked not applicable'],
+  agency_created: ['Agency created', 'agencies created'],
 };
 
-/** A visit, not work: doesn't make an account "active" on its own. */
+/** A visit, not work: doesn't make a broker or an account "active" on its own. */
 const PASSIVE: ReadonlySet<ProductEventName> = new Set(['account_opened_on_later_day']);
 const MARKET_RESEARCH: ReadonlySet<ProductEventName> = new Set(['market_search_completed', 'carrier_appetite_generated', 'carrier_match_opened', 'market_added_to_account']);
 
@@ -175,6 +198,8 @@ export class FounderView {
   readonly scoped: SnapshotEvent[];
   /** Scoped events inside the selected date range. */
   readonly inRange: SnapshotEvent[];
+  /** Scoped events that are real work (not just re-opening an account) — what "active" means. */
+  readonly meaningful: SnapshotEvent[];
   readonly thisWeek: [number, number];
   readonly lastWeek: [number, number];
 
@@ -206,6 +231,7 @@ export class FounderView {
     });
     this.thisWeek = [to - 7 * DAY, to];
     this.lastWeek = [to - 14 * DAY, to - 7 * DAY];
+    this.meaningful = this.scoped.filter((e) => !PASSIVE.has(e.name));
   }
 
   isTestAccount(accountId: string | null): boolean {
@@ -238,8 +264,9 @@ export class FounderView {
   activeAccounts(window: [number, number]): Set<string> {
     return this.distinct(this.between(this.scoped, window).filter((e) => !PASSIVE.has(e.name)).map((e) => e.accountId));
   }
+  /** Brokers with at least one meaningful action in [a, b). */
   activeBrokersIn(window: [number, number]): Set<string> {
-    return this.distinct(this.between(this.scoped, window).map((e) => e.userId));
+    return this.distinct(this.between(this.meaningful, window).map((e) => e.userId));
   }
 
   kpis() {
@@ -250,7 +277,8 @@ export class FounderView {
     const lastWeekBrokers = this.activeBrokersIn(this.lastWeek);
     return {
       activeBrokerages: this.distinct(r.map((e) => this.orgOf(e) ?? (e.userId ? `user:${e.userId}` : null))).size,
-      activeBrokers: this.distinct(r.map((e) => e.userId)).size,
+      activeBrokers: this.distinct(r.filter((e) => !PASSIVE.has(e.name)).map((e) => e.userId)).size,
+      weeklyActiveBrokers: thisWeekBrokers.size,
       weeklyActiveAccounts: this.activeAccounts(this.thisWeek).size,
       weeklyActiveAccountsLastWeek: this.activeAccounts(this.lastWeek).size,
       newRealAccounts: accountsWith(['account_created', 'account_imported']),
@@ -276,16 +304,26 @@ export class FounderView {
       .sort((a, b) => b.weight - a.weight);
   }
 
+  /**
+   * One row per broker with meaningful activity in the range. Definitions:
+   *  - activeDays: days in the selected range with at least one meaningful action
+   *  - daysActiveThisWeek: the same, for the last 7 days of the range
+   *  - returningFromPreviousWeek: active this week AND in the 7 days before it
+   *  - firstActivity / lastActivity: first and most recent meaningful action ever (0047), else
+   *    the earliest/latest one in the loaded data
+   */
   brokers() {
     const byUser = new Map<string, SnapshotEvent[]>();
-    for (const e of this.inRange) if (e.userId) byUser.set(e.userId, [...(byUser.get(e.userId) ?? []), e]);
+    for (const e of this.inRange) if (e.userId && !PASSIVE.has(e.name)) byUser.set(e.userId, [...(byUser.get(e.userId) ?? []), e]);
     const lastWeekBrokers = this.activeBrokersIn(this.lastWeek);
     const thisWeekBrokers = this.activeBrokersIn(this.thisWeek);
     return [...byUser.entries()]
       .map(([userId, evs]) => {
         const user = this.users.get(userId);
-        const lastActive = evs.reduce((m, e) => (e.at > m ? e.at : m), '');
-        const earlierThanThisWeek = this.scoped.some((e) => e.userId === userId && new Date(e.at).getTime() < this.thisWeek[0]) || (!!user?.firstSeen && new Date(user.firstSeen).getTime() < this.thisWeek[0]);
+        const mine = this.meaningful.filter((e) => e.userId === userId);
+        const thisWeekDays = this.distinct(this.between(mine, this.thisWeek).map((e) => localDay(e.at))).size;
+        const firstLoaded = mine.reduce((m, e) => (!m || e.at < m ? e.at : m), '');
+        const lastLoaded = mine.reduce((m, e) => (e.at > m ? e.at : m), '');
         return {
           userId,
           name: this.userName(userId),
@@ -293,12 +331,42 @@ export class FounderView {
           brokerage: this.orgName(user?.orgId ?? this.orgOf(evs[0])),
           realAccounts: this.distinct(evs.map((e) => e.accountId)).size,
           activeDays: this.distinct(evs.map((e) => localDay(e.at))).size,
-          lastActive,
+          activeThisWeek: thisWeekBrokers.has(userId),
+          daysActiveThisWeek: thisWeekDays,
+          returningFromPreviousWeek: thisWeekBrokers.has(userId) && lastWeekBrokers.has(userId),
+          firstActivity: user?.firstMeaningful ?? firstLoaded,
+          lastActivity: user?.lastMeaningful && user.lastMeaningful > lastLoaded ? user.lastMeaningful : lastLoaded,
+          /** @deprecated kept for the account-detail view; same as lastActivity within the range. */
+          lastActive: evs.reduce((m, e) => (e.at > m ? e.at : m), ''),
           mainFeatures: this.featuresOf(evs).slice(0, 3).map((f) => f.label),
-          returnedThisWeek: thisWeekBrokers.has(userId) && (lastWeekBrokers.has(userId) || earlierThanThisWeek),
         };
       })
       .sort((a, b) => (a.lastActive < b.lastActive ? 1 : -1));
+  }
+
+  /**
+   * Who could be using Renewal IQ and whether they have: agency members (0047 lists them even
+   * with no activity), open invitations, and sign-ups that never joined an agency. The founder is
+   * never counted. "Activated" = at least one meaningful action, ever.
+   */
+  adoption() {
+    const members = [...this.users.values()].filter((u) => !!u.orgId && !u.isFounder && (!this.filters.orgId || u.orgId === this.filters.orgId));
+    const activeEver = (u: SnapshotUser) => !!u.firstMeaningful || this.meaningful.some((e) => e.userId === u.id);
+    const notActivated = members
+      .filter((u) => !activeEver(u))
+      .map((u) => ({ userId: u.id, name: u.name, email: u.email, brokerage: this.orgName(u.orgId), role: u.role ?? null, joinedAt: u.joinedAt ?? null }));
+    const invitations = (this.snapshot.invitations ?? [])
+      .filter((i) => !this.filters.orgId || i.orgId === this.filters.orgId)
+      .map((i) => ({ ...i, brokerage: this.orgName(i.orgId) }));
+    return {
+      /** Present only once 0047 runs — before that only brokers with activity are known. */
+      complete: this.snapshot.invitations !== undefined,
+      eligibleMembers: members.length,
+      activatedMembers: members.length - notActivated.length,
+      notActivated,
+      invitations,
+      unaffiliatedSignups: this.filters.orgId ? 0 : (this.snapshot.unaffiliatedSignups ?? 0),
+    };
   }
 
   brokerDetail(userId: string) {
@@ -313,8 +381,8 @@ export class FounderView {
       name: this.userName(userId),
       email: user?.email ?? null,
       brokerage: this.orgName(user?.orgId ?? null),
-      firstActive: user?.firstSeen ?? all[0]?.at ?? null,
-      lastActive: user?.lastSeen ?? all[all.length - 1]?.at ?? null,
+      firstActive: user?.firstMeaningful ?? all.find((e) => !PASSIVE.has(e.name))?.at ?? null,
+      lastActive: user?.lastMeaningful ?? [...all].reverse().find((e) => !PASSIVE.has(e.name))?.at ?? null,
       activeDays: this.distinct(evs.map((e) => localDay(e.at))).size,
       activeWeeks: this.distinct(evs.map((e) => weekKey(e.at))).size,
       realAccounts: [...this.distinct(evs.map((e) => e.accountId))],
