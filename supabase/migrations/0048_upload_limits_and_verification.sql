@@ -80,3 +80,5 @@ drop trigger if exists intake_documents_verified_upload on public.intake_documen
 create trigger intake_documents_verified_upload
   before insert or update of storage_path on public.intake_documents
   for each row execute function public.require_verified_upload();
+
+notify pgrst, 'reload schema';

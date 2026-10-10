@@ -54,3 +54,14 @@ export async function verifyUploadOnServer(bucket: 'intake-uploads' | 'submissio
 export function storageContentType(file: File): string | undefined {
   return contentTypeFor(file.name) ?? (file.type || undefined);
 }
+
+/**
+ * What to hand to Storage: the same bytes, carrying storageContentType. supabase-js sends a File
+ * as multipart and Storage takes the type from that part — the browser's guess, which is often
+ * empty (e.g. .heic on Windows) and would be refused by the buckets' allow-list — so the
+ * `contentType` option alone isn't enough. slice() relabels without copying.
+ */
+export function storageBody(file: File): Blob {
+  const type = storageContentType(file);
+  return type && type !== file.type ? file.slice(0, file.size, type) : file;
+}

@@ -33,6 +33,10 @@ describe('file contents, not names (api/_lib/fileSignature)', () => {
     expect(checkUpload('page.html', 100, HTML)).toMatchObject({ ok: false });
     expect(checkUpload('drawing.svg', 100, bytes('<svg>'))).toMatchObject({ ok: false });
     expect(checkUpload('setup.exe', 100, EXE)).toMatchObject({ ok: false });
+    // programs without zero bytes in their first 4 KB still aren't "text"
+    expect(checkUpload('notes.txt', 300, bytes('MZ', new Array(200).fill(0x90)))).toMatchObject({ ok: false });
+    expect(checkUpload('notes.txt', 300, bytes([0x7f], 'ELF', new Array(50).fill(0x41)))).toMatchObject({ ok: false });
+    expect(checkUpload('run.csv', 300, bytes('#!/bin/sh\ncurl x | sh\n'))).toMatchObject({ ok: false });
     expect(checkUpload('empty.pdf', 0, new Uint8Array())).toMatchObject({ ok: false });
     expect((checkUpload('huge.pdf', 26 * 1024 * 1024, PDF) as { reason: string }).reason).toContain('25 MB');
   });
@@ -49,13 +53,13 @@ describe('POST /api/verify-upload', () => {
   const clientPath = '5b0c8a7e-1111-4111-8111-000000000001/key-aaaa-0001/loss run.pdf';
   const req = (body: unknown, auth?: string) => new Request('https://app/api/verify-upload', { method: 'POST', headers: { 'content-type': 'application/json', ...(auth ? { authorization: auth } : {}) }, body: JSON.stringify(body) });
 
-  function storage(content: Uint8Array, total = content.length) {
+  function storage(content: Uint8Array, total = content.length, lastModified: string | null = new Date().toUTCString()) {
     const calls: { url: string; method: string; body?: string; range?: string | null }[] = [];
     const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? 'GET';
       calls.push({ url, method, body: init?.body as string | undefined, range: new Headers(init?.headers).get('range') });
       if (url.endsWith('/auth/v1/user')) return new Response(JSON.stringify({ id: '00000000-0000-0000-0000-00000000000a' }));
-      if (url.includes('/storage/v1/object/') && method === 'GET') return new Response(content.slice(0, 4096), { status: 206, headers: { 'content-range': `bytes 0-${Math.min(content.length, 4096) - 1}/${total}` } });
+      if (url.includes('/storage/v1/object/') && method === 'GET') return new Response(content.slice(0, 4096), { status: 206, headers: { 'content-range': `bytes 0-${Math.min(content.length, 4096) - 1}/${total}`, ...(lastModified ? { 'last-modified': lastModified } : {}) } });
       return new Response(null, { status: 201 });
     }) as unknown as typeof fetch;
     return { fetchImpl, calls };
@@ -81,6 +85,15 @@ describe('POST /api/verify-upload', () => {
     expect(calls.some((c) => c.url.includes('upload_verifications'))).toBe(false);
   });
 
+  it('never deletes an older file — a re-check of a known path can only refuse it', async () => {
+    for (const lastModified of [new Date(Date.now() - 60 * 60_000).toUTCString(), null]) {
+      const { fetchImpl, calls } = storage(PDF, 30 * 1024 * 1024, lastModified);
+      expect((await handleVerifyUpload(req({ bucket: 'intake-uploads', path: clientPath }), env, fetchImpl)).status).toBe(422);
+      expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+      expect(calls.some((c) => c.url.includes('upload_verifications'))).toBe(false);
+    }
+  });
+
   it('uses the stored size, so an oversized file is refused even if the first bytes look fine', async () => {
     const { fetchImpl } = storage(PDF, 30 * 1024 * 1024);
     expect((await handleVerifyUpload(req({ bucket: 'intake-uploads', path: clientPath }), env, fetchImpl)).status).toBe(422);
@@ -93,6 +106,15 @@ describe('POST /api/verify-upload', () => {
     expect((await handleVerifyUpload(req({ bucket: 'submission-documents', path: own }), env, fetchImpl)).status).toBe(401);
     expect((await handleVerifyUpload(req({ bucket: 'submission-documents', path: other }, 'Bearer t'), env, fetchImpl)).status).toBe(403);
     expect((await handleVerifyUpload(req({ bucket: 'submission-documents', path: own }, 'Bearer t'), env, fetchImpl)).status).toBe(200);
+  });
+
+  it("refuses '.' and '..' segments before touching storage", async () => {
+    const { fetchImpl, calls } = storage(PDF);
+    for (const path of ['00000000-0000-0000-0000-00000000000a/../00000000-0000-0000-0000-00000000000b/a.pdf', '00000000-0000-0000-0000-00000000000a/acct_1/../a.pdf', '00000000-0000-0000-0000-00000000000a/./doc_1/a.pdf']) {
+      expect((await handleVerifyUpload(req({ bucket: 'submission-documents', path }, 'Bearer t'), env, fetchImpl)).status).toBe(400);
+    }
+    expect((await handleVerifyUpload(req({ bucket: 'intake-uploads', path: '5b0c8a7e-1111-4111-8111-000000000001/key-aaaa-0001/..' }), env, fetchImpl)).status).toBe(400);
+    expect(calls).toHaveLength(0);
   });
 
   it('refuses unknown buckets and malformed paths; 501 until configured', async () => {

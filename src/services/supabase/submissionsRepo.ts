@@ -842,7 +842,7 @@ export async function submissionsRevoked(ids: string[]): Promise<Record<string, 
 // Storage (private submission-documents bucket)
 // ---------------------------------------------------------------------------------------------
 
-import { precheckUpload, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
+import { precheckUpload, storageBody, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
 
 const BUCKET = 'submission-documents';
 
@@ -856,7 +856,7 @@ export async function uploadDocumentFile(userId: string, accountId: string, docu
   if (!pre.ok) return fail(pre.reason);
   const path = storagePathFor(userId, accountId, documentId, file.name);
   try {
-    const { error } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: true, contentType: storageContentType(file) });
+    const { error } = await supabase.storage.from(BUCKET).upload(path, storageBody(file), { upsert: true, contentType: storageContentType(file) });
     if (error) return fail(error.message);
     // The server reads the stored file and checks it really is what its name says (deleted if not).
     const token = (await supabase.auth.getSession()).data.session?.access_token;

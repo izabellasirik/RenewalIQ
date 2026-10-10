@@ -5,7 +5,7 @@ import { SIGNATURE_BYTES, checkUpload } from './_lib/fileSignature.js';
  *
  * Checks a just-uploaded file's real contents on the server: reads its first 4 KB from private
  * Storage with the service key and checks them against its extension (api/_lib/fileSignature.ts),
- * plus its size. A file that isn't what it claims is deleted. A file that passes is recorded in
+ * plus its size. A just-uploaded file that isn't what it claims is deleted. A file that passes is recorded in
  * upload_verifications (0048) — once enforcement is switched on, a client upload can only be
  * attached to a request or intake submission after this.
  *
@@ -34,8 +34,21 @@ const CLIENT_PATH = /^[A-Za-z0-9_-]{8,80}\/[A-Za-z0-9_-]{4,80}\/[^/]{1,255}$/;
 const BROKER_PATH = /^[0-9a-f-]{36}\/[A-Za-z0-9_.:-]{1,100}\/[A-Za-z0-9_.:-]{1,100}\/[^/]{1,255}$/i;
 
 const encodePath = (p: string) => p.split('/').map(encodeURIComponent).join('/');
+// '.' and '..' would be resolved by the URL and point outside the caller's folder.
+const hasDotSegment = (p: string) => p.split('/').some((s) => s === '.' || s === '..');
 
-export async function handleVerifyUpload(request: Request, env: VerifyEnv, fetchImpl: typeof fetch = fetch): Promise<Response> {
+/**
+ * Only a file stored in the last few minutes (the upload this check follows) is deleted when it
+ * fails. An older file — e.g. one a client sent before these limits existed and a broker already
+ * has — is refused but left alone, so re-checking a known path can never remove someone's document.
+ */
+export const DELETE_WINDOW_MS = 15 * 60_000;
+const justUploaded = (lastModified: string | null, now: number) => {
+  const t = lastModified ? Date.parse(lastModified) : NaN;
+  return Number.isFinite(t) && now - t <= DELETE_WINDOW_MS;
+};
+
+export async function handleVerifyUpload(request: Request, env: VerifyEnv, fetchImpl: typeof fetch = fetch, now = Date.now()): Promise<Response> {
   const url = (env.SUPABASE_URL ?? env.VITE_SUPABASE_URL ?? '').replace(/\/$/, '');
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) return json(501, { notConfigured: true, error: 'Upload verification is not configured for this deployment.' });
@@ -48,6 +61,7 @@ export async function handleVerifyUpload(request: Request, env: VerifyEnv, fetch
   }
   const bucket = body.bucket;
   const path = typeof body.path === 'string' ? body.path : '';
+  if (hasDotSegment(path)) return json(400, { error: 'Unknown upload.' });
   if (bucket === 'intake-uploads') {
     if (!CLIENT_PATH.test(path)) return json(400, { error: 'Unknown upload.' });
   } else if (bucket === 'submission-documents') {
@@ -79,6 +93,7 @@ export async function handleVerifyUpload(request: Request, env: VerifyEnv, fetch
   const verdict = checkUpload(name, Number.isFinite(total) ? total : bytes.length, bytes);
 
   if (!verdict.ok) {
+    if (!justUploaded(res.headers.get('last-modified'), now)) return json(422, { rejected: true, error: verdict.reason });
     await fetchImpl(`${url}/storage/v1/object/${bucket}`, { method: 'DELETE', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ prefixes: [path] }), signal: AbortSignal.timeout(8_000) }).catch(() => null);
     return json(422, { rejected: true, error: verdict.reason });
   }

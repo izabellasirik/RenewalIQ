@@ -3,7 +3,7 @@ import type { DocumentRequest, DocumentRequestFile, DocumentRequestItem } from '
 import { storageSafeName } from './intakeRepo';
 import { clientRequestUrl } from '../publicLinks';
 import { errorMessage, errorStatus, withRetry, withTimeout } from '../intake/retry';
-import { precheckUpload, rejectedFileError, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
+import { precheckUpload, rejectedFileError, storageBody, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
 
 /**
  * Client document requests (0030). Broker functions run signed in and are checked by the database
@@ -320,7 +320,7 @@ export async function uploadRequestFile(
   const timeout = 60_000 + Math.ceil(file.size / 50_000) * 1000;
   return withRetry(
     async () => {
-      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, file, { contentType: storageContentType(file) })), timeout, `Uploading ${file.name}`);
+      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, storageBody(file), { contentType: storageContentType(file) })), timeout, `Uploading ${file.name}`);
       if (up.error && !isAlreadyThere(up.error)) {
         if (errorStatus(up.error) === 413 || /too large|exceeded the maximum/i.test(up.error.message)) throw Object.assign(new Error(`${file.name} is too large to upload (25 MB at most).`), { status: 413 });
         throw up.error;

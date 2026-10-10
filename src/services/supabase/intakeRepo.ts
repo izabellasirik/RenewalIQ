@@ -1,4 +1,4 @@
-import { precheckUpload, rejectedFileError, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
+import { precheckUpload, rejectedFileError, storageBody, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
 import { supabase } from './client';
 import type { DuplicateCandidate } from '../intake/duplicateDetection';
 import type { CoverageType, IntakeDocument, IntakeEvent, IntakeContact, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../../types';
@@ -254,7 +254,7 @@ export async function uploadIntakeFile(session: IntakeSession, fileKey: string, 
   const timeout = 60_000 + Math.ceil(file.size / 50_000) * 1000;
   await withRetry(
     async () => {
-      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, file, { contentType: storageContentType(file) })), timeout, `Uploading ${file.name}`);
+      const up = await withTimeout(Promise.resolve(supabase!.storage.from(BUCKET).upload(path, storageBody(file), { contentType: storageContentType(file) })), timeout, `Uploading ${file.name}`);
       if (up.error && !isAlreadyThere(up.error)) {
         if (errorStatus(up.error) === 413 || /too large|exceeded the maximum/i.test(up.error.message)) throw Object.assign(new Error(`${file.name} is too large to upload (25 MB at most).`), { status: 413 });
         throw up.error;
@@ -364,7 +364,7 @@ export async function submitIntake(link: IntakeLink, answers: IntakeAnswers, fil
         const documentId = generateId('idoc');
         const path = `${submissionId}/${documentId}/${storageSafeName(file.name)}`;
         if (!(await precheckUpload(file)).ok) break;
-        const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, file, { contentType: storageContentType(file) });
+        const { error: uploadErr } = await supabase.storage.from(BUCKET).upload(path, storageBody(file), { contentType: storageContentType(file) });
         if (uploadErr) continue;
         if ((await verifyUploadOnServer('intake-uploads', path)).status === 'rejected') break;
         const { error: rowErr } = await supabase.from('intake_documents').insert({

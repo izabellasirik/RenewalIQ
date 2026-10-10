@@ -64,6 +64,8 @@ export function detectKind(b: Uint8Array): FileKind | null {
 /** Text a spreadsheet or note would contain: no NUL bytes, mostly printable, and not a web page or script in disguise. */
 function looksLikeText(b: Uint8Array): boolean {
   if (b.includes(0)) return false;
+  // Programs and scripts are never text here, however printable: Windows (MZ), Linux (ELF), Mac (Mach-O), shebang scripts.
+  if (ascii(b, 0, 2) === 'MZ' || ascii(b, 0, 4) === '\x7fELF' || ascii(b, 0, 2) === '#!' || [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe].includes(((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0)) return false;
   let printable = 0;
   for (const c of b) if (c === 9 || c === 10 || c === 13 || c >= 32) printable++;
   if (printable / b.length < 0.95) return false;
