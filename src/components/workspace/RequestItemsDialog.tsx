@@ -121,6 +121,8 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contactId, selectedIds.join(','), account?.id, draftItem?.label, draftItem?.instructions, canLink]);
 
+  const recordEmailDraftOpened = useAccountsStore((s) => s.recordEmailDraftOpened);
+  const [gmailError, setGmailError] = useState<string | null>(null);
   if (!account) return null;
   const locked = !!link;
 
@@ -175,8 +177,6 @@ export function RequestItemsDialog({ accountId, itemIds, open, onClose, newDocum
     return { body: withLink };
   }
 
-  const recordEmailDraftOpened = useAccountsStore((s) => s.recordEmailDraftOpened);
-  const [gmailError, setGmailError] = useState<string | null>(null);
 
   /**
    * Gmail's compose window, in a new tab, with To / Subject / the whole draft filled in. The broker

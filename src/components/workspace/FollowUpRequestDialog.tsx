@@ -36,6 +36,7 @@ export function FollowUpRequestDialog({ accountId, request, onClose }: { account
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account?.id, request.id, outstanding.map((i) => i.id).join(',')]);
 
+  const recordEmailDraftOpened = useAccountsStore((s) => s.recordEmailDraftOpened);
   if (!account) return null;
 
   async function copy() {
@@ -48,7 +49,6 @@ export function FollowUpRequestDialog({ accountId, request, onClose }: { account
     }
   }
 
-  const recordEmailDraftOpened = useAccountsStore((s) => s.recordEmailDraftOpened);
   /** Gmail's compose window in a new tab, draft filled in; the broker sends it there. Recorded as opened, never as sent. */
   function openInGmail() {
     const url = gmailComposeUrl(request.contactEmail, { subject, body });
