@@ -151,18 +151,21 @@ export function agencyCarrierToRecord(carrier: AgencyCarrier, base: AppetiteReco
 
 /**
  * The records Market Finder uses for an agency: built-ins (the agency's version where it has one,
- * minus the ones it archived), then the carriers it added itself (not archived).
+ * minus the ones it archived), then the carriers it added itself (not archived). An agency's
+ * version of a built-in that no longer exists stays, on its own details — removing a built-in
+ * never removes an agency's market.
  */
 export function layerAgencyCarriers(base: AppetiteRecord[], carriers: AgencyCarrier[], agencyName: string | null): AppetiteRecord[] {
   if (carriers.length === 0) return base;
   const byBase = new Map(carriers.filter((c) => c.baseRecordId).map((c) => [c.baseRecordId!, c]));
+  const baseIds = new Set(base.map((r) => r.id));
   const out: AppetiteRecord[] = [];
   for (const record of base) {
     const mine = byBase.get(record.id);
     if (!mine) out.push(record);
     else if (!mine.archivedAt) out.push(agencyCarrierToRecord(mine, record, agencyName));
   }
-  for (const c of carriers) if (!c.baseRecordId && !c.archivedAt) out.push(agencyCarrierToRecord(c, undefined, agencyName));
+  for (const c of carriers) if ((!c.baseRecordId || !baseIds.has(c.baseRecordId)) && !c.archivedAt) out.push(agencyCarrierToRecord(c, undefined, agencyName));
   return out;
 }
 

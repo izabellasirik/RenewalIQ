@@ -476,7 +476,7 @@ function CreateAgencyCard({ onCreated }: { onCreated: () => Promise<void> | void
             <label className={labelClass} htmlFor="agency-name">
               Agency name
             </label>
-            <input id="agency-name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} placeholder="e.g. DXP Services" maxLength={120} autoFocus />
+            <input id="agency-name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} placeholder="e.g. Summit Trucking Insurance" maxLength={120} autoFocus />
           </div>
           {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
           <div>

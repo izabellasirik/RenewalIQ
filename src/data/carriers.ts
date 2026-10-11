@@ -1,18 +1,5 @@
-import type { AppetiteRecord, CriterionSource } from '../types';
-import { source, verifiedCriterion as v, unknownCriterion as u, needsConfirmationCriterion as nc } from './appetiteCriteriaHelpers';
-import { newMarketAppetiteRecords } from './newMarketCandidates';
-import { newMarketAppetiteRecordsPhase2 } from './newMarketCandidatesPhase2';
-
-/**
- * Internal-market-list provenance for the Phase 2 additive reconciliation below (Cover Whale,
- * Northland, Prime Insurance). Every criterion built with this source uses `nc()`
- * (NEEDS_CONFIRMATION) rather than `v()` — this workbook was never an officially-verified source,
- * so nothing it supplies is allowed to overwrite or masquerade as a VERIFIED fact. See
- * PRODUCT_ROADMAP.md — "Phase 2: Existing Markets".
- */
-function internalList(): CriterionSource {
-  return source('INTERNAL_MARKET_LIST', 'Internal Market Intelligence List');
-}
+import type { AppetiteRecord } from '../types';
+import { source, verifiedCriterion as v, unknownCriterion as u } from './appetiteCriteriaHelpers';
 
 /**
  * Source-aware appetite dataset for real, named trucking markets. Every criterion is either
@@ -42,8 +29,7 @@ function official(sourceName: string, sourceUrl?: string) {
   return source('OFFICIAL', sourceName, { verifiedAt: VERIFIED_AT, sourceUrl });
 }
 
-/** The original hand-researched, officially-sourced batch — unchanged in shape/count (16 records). */
-const verifiedAppetiteRecords: AppetiteRecord[] = [
+export const sampleAppetiteRecords: AppetiteRecord[] = [
   // ---------------------------------------------------------------------------------------
   // Cover Whale — modeled per-coverage rather than one universal appetite. Auto Liability is
   // the only coverage with verified public rules captured so far; APD/Motor Truck Cargo/NTL/GL
@@ -64,7 +50,7 @@ const verifiedAppetiteRecords: AppetiteRecord[] = [
     commodities: u(),
     minDriverAge: u(),
     minDriverExperienceYears: v(2, 'HARD_RULE', official('Cover Whale Appetite Guidelines'), 'Minimum 2 years driving experience with a like vehicle.'),
-    telematicsRequired: nc(true, internalList(), 'Internal market list separately notes ELD is required for this coverage — not independently confirmed against Cover Whale\'s own published guidelines, so kept at NEEDS_CONFIRMATION rather than folded into the verified dashcam/ELD-connectivity rule below.'),
+    telematicsRequired: u(),
     dashcamRequired: v(true, 'HARD_RULE', official('Cover Whale Appetite Guidelines'), 'Dashcam / ELD connectivity required for Auto Liability.'),
     dotNumberRequired: u(),
     majorExclusions: u('Cover Whale publishes excluded trucking classes/operations; the specific list is not yet captured in RenewalIQ.'),
@@ -423,18 +409,18 @@ const verifiedAppetiteRecords: AppetiteRecord[] = [
     parentCompany: 'Northland Insurance',
     marketType: 'direct',
     states: u(),
-    fleetSize: u('Northland does not publish fleet-size thresholds. Internal market list separately cites both a 10+ unit floor (USR/CRC/RPS distribution path) and a 1+ unit floor (AMWINS/RPS path) — kept unset here rather than picking one, since the two paths appear to describe different target segments; see underwritingNotes.'),
+    fleetSize: u('Northland does not publish fleet-size thresholds.'),
     yearsInBusinessMin: u(),
     yearsInBusinessMax: u(),
     operationTypes: u(),
     maxRadius: u(),
-    commodities: nc(['Dry Freight', 'Intermodal', 'Flatbed', 'Reefer', 'Dumps'], internalList(), 'USR/CRC/RPS distribution-path note; not independently confirmed against Northland\'s own published guidelines.'),
+    commodities: u(),
     minDriverAge: u(),
     minDriverExperienceYears: u(),
     telematicsRequired: u(),
     dashcamRequired: u(),
     dotNumberRequired: u(),
-    majorExclusions: nc(['NYC (5 boroughs)'], internalList(), 'USR/CRC/RPS distribution-path note.'),
+    majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: v(
@@ -443,7 +429,7 @@ const verifiedAppetiteRecords: AppetiteRecord[] = [
       official('Northland Insurance — Trucking Program Materials')
     ),
     underwritingNotes:
-      'A Travelers company. Dedicated trucking insurer serving owner-operators and fleet businesses through commercial fleet and owner-operator programs. Distributed through transportation agents/general agents.\n[Internal market list — unverified]: also available through USR, CRC, RPS and AMWINS; additional notes describe "really clean accounts," an aversion to high IFTA counts, a requirement that all drivers hold a commercial license, and (on the AMWINS/RPS path) that a strong driver pool matters more than a specific unit count.',
+      'A Travelers company. Dedicated trucking insurer serving owner-operators and fleet businesses through commercial fleet and owner-operator programs. Distributed through transportation agents/general agents.',
   },
 
   // ---------------------------------------------------------------------------------------
@@ -506,12 +492,12 @@ const verifiedAppetiteRecords: AppetiteRecord[] = [
     telematicsRequired: u(),
     dashcamRequired: u(),
     dotNumberRequired: u(),
-    majorExclusions: nc(['Non-domiciled CDL drivers', 'Temp CDL drivers'], internalList(), 'Internal market list states Prime no longer provides insurance for these driver categories, effective November 2025 per the source — not independently confirmed against Prime\'s own published guidelines.'),
+    majorExclusions: u(),
     maxClaimsPast3Years: u(),
     maxIncurredPerUnit: u(),
     linesOffered: u(),
     underwritingNotes:
-      'Writes difficult/hard-to-place commercial trucking risks. Prime states it may consider risks with losses, substandard DOT scores and MVR issues — this is a stated willingness to review flexibly, not a guarantee of eligibility.\n[Internal market list — unverified]: also available through Maximum and Prime Agency (a wholesale MGA distinct from this carrier). Notes describe no growth limitation, collateral of $3,000–$5,000 on top of down payment, UIIA eligibility, and that new ventures are allowed.',
+      'Writes difficult/hard-to-place commercial trucking risks. Prime states it may consider risks with losses, substandard DOT scores and MVR issues — this is a stated willingness to review flexibly, not a guarantee of eligibility.',
   },
 
   // ---------------------------------------------------------------------------------------
@@ -541,12 +527,3 @@ const verifiedAppetiteRecords: AppetiteRecord[] = [
     underwritingNotes: 'Dedicated trucking insurer with trucking-focused risk control and claims expertise. Detailed fleet, state, radius, cargo and driver criteria remain unverified pending direct confirmation.',
   },
 ];
-
-/**
- * Full appetite dataset: the verified base batch, plus the first new-market batch
- * (./newMarketCandidates.ts), plus the broader "remaining workbook data" batch
- * (./newMarketCandidatesPhase2.ts) — see PRODUCT_ROADMAP.md. Each workbook-derived batch is kept
- * in its own module rather than interleaved above, so the verified batch's diff stays untouched
- * and every addition is reviewable on its own.
- */
-export const sampleAppetiteRecords: AppetiteRecord[] = [...verifiedAppetiteRecords, ...newMarketAppetiteRecords, ...newMarketAppetiteRecordsPhase2];

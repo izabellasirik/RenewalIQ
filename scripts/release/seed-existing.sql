@@ -1,5 +1,5 @@
 -- Synthetic "existing data" for the isolated TEST project, created in the schema production has
--- before this release (0001–0046). Stands in for DXP's accounts so the release can prove it leaves
+-- before this release (0001–0046). Stands in for a design partner's accounts so the release can prove it leaves
 -- such data alone. Every name, email and number here is made up (example.com addresses only, plus
 -- the founder's own sign-in for Founder Analytics). Run by test-env.sh setup — never on production
 -- (test-env.sh refuses any database without the release_test marker).

@@ -155,11 +155,11 @@ describe('the checklist is not pre-filled', () => {
 
 describe('activity records who did it', () => {
   it('stamps the signed-in user on new events, and nobody when signed out', () => {
-    store().setCurrentUserId('u-roman', 'roman@dxpserinc.com');
+    store().setCurrentUserId('u-roman', 'roman@agency.example');
     const id = store().createAccount('Actor Co', 'TX');
     const created = store().activityLog[id].at(-1)!;
     expect(created.actorId).toBe('u-roman');
-    expect(created.actorName).toBe('roman@dxpserinc.com');
+    expect(created.actorName).toBe('roman@agency.example');
     store().setCurrentUserId(null);
     const local = store().createAccount('Local Co', 'TX');
     expect(store().activityLog[local].at(-1)!.actorId).toBeUndefined();

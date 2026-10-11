@@ -84,6 +84,17 @@ describe('agency carriers in Market Finder', () => {
     expect(out.some((r) => r.marketName === 'Gone Co')).toBe(false);
   });
 
+  it("an agency's version of a built-in that was later removed stays in Market Finder, on its own details", () => {
+    const orphan = carrier({ id: 'o1', baseRecordId: 'appetite_removed_example', name: 'Removed Example (ours)', criteria: { fleetSize: { max: 10 } } });
+    const out = layerAgencyCarriers(sampleAppetiteRecords, [orphan, carrier({ id: 'o2', baseRecordId: 'appetite_removed_other', name: 'Archived', archivedAt: '2026-10-01T00:00:00Z' })], 'My Agency');
+    const mine = out.find((r) => r.marketName === 'Removed Example (ours)')!;
+    expect(mine).toBeTruthy();
+    expect(mine.id).toBe('appetite_removed_example');
+    expect(mine.fleetSize.value).toEqual({ max: 10 });
+    expect(out.some((r) => r.marketName === 'Archived')).toBe(false);
+    expect(out.length).toBe(sampleAppetiteRecords.length + 1);
+  });
+
   it('editing a built-in saves only what changed; a cleared field is saved as null', () => {
     const builtIn = sampleAppetiteRecords.find((r) => r.fleetSize.verificationStatus === 'VERIFIED' && r.fleetSize.value)!;
     const form = recordToForm(builtIn);

@@ -218,7 +218,7 @@ function LinksSection({ userId }: { userId: string }) {
             Agency name (shown to the client)
             <input
               className={`${inputClass} mt-1`}
-              placeholder="e.g. DXP Services Inc."
+              placeholder="e.g. Summit Trucking Insurance"
               value={orgName}
               onChange={(e) => {
                 setOrgName(e.target.value);

@@ -151,7 +151,7 @@ describe('Founder Analytics numbers', () => {
     const e = (id: string, u: string, d: number, name: ProductEventName = 'document_uploaded'): SnapshotEvent => ({ id, name, at: at(d), userId: u, orgId: 'org', accountId: 'acc', metadata: {} });
     const make = (events: SnapshotEvent[], extra: Partial<FounderSnapshot> = {}) =>
       new FounderView(
-        { events, users: [user('NEW'), user('LAPSED'), user('BACK'), user('OPENER'), user('IDLE', { role: 'agent', joinedAt: at(20) }), user('FOUNDER', { isFounder: true })], orgs: [{ id: 'org', name: 'DXP' }], accounts: [{ id: 'acc', name: 'Acc', orgId: 'org', createdAt: null, isTest: false, flag: null }], timeSaved: [], ...extra },
+        { events, users: [user('NEW'), user('LAPSED'), user('BACK'), user('OPENER'), user('IDLE', { role: 'agent', joinedAt: at(20) }), user('FOUNDER', { isFounder: true })], orgs: [{ id: 'org', name: 'Test Agency' }], accounts: [{ id: 'acc', name: 'Acc', orgId: 'org', createdAt: null, isTest: false, flag: null }], timeSaved: [], ...extra },
         { from: new Date(to.getTime() - 30 * D), to, accounts: 'real', includeFounder: false }
       );
     const events = [
@@ -188,7 +188,7 @@ describe('Founder Analytics numbers', () => {
 
     it('lists members who never did anything, open invitations and unaffiliated sign-ups — never the founder', () => {
       const v = make(events, {
-        invitations: [{ orgId: 'org', email: 'pending@dxp.com', role: 'agent', createdAt: at(4), status: 'open' }],
+        invitations: [{ orgId: 'org', email: 'pending@agency.example', role: 'agent', createdAt: at(4), status: 'open' }],
         unaffiliatedSignups: 2,
       });
       const a = v.adoption();
@@ -196,7 +196,7 @@ describe('Founder Analytics numbers', () => {
       expect(a.notActivated.map((m) => m.userId)).toEqual(['IDLE']);
       expect(a.eligibleMembers).toBe(5); // NEW, LAPSED, BACK, OPENER, IDLE — not FOUNDER
       expect(a.activatedMembers).toBe(4);
-      expect(a.invitations.map((i) => i.email)).toEqual(['pending@dxp.com']);
+      expect(a.invitations.map((i) => i.email)).toEqual(['pending@agency.example']);
       expect(a.unaffiliatedSignups).toBe(2);
       expect(make(events).adoption().complete).toBe(false); // before 0047
     });
