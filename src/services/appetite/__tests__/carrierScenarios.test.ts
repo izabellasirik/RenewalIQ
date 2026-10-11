@@ -74,7 +74,7 @@ describe('five anonymized accounts × synthetic markets', () => {
       'Program X via MGA Y': 'likely_match',
       'Access-Only Market': 'needs_more_information',
       'Cargo Specialist': 'likely_match',
-      'Unverified Sheet Market': 'possible_match', // clears its only (unverified) exclusion: underwriter review, never Likely
+      'Unverified Sheet Market': 'needs_more_information', // clears only an unverified rule: not a match until verified
     });
   });
 
@@ -84,7 +84,7 @@ describe('five anonymized accounts × synthetic markets', () => {
       'Program X via MGA Y': 'not_eligible',
       'Access-Only Market': 'needs_more_information',
       'Cargo Specialist': 'likely_match',
-      'Unverified Sheet Market': 'possible_match',
+      'Unverified Sheet Market': 'needs_more_information',
     });
   });
 

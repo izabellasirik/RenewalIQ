@@ -1,7 +1,7 @@
 import type { AppetiteRecord, MatchReason, MatchResult, RiskProfile, Verdict } from '../../types';
 import { ALL_RULES } from './rules';
 import { computeRecordFreshness, computeRulesMarketFreshness } from './freshness';
-import { bestCoverageVerdict, evaluateRulesByCoverage, rulesFitScore } from './carrierRules';
+import { appetiteUnverified, bestCoverageVerdict, evaluateRulesByCoverage, rulesFitScore } from './carrierRules';
 
 /** Below this many verified (not data-gap) pass criteria, there isn't enough real signal to make a useful call either way. */
 const MIN_VERIFIED_FOR_A_VERDICT = 2;
@@ -53,7 +53,7 @@ export function isRulesMarket(record: AppetiteRecord): boolean {
  */
 function evaluateRulesMarket(record: AppetiteRecord, profile: RiskProfile): MatchResult {
   const builtIn = ALL_RULES.map((rule) => rule(record, profile)).filter((r) => !r.marketUnknown);
-  const coverageResults = evaluateRulesByCoverage(record.rules ?? [], profile, builtIn);
+  const coverageResults = evaluateRulesByCoverage(record.rules ?? [], profile, builtIn, new Date(), record.baseCoverage);
   const verdict = bestCoverageVerdict(coverageResults);
   const seen = new Set<string>();
   const reasons = coverageResults.flatMap((c) => c.reasons).filter((r) => {
@@ -78,6 +78,7 @@ function evaluateRulesMarket(record: AppetiteRecord, profile: RiskProfile): Matc
     underwritingNotes: record.underwritingNotes,
     access: record.access,
     rulesMode: true,
+    appetiteUnverified: appetiteUnverified(reasons),
     coverageResults,
   };
 }

@@ -436,4 +436,13 @@ CR14 other agency sees only its own: markets=1 rules=0
 CR14 our market untouched by the other agency: partial code=PC-TEST-1
 CR15 anon cannot read rules
 CR15 anon cannot import
+CR16 built-in link import: added=1
+CR16 it is the agency version of the built-in: base=appetite_example_wide
+CR16 re-import of the same reference updates it: {"dryRun": true, "rulesAdded": 0, "marketsAdded": 0, "rulesUpdated": 0, "marketsUpdated": 1}
+CR16 two imported markets are never merged: Market m-link2: Example Wide Co via Wholesaler is already linked to import reference m-link.
+CR16 link to own market by id: {"dryRun": false, "rulesAdded": 0, "marketsAdded": 0, "rulesUpdated": 0, "marketsUpdated": 1}
+CR16 linked market keeps its name, gets the reference: name=Own Market Without Ref ref=m-own status=partial
+CR16 link to another agency's market refused: Market m-steal: the market to link to is not one of your agency's markets.
+CR16 malformed built-in id refused
+CR16 other agency's market untouched: ref=m-blue
 AQ1 20 concurrent reads, limit 5, allowed: 5

@@ -33,6 +33,11 @@ export function MarketCard({ result, onClick, onEdit }: { result: MatchResult; o
               <Badge tone="neutral">{result.marketType === 'direct' ? 'Direct' : 'MGA'}</Badge>
               <VerdictBadge verdict={result.verdict} />
               {result.access && <AccessStatusBadge status={result.access.status} />}
+              {result.appetiteUnverified && (
+                <Badge tone="warning" title="Nothing verified backs this result yet — the market's rules haven't been confirmed. A lead to check, not a match." data-testid="appetite-unverified">
+                  Appetite not verified
+                </Badge>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">

@@ -84,17 +84,31 @@ describe('Carrier 102 — passes, referrals, YES ranges, conditions', () => {
     expect(r.verifiedMatchCount).toBe(3);
   });
 
-  it('an unverified pass is not enough evidence for Likely Match — it reads Possible (underwriter review)', () => {
-    expect(evaluateMarket(market([hazmatNo({ lastVerifiedAt: null }), fleetNo({ lastVerifiedAt: null })]), account({ fleet: 8, commodities: ['Dry van'] })).verdict).toBe('possible_match');
+  it('unverified appetite is never presented as a match: clearing only unverified rules → Needs More Information, flagged', () => {
+    const r = evaluateMarket(market([hazmatNo({ lastVerifiedAt: null }), fleetNo({ lastVerifiedAt: null })]), account({ fleet: 8, commodities: ['Dry van'] }));
+    expect(r.verdict).toBe('needs_more_information');
+    expect(r.appetiteUnverified).toBe(true);
+  });
+
+  it('one verified pass is not a confident match: Possible, never Likely', () => {
+    const r = evaluateMarket(market([fleetNo()]), account({ fleet: 8 }));
+    expect(r.verdict).toBe('possible_match');
+    expect(r.appetiteUnverified).toBe(false);
+    expect(evaluateMarket(market([fleetNo(), hazmatNo()]), account({ fleet: 8, commodities: ['Dry van'] })).verdict).toBe('likely_match');
+  });
+
+  it('an unverified REFERRAL alone is not a match either', () => {
+    expect(evaluateMarket(market([rule({ category: 'years_in_business', operator: 'lt', value: 3, answer: 'referral', lastVerifiedAt: null })]), account({ years: 1 })).verdict).toBe('needs_more_information');
   });
 
   it('on an unverified market, an account that clears every rule never ranks below one that hits an exclusion', () => {
     const m = market([hazmatNo({ lastVerifiedAt: null }), fleetNo({ lastVerifiedAt: null }), rule({ category: 'driver_experience', operator: 'gte', value: 2, answer: 'yes', lastVerifiedAt: null })]);
     const clean = evaluateMarket(m, account({ fleet: 8, commodities: ['Dry van'] }));
     const hazmat = evaluateMarket(m, account({ fleet: 8, commodities: ['Hazmat'] }));
-    expect(clean.verdict).toBe('possible_match');
+    expect(clean.verdict).toBe('needs_more_information');
     expect(VERDICT_RANK[hazmat.verdict]).toBeGreaterThanOrEqual(VERDICT_RANK[clean.verdict]);
     expect(clean.matchScore).toBeGreaterThan(hazmat.matchScore);
+    expect(matchAllMarkets([{ ...m, id: 'h', marketName: 'H' }, { ...m, id: 'c', marketName: 'C' }], account({ fleet: 8, commodities: ['Dry van'] })).map((x) => x.verdict)).toEqual(['needs_more_information', 'needs_more_information']);
   });
 
   it('an UNKNOWN that applies outweighs a single unverified pass → Needs More Information', () => {
@@ -220,5 +234,21 @@ describe('Carrier 101 + existing appetite', () => {
     const tooBig = evaluateMarket(rec, account({ fleet: base!.fleetSize.value!.max! + 50, commodities: ['Dry van'] }));
     expect(tooBig.verdict).toBe('not_eligible');
     expect(tooBig.reasons.some((x) => x.marketUnknown)).toBe(false);
+  });
+});
+
+describe('Carrier 101 — a market linked to a built-in program keeps programs apart', () => {
+  it("a built-in that is one coverage (Auto Liability program) applies its verified criteria to that coverage only", () => {
+    const base = sampleAppetiteRecords.find((r) => r.programName === 'Auto Liability' && r.dashcamRequired.verificationStatus === 'VERIFIED' && r.dashcamRequired.ruleType === 'HARD_RULE');
+    expect(base).toBeTruthy();
+    const c: AgencyCarrier = { id: 'm3', baseRecordId: base!.id, name: 'Synthetic Linked Market', marketType: 'mga', availableThrough: null, website: null, contactName: null, contactEmail: null, contactPhone: null, criteria: {}, strictness: 'hard', notes: null, source: 'import', lastVerifiedAt: null, updatedAt: '2026-10-08T00:00:00Z', archivedAt: null, access: ACCESS, rules: [fleetNo(), hazmatNo()] };
+    const rec = agencyCarrierToRecord(c, base, 'Test Agency');
+    expect(rec.baseCoverage).toBe('auto_liability');
+    expect(rec.programName).toBeUndefined();
+    const acct = account({ fleet: 5, commodities: ['Dry van'], coverages: ['auto_liability', 'motor_truck_cargo'] });
+    acct.transportation.dashcams = Object.assign(acct.transportation.dashcams, { value: false, isMissing: false });
+    const r = evaluateMarket(rec, acct);
+    expect(r.coverageResults?.map((x) => `${x.coverage}:${x.verdict}`)).toEqual(['auto_liability:not_eligible', 'motor_truck_cargo:likely_match']);
+    expect(r.verdict).toBe('likely_match');
   });
 });

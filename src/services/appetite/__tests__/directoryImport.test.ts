@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IMPORT_TEMPLATE_CSV, parseCsvText, planImport, planImportJson } from '../directoryImport';
+import { IMPORT_TEMPLATE_CSV, parseCsvText, planImport, planImportJson, relinkPlan } from '../directoryImport';
 import type { AgencyCarrier } from '../agencyCarriers';
 
 // Synthetic data only.
@@ -73,5 +73,79 @@ describe('directory import (Carrier 101 + 102)', () => {
 
   it('parses quoted cells with commas, quotes and line breaks', () => {
     expect(parseCsvText('a,b\n"x, y","say ""hi""\nthere"')).toEqual([['a', 'b'], ['x, y', 'say "hi"\nthere']]);
+  });
+});
+
+describe('directory import — linking to existing markets (no duplicates, programs kept separate)', () => {
+  // Synthetic built-ins: one carrier-wide record and two programs of another carrier.
+  const BUILT_INS = [
+    { id: 'appetite_example_wide', marketName: 'Example Mutual', parentCompany: 'Example Mutual' },
+    { id: 'appetite_sample_a', marketName: 'Sample Casualty Alpha', parentCompany: 'Sample Casualty Company', programName: 'Alpha' },
+    { id: 'appetite_sample_b', marketName: 'Sample Casualty Beta', parentCompany: 'Sample Casualty Company', programName: 'Beta' },
+  ];
+  const market = (patch: Record<string, unknown>) => ({ ref: 'm1', name: 'Example Mutual via Some Wholesaler', accessStatus: 'ready', rules: [], ...patch });
+  const json = (...ms: Record<string, unknown>[]) => JSON.stringify({ markets: ms });
+
+  it('a market linked to a built-in becomes the agency version of it', () => {
+    const plan = planImportJson(json(market({ baseRecordId: 'appetite_example_wide' })), [], BUILT_INS);
+    expect(plan.errors).toEqual([]);
+    expect(plan.preview[0]).toMatchObject({ action: 'new', linkedTo: { kind: 'built-in', id: 'appetite_example_wide', name: 'Example Mutual' }, possibleDuplicates: [] });
+    expect(plan.markets[0].baseRecordId).toBe('appetite_example_wide');
+  });
+
+  it('an unknown built-in id is an error', () => {
+    expect(planImportJson(json(market({ baseRecordId: 'appetite_nope' })), [], BUILT_INS).errors[0]).toMatch(/doesn't exist/);
+  });
+
+  it('a look-alike is flagged, never linked on its own — and every program of a carrier is listed separately', () => {
+    const plan = planImportJson(json(market({}), market({ ref: 'm2', name: 'Sample Casualty via Some MGA' })), [], BUILT_INS);
+    expect(plan.preview[0]).toMatchObject({ action: 'new', linkedTo: undefined });
+    expect(plan.preview[0].possibleDuplicates.map((d) => d.name)).toEqual(['Example Mutual']);
+    expect(plan.preview[1].possibleDuplicates.map((d) => `${d.name}/${d.program}`)).toEqual(['Sample Casualty Alpha/Alpha', 'Sample Casualty Beta/Beta']);
+    expect(plan.warnings.some((w) => /may already exist under another name/.test(w))).toBe(true);
+    expect(plan.markets.every((m) => !m.baseRecordId && !m.linkTo)).toBe(true);
+  });
+
+  it("the words after 'via' are the route, not the market — no false duplicate", () => {
+    expect(planImportJson(json(market({ name: 'Other Carrier via Example Mutual' })), [], BUILT_INS).preview[0].possibleDuplicates).toEqual([]);
+  });
+
+  it('the admin links or keeps separate; two imported markets can never be merged into one', () => {
+    let plan = planImportJson(json(market({}), market({ ref: 'm2', name: 'Example Mutual direct' })), [], BUILT_INS);
+    plan = relinkPlan(plan, 'm1', { kind: 'built-in', id: 'appetite_example_wide', name: 'Example Mutual' }, [], BUILT_INS);
+    expect(plan.errors).toEqual([]);
+    expect(plan.preview[0].linkedTo?.id).toBe('appetite_example_wide');
+    plan = relinkPlan(plan, 'm2', { kind: 'built-in', id: 'appetite_example_wide', name: 'Example Mutual' }, [], BUILT_INS);
+    expect(plan.errors[0]).toMatch(/both link to "Example Mutual"/);
+    plan = relinkPlan(plan, 'm2', null, [], BUILT_INS);
+    expect(plan.errors).toEqual([]);
+  });
+
+  it("links to one of the agency's own markets with a different name; refuses one already holding another import", () => {
+    const mine = existing({ id: '11111111-1111-4111-8111-111111111111', name: 'Example Mut.' });
+    expect(planImportJson(json(market({ linkTo: mine.id })), [mine], BUILT_INS).preview[0]).toMatchObject({ action: 'update', existingName: 'Example Mut.', linkedTo: { kind: 'agency', id: mine.id } });
+    expect(planImportJson(json(market({ linkTo: mine.id })), [{ ...mine, externalRef: 'other-ref' }], BUILT_INS).errors[0]).toMatch(/never merged/);
+    expect(planImportJson(json(market({ linkTo: '22222222-2222-4222-8222-222222222222' })), [mine], BUILT_INS).errors[0]).toMatch(/isn't one of your agency's markets/);
+  });
+
+  it("the agency's existing version of a built-in is updated, not duplicated", () => {
+    const version = existing({ id: '33333333-3333-4333-8333-333333333333', baseRecordId: 'appetite_example_wide', name: 'Example Mutual (ours)' });
+    expect(planImportJson(json(market({ baseRecordId: 'appetite_example_wide' })), [version], BUILT_INS).preview[0]).toMatchObject({ action: 'update', existingName: 'Example Mutual (ours)' });
+  });
+});
+
+describe('directory import — a built-in link is never changed on re-import', () => {
+  it('warns instead of silently ignoring it', () => {
+    const plan = planImportJson(JSON.stringify({ markets: [{ ref: 'm1', name: 'X', accessStatus: 'ready', baseRecordId: 'appetite_example_wide', rules: [] }] }), [existing({ name: 'X', externalRef: 'm1' })], [{ id: 'appetite_example_wide', marketName: 'Example Mutual', parentCompany: 'Example Mutual' }]);
+    expect(plan.warnings.some((w) => /can't be changed on re-import/.test(w))).toBe(true);
+  });
+});
+
+describe('directory import — warnings stay readable', () => {
+  it('many unverified hard NOs collapse into one line; the duplicate prompt comes first', () => {
+    const rules = Array.from({ length: 6 }, (_, i) => ({ ref: `r${i}`, category: 'commodity', operator: 'any_of', value: ['hazmat'], answer: 'no', strength: 'hard' }));
+    const plan = planImportJson(JSON.stringify({ markets: [{ ref: 'm1', name: 'Example Mutual West', accessStatus: 'ready', rules }] }), [], [{ id: 'appetite_example_wide', marketName: 'Example Mutual', parentCompany: 'Example Mutual' }]);
+    expect(plan.warnings[0]).toMatch(/may already exist under another name/);
+    expect(plan.warnings.filter((w) => /hard NO without verified_at/.test(w))).toEqual([expect.stringMatching(/^6 rules \(Row \d+, Row \d+, Row \d+, …\)/)]);
   });
 });

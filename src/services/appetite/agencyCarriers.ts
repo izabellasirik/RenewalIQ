@@ -1,4 +1,5 @@
-import type { AppetiteCriterion, AppetiteRecord, CarrierRule, CriterionSource, MarketAccess, MarketType, RuleType } from '../../types';
+import type { AppetiteCriterion, AppetiteRecord, CarrierRule, CoverageType, CriterionSource, MarketAccess, MarketType, RuleType } from '../../types';
+import { COVERAGE_LABELS } from '../../types';
 import { unknownCriterion, verifiedCriterion } from '../../data/appetiteCriteriaHelpers';
 import { US_STATES } from '../../utils/usStates';
 
@@ -139,6 +140,13 @@ export function agencyCarrierToRecord(carrier: AgencyCarrier, base: AppetiteReco
   if (carrier.notes?.trim()) record.underwritingNotes = carrier.notes.trim();
   if (hasAccessInfo(carrier.access)) record.access = carrier.access;
   if (carrier.rules?.length) record.rules = carrier.rules;
+  // Linked to a built-in that is one coverage of the carrier (e.g. its Auto Liability program): the
+  // agency's market may be wider, so the built-in's criteria are kept for that coverage only.
+  const baseCoverage = base?.programName ? (Object.entries(COVERAGE_LABELS) as [CoverageType, string][]).find(([, label]) => label.toLowerCase() === base.programName!.toLowerCase())?.[0] : undefined;
+  if (baseCoverage && (record.access || record.rules)) {
+    record.baseCoverage = baseCoverage;
+    record.programName = undefined;
+  }
   record.agencyCarrier = {
     carrierId: carrier.id,
     website: carrier.website ?? undefined,

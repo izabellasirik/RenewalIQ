@@ -260,28 +260,36 @@ export function outcomeToReason(o: RuleOutcome): MatchReason {
 
 /**
  * The verdict from reasons (rule outcomes plus any verified built-in criteria):
- *   any fail (verified hard)                     → Not Eligible
- *   nothing scorable                             → Needs More Information
- *   no passes at all: reviews only → Possible, anything left to confirm → Needs More Information
- *   more to confirm than passes (an unverified pass counts half) → Needs More Information
- *   any review or confirm, or no VERIFIED pass   → Possible Match / Underwriter Review
- *   otherwise                                    → Likely Match
- * An unverified pass (a rule the agency hasn't verified yet) counts as evidence for Possible, never
- * for Likely — so an account that clears every documented rule never ranks below one that doesn't.
+ *   any fail (verified hard)                                   → Not Eligible
+ *   nothing scorable, or NO verified evidence (no verified rule
+ *   passed or flagged a review) — appetite not verified        → Needs More Information
+ *   more open questions than passes (unverified pass = half)   → Needs More Information
+ *   at least 2 verified passes, no review, nothing to confirm  → Likely Match
+ *   otherwise                                                  → Possible Match / Underwriter Review
+ * Unverified rules (e.g. an agency sheet nobody has confirmed yet) still order the results — an
+ * account that clears them ranks first — but on their own never make a market look like a match.
  */
 export function verdictFromReasons(reasons: MatchReason[]): Verdict {
   if (reasons.some((r) => r.status === 'fail')) return 'not_eligible';
   const scored = reasons.filter((r) => r.group !== 'info');
+  const verified = (r: MatchReason) => r.ruleVerified !== false;
   const passes = scored.filter((r) => r.status === 'pass');
-  const verifiedPasses = passes.filter((r) => r.ruleVerified !== false).length;
+  const verifiedPasses = passes.filter(verified).length;
   const confirms = scored.filter((r) => r.group === 'needs_verification').length;
-  const reviews = scored.filter((r) => r.group === 'review' || r.group === 'preference').length;
+  const reviews = scored.filter((r) => r.group === 'review' || r.group === 'preference');
   if (scored.length === 0) return 'needs_more_information';
-  if (passes.length === 0) return reviews > 0 && confirms === 0 ? 'possible_match' : 'needs_more_information';
-  // An unverified pass is half the evidence of a verified one when weighed against open questions.
+  if (verifiedPasses + reviews.filter(verified).length === 0) return 'needs_more_information';
   if (confirms > verifiedPasses + (passes.length - verifiedPasses) / 2) return 'needs_more_information';
-  if (reviews > 0 || confirms > 0 || verifiedPasses === 0) return 'possible_match';
-  return 'likely_match';
+  if (verifiedPasses >= MIN_VERIFIED_PASSES_FOR_LIKELY && reviews.length === 0 && confirms === 0) return 'likely_match';
+  return 'possible_match';
+}
+
+/** Below this many verified passes there isn't enough confirmed appetite for a confident "Likely Match". */
+export const MIN_VERIFIED_PASSES_FOR_LIKELY = 2;
+
+/** True when nothing verified backs a rules market's result — its appetite comes only from unconfirmed rules. */
+export function appetiteUnverified(reasons: MatchReason[]): boolean {
+  return !reasons.some((r) => r.group !== 'info' && r.ruleVerified !== false && (r.status === 'pass' || r.status === 'fail' || r.group === 'review' || r.group === 'preference'));
 }
 
 /**
@@ -304,13 +312,15 @@ const RANK: Record<Verdict, number> = { likely_match: 0, possible_match: 1, need
  * and the reasons from the built-in criteria (`extra`). With no coverage requested, one result
  * over the rules that apply to every coverage.
  */
-export function evaluateRulesByCoverage(rules: CarrierRule[], profile: RiskProfile, extra: MatchReason[] = [], asOf = new Date()): CoverageResult[] {
+export function evaluateRulesByCoverage(rules: CarrierRule[], profile: RiskProfile, extra: MatchReason[] = [], asOf = new Date(), extraCoverage?: CoverageType): CoverageResult[] {
   const live = rules.filter((r) => !r.archivedAt);
   const requested = [...new Set(profile.coverage.map((c) => c.type))];
   const coverages: (CoverageType | null)[] = requested.length ? requested : [null];
   return coverages.map((coverage) => {
     const outcomes = live.filter((r) => r.coverage === null || r.coverage === coverage).map((r) => evaluateRule(r, profile, asOf));
-    const reasons = [...extra, ...outcomes.filter((o) => o.status !== 'not_applicable').map(outcomeToReason)];
+    // Built-in criteria scoped to one coverage (a linked built-in program) count only for that coverage.
+    const builtIn = extraCoverage && coverage && coverage !== extraCoverage ? [] : extra;
+    const reasons = [...builtIn, ...outcomes.filter((o) => o.status !== 'not_applicable').map(outcomeToReason)];
     return { coverage, verdict: verdictFromReasons(reasons), reasons };
   });
 }

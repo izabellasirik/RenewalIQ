@@ -312,6 +312,12 @@ export function MarketDetailDrawer({
           {result.needsVerificationCount === 1 ? 's' : ''} verification
         </p>
         )}
+        {result?.appetiteUnverified && (
+          <p className="rounded-lg bg-[var(--color-warning-50)] px-3 py-2 text-xs text-[var(--color-warning-700)]" data-testid="appetite-unverified-note">
+            <span className="font-medium">Appetite not verified.</span> None of this market's rules has been confirmed in RenewalIQ yet, so it is not shown as a match —
+            treat it as a lead to check with the market. Passed and flagged rules below are from the agency's unconfirmed record.
+          </p>
+        )}
         {result && rulesMode && (
           <p className="text-xs text-[var(--color-ink-500)]" data-testid="requirement-counts">
             {count((r) => r.status === 'pass')} passed · {count((r) => r.status === 'fail')} failed · {count((r) => r.group === 'review' || r.group === 'preference')} for underwriter review ·{' '}

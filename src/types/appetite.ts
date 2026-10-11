@@ -149,6 +149,11 @@ export interface AppetiteRecord {
   access?: MarketAccess;
   /** Carrier 102: the agency's individual underwriting rules for this market. */
   rules?: CarrierRule[];
+  /**
+   * Set when an agency market is linked to a built-in that models ONE coverage of a carrier (e.g.
+   * its Auto Liability program): that built-in's verified criteria apply to that coverage only.
+   */
+  baseCoverage?: CoverageType;
 }
 
 export type ReasonStatus = 'pass' | 'fail' | 'warning';
@@ -215,6 +220,8 @@ export interface MatchResult {
   access?: MarketAccess;
   /** Carrier 102: true when this market is matched on the agency's underwriting rules. */
   rulesMode?: boolean;
+  /** Carrier 102: nothing verified backs this result — the market's rules haven't been confirmed yet. */
+  appetiteUnverified?: boolean;
   /** Carrier 102: one verdict per requested coverage. */
   coverageResults?: CoverageResult[];
 }

@@ -46,14 +46,16 @@ outside "ages 25–70" is a review); a NO or REFERRAL triggers on **any** one. K
 account's own words at a word start and skip negated wording ("non-hazmat tanker" is not hazmat).
 "Operations (cargo or equipment)" looks at commodities and vehicle types together.
 
-Market verdict per coverage: any verified hard NO → **Not Eligible**; nothing scorable, or more open
-questions than passes (an unverified pass counts half) → **Needs More Information**; any review or
-open question, or no *verified* pass → **Possible Match / Underwriter Review**; otherwise **Likely
-Match**. An unverified pass is evidence for Possible, never for Likely, so an account that clears every
-documented rule never ranks below one that hits an exclusion. Within a verdict, markets with fewer
-underwriter-review flags come first. The market shows its best coverage and lists each one. A market
-with an access route but no rules (unknown appetite) is **Needs More Information**, with its submission
-route shown.
+Market verdict per coverage: any verified hard NO → **Not Eligible**. **No verified evidence** (no
+verified rule passed or flagged a review — e.g. an agency sheet nobody has confirmed yet), nothing
+scorable, or more open questions than passes (an unverified pass counts half) → **Needs More
+Information**, and the card says **Appetite not verified**. At least two verified passes with nothing
+to review or confirm → **Likely Match**; otherwise **Possible Match / Underwriter Review**. So a market
+is never presented as a match on unconfirmed rules alone. Unverified rules still order the results:
+within a verdict, fewer underwriter-review flags and more passes come first, so an account that clears
+every documented rule never ranks below one that hits an exclusion. The market shows its best coverage
+and lists each one. A market with an access route but no rules (unknown appetite) is **Needs More
+Information**, with its submission route shown.
 
 Verification: `last_verified_at` is set only by an agency admin after independent confirmation
 ("Mark verified"). An imported document's own "VERIFIED" goes in *documented status* and does not let
@@ -68,6 +70,26 @@ lists every market as new or updating an existing one, with errors (bad status, 
 unknown category, …) and warnings (e.g. a hard NO without a verified date will not decline). **Check**
 asks the database for the exact counts without saving; **Import** saves. Columns that look like
 passwords or logins are refused.
+
+## Linking to existing markets (no duplicates; programs stay separate)
+
+An imported market can be linked instead of added: `baseRecordId` makes it the agency's version of a
+built-in market (one card in Market Finder; the built-in's verified criteria still apply, never
+overwritten), `linkTo` points at one of the agency's own markets whose name differs. The import
+matches by import reference → chosen link → the agency's existing version of that built-in → exact
+name. The preview lists look-alikes ("may already exist under another name") with a **Link to**
+choice per market — default **Keep separate**; nothing is linked on a guess. Rules that keep programs
+apart:
+
+- Each program of a carrier is its own market; a route that doesn't say which program it reaches is
+  kept separate and offered every program to choose from.
+- A built-in that models one coverage (e.g. a carrier's Auto Liability program) applies its criteria to
+  that coverage only when linked to a wider agency market.
+- Two imported markets are never merged into one (refused by the preview and the database), and a
+  link to another agency's market is refused.
+- The built-in link of a market already in the list can't be changed on re-import (0023 keeps
+  `base_record_id` fixed); the preview says so.
+- An agency's version of a built-in that is later removed from the dataset stays, on its own details.
 
 ## Order of work and status
 
@@ -90,4 +112,4 @@ the V4 release (0047/0048) — `0049` is additive and re-runnable. No Edge Funct
 - `src/services/appetite/__tests__/carrierRules.test.ts` — rule semantics (only verified hard NO declines, UNKNOWN never does, a source's own "VERIFIED" cannot decline, every-driver/any-driver ranges, negated keywords, operations, conditions, coverage by coverage, ordering on unverified markets, existing appetite preserved).
 - `src/services/appetite/__tests__/carrierScenarios.test.ts` — five anonymized accounts × six synthetic markets.
 - `src/services/appetite/__tests__/directoryImport.test.ts` — import parsing, matching, credential refusal, errors.
-- `supabase/tests/agency_rls` CR1–CR15 (incl. documented status kept as written, operations rules) — member read / admin write, cross-agency isolation, import permissions, dry run, no overwrite of existing appetite, invalid import rolled back.
+- `supabase/tests/agency_rls` CR1–CR16 (incl. documented status kept as written, operations rules, linking: own agency only, never merging two imported markets) — member read / admin write, cross-agency isolation, import permissions, dry run, no overwrite of existing appetite, invalid import rolled back.

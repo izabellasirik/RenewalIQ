@@ -20,9 +20,13 @@ import {
   parseRuleValue,
   planImport,
   planImportJson,
+  relinkPlan,
   valueToText,
+  type BuiltInRef,
   type ImportPlan,
+  type LinkTarget,
 } from '../services/appetite/directoryImport';
+import { sampleAppetiteRecords } from '../data/carriers';
 import type { AccessRoute, AccessStatus, CarrierRule, CoverageType, MarketAccess, MarketContact, RuleAnswer, RuleCategory, RuleOperator, RuleStrength } from '../types';
 import { ACCESS_ROUTE_LABELS, ACCESS_STATUS_LABELS, COVERAGE_LABELS, RULE_ANSWER_LABELS, RULE_CATEGORY_LABELS, RULE_STRENGTH_LABELS } from '../types';
 import { cn } from '../utils/cn';
@@ -502,6 +506,10 @@ function RuleForm({ initial, onCancel, onSave }: { initial: CarrierRule | null; 
   );
 }
 
+const BUILT_INS: BuiltInRef[] = sampleAppetiteRecords.map((r) => ({ id: r.id, marketName: r.marketName, parentCompany: r.parentCompany, programName: r.programName }));
+const targetKey = (t: LinkTarget) => `${t.kind}:${t.id}`;
+const targetLabel = (t: LinkTarget) => `${t.kind === 'built-in' ? 'Built-in' : 'Your market'}: ${t.name}${t.program ? ` (${t.program} program)` : ''}`;
+
 function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; existing: AgencyCarrier[]; onClose: () => void; onImported: (counts: ImportCounts, fileName: string) => void }) {
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [fileName, setFileName] = useState('');
@@ -521,7 +529,7 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
     if (file.size > 5 * 1024 * 1024) return setError('That file is over 5 MB — a directory is much smaller.');
     const text = await file.text();
     setFileName(file.name);
-    setPlan(/\.json$/i.test(file.name) ? planImportJson(text, existing) : planImport(parseCsvText(text), existing));
+    setPlan(/\.json$/i.test(file.name) ? planImportJson(text, existing, BUILT_INS) : planImport(parseCsvText(text), existing, BUILT_INS));
   }
 
   async function run(dryRun: boolean) {
@@ -583,13 +591,35 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
           <div className="max-h-80 overflow-auto rounded-lg border border-[var(--color-ink-100)]">
             <table className="w-full text-left text-xs" data-testid="import-preview">
               <thead className="sticky top-0 bg-[var(--color-ink-50)] text-[var(--color-ink-500)]">
-                <tr><th className="px-2 py-1.5">Market</th><th className="px-2 py-1.5">Action</th><th className="px-2 py-1.5">Access</th><th className="px-2 py-1.5">Route</th><th className="px-2 py-1.5">Rules</th></tr>
+                <tr><th className="px-2 py-1.5">Market</th><th className="px-2 py-1.5">Action</th><th className="px-2 py-1.5">Link to</th><th className="px-2 py-1.5">Access</th><th className="px-2 py-1.5">Route</th><th className="px-2 py-1.5">Rules</th></tr>
               </thead>
               <tbody>
                 {plan.preview.map((p) => (
                   <tr key={p.market.ref} className="border-t border-[var(--color-ink-100)]">
                     <td className="px-2 py-1.5 font-medium text-[var(--color-ink-800)]">{p.market.name}</td>
-                    <td className="px-2 py-1.5">{p.action === 'new' ? 'New' : `Updates “${p.existingName}”`}</td>
+                    <td className="px-2 py-1.5">{p.action === 'new' ? (p.linkedTo ? 'New, as your version' : 'New') : `Updates “${p.existingName}”`}</td>
+                    <td className="px-2 py-1.5" data-testid="import-link">
+                      {p.action === 'update' && p.linkedTo?.kind === 'agency' && !p.market.linkTo ? (
+                        <span className="text-[var(--color-ink-500)]">matched</span>
+                      ) : p.linkedTo || p.possibleDuplicates.length ? (
+                        <select
+                          aria-label={`Link ${p.market.name} to`}
+                          className="max-w-56 rounded border border-[var(--color-ink-200)] bg-white px-1 py-0.5 text-xs"
+                          value={p.linkedTo ? targetKey(p.linkedTo) : ''}
+                          onChange={(e) => {
+                            const options = [...(p.linkedTo ? [p.linkedTo] : []), ...p.possibleDuplicates];
+                            const target = options.find((t) => targetKey(t) === e.target.value) ?? null;
+                            setCheck(null);
+                            setPlan(relinkPlan(plan, p.market.ref, target, existing, BUILT_INS));
+                          }}
+                        >
+                          <option value="">Keep separate</option>
+                          {[...(p.linkedTo ? [p.linkedTo] : []), ...p.possibleDuplicates].map((t) => <option key={targetKey(t)} value={targetKey(t)}>{targetLabel(t)}</option>)}
+                        </select>
+                      ) : (
+                        <span className="text-[var(--color-ink-400)]">—</span>
+                      )}
+                    </td>
                     <td className="px-2 py-1.5">{p.market.accessStatus ? ACCESS_STATUS_LABELS[p.market.accessStatus] : '—'}</td>
                     <td className="px-2 py-1.5">{chainText({ ...EMPTY_ACCESS, mga: p.market.mga, wholesaler: p.market.wholesaler, paper: p.market.paper }) || (p.market.accessRoute ? ACCESS_ROUTE_LABELS[p.market.accessRoute] : '—')}</td>
                     <td className="px-2 py-1.5">{p.market.rules.length}{p.market.rules.length ? ` (${p.verifiedHardNos} verified hard NO · ${p.unverifiedRules} not verified)` : ''}</td>

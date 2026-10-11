@@ -34,7 +34,9 @@
 --
 -- 3. import_agency_carrier_directory(payload, dry_run): an agency admin's reviewed import of a
 --    directory (Carrier 101 records + their Carrier 102 rules). Matches existing markets by import
---    reference, then by name; NEVER changes a market's existing appetite criteria (0023's
+--    reference, then the agency market the admin chose to link (linkTo, own agency only), then the
+--    agency's version of a chosen built-in (baseRecordId — a new market is created as that version),
+--    then by name. Two imported markets are never merged into one. NEVER changes a market's existing appetite criteria (0023's
 --    criteria / rule_strictness) and never deletes anything. dry_run returns the exact counts and
 --    rolls everything back. Each real import is recorded in agency_carrier_imports.
 --
@@ -218,6 +220,7 @@ declare
   v_rule uuid;
   v_counts jsonb;
   n_added int := 0; n_updated int := 0; n_rules_added int := 0; n_rules_updated int := 0;
+  v_base text;
   t text;
 begin
   if auth.uid() is null or v_agency is null or not public.is_agency_admin() then
@@ -238,17 +241,40 @@ begin
       if jsonb_typeof(coalesce(m -> 'rules', '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(m -> 'rules', '[]'::jsonb)) > 200 then
         raise exception 'Market %: rules must be a list of at most 200.', m ->> 'ref' using errcode = '22023';
       end if;
-      -- Existing market: by import reference, else by its name (not archived).
+      v_base := nullif(btrim(m ->> 'baseRecordId'), '');
+      if v_base is not null and v_base !~ '^[a-z0-9_]{1,100}$' then
+        raise exception 'Market %: baseRecordId is not a built-in market id.', m ->> 'ref' using errcode = '22023';
+      end if;
+      -- Existing market, in this order: by import reference; the agency's own market the admin chose
+      -- to link (linkTo); the agency's version of the chosen built-in (baseRecordId); its name (not archived).
       select c.id into v_carrier from public.agency_carriers c where c.agency_id = v_agency and c.external_ref = m ->> 'ref';
+      if v_carrier is null and nullif(m ->> 'linkTo', '') is not null then
+        if (m ->> 'linkTo') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+          raise exception 'Market %: linkTo is not a market id.', m ->> 'ref' using errcode = '22023';
+        end if;
+        select c.id into v_carrier from public.agency_carriers c where c.agency_id = v_agency and c.id = (m ->> 'linkTo')::uuid;
+        if v_carrier is null then
+          raise exception 'Market %: the market to link to is not one of your agency''s markets.', m ->> 'ref' using errcode = '22023';
+        end if;
+      end if;
+      if v_carrier is null and v_base is not null then
+        select c.id into v_carrier from public.agency_carriers c where c.agency_id = v_agency and c.base_record_id = v_base;
+      end if;
       if v_carrier is null then
         select c.id into v_carrier from public.agency_carriers c
          where c.agency_id = v_agency and c.archived_at is null and lower(btrim(c.name)) = lower(btrim(m ->> 'name'))
          order by c.created_at limit 1;
       end if;
+      -- Two imported markets never merge into one: a market already holding another import
+      -- reference is not linked again (separate programs and rules stay separate).
+      if v_carrier is not null and exists (select 1 from public.agency_carriers c where c.id = v_carrier and c.external_ref is not null and c.external_ref <> m ->> 'ref') then
+        raise exception 'Market %: % is already linked to import reference %.', m ->> 'ref',
+          (select name from public.agency_carriers where id = v_carrier), (select external_ref from public.agency_carriers where id = v_carrier) using errcode = '22023';
+      end if;
 
       if v_carrier is null then
-        insert into public.agency_carriers (agency_id, name, market_type, source, external_ref)
-        values (v_agency, btrim(m ->> 'name'), case when m ->> 'marketType' = 'mga' then 'mga' else 'direct' end, 'import', m ->> 'ref')
+        insert into public.agency_carriers (agency_id, base_record_id, name, market_type, source, external_ref)
+        values (v_agency, v_base, btrim(m ->> 'name'), case when m ->> 'marketType' = 'mga' then 'mga' else 'direct' end, 'import', m ->> 'ref')
         returning id into v_carrier;
         n_added := n_added + 1;
       else
