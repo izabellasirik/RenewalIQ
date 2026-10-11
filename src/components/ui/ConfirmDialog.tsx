@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { TriangleAlert } from 'lucide-react';
 import { Button } from './Button';
@@ -17,6 +18,7 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   confirming = false,
   variant = 'danger',
+  typeToConfirm,
 }: {
   open: boolean;
   onCancel: () => void;
@@ -27,7 +29,14 @@ export function ConfirmDialog({
   cancelLabel?: string;
   confirming?: boolean;
   variant?: 'danger' | 'default';
+  /** Strong confirmation: the confirm button stays disabled until this exact text (any case) is typed. */
+  typeToConfirm?: string;
 }) {
+  const [typed, setTyped] = useState('');
+  useEffect(() => {
+    if (open) setTyped('');
+  }, [open]);
+  const typedOk = !typeToConfirm || typed.trim().toUpperCase() === typeToConfirm.trim().toUpperCase();
   return (
     <AnimatePresence>
       {open && (
@@ -53,11 +62,24 @@ export function ConfirmDialog({
                 <p className="mt-1.5 text-sm text-[var(--color-ink-600)]">{description}</p>
               </div>
             </div>
+            {typeToConfirm && (
+              <label className="mt-4 block text-sm text-[var(--color-ink-600)]">
+                Type <span className="font-semibold text-[var(--color-ink-900)]">{typeToConfirm.toUpperCase()}</span> to confirm.
+                <input
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                  autoFocus
+                  autoComplete="off"
+                  aria-label="Type the account name to confirm"
+                  className="mt-1.5 w-full rounded-lg border border-[var(--color-ink-200)] px-3 py-2 text-sm outline-none focus:border-[var(--color-danger-600)] focus:ring-2 focus:ring-[var(--color-danger-600)]/15"
+                />
+              </label>
+            )}
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={onCancel} disabled={confirming}>
                 {cancelLabel}
               </Button>
-              <Button variant={variant === 'danger' ? 'danger' : 'primary'} size="sm" onClick={onConfirm} disabled={confirming}>
+              <Button variant={variant === 'danger' ? 'danger' : 'primary'} size="sm" onClick={onConfirm} disabled={confirming || !typedOk}>
                 {confirming ? 'Working…' : confirmLabel}
               </Button>
             </div>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import type { CoverageLine, CoverageType } from '../../types';
-import { COVERAGE_LABELS } from '../../types';
+import type { CoverageField, CoverageLine, CoverageType } from '../../types';
+import { COVERAGE_LABELS, DEDUCTIBLE_COVERAGES } from '../../types';
 import type { FieldResolution } from '../../services/extraction';
 import { Button, ConfirmDialog } from '../ui';
 import { FieldRow } from './FieldRow';
@@ -15,10 +15,13 @@ export function CoverageSection({
   onResolve,
   onAdd,
   onDelete,
+  highlightType,
 }: {
+  /** Ring + scroll target for a deep link (e.g. from What's Missing). */
+  highlightType?: CoverageType | null;
   coverage: CoverageLine[];
-  onSave: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', value: string) => void;
-  onResolve: (coverageType: CoverageType, field: 'currentLimit' | 'requestedLimit', resolution: FieldResolution<string>) => void;
+  onSave: (coverageType: CoverageType, field: CoverageField, value: string) => void;
+  onResolve: (coverageType: CoverageType, field: CoverageField, resolution: FieldResolution<string>) => void;
   onAdd: (coverageType: CoverageType) => void;
   onDelete: (coverageType: CoverageType) => void;
 }) {
@@ -29,7 +32,7 @@ export function CoverageSection({
   return (
     <div>
       {availableToAdd.length > 0 && (
-        <div className="mb-3 flex items-center justify-end gap-2">
+        <div className="mb-3 flex items-center justify-start gap-2">
           <select
             value={addType}
             onChange={(e) => setAddType(e.target.value as CoverageType | '')}
@@ -60,7 +63,11 @@ export function CoverageSection({
       {coverage.length === 0 && <p className="px-2 py-6 text-center text-sm text-[var(--color-ink-400)]">No coverages requested yet.</p>}
 
       {coverage.map((line) => (
-        <div key={line.type} className="border-b border-[var(--color-ink-100)] py-3 last:border-0">
+        <div
+          key={line.type}
+          id={`coverage-${line.type}`}
+          className={`border-b border-[var(--color-ink-100)] py-3 last:border-0 ${highlightType === line.type ? 'rounded-lg ring-2 ring-[var(--color-brand-500)]' : ''}`}
+        >
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-semibold text-[var(--color-ink-800)]">{COVERAGE_LABELS[line.type]}</p>
             <button
@@ -71,21 +78,30 @@ export function CoverageSection({
               <Trash2 size={13} />
             </button>
           </div>
-          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+          <div className={`grid grid-cols-1 gap-2 ${DEDUCTIBLE_COVERAGES.includes(line.type) ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
             <FieldRow
               label="Current Limit"
               valueType="text"
-              field={line.currentLimit ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false }}
+              field={limitDisplay(line.currentLimit ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false })}
               onSave={(value) => onSave(line.type, 'currentLimit', normalizeCurrencyText(value))}
               onResolve={(resolution) => onResolve(line.type, 'currentLimit', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
             />
             <FieldRow
               label="Requested Limit"
               valueType="text"
-              field={line.requestedLimit}
+              field={limitDisplay(line.requestedLimit)}
               onSave={(value) => onSave(line.type, 'requestedLimit', normalizeCurrencyText(value))}
               onResolve={(resolution) => onResolve(line.type, 'requestedLimit', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
             />
+            {DEDUCTIBLE_COVERAGES.includes(line.type) && (
+              <FieldRow
+                label="Deductible"
+                valueType="text"
+                field={limitDisplay(line.deductible ?? { value: null, confidence: 'low', isMissing: true, isConflicting: false })}
+                onSave={(value) => onSave(line.type, 'deductible', normalizeCurrencyText(value))}
+                onResolve={(resolution) => onResolve(line.type, 'deductible', resolution.type === 'manual' ? { ...resolution, value: normalizeCurrencyText(resolution.value) } : resolution)}
+              />
+            )}
           </div>
         </div>
       ))}
@@ -103,4 +119,9 @@ export function CoverageSection({
       />
     </div>
   );
+}
+
+/** Shows a stored limit the way it's saved from now on ("$1,000,000/$2,000,000"); the stored value isn't changed until the broker saves. */
+function limitDisplay<F extends { value: unknown }>(field: F): F {
+  return typeof field.value === 'string' ? { ...field, value: normalizeCurrencyText(field.value) } : field;
 }

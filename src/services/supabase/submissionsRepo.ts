@@ -1,6 +1,8 @@
 import { supabase } from './client';
-import type { Account, ActivityEvent, CoverageType, DriverEntry, FieldValue, LossEntry, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
+import { driverFromRow, driverToRow, lossFromRow, lossToRow, vehicleFromRow, vehicleToRow, withoutDetails } from './recordRows';
+import type { Account, AccountNote, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, LossRun, ReviewCandidate, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
 import { emptyField } from '../../types';
+import { createEmptyRiskProfile } from '../extraction/emptyRiskProfile';
 
 export type RepoResult<T = void> = { ok: true; data: T } | { ok: false; message: string };
 
@@ -47,6 +49,19 @@ interface FieldValueRow {
   source_page: number | null;
   source_excerpt: string | null;
   last_updated_at: string | null;
+  /** 0031: provenance that has no column of its own — see fieldDetails. Omitted when empty. */
+  details?: FieldDetails | null;
+}
+
+/** Other supporting documents, a review flag, and whether the broker confirmed it (0031). */
+type FieldDetails = Pick<FieldValue<unknown>, 'support' | 'reviewFlag' | 'confirmedByBroker'>;
+
+function fieldDetails(field: FieldValue<unknown>): FieldDetails | undefined {
+  const d: FieldDetails = {};
+  if (field.support?.length) d.support = field.support;
+  if (field.reviewFlag) d.reviewFlag = field.reviewFlag;
+  if (field.confirmedByBroker) d.confirmedByBroker = true;
+  return Object.keys(d).length ? d : undefined;
 }
 
 interface FieldAlternateRow {
@@ -80,6 +95,7 @@ function toFieldValueRow(submissionId: string, userId: string, section: FieldVal
     source_page: field.source?.page ?? null,
     source_excerpt: field.source?.excerpt ?? null,
     last_updated_at: field.lastUpdatedAt ?? null,
+    ...(fieldDetails(field) ? { details: fieldDetails(field) } : {}),
   };
 }
 
@@ -94,6 +110,7 @@ function fromFieldValueRow<T>(row: FieldValueRow, alternates: FieldAlternateRow[
     source: row.source_document_id
       ? { documentId: row.source_document_id, documentName: '', page: row.source_page ?? undefined, excerpt: row.source_excerpt ?? undefined }
       : undefined,
+    ...(row.details && typeof row.details === 'object' ? row.details : {}),
     alternateValues: alternates.length
       ? alternates.map((a) => ({
           value: a.value as T,
@@ -132,6 +149,7 @@ function collectFieldValueRows(userId: string, submissionId: string, profile: Ri
   for (const key of Object.keys(profile.transportation)) push('transportation', key, transportationFields[key]);
   for (const line of profile.coverage) {
     if (line.currentLimit) push('coverage', `${line.type}.currentLimit`, line.currentLimit);
+    if (line.deductible) push('coverage', `${line.type}.deductible`, line.deductible);
     push('coverage', `${line.type}.requestedLimit`, line.requestedLimit);
   }
 
@@ -147,23 +165,98 @@ export interface CloudSubmissionBundle {
   profile: RiskProfile;
   documents: UploadedDocument[];
   activity: ActivityEvent[];
+  /** undefined when the workflow columns don't exist yet (migration 0007 not applied) — callers must keep local data in that case rather than treat it as "no items". */
+  missingItems?: MissingItem[];
+  quotes?: MarketQuote[];
+  /** Whether the project has 0007's workflow columns / 0008's stage column — when not, the cloud simply can't hold those fields, and the local values must be kept on hydrate. */
+  hasWorkflowColumns: boolean;
+  hasStageColumn: boolean;
+  /** Whether 0016's done_actions column exists — when not, keep this device's own. */
+  hasDoneColumn: boolean;
+  /** Whether 0020's account_notes column exists — when not, keep this device's own. */
+  hasNotesColumn: boolean;
+  /** Whether 0025's loss_runs column exists — when not, keep this device's own. */
+  hasLossRunsColumn: boolean;
+  /** undefined when 0009 isn't applied. */
+  followUps?: FollowUp[];
 }
 
-/** Fetches every submission owned by the current user, fully hydrated. Used on sign-in to populate the workspace. */
-export async function fetchUserSubmissions(userId: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
+/**
+ * Account workflow data (contacts, assigned broker, checklist items, market quotes) lives in jsonb
+ * columns on `submissions` (see 0007_account_workflow.sql) rather than new tables: it's always read
+ * and written together with the submission, the existing owner-only RLS on `submissions` covers
+ * it with no new policies, and it keeps this file's full-snapshot save a single upsert.
+ */
+const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions', 'account_notes', 'loss_runs'] as const;
+
+function isMissingWorkflowColumnError(error: { message: string; code?: string }): boolean {
+  return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
+}
+
+/** The database function isn't there yet (its migration not applied) — PostgREST's "not found in the schema cache". */
+function isMissingFunctionError(error: { message: string; code?: string }): boolean {
+  return error.code === 'PGRST202' || error.code === '42883' || /replace_submission_children/.test(error.message);
+}
+
+function isMissingColumnError(error: { message: string; code?: string }, columns: string[]): boolean {
+  return error.code === 'PGRST204' || error.code === '42703' || columns.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
+}
+
+function asArray<T>(value: unknown): T[] | undefined {
+  return Array.isArray(value) ? (value as T[]) : undefined;
+}
+
+function normalizeQuotes(value: unknown, accountId: string): MarketQuote[] | undefined {
+  const arr = asArray<Partial<MarketQuote>>(value);
+  if (!arr) return undefined;
+  return arr
+    .filter((q): q is Partial<MarketQuote> & { id: string; marketName: string } => !!q && typeof q.id === 'string' && typeof q.marketName === 'string')
+    .map((q) => ({ ...q, accountId, status: q.status ?? 'preparing', notes: Array.isArray(q.notes) ? q.notes : [], createdAt: q.createdAt ?? new Date().toISOString(), updatedAt: q.updatedAt ?? new Date().toISOString() }) as MarketQuote);
+}
+
+function normalizeItems(value: unknown, accountId: string): MissingItem[] | undefined {
+  const arr = asArray<Partial<MissingItem>>(value);
+  if (!arr) return undefined;
+  return arr
+    .filter((i): i is Partial<MissingItem> & { id: string; label: string } => !!i && typeof i.id === 'string' && typeof i.label === 'string')
+    .map((i) => ({ ...i, accountId, type: i.type ?? 'document', status: i.status ?? 'missing', createdAt: i.createdAt ?? new Date().toISOString(), updatedAt: i.updatedAt ?? new Date().toISOString() }) as MissingItem);
+}
+
+/**
+ * Reads every row of a table the signed-in user may see, in pages — Supabase caps a single select at
+ * 1000 rows by default, and an agency admin's pull spans every agent's accounts, so a silently
+ * truncated read here would later be saved back as data loss. No user filter: Row Level Security
+ * (0011_agency_roles.sql) decides what comes back — an agent's own accounts, or the whole agency
+ * for an admin.
+ */
+async function selectAllVisible(table: string, onlySubmissionId?: string) {
+  const PAGE = 1000;
+  const rows = [];
+  for (let from = 0; ; from += PAGE) {
+    let q = supabase!.from(table).select('*');
+    // One account only: its own row, and its child rows (field_alternates hang off field_values ids "<submission>::…").
+    if (onlySubmissionId) {
+      if (table === 'submissions') q = q.eq('id', onlySubmissionId);
+      else if (table === 'field_alternates') q = q.like('field_value_id', `${onlySubmissionId}::%`);
+      else q = q.eq('submission_id', onlySubmissionId);
+    }
+    // "Matched against N markets" is recomputed on every load and never needed from the cloud —
+    // older versions saved one per account per sign-in, thousands of rows that made loading slow.
+    if (table === 'activity_events') q = q.neq('type', 'matching_run');
+    const { data, error } = await q.order('id').range(from, from + PAGE - 1);
+    if (error) return { data: null, error };
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE) return { data: rows, error: null };
+  }
+}
+
+/** Fetches every submission the current user can access (RLS-scoped), fully hydrated — or just one (`onlySubmissionId`). Used on sign-in to populate the workspace. */
+export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await Promise.all([
-      supabase.from('submissions').select('*').eq('user_id', userId),
-      supabase.from('field_values').select('*').eq('user_id', userId),
-      supabase.from('field_alternates').select('*').eq('user_id', userId),
-      supabase.from('coverage_lines').select('*').eq('user_id', userId),
-      supabase.from('vehicles').select('*').eq('user_id', userId),
-      supabase.from('drivers').select('*').eq('user_id', userId),
-      supabase.from('losses').select('*').eq('user_id', userId),
-      supabase.from('documents').select('*').eq('user_id', userId),
-      supabase.from('activity_events').select('*').eq('user_id', userId),
-    ]);
+    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await Promise.all(
+      ['submissions', 'field_values', 'field_alternates', 'coverage_lines', 'vehicles', 'drivers', 'losses', 'documents', 'activity_events'].map((t) => selectAllVisible(t, onlySubmissionId))
+    );
     const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes].find((r) => r.error);
     if (errored?.error) return fail(errored.error.message);
 
@@ -179,12 +272,23 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         ...(sub.contact_name ? { contactName: sub.contact_name } : {}),
         ...(sub.contact_email ? { contactEmail: sub.contact_email } : {}),
         ...(sub.contact_phone ? { contactPhone: sub.contact_phone } : {}),
+        ...(Array.isArray(sub.contacts) ? { contacts: sub.contacts as Contact[] } : {}),
+        ...(sub.assigned_broker && typeof sub.assigned_broker === 'object' ? { assignedBroker: sub.assigned_broker as AssignedBroker } : {}),
+        ...(sub.stage ? { stage: sub.stage as AccountStage } : {}),
+        ...(sub.done_actions && typeof sub.done_actions === 'object' && Object.keys(sub.done_actions).length > 0 ? { doneActions: sub.done_actions as Record<string, string> } : {}),
+        ...(Array.isArray(sub.account_notes) && sub.account_notes.length > 0 ? { notes: (sub.account_notes as AccountNote[]).filter((n) => n && typeof n.id === 'string' && typeof n.text === 'string') } : {}),
+        ...(Array.isArray(sub.loss_runs) && sub.loss_runs.length > 0 ? { lossRuns: (sub.loss_runs as LossRun[]).filter((r) => r && typeof r.id === 'string' && typeof r.carrier === 'string') } : {}),
+        // Set by the database (0011) — never sent back on save, so the app can't grant itself access.
+        ...(sub.organization_id ? { agencyId: sub.organization_id as string } : {}),
+        ...(sub.assigned_user_id !== undefined ? { assignedUserId: (sub.assigned_user_id as string | null) ?? null } : {}),
+        ...(Array.isArray(sub.collaborator_ids) ? { collaboratorIds: sub.collaborator_ids as string[] } : {}),
+        ...(sub.original_assigned_user_id !== undefined ? { originalAssignedUserId: (sub.original_assigned_user_id as string | null) ?? null } : {}),
       };
 
       const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
       const business: Record<string, FieldValue<unknown>> = {};
       const transportation: Record<string, FieldValue<unknown>> = {};
-      const coverageLimits: Record<string, { currentLimit?: FieldValue<string>; requestedLimit?: FieldValue<string> }> = {};
+      const coverageLimits: Record<string, { currentLimit?: FieldValue<string>; requestedLimit?: FieldValue<string>; deductible?: FieldValue<string> }> = {};
 
       for (const row of fvRowsForSub) {
         const alts = (faRes.data ?? []).filter((a) => a.field_value_id === row.id);
@@ -195,6 +299,7 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
           const [type, sub2] = row.field_key.split('.');
           coverageLimits[type] ??= {};
           if (sub2 === 'currentLimit') coverageLimits[type].currentLimit = fv as FieldValue<string>;
+          else if (sub2 === 'deductible') coverageLimits[type].deductible = fv as FieldValue<string>;
           else coverageLimits[type].requestedLimit = fv as FieldValue<string>;
         }
       }
@@ -203,53 +308,20 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         .filter((c) => c.submission_id === sub.id)
         .map((c) => ({
           type: c.coverage_type as CoverageType,
+          ...(Array.isArray((c.details as { sources?: unknown } | null)?.sources) ? { sources: (c.details as { sources: string[] }).sources } : {}),
           currentLimit: coverageLimits[c.coverage_type]?.currentLimit,
           requestedLimit: coverageLimits[c.coverage_type]?.requestedLimit ?? emptyField<string>(),
+          ...(coverageLimits[c.coverage_type]?.deductible ? { deductible: coverageLimits[c.coverage_type].deductible } : {}),
         }));
 
-      const vehicles: VehicleEntry[] = (vehRes.data ?? [])
-        .filter((v) => v.submission_id === sub.id)
-        .map((v) => ({
-          id: v.id,
-          vin: v.vin ?? undefined,
-          make: v.make ?? undefined,
-          model: v.model ?? undefined,
-          year: v.year ?? undefined,
-          value: v.value ?? undefined,
-          bodyType: v.body_type ?? undefined,
-          isManual: v.is_manual,
-          lastUpdatedAt: v.last_updated_at ?? undefined,
-          source: v.source_document_id ? { documentId: v.source_document_id, documentName: '', page: v.source_page ?? undefined, excerpt: v.source_excerpt ?? undefined } : undefined,
-        }));
-
-      const drivers: DriverEntry[] = (drvRes.data ?? [])
-        .filter((d) => d.submission_id === sub.id)
-        .map((d) => ({
-          id: d.id,
-          name: d.name ?? undefined,
-          dob: d.dob ?? undefined,
-          licenseState: d.license_state ?? undefined,
-          yearsExperience: d.years_experience ?? undefined,
-          violations: d.violations ?? undefined,
-          isManual: d.is_manual,
-          lastUpdatedAt: d.last_updated_at ?? undefined,
-          source: d.source_document_id ? { documentId: d.source_document_id, documentName: '', page: d.source_page ?? undefined, excerpt: d.source_excerpt ?? undefined } : undefined,
-        }));
-
-      const lossHistory: LossEntry[] = (lossRes.data ?? [])
-        .filter((l) => l.submission_id === sub.id)
-        .map((l) => ({
-          id: l.id,
-          lossDate: l.loss_date,
-          claimType: l.claim_type,
-          paid: Number(l.paid),
-          reserved: Number(l.reserved),
-          incurred: Number(l.incurred),
-          status: l.status,
-          isManual: l.is_manual,
-          lastUpdatedAt: l.last_updated_at ?? undefined,
-          source: l.source_document_id ? { documentId: l.source_document_id, documentName: '', page: l.source_page ?? undefined, excerpt: l.source_excerpt ?? undefined } : undefined,
-        }));
+      // Every field — including ones without their own column — comes back via recordRows (0024 `details`).
+      // Rows store only the source document's id; put its file name back so "Source" isn't blank.
+      const docNames = new Map<string, string>((docRes.data ?? []).filter((d) => d.submission_id === sub.id).map((d) => [d.id as string, d.name as string]));
+      const withDocName = <T extends { source?: { documentId: string; documentName: string } }>(r: T): T =>
+        r.source && !r.source.documentName && docNames.has(r.source.documentId) ? { ...r, source: { ...r.source, documentName: docNames.get(r.source.documentId)! } } : r;
+      const vehicles: VehicleEntry[] = (vehRes.data ?? []).filter((v) => v.submission_id === sub.id).map(vehicleFromRow).map(withDocName);
+      const drivers: DriverEntry[] = (drvRes.data ?? []).filter((d) => d.submission_id === sub.id).map(driverFromRow).map(withDocName);
+      const lossHistory: LossEntry[] = (lossRes.data ?? []).filter((l) => l.submission_id === sub.id).map(lossFromRow).map(withDocName);
 
       const documents: UploadedDocument[] = (docRes.data ?? [])
         .filter((d) => d.submission_id === sub.id)
@@ -264,19 +336,27 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
           fieldsExtracted: d.fields_extracted ?? undefined,
           warnings: (d.warnings as string[] | null) ?? undefined,
           previewDataUrl: d.preview_data_url ?? undefined,
+          // Needed to fetch the original file for preview — dropping it made every cloud-loaded document unpreviewable.
+          storagePath: d.storage_path ?? undefined,
+          ...(d.source_url ? { sourceUrl: d.source_url as string } : {}),
+          ...(Array.isArray(d.review_candidates) && d.review_candidates.length ? { reviewCandidates: d.review_candidates as ReviewCandidate[] } : {}),
+          ...(typeof d.rejected_count === 'number' && d.rejected_count > 0 ? { rejectedCount: d.rejected_count } : {}),
           uploadedAt: d.uploaded_at,
         }));
 
       const activity: ActivityEvent[] = (actRes.data ?? [])
         .filter((e) => e.submission_id === sub.id)
-        .map((e) => ({ id: e.id, accountId: sub.id, type: e.type, message: e.message, timestamp: e.occurred_at }))
+        .map((e) => ({ id: e.id, accountId: sub.id, type: e.type, message: e.message, timestamp: e.occurred_at, actorId: e.user_id ?? undefined, ...(e.actor_name ? { actorName: e.actor_name as string } : {}), ...(e.details && typeof e.details === 'object' ? { details: e.details as ActivityEvent['details'] } : {}) }))
         .sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
 
+      const emptyProfile = createEmptyRiskProfile(sub.id);
       const profile: RiskProfile = {
         id: `risk_${sub.id}`,
         accountId: sub.id,
-        business: business as unknown as RiskProfile['business'],
-        transportation: transportation as unknown as RiskProfile['transportation'],
+        // Start from an empty profile so a field with no row (saved before that field existed) reads
+        // as missing instead of undefined.
+        business: { ...emptyProfile.business, ...business } as unknown as RiskProfile['business'],
+        transportation: { ...emptyProfile.transportation, ...transportation } as unknown as RiskProfile['transportation'],
         coverage,
         vehicles,
         drivers,
@@ -284,7 +364,21 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
         updatedAt: sub.updated_at,
       };
 
-      return { account, profile, documents, activity };
+      const hasWorkflowColumns = 'missing_items' in sub;
+      return {
+        account,
+        profile,
+        documents,
+        activity,
+        hasWorkflowColumns,
+        hasStageColumn: 'stage' in sub,
+        hasDoneColumn: 'done_actions' in sub,
+        hasNotesColumn: 'account_notes' in sub,
+        hasLossRunsColumn: 'loss_runs' in sub,
+        followUps: 'follow_ups' in sub ? (Array.isArray(sub.follow_ups) ? (sub.follow_ups as FollowUp[]).filter((f) => f && typeof f.id === 'string').map((f) => ({ ...f, accountId: sub.id })) : []) : undefined,
+        missingItems: hasWorkflowColumns ? (normalizeItems(sub.missing_items, sub.id) ?? []) : undefined,
+        quotes: hasWorkflowColumns ? (normalizeQuotes(sub.market_quotes, sub.id) ?? []) : undefined,
+      };
     });
 
     return { ok: true, data: bundles };
@@ -301,11 +395,19 @@ export async function fetchUserSubmissions(userId: string): Promise<RepoResult<C
 export async function saveSubmissionSnapshot(
   userId: string,
   account: Account,
-  profile: RiskProfile
-): Promise<RepoResult> {
-  if (!supabase) return NOT_CONFIGURED;
+  profile: RiskProfile,
+  workflow?: { missingItems: MissingItem[]; quotes: MarketQuote[]; followUps?: FollowUp[] }
+): Promise<RepoResult & { headerSaved: boolean; coreSaved: boolean }> {
+  if (!supabase) return { ...NOT_CONFIGURED, headerSaved: false, coreSaved: false };
+  // headerSaved: whether the `submissions` row itself landed — callers only write rows that
+  // reference it (activity_events has a foreign key onto it) once it has, even when some other
+  // part of the snapshot couldn't be saved (e.g. a migration not applied yet).
+  let headerSaved = false;
+  // coreSaved: the row AND the Risk Profile's rows (fields, coverage, vehicles, drivers, losses)
+  // all landed — only workflow columns from a not-yet-applied migration may still be missing.
+  let coreSaved = false;
   try {
-    const submissionRow = {
+    const legacyRow = {
       id: account.id,
       user_id: userId,
       named_insured: account.namedInsured,
@@ -318,12 +420,65 @@ export async function saveSubmissionSnapshot(
       contact_email: account.contactEmail || null,
       contact_phone: account.contactPhone || null,
     };
-    const { error: subErr } = await supabase.from('submissions').upsert(submissionRow);
-    if (subErr) return fail(subErr.message);
+    const workflowRow = {
+      ...legacyRow,
+      contacts: account.contacts ?? null,
+      assigned_broker: account.assignedBroker ?? null,
+      ...(workflow ? { missing_items: workflow.missingItems, market_quotes: workflow.quotes } : {}),
+    };
+    const stageRow = { ...workflowRow, stage: account.stage ?? null };
+    const submissionRow = { ...stageRow, ...(workflow?.followUps ? { follow_ups: workflow.followUps } : {}) };
+    const doneRow = { ...submissionRow, done_actions: account.doneActions ?? {} };
+    const notesRow = { ...doneRow, account_notes: account.notes ?? [] };
+    const lossRunsRow = { ...notesRow, loss_runs: account.lossRuns ?? [] };
+    // A project that hasn't applied the newest migrations still saves everything it can (so the
+    // Risk Profile never stops syncing), stepping down one migration at a time — 0009 (follow-ups),
+    // 0008 (stage), then 0007 (workflow) — and reports the gap honestly instead of claiming "Saved".
+    const attempts: { row: Record<string, unknown>; missing: string }[] = [
+      { row: lossRunsRow, missing: '' },
+      { row: notesRow, missing: 'Loss-run reports were not saved to your account — the database needs migration 0025_loss_runs.sql.' },
+      { row: doneRow, missing: 'Notes were not saved to your account — the database needs migration 0020_account_notes.sql.' },
+      { row: submissionRow, missing: 'Tasks marked done were not saved to your account — the database needs migration 0016_account_done_actions.sql.' },
+      { row: stageRow, missing: 'Follow-ups were not saved to your account — the database needs migration 0009_account_follow_ups.sql.' },
+      { row: workflowRow, missing: 'Status and follow-ups were not saved to your account — the database needs migrations 0008_account_stage.sql and 0009_account_follow_ups.sql.' },
+      { row: legacyRow, missing: 'Contacts, checklist, quotes, status, and follow-ups were not saved to your account — the database needs migrations 0007, 0008 and 0009 (see SUPABASE_SETUP.md).' },
+    ];
+    let notSavedMessage: string | null = null;
+    let subErr: { message: string; code?: string } | null = null;
+    for (const attempt of attempts) {
+      ({ error: subErr } = await supabase.from('submissions').upsert(attempt.row));
+      notSavedMessage = attempt.missing || null;
+      if (!subErr || !isMissingWorkflowColumnError(subErr)) break;
+    }
+    if (subErr) return { ...fail(subErr.message), headerSaved, coreSaved };
+    headerSaved = true;
 
     const { values, alternates } = collectFieldValueRows(userId, account.id, profile);
+    // 0031: which documents put an extracted coverage line there (absent for broker-added lines).
+    const coverageRows = profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type, ...(c.sources ? { details: { sources: c.sources } } : {}) }));
+    const vehicleRows = profile.vehicles.map((v) => vehicleToRow(v, account.id, userId));
+    const driverRows = profile.drivers.map((d) => driverToRow(d, account.id, userId));
+    const lossRows = profile.lossHistory.map((l) => lossToRow(l, account.id, userId));
 
-    // Delete-then-reinsert for the itemized/child tables — see file header for why this is an
+    // 0028: replace every child row in ONE database transaction — a save that's interrupted or
+    // refused changes nothing, instead of leaving the account's drivers/vehicles/losses deleted.
+    const atomic = await supabase.rpc('replace_submission_children', {
+      p_submission_id: account.id,
+      p_field_values: values,
+      p_field_alternates: alternates,
+      p_coverage_lines: coverageRows,
+      p_vehicles: vehicleRows,
+      p_drivers: driverRows,
+      p_losses: lossRows,
+    });
+    if (!atomic.error) {
+      coreSaved = true;
+      if (notSavedMessage) return { ...fail(notSavedMessage), headerSaved, coreSaved };
+      return { ok: true, data: undefined, headerSaved, coreSaved };
+    }
+    if (!isMissingFunctionError(atomic.error)) return { ...fail(atomic.error.message), headerSaved, coreSaved };
+
+    // Before 0028: delete-then-reinsert for the itemized/child tables — see file header for why this is an
     // acceptable trade-off at this app's scale.
     const del = await Promise.all([
       supabase.from('field_values').delete().eq('submission_id', account.id),
@@ -333,96 +488,82 @@ export async function saveSubmissionSnapshot(
       supabase.from('losses').delete().eq('submission_id', account.id),
     ]);
     const delErr = del.find((r) => r.error);
-    if (delErr?.error) return fail(delErr.error.message);
+    if (delErr?.error) return { ...fail(delErr.error.message), headerSaved, coreSaved };
 
     const inserts: PromiseLike<{ error: { message: string } | null }>[] = [];
-    if (values.length) inserts.push(supabase.from('field_values').insert(values));
-    if (profile.coverage.length) {
+    let driverMonthsNotSaved = false;
+    let detailsNotSaved = false;
+    // field_alternates are only writable once their parent field_values row exists (their RLS
+    // check looks the parent up), so they go in right after it — never in parallel with it, which
+    // intermittently failed with a row-level-security error when the child request won the race.
+    if (values.length) {
       inserts.push(
-        supabase.from('coverage_lines').insert(profile.coverage.map((c) => ({ id: `${account.id}::cov::${c.type}`, submission_id: account.id, user_id: userId, coverage_type: c.type })))
+        (async () => {
+          let res = await supabase.from('field_values').insert(values);
+          if (res.error && isMissingColumnError(res.error, ['details'])) res = await supabase.from('field_values').insert(values.map(({ details: _d, ...rest }) => rest)); // before 0031
+          if (res.error || !alternates.length) return res;
+          return supabase.from('field_alternates').insert(alternates);
+        })()
       );
     }
-    if (profile.vehicles.length) {
+    if (coverageRows.length)
       inserts.push(
-        supabase.from('vehicles').insert(
-          profile.vehicles.map((v) => ({
-            id: v.id,
-            submission_id: account.id,
-            user_id: userId,
-            vin: v.vin ?? null,
-            make: v.make ?? null,
-            model: v.model ?? null,
-            year: v.year ?? null,
-            value: v.value ?? null,
-            body_type: v.bodyType ?? null,
-            is_manual: !!v.isManual,
-            source_document_id: v.source?.documentId ?? null,
-            source_page: v.source?.page ?? null,
-            source_excerpt: v.source?.excerpt ?? null,
-            last_updated_at: v.lastUpdatedAt ?? null,
-          }))
-        )
+        (async () => {
+          const res = await supabase.from('coverage_lines').insert(coverageRows);
+          // Before 0031: without which documents added each line.
+          return res.error && isMissingColumnError(res.error, ['details']) ? supabase.from('coverage_lines').insert(coverageRows.map(({ details: _d, ...rest }) => rest)) : res;
+        })()
       );
-    }
-    if (profile.drivers.length) {
-      inserts.push(
-        supabase.from('drivers').insert(
-          profile.drivers.map((d) => ({
-            id: d.id,
-            submission_id: account.id,
-            user_id: userId,
-            name: d.name ?? null,
-            dob: d.dob ?? null,
-            license_state: d.licenseState ?? null,
-            years_experience: d.yearsExperience ?? null,
-            violations: d.violations ?? null,
-            is_manual: !!d.isManual,
-            source_document_id: d.source?.documentId ?? null,
-            source_page: d.source?.page ?? null,
-            source_excerpt: d.source?.excerpt ?? null,
-            last_updated_at: d.lastUpdatedAt ?? null,
-          }))
-        )
-      );
-    }
-    if (profile.lossHistory.length) {
-      inserts.push(
-        supabase.from('losses').insert(
-          profile.lossHistory.map((l) => ({
-            id: l.id,
-            submission_id: account.id,
-            user_id: userId,
-            loss_date: l.lossDate,
-            claim_type: l.claimType,
-            paid: l.paid,
-            reserved: l.reserved,
-            incurred: l.incurred,
-            status: l.status,
-            is_manual: !!l.isManual,
-            source_document_id: l.source?.documentId ?? null,
-            source_page: l.source?.page ?? null,
-            source_excerpt: l.source?.excerpt ?? null,
-            last_updated_at: l.lastUpdatedAt ?? null,
-          }))
-        )
-      );
-    }
-    if (alternates.length) inserts.push(supabase.from('field_alternates').insert(alternates));
+    // Inserts a table's rows with every field; if 0024's `details` column isn't there yet, saves the
+    // columns it does have and says the rest wasn't kept (instead of failing the whole save).
+    const insertRows = (table: 'vehicles' | 'drivers' | 'losses', rows: Record<string, unknown>[]) =>
+      (async () => {
+        let res = await supabase!.from(table).insert(rows);
+        if (res.error && isMissingColumnError(res.error, ['details'])) {
+          detailsNotSaved = true;
+          rows = rows.map(withoutDetails);
+          res = await supabase!.from(table).insert(rows);
+        }
+        if (res.error && table === 'drivers' && isMissingColumnError(res.error, ['experience_months', 'experience_or_more'])) {
+          // 0010 not applied: save whole years like before, and say months weren't kept.
+          driverMonthsNotSaved = true;
+          res = await supabase!.from(table).insert(rows.map(({ experience_months: _m, experience_or_more: _o, ...rest }) => rest));
+        }
+        return res;
+      })();
+    if (vehicleRows.length) inserts.push(insertRows('vehicles', vehicleRows));
+    if (driverRows.length) inserts.push(insertRows('drivers', driverRows));
+    if (lossRows.length) inserts.push(insertRows('losses', lossRows));
 
     const insRes = await Promise.all(inserts);
     const insErr = insRes.find((r) => r.error);
-    if (insErr?.error) return fail(insErr.error.message);
+    if (insErr?.error) return { ...fail(insErr.error.message), headerSaved, coreSaved };
+    coreSaved = true;
 
-    return { ok: true, data: undefined };
+    if (notSavedMessage) return { ...fail(notSavedMessage), headerSaved, coreSaved };
+    if (detailsNotSaved) return { ...fail('Some driver, vehicle and loss details were not saved — the database needs migration 0024_record_details.sql.'), headerSaved, coreSaved };
+    if (driverMonthsNotSaved) return { ...fail('Driver experience was saved as whole years only — the database needs migration 0010_driver_experience_months.sql to keep months.'), headerSaved, coreSaved };
+    return { ok: true, data: undefined, headerSaved, coreSaved };
   } catch (err) {
-    return fail(err instanceof Error ? err.message : 'Could not save to your account.');
+    return { ...fail(err instanceof Error ? err.message : 'Could not save to your account.'), headerSaved, coreSaved };
+  }
+}
+
+/** When the account was last saved to the cloud (by anyone), or null if unknown / not there. Cheap check before a save. */
+export async function fetchSubmissionUpdatedAt(submissionId: string): Promise<string | null> {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.from('submissions').select('updated_at').eq('id', submissionId).maybeSingle();
+    return error || !data ? null : ((data as { updated_at: string | null }).updated_at ?? null);
+  } catch {
+    return null;
   }
 }
 
 export async function upsertDocumentMetadata(userId: string, accountId: string, doc: UploadedDocument, storagePath: string | null): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const { error } = await supabase.from('documents').upsert({
+    const row: Record<string, unknown> = {
       id: doc.id,
       submission_id: accountId,
       user_id: userId,
@@ -436,7 +577,15 @@ export async function upsertDocumentMetadata(userId: string, accountId: string, 
       storage_path: storagePath,
       preview_data_url: doc.previewDataUrl ?? null,
       uploaded_at: doc.uploadedAt,
-    });
+    };
+    const withLink = doc.sourceUrl ? { ...row, source_url: doc.sourceUrl } : row;
+    // 0034: what it read but held for review.
+    const full = { ...withLink, review_candidates: doc.reviewCandidates ?? null, rejected_count: doc.rejectedCount ?? null };
+    let { error } = await supabase.from('documents').upsert(full);
+    // 0034 not applied yet: save without the review list (it stays on this device).
+    if (error && isMissingColumnError(error, ['review_candidates', 'rejected_count'])) ({ error } = await supabase.from('documents').upsert(withLink));
+    // 0015 not applied yet: save the document without its link.
+    if (error && doc.sourceUrl && isMissingColumnError(error, ['source_url'])) ({ error } = await supabase.from('documents').upsert(row));
     if (error) return fail(error.message);
     return { ok: true, data: undefined };
   } catch (err) {
@@ -457,11 +606,20 @@ export async function deleteDocumentRow(documentId: string): Promise<RepoResult>
 
 export async function appendActivityEvents(userId: string, accountId: string, events: ActivityEvent[]): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
+  // Technical matching runs stay on this device (see selectAllVisible).
+  events = events.filter((e) => e.type !== 'matching_run');
   if (events.length === 0) return { ok: true, data: undefined };
   try {
-    const { error } = await supabase.from('activity_events').upsert(
-      events.map((e) => ({ id: e.id, submission_id: accountId, user_id: userId, type: e.type, message: e.message, occurred_at: e.timestamp }))
-    );
+    // ignoreDuplicates = INSERT … ON CONFLICT DO NOTHING. activity_events is append-only (no UPDATE
+    // policy, by design — see 0003), so a plain upsert re-sending already-saved events was rejected
+    // by RLS on every save after the first, failing the whole sync ("Failed to save to your account")
+    // and silently dropping every new event from the cloud copy.
+    const rows = events.map((e) => ({ id: e.id, submission_id: accountId, user_id: userId, type: e.type, message: e.message, occurred_at: e.timestamp, actor_name: e.actorName ?? null }));
+    let { error } = await supabase.from('activity_events').upsert(rows, { onConflict: 'id', ignoreDuplicates: true });
+    // 0014 not applied yet: save without the name (user_id still records who).
+    if (error && isMissingColumnError(error, ['actor_name'])) {
+      ({ error } = await supabase.from('activity_events').upsert(rows.map(({ actor_name: _n, ...rest }) => rest), { onConflict: 'id', ignoreDuplicates: true }));
+    }
     if (error) return fail(error.message);
     return { ok: true, data: undefined };
   } catch (err) {
@@ -469,21 +627,222 @@ export async function appendActivityEvents(userId: string, accountId: string, ev
   }
 }
 
-/** Deletes a submission and (via ON DELETE CASCADE) every dependent row — field_values, field_alternates, coverage_lines, vehicles, drivers, losses, documents, activity_events. Does not touch Storage objects; callers should list and remove those first (see deleteSubmissionFiles). */
+/**
+ * Permanently deletes a submission and (via ON DELETE CASCADE) every dependent row — field_values,
+ * field_alternates, coverage_lines, vehicles, drivers, losses, documents, activity_events. Does not
+ * touch Storage objects; callers should check canDeleteAccount, then remove those first (see
+ * deleteSubmissionFiles). Since 0021 the database only allows this for an ARCHIVED account, by an
+ * admin of its agency (or the owner of a personal account) — a refused delete removes nothing and
+ * returns no error, so the deleted row is read back to tell the two apart.
+ */
 export async function deleteSubmissionCloud(submissionId: string): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const { error } = await supabase.from('submissions').delete().eq('id', submissionId);
+    const { data, error } = await supabase.from('submissions').delete().eq('id', submissionId).select('id');
     if (error) return fail(error.message);
+    if (!data || data.length === 0) return fail('The account was not deleted — only an agency admin can permanently delete an archived account.');
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not delete this submission.');
   }
 }
 
+/** Whether the database will let the signed-in user permanently delete this account (0021: archived, and an admin of its agency or the owner of a personal account). */
+export async function canDeleteAccount(submissionId: string): Promise<RepoResult<boolean>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('can_delete_account', { p_submission_id: submissionId });
+    if (error) {
+      if (/can_delete_account|function|schema cache/i.test(error.message)) return fail('Permanent delete needs database migration 0021_account_archive_permissions.sql.');
+      return fail(error.message);
+    }
+    return { ok: true, data: data === true };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not check this account.');
+  }
+}
+
+/** Moves the caller's own personal account into their agency (0032). */
+export async function shareAccountWithAgency(submissionId: string): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { error } = await supabase.rpc('share_account_with_agency', { p_submission_id: submissionId });
+    if (error) {
+      if (/share_account_with_agency|schema cache|PGRST202/i.test(error.message) || error.code === 'PGRST202') return fail('Sharing needs database migration 0032_share_personal_accounts.sql.');
+      return fail(error.message);
+    }
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not share this account.');
+  }
+}
+
+/** Marks just the row archived (the database stamps who/when) — used to take a half-saved import out of the active views. */
+export async function archiveSubmissionCloud(submissionId: string): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { error } = await supabase.from('submissions').update({ archived: true }).eq('id', submissionId);
+    if (error) return fail(error.message);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not archive this submission.');
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Agency access (0011_agency_roles.sql). Roles live in `profiles`, written only from the SQL
+// editor; these reads just tell the UI what the database will already allow.
+// ---------------------------------------------------------------------------------------------
+
+export interface AgencyAccess {
+  agencyId: string;
+  agencyName: string | null;
+  role: 'agent' | 'admin';
+}
+
+export interface AgencyMember {
+  userId: string;
+  role: 'agent' | 'admin';
+  name: string;
+  email: string | null;
+}
+
+/**
+ * The signed-in user's agency role, plus (admins only — RLS returns just your own row to an agent)
+ * the agency's members. `access: null` = not in an agency (0011 not applied, or no profile yet):
+ * the app behaves exactly as before, owner-only.
+ */
+export async function fetchAgencyAccess(userId: string): Promise<RepoResult<{ access: AgencyAccess | null; members: AgencyMember[] }>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('profiles').select('user_id, agency_id, role, display_name, email');
+    if (error) {
+      // 0011 not applied yet — no agency features, nothing else changes.
+      if (error.code === '42P01' || error.code === 'PGRST205' || /profiles/.test(error.message)) return { ok: true, data: { access: null, members: [] } };
+      return fail(error.message);
+    }
+    const rows = data ?? [];
+    const mine = rows.find((r) => r.user_id === userId);
+    if (!mine) return { ok: true, data: { access: null, members: [] } };
+    const { data: agency } = await supabase.from('agencies').select('name').eq('id', mine.agency_id).maybeSingle();
+    let members: AgencyMember[] = rows
+      .filter((r) => r.agency_id === mine.agency_id)
+      .map((r) => ({ userId: r.user_id, role: r.role, name: (r.display_name as string | null) || (r.email as string | null) || 'Unnamed', email: r.email ?? null }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    // An agent reads only their own profile; teammates' names come from 0026's agency_member_names()
+    // (names and roles only) so collaborators and assignees show by name. Without 0026: self only.
+    if (mine.role !== 'admin') {
+      const { data: names, error: namesErr } = await supabase.rpc('agency_member_names');
+      if (!namesErr && Array.isArray(names)) {
+        members = (names as { user_id: string; name: string; role: 'agent' | 'admin' }[]).map((n) => ({
+          userId: n.user_id,
+          role: n.role,
+          name: n.name,
+          email: n.user_id === userId ? (mine.email ?? null) : null,
+        }));
+      }
+    }
+    return { ok: true, data: { access: { agencyId: mine.agency_id, agencyName: agency?.name ?? null, role: mine.role }, members } };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not load agency access.');
+  }
+}
+
+/** Admin: give an account to another agent (or null = unassigned, admins only). The database trigger rejects this for non-admins and for users outside the agency. */
+export async function assignSubmission(submissionId: string, userId: string | null): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('submissions').update({ assigned_user_id: userId }).eq('id', submissionId).select('id');
+    if (error) return fail(error.message);
+    if (!data || data.length === 0) return fail('This account could not be reassigned — it may not be saved to the cloud yet, or you no longer have access to it.');
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not reassign this account.');
+  }
+}
+
+/** Replace an account's collaborators — the database allows it only for an agency admin or the account's primary broker (0026). */
+export async function setSubmissionCollaborators(submissionId: string, userIds: string[]): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('submissions').update({ collaborator_ids: userIds }).eq('id', submissionId).select('id');
+    if (error) {
+      if (/collaborator_ids/.test(error.message) && /column|schema cache/i.test(error.message)) return fail('Collaborators need database migration 0026_collaborators_notifications.sql.');
+      return fail(error.message);
+    }
+    if (!data || data.length === 0) return fail('This account could not be updated — it may not be saved to the cloud yet, or you no longer have access to it.');
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not update collaborators.');
+  }
+}
+
+export interface AppNotification {
+  id: string;
+  type: 'assigned' | 'collaborator_added';
+  submissionId: string | null;
+  message: string;
+  actorName: string | null;
+  createdAt: string;
+  readAt: string | null;
+}
+
+/** The signed-in person's own notifications (RLS returns only theirs), newest first. Empty when 0026 isn't applied. */
+export async function fetchNotifications(): Promise<RepoResult<AppNotification[]>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(50);
+    if (error) return fail(error.message);
+    return {
+      ok: true,
+      data: (data ?? []).map((n) => ({ id: n.id, type: n.type, submissionId: n.submission_id, message: n.message, actorName: n.actor_name, createdAt: n.created_at, readAt: n.read_at })),
+    };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not load notifications.');
+  }
+}
+
+export async function markNotificationsRead(ids: string[]): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  if (ids.length === 0) return { ok: true, data: undefined };
+  try {
+    const { error } = await supabase.from('notifications').update({ read_at: new Date().toISOString() }).in('id', ids);
+    if (error) return fail(error.message);
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not update notifications.');
+  }
+}
+
+/**
+ * For accounts this device has but the cloud didn't return: true = the account exists but this
+ * user can no longer see it (reassigned away / access removed) → drop the local copy; false = it
+ * never reached the cloud (or was deleted) → keep it, exactly as before. Unknown on any error.
+ */
+export async function submissionsRevoked(ids: string[]): Promise<Record<string, boolean>> {
+  const out: Record<string, boolean> = {};
+  if (!supabase || ids.length === 0) return out;
+  // Revoked = it exists but this user can no longer see it. An account saved just after the list
+  // was fetched (a brand-new one) exists AND is visible — that's not revoked. Without this check a
+  // new account was dropped from the screen (and its local files deleted) right after creation.
+  const visible = await supabase.from('submissions').select('id').in('id', ids);
+  if (visible.error) return out; // unsure — never drop anything on a failed check
+  const stillVisible = new Set((visible.data ?? []).map((r) => r.id as string));
+  ids = ids.filter((id) => !stillVisible.has(id));
+  await Promise.all(
+    ids.map(async (id) => {
+      const { data, error } = await supabase!.rpc('submission_exists', { p_submission_id: id });
+      if (!error && data === true) out[id] = true;
+    })
+  );
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Storage (private submission-documents bucket)
 // ---------------------------------------------------------------------------------------------
+
+import { precheckUpload, storageBody, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
 
 const BUCKET = 'submission-documents';
 
@@ -493,10 +852,16 @@ function storagePathFor(userId: string, accountId: string, documentId: string, f
 
 export async function uploadDocumentFile(userId: string, accountId: string, documentId: string, file: File): Promise<RepoResult<string>> {
   if (!supabase) return NOT_CONFIGURED;
+  const pre = await precheckUpload(file);
+  if (!pre.ok) return fail(pre.reason);
   const path = storagePathFor(userId, accountId, documentId, file.name);
   try {
-    const { error } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: true });
+    const { error } = await supabase.storage.from(BUCKET).upload(path, storageBody(file), { upsert: true, contentType: storageContentType(file) });
     if (error) return fail(error.message);
+    // The server reads the stored file and checks it really is what its name says (deleted if not).
+    const token = (await supabase.auth.getSession()).data.session?.access_token;
+    const checked = await verifyUploadOnServer('submission-documents', path, token);
+    if (checked.status === 'rejected') return fail(checked.message);
     return { ok: true, data: path };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not upload this file.');
@@ -532,6 +897,18 @@ export async function deleteSubmissionFiles(userId: string, accountId: string): 
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not remove stored files.');
+  }
+}
+
+/** The original file's bytes from the private bucket — for the in-app document preview (nothing is saved to the broker's disk). */
+export async function downloadDocumentFile(storagePath: string): Promise<RepoResult<Blob>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.storage.from(BUCKET).download(storagePath);
+    if (error || !data) return fail(error?.message ?? 'Could not load this file.');
+    return { ok: true, data };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not load this file.');
   }
 }
 

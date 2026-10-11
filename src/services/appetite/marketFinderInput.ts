@@ -1,6 +1,7 @@
 import type { RiskProfile } from '../../types';
 import { manualField } from '../../types';
 import { createEmptyRiskProfile } from '../extraction';
+import { fromParts, type Duration } from '../../utils/duration';
 
 export const OPERATION_TYPE_OPTIONS = [
   'General Freight',
@@ -30,11 +31,15 @@ export interface MarketFinderFilters {
   operatingStates: string[];
   fleetSize: string;
   yearsInBusiness: string;
+  /** Extra months on top of yearsInBusiness (0–11) — "1 year 6 months", or just "8 months". */
+  yearsInBusinessMonths: string;
   newVenture: boolean;
   operationTypes: string[];
   cargoText: string;
   operatingRadius: string;
   minDriverExperienceYears: string;
+  /** Extra months on top of minDriverExperienceYears — lets a broker search below 1 year (3, 6, 8 months). */
+  minDriverExperienceMonths: string;
   minDriverAge: string;
   telematics: TriState;
   dashcams: TriState;
@@ -46,11 +51,13 @@ export const EMPTY_MARKET_FINDER_FILTERS: MarketFinderFilters = {
   operatingStates: [],
   fleetSize: '',
   yearsInBusiness: '',
+  yearsInBusinessMonths: '',
   newVenture: false,
   operationTypes: [],
   cargoText: '',
   operatingRadius: '',
   minDriverExperienceYears: '',
+  minDriverExperienceMonths: '',
   minDriverAge: '',
   telematics: 'unknown',
   dashcams: 'unknown',
@@ -62,6 +69,14 @@ function toNumber(raw: string): number | undefined {
   if (!trimmed) return undefined;
   const n = Number(trimmed);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Years + months boxes → a Duration in months; undefined when both are blank. */
+export function filterDuration(years: string, months: string): Duration | undefined {
+  const y = toNumber(years);
+  const m = toNumber(months);
+  if (y === undefined && m === undefined) return undefined;
+  return fromParts(Math.max(0, y ?? 0), Math.max(0, m ?? 0));
 }
 
 /**
@@ -76,7 +91,7 @@ export function buildProfileFromFilters(filters: MarketFinderFilters): RiskProfi
 
   if (filters.domicileState) profile.business.state = manualField(filters.domicileState);
 
-  const yearsInBusiness = toNumber(filters.yearsInBusiness);
+  const yearsInBusiness = filterDuration(filters.yearsInBusiness, filters.yearsInBusinessMonths);
   if (yearsInBusiness !== undefined) {
     profile.business.yearsInBusiness = manualField(yearsInBusiness);
   } else if (filters.newVenture) {
@@ -96,7 +111,7 @@ export function buildProfileFromFilters(filters: MarketFinderFilters): RiskProfi
   const commodities = [...filters.operationTypes, ...cargoFromText];
   if (commodities.length > 0) profile.transportation.commoditiesHauled = manualField(commodities);
 
-  const minDriverExperienceYears = toNumber(filters.minDriverExperienceYears);
+  const minDriverExperienceYears = filterDuration(filters.minDriverExperienceYears, filters.minDriverExperienceMonths);
   if (minDriverExperienceYears !== undefined) profile.transportation.minDriverExperienceYears = manualField(minDriverExperienceYears);
 
   const minDriverAge = toNumber(filters.minDriverAge);
@@ -114,11 +129,13 @@ export function hasAnyFilter(filters: MarketFinderFilters): boolean {
     filters.operatingStates.length > 0 ||
     !!filters.fleetSize ||
     !!filters.yearsInBusiness ||
+    !!filters.yearsInBusinessMonths ||
     filters.newVenture ||
     filters.operationTypes.length > 0 ||
     !!filters.cargoText.trim() ||
     !!filters.operatingRadius.trim() ||
     !!filters.minDriverExperienceYears ||
+    !!filters.minDriverExperienceMonths ||
     !!filters.minDriverAge ||
     filters.telematics !== 'unknown' ||
     filters.dashcams !== 'unknown' ||

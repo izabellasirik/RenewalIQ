@@ -3,3 +3,5 @@ export * from './extractionService';
 export * from './fieldExtraction';
 export * from './reconciliation';
 export * from './reconcileImageExtraction';
+export * from './lossRunRecords';
+export * from './validation';

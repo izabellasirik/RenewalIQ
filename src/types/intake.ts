@@ -9,15 +9,24 @@ import type { CoverageType } from './coverage';
  * exact same createAccountFromExtraction/addFiles pipeline any other submission uses.
  */
 
-export type IntakeSubmissionStatus = 'pending' | 'imported' | 'dismissed';
+/** uploading = the client is still sending it (not importable); incomplete = they stopped before finishing (0029). */
+export type IntakeSubmissionStatus = 'uploading' | 'pending' | 'imported' | 'dismissed' | 'incomplete';
 
 export interface IntakeLink {
   id: string;
   userId: string;
+  /** Broker-internal note for telling sources apart — never shown to the person filling in the form. */
   label: string;
+  /** The agency name the person filling in the form sees ("submitting this directly to …"). Null = not set; the form says "your insurance broker". */
+  organizationName: string | null;
   token: string;
   active: boolean;
   createdAt: string;
+  /** Whose link it is — shown when an admin sees the agency's links (0036). */
+  ownerName?: string;
+  /** Submissions through it not yet imported or dismissed (0036) — a link with any can't be deleted. */
+  openSubmissions?: number;
+  totalSubmissions?: number;
 }
 
 /**
@@ -27,6 +36,13 @@ export interface IntakeLink {
  * FieldValues in the Risk Profile only once a broker imports the submission (see
  * services/intake/importIntakeSubmission.ts), never before.
  */
+/** A further contact the client listed on the intake form. */
+export interface IntakeContact {
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
 export interface IntakeSubmission {
   id: string;
   intakeLinkId: string;
@@ -49,9 +65,28 @@ export interface IntakeSubmission {
   currentCarrier: string | null;
   effectiveDate: string | null;
   additionalNotes: string | null;
+  /** VIN numbers the client listed (0044). */
+  vinNumbers?: string[];
+  /** Contacts beyond the first one (0044). */
+  additionalContacts?: IntakeContact[];
   createdAt: string;
   importedAt: string | null;
   importedAccountId: string | null;
+  /** The confirmation number the client was given (0029). */
+  reference?: string | null;
+  /** How many files the client was sending (0029). */
+  expectedFiles?: number | null;
+  /** When the server verified the submission complete (0029). */
+  completedAt?: string | null;
+  lastActivityAt?: string | null;
+}
+
+/** One entry of a submission's history (0029 intake_events). */
+export interface IntakeEvent {
+  id: number;
+  event: 'started' | 'resumed' | 'file_uploaded' | 'file_failed' | 'file_retry' | 'file_removed' | 'verification_failed' | 'completed' | 'abandoned' | 'imported' | 'dismissed';
+  detail: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface IntakeDocument {

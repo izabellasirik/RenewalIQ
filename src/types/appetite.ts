@@ -140,6 +140,8 @@ export interface AppetiteRecord {
   linesOffered: AppetiteCriterion<string[]>;
   /** Free-text underwriting/distribution commentary. Not a scored fact, so it stays plain text rather than a sourced criterion. */
   underwritingNotes: string;
+  /** Present when this record comes from (or is the agency's version of) a carrier the agency maintains — see services/appetite/agencyCarriers.ts. */
+  agencyCarrier?: { carrierId: string; website?: string; contactName?: string; contactEmail?: string; contactPhone?: string };
 }
 
 export type ReasonStatus = 'pass' | 'fail' | 'warning';

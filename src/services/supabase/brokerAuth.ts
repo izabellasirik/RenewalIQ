@@ -1,4 +1,5 @@
 import { supabase } from './client';
+import { authRedirectUrl, clearPasswordRecovery } from './authRedirect';
 
 export type AuthResult = { ok: true } | { ok: false; message: string };
 
@@ -9,9 +10,10 @@ export type AuthResult = { ok: true } | { ok: false; message: string };
  * supabase/migrations/0003_broker_workspaces.sql's security-model comment).
  */
 
-export async function signUpBroker(email: string, password: string): Promise<AuthResult> {
+/** The confirmation email brings them back to this site's /login (or `redirectPath`, e.g. an invitation) — see authRedirect.ts. */
+export async function signUpBroker(email: string, password: string, redirectPath = '/login'): Promise<AuthResult> {
   if (!supabase) return { ok: false, message: 'Cloud sync is not configured in this environment. See SUPABASE_SETUP.md.' };
-  const { error } = await supabase.auth.signUp({ email, password });
+  const { error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: authRedirectUrl(redirectPath) } });
   if (error) return { ok: false, message: error.message };
   return { ok: true };
 }
@@ -24,6 +26,7 @@ export async function signInBroker(email: string, password: string): Promise<Aut
 }
 
 export async function signOutBroker(): Promise<void> {
+  clearPasswordRecovery();
   if (!supabase) return;
   await supabase.auth.signOut();
 }
@@ -37,7 +40,7 @@ export async function signOutBroker(): Promise<void> {
 export async function requestBrokerPasswordReset(email: string): Promise<AuthResult> {
   if (!supabase) return { ok: false, message: 'Cloud sync is not configured in this environment. See SUPABASE_SETUP.md.' };
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/login`,
+    redirectTo: authRedirectUrl('/login'),
   });
   if (error) return { ok: false, message: error.message };
   return { ok: true };
@@ -47,5 +50,6 @@ export async function updateBrokerPassword(newPassword: string): Promise<AuthRes
   if (!supabase) return { ok: false, message: 'Cloud sync is not configured in this environment. See SUPABASE_SETUP.md.' };
   const { error } = await supabase.auth.updateUser({ password: newPassword });
   if (error) return { ok: false, message: error.message };
+  clearPasswordRecovery();
   return { ok: true };
 }

@@ -1,3 +1,4 @@
+import { normalizeCurrencyText } from '../../../utils/currency';
 import type { CoverageType } from '../../../types';
 import type { TextLine } from './textLines';
 
@@ -83,7 +84,7 @@ export function extractCurrentPolicyCoverageLines(lines: TextLine[]): CurrentPol
       const [label, limit] = columns;
       const alias = COVERAGE_TYPE_ALIASES.find((a) => a.match.test(label));
       if (alias) {
-        results.push({ coverageType: alias.type, currentLimit: limit, matchedText: line.text, page: line.page });
+        results.push({ coverageType: alias.type, currentLimit: normalizeCurrencyText(limit), matchedText: line.text, page: line.page });
         continue;
       }
     }

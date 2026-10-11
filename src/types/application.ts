@@ -94,6 +94,8 @@ export interface MappedField {
   required?: boolean;
   /** See FieldMapping.neverFlagMissing — carried through so completeness.ts can skip this field's blank state without re-deriving it from the template. */
   neverFlagMissing?: boolean;
+  /** A value shown to the broker only (e.g. "Requested — limit not specified"), never printed on the exported application. */
+  isPlaceholder?: boolean;
   /** Carried through so the UI can offer "also save this to the Risk Profile" / "resolve in Risk Profile" for fields that have one. Undefined for fields with no Risk Profile equivalent. */
   riskProfilePath?: FieldPath;
 }
@@ -121,6 +123,14 @@ export interface MappedTableSection {
   rows: MappedTableRow[];
 }
 
+/** Loss run reports shown as the Loss History table when no claims are itemized (only what the reports state). */
+export interface MappedLossRunSummary {
+  /** Every report explicitly says there were no losses. */
+  allReportNoLosses: boolean;
+  columns: { key: string; label: string }[];
+  rows: { id: string; cells: Record<string, string> }[];
+}
+
 export interface MappedApplication {
   accountId: string;
   templateId: string;
@@ -131,6 +141,8 @@ export interface MappedApplication {
   fieldsNeedingReview: number;
   /** Submission-quality warnings (missing identifiers, fleet/vehicle-count conflicts, unspecified requested limits, new coverage requests) — see services/extraction/reconciliation.ts. */
   warnings: string[];
+  /** Set when there are loss run reports but no itemized claims (see lossRunSummary.ts). */
+  lossRunSummary?: MappedLossRunSummary;
 }
 
 export interface ApplicationStats {
