@@ -1,4 +1,4 @@
-import type { AppetiteCriterion, AppetiteRecord, CriterionSource, MarketType, RuleType } from '../../types';
+import type { AppetiteCriterion, AppetiteRecord, CarrierRule, CriterionSource, MarketAccess, MarketType, RuleType } from '../../types';
 import { unknownCriterion, verifiedCriterion } from '../../data/appetiteCriteriaHelpers';
 import { US_STATES } from '../../utils/usStates';
 
@@ -51,6 +51,19 @@ export interface AgencyCarrier {
   lastVerifiedAt: string | null;
   updatedAt: string;
   archivedAt: string | null;
+  /** Carrier 101 (0049): how the agency reaches this market. Null/absent = nothing on file. */
+  access?: MarketAccess | null;
+  /** Carrier 102 (0049): the agency's underwriting rules for this market. */
+  rules?: CarrierRule[];
+  /** The market's key in the agency's directory import, when it came from one. */
+  externalRef?: string | null;
+}
+
+/** True when any Carrier 101 detail is on file — such a market is matched on its rules (Carrier 102). */
+export function hasAccessInfo(a: MarketAccess | null | undefined): a is MarketAccess {
+  if (!a) return false;
+  const { contacts, ...rest } = a;
+  return contacts.length > 0 || Object.values(rest).some((v) => v !== null && v !== '');
 }
 
 /** Market Finder id for a carrier the agency added itself (built-in versions keep the built-in id). */
@@ -124,6 +137,8 @@ export function agencyCarrierToRecord(carrier: AgencyCarrier, base: AppetiteReco
   record.marketType = carrier.marketType;
   record.availableThrough = carrier.availableThrough ?? (base ? base.availableThrough : undefined);
   if (carrier.notes?.trim()) record.underwritingNotes = carrier.notes.trim();
+  if (hasAccessInfo(carrier.access)) record.access = carrier.access;
+  if (carrier.rules?.length) record.rules = carrier.rules;
   record.agencyCarrier = {
     carrierId: carrier.id,
     website: carrier.website ?? undefined,

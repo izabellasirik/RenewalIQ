@@ -64,3 +64,19 @@ export function computeRecordFreshness(record: AppetiteRecord): { state: Freshne
 
   return { state: computeCriterionFreshness(leastFresh.source), message: buildCriterionFreshnessMessage(leastFresh.source) };
 }
+
+/**
+ * Carrier 101/102 markets: the least fresh of the access verification date, every verified rule,
+ * and any verified built-in criterion. Unverified rules don't count (they are "not verified", not stale).
+ */
+export function computeRulesMarketFreshness(record: AppetiteRecord): { state: FreshnessState; message?: string } {
+  const dates = [
+    ...allCriteria(record).filter((c) => (c.verificationStatus === 'VERIFIED' || c.verificationStatus === 'PARTIALLY_VERIFIED') && c.source.verifiedAt).map((c) => c.source.verifiedAt!),
+    ...(record.access?.verifiedAt ? [record.access.verifiedAt] : []),
+    ...(record.rules ?? []).filter((r) => !r.archivedAt && r.lastVerifiedAt).map((r) => r.lastVerifiedAt!),
+  ];
+  if (dates.length === 0) return { state: 'UNKNOWN' };
+  const oldest = dates.reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
+  const source: CriterionSource = { sourceType: 'INTERNAL_MARKET_LIST', verifiedAt: oldest };
+  return { state: computeCriterionFreshness(source), message: buildCriterionFreshnessMessage(source) };
+}

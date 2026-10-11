@@ -27,6 +27,9 @@ export function Drawer({
             onClick={onClose}
           />
           <motion.div
+            role="dialog"
+            aria-modal="true"
+            aria-label={title}
             className="fixed right-0 top-0 z-50 flex h-full w-full max-w-xl flex-col bg-white shadow-2xl scrollbar-thin overflow-y-auto"
             initial={{ x: '100%' }}
             animate={{ x: 0 }}

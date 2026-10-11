@@ -19,7 +19,7 @@ function isUsable(status: VerificationStatus): boolean {
 
 /** A market with no usable evidence for this criterion reads as a verification gap — never a pass or a fail. */
 function unknownMarketReason(criterionLabel: string, marketName: string, what: string, ruleType: RuleType): MatchReason {
-  return reason(criterionLabel, 'warning', `${marketName} has no verified ${what} on file — confirm directly with the market.`, ruleType, true);
+  return { ...reason(criterionLabel, 'warning', `${marketName} has no verified ${what} on file — confirm directly with the market.`, ruleType, true), marketUnknown: true };
 }
 
 /**
@@ -34,7 +34,7 @@ function ruleTypeLabel(ruleType: RuleType): string {
   return 'preferred';
 }
 
-function classifyOperationType(radiusText: string | null): string | null {
+export function classifyOperationType(radiusText: string | null): string | null {
   if (!radiusText) return null;
   const t = radiusText.toLowerCase();
   if (t.includes('local')) return 'local';
@@ -44,7 +44,7 @@ function classifyOperationType(radiusText: string | null): string | null {
   return null;
 }
 
-function parseLeadingMiles(text: string | null): number | null {
+export function parseLeadingMiles(text: string | null): number | null {
   if (!text) return null;
   const match = text.match(/(\d[\d,]*)\s*mile/i);
   return match ? Number(match[1].replace(/,/g, '')) : null;

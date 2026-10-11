@@ -320,6 +320,12 @@ editor (paste the file's contents and run) or the Supabase CLI (`supabase db pus
   the app with `api/verify-upload` is deployed and `SUPABASE_SERVICE_ROLE_KEY` is set on Vercel, turn
   it on so an unchecked client upload can't be recorded:
   `update public.app_settings set value = 'true' where key = 'require_upload_verification';`
+- **`supabase/migrations/0049_carrier_access_and_rules.sql`** — Carrier 101 + 102 (see
+  `CARRIER_101_102.md`): access details on the agency's own carriers (route, status, intermediaries,
+  portal, contacts, producer code, appointment), `agency_carrier_rules` (individual underwriting
+  rules) and the admin-only, reviewed `import_agency_carrier_directory`. Agency-private; members read,
+  admins write; never changes an existing market's appetite criteria. Needs 0011 and 0023; independent
+  of 0047/0048.
 
 **Read the security model comment at the top of each file.** In short: an anonymous broker can
 only insert a new appetite-update request or feedback entry, and read approved appetite overrides
@@ -412,6 +418,7 @@ from (values
   ('0046_ai_usage',                   to_regprocedure('public.founder_ai_usage(text)') is not null),
   ('0047_requests_sent_quota_agencies', to_regprocedure('public.mark_document_request_sent(text,timestamptz,date)') is not null),
   ('0048_upload_limits_and_verification', to_regclass('public.upload_verifications') is not null),
+  ('0049_carrier_access_and_rules',   to_regclass('public.agency_carrier_rules') is not null),
   ('bucket: submission-documents',    exists (select 1 from storage.buckets where id = 'submission-documents')),
   ('bucket: intake-uploads',          exists (select 1 from storage.buckets where id = 'intake-uploads'))
 ) as m(migration, applied);

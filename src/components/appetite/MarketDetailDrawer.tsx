@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { CircleCheck, CircleX, TriangleAlert, CircleHelp, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus, Link2, Pencil } from 'lucide-react';
+import { CircleCheck, CircleX, TriangleAlert, CircleHelp, Info, UserRoundSearch, NotebookPen, ExternalLink, ChevronDown, MessageSquarePlus, Link2, Pencil } from 'lucide-react';
 import type { AppetiteCriterion, AppetiteRecord, MatchReason, MatchResult, ReasonGroup, RuleType } from '../../types';
-import { SOURCE_TYPE_LABELS } from '../../types';
+import { COVERAGE_LABELS, RULE_STRENGTH_LABELS, SOURCE_TYPE_LABELS, VERDICT_LABELS } from '../../types';
+import { HowToSubmit, RuleSummary } from './MarketAccessParts';
+import { useAccountsStore } from '../../state/useAccountsStore';
 import { Drawer, VerdictBadge, Badge, Button } from '../ui';
 import { AvailableThroughTag } from './AvailableThroughTag';
 import { FreshnessWarning } from './FreshnessWarning';
@@ -25,9 +27,11 @@ const REASON_GROUP_META: Record<ReasonGroup, { label: string; Icon: typeof Circl
   failed: { label: 'Failed', Icon: CircleX, color: 'text-[var(--color-danger-600)]' },
   needs_verification: { label: 'Needs Verification', Icon: CircleHelp, color: 'text-[var(--color-ink-400)]' },
   preference: { label: 'Preferences', Icon: TriangleAlert, color: 'text-[var(--color-warning-600)]' },
+  review: { label: 'Underwriter review', Icon: UserRoundSearch, color: 'text-[var(--color-warning-600)]' },
+  info: { label: 'For information', Icon: Info, color: 'text-[var(--color-ink-400)]' },
 };
 
-const GROUP_ORDER: ReasonGroup[] = ['failed', 'matched', 'needs_verification', 'preference'];
+const GROUP_ORDER: ReasonGroup[] = ['failed', 'matched', 'needs_verification', 'preference', 'review', 'info'];
 
 /** Maps a MatchReason's criterion label back to the underlying sourced criterion, so "why this match" rows can show their source. */
 function criterionForReason(record: AppetiteRecord, label: string): AppetiteCriterion<unknown> | null {
@@ -107,12 +111,21 @@ function ReasonRow({ reason, record }: { reason: MatchReason; record: AppetiteRe
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="text-sm font-medium text-[var(--color-ink-800)]">{reason.criterion}</p>
-            {reason.ruleType !== 'UNKNOWN' && (
+            {reason.ruleStrength && (
+              <span className="rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-500)]">{RULE_STRENGTH_LABELS[reason.ruleStrength]}</span>
+            )}
+            {!reason.ruleId && reason.ruleType !== 'UNKNOWN' && (
               <span className="rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-ink-500)]">{RULE_TYPE_LABELS[reason.ruleType]}</span>
             )}
           </div>
           <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{reason.explanation}</p>
-          {criterion && (
+          {reason.ruleId && (
+            <p className="mt-1 text-[11px] text-[var(--color-ink-400)]">
+              {reason.ruleVerified ? 'Verified rule' : 'Not verified'}
+              {reason.ruleSource ? ` · ${reason.ruleSource}` : ''}
+            </p>
+          )}
+          {criterion && !reason.ruleId && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -247,7 +260,12 @@ export function MarketDetailDrawer({
   onEdit?: (record: AppetiteRecord) => void;
 }) {
   const [updateFormOpen, setUpdateFormOpen] = useState(false);
+  const agencyName = useAccountsStore((s) => s.agencyAccess?.agencyName ?? null);
   if (!record) return null;
+  const access = result?.access ?? record.access;
+  const rulesMode = !!result?.rulesMode || !!record.access || (record.rules?.length ?? 0) > 0;
+  const rules = (record.rules ?? []).filter((r) => !r.archivedAt);
+  const count = (pred: (r: MatchReason) => boolean) => (result ? result.reasons.filter(pred).length : 0);
 
   const groups = result ? GROUP_ORDER.map((group) => ({ group, reasons: result.reasons.filter((r) => r.group === group) })).filter((g) => g.reasons.length > 0) : [];
 
@@ -288,11 +306,43 @@ export function MarketDetailDrawer({
           </div>
         )}
 
-        {result && (
+        {result && !rulesMode && (
         <p className="text-xs text-[var(--color-ink-500)]">
           {result.verifiedMatchCount} verified criteri{result.verifiedMatchCount === 1 ? 'on' : 'a'} matched · {result.needsVerificationCount} need
           {result.needsVerificationCount === 1 ? 's' : ''} verification
         </p>
+        )}
+        {result && rulesMode && (
+          <p className="text-xs text-[var(--color-ink-500)]" data-testid="requirement-counts">
+            {count((r) => r.status === 'pass')} passed · {count((r) => r.status === 'fail')} failed · {count((r) => r.group === 'review' || r.group === 'preference')} for underwriter review ·{' '}
+            {count((r) => r.group === 'needs_verification')} to confirm
+          </p>
+        )}
+
+        {result?.coverageResults && result.coverageResults.some((c) => c.coverage) && (
+          <div data-testid="coverage-results">
+            <h4 className="mb-2 text-sm font-semibold text-[var(--color-ink-900)]">By coverage</h4>
+            <ul className="flex flex-col gap-1.5">
+              {result.coverageResults.map((c) => (
+                <li key={c.coverage ?? 'all'} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-ink-100)] px-3 py-2 text-sm">
+                  <span className="text-[var(--color-ink-800)]">{c.coverage ? COVERAGE_LABELS[c.coverage] : 'All coverages'}</span>
+                  <VerdictBadge verdict={c.verdict} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {access && (
+          <div className="rounded-lg border border-[var(--color-ink-100)] bg-white p-4">
+            <p className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">How to submit</p>
+            <HowToSubmit access={access} marketName={record.marketName} agencyName={agencyName} />
+          </div>
+        )}
+        {rulesMode && rules.length === 0 && (
+          <p className="rounded-lg border border-dashed border-[var(--color-ink-200)] px-3 py-2.5 text-xs text-[var(--color-ink-500)]">
+            No underwriting rules on file for this market yet — its appetite is unknown, so {VERDICT_LABELS.needs_more_information.toLowerCase()} until they are added. Confirm with the underwriter.
+          </p>
         )}
 
         {result?.freshnessMessage && <FreshnessWarning message={result.freshnessMessage} />}
@@ -345,8 +395,8 @@ export function MarketDetailDrawer({
                     {meta.label}
                   </p>
                   <ul className="flex flex-col gap-2">
-                    {reasons.map((reason) => (
-                      <ReasonRow key={reason.criterion} reason={reason} record={record} />
+                    {reasons.map((reason, i) => (
+                      <ReasonRow key={`${reason.criterion}-${i}`} reason={reason} record={record} />
                     ))}
                   </ul>
                 </div>
@@ -356,6 +406,20 @@ export function MarketDetailDrawer({
         </div>
         )}
 
+        {rules.length > 0 && (
+          <div>
+            <h4 className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">Underwriting rules ({rules.length})</h4>
+            <ul className="flex flex-col gap-2.5">
+              {rules.map((r) => (
+                <li key={r.id} className="rounded-lg border border-[var(--color-ink-100)] px-3 py-2.5">
+                  <RuleSummary rule={r} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {!(rulesMode && record.id.startsWith('agency-')) && (
         <div>
           <h4 className="mb-3 text-sm font-semibold text-[var(--color-ink-900)]">Appetite Record</h4>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -364,6 +428,7 @@ export function MarketDetailDrawer({
             ))}
           </div>
         </div>
+        )}
 
         <p className="flex items-start gap-1.5 border-t border-[var(--color-ink-100)] pt-3 text-xs text-[var(--color-ink-400)]">
           Carrier appetite changes frequently. Confirm current eligibility with the market before quoting or binding.

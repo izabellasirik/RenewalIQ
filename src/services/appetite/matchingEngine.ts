@@ -1,6 +1,7 @@
 import type { AppetiteRecord, MatchReason, MatchResult, RiskProfile, Verdict } from '../../types';
 import { ALL_RULES } from './rules';
-import { computeRecordFreshness } from './freshness';
+import { computeRecordFreshness, computeRulesMarketFreshness } from './freshness';
+import { bestCoverageVerdict, evaluateRulesByCoverage } from './carrierRules';
 
 /** Below this many verified (not data-gap) pass criteria, there isn't enough real signal to make a useful call either way. */
 const MIN_VERIFIED_FOR_A_VERDICT = 2;
@@ -40,7 +41,49 @@ function deriveVerdict(reasons: MatchReason[]): Verdict {
   return gapRatio <= LIKELY_MATCH_MAX_GAP_RATIO ? 'likely_match' : 'possible_match';
 }
 
+/** Carrier 101/102 markets (the agency's access details and/or underwriting rules) are matched on their rules. */
+export function isRulesMarket(record: AppetiteRecord): boolean {
+  return !!record.access || (record.rules?.length ?? 0) > 0;
+}
+
+/**
+ * A Carrier 102 market: its rules, coverage by coverage, plus whatever built-in criteria ARE
+ * verified for it (never overwritten — an unknown built-in criterion is simply left out, the
+ * rules speak for it). The market's verdict is its best coverage; each coverage is kept.
+ */
+function evaluateRulesMarket(record: AppetiteRecord, profile: RiskProfile): MatchResult {
+  const builtIn = ALL_RULES.map((rule) => rule(record, profile)).filter((r) => !r.marketUnknown);
+  const coverageResults = evaluateRulesByCoverage(record.rules ?? [], profile, builtIn);
+  const verdict = bestCoverageVerdict(coverageResults);
+  const seen = new Set<string>();
+  const reasons = coverageResults.flatMap((c) => c.reasons).filter((r) => {
+    const key = `${r.ruleId ?? r.criterion}|${r.explanation}`;
+    return seen.has(key) ? false : (seen.add(key), true);
+  });
+  const freshness = computeRulesMarketFreshness(record);
+  return {
+    appetiteRecordId: record.id,
+    marketName: record.marketName,
+    parentCompany: record.parentCompany,
+    programName: record.programName,
+    marketType: record.marketType,
+    availableThrough: record.availableThrough,
+    verdict,
+    reasons,
+    matchScore: verdict === 'not_eligible' || reasons.length === 0 ? 0 : computeMatchScore(reasons),
+    verifiedMatchCount: reasons.filter((r) => r.status === 'pass' && r.ruleVerified !== false).length,
+    needsVerificationCount: reasons.filter((r) => r.status === 'warning' && r.isDataGap).length,
+    freshness: freshness.state,
+    freshnessMessage: freshness.message,
+    underwritingNotes: record.underwritingNotes,
+    access: record.access,
+    rulesMode: true,
+    coverageResults,
+  };
+}
+
 export function evaluateMarket(record: AppetiteRecord, profile: RiskProfile): MatchResult {
+  if (isRulesMarket(record)) return evaluateRulesMarket(record, profile);
   const reasons = ALL_RULES.map((rule) => rule(record, profile));
   const hasFail = reasons.some((r) => r.status === 'fail');
   const score = computeMatchScore(reasons);
@@ -74,6 +117,8 @@ export const VERDICT_RANK: Record<Verdict, number> = {
 
 export function matchAllMarkets(records: AppetiteRecord[], profile: RiskProfile): MatchResult[] {
   return records
+    // An inactive market (Carrier 101) is not suggested at all.
+    .filter((record) => record.access?.status !== 'inactive')
     .map((record) => evaluateMarket(record, profile))
     .sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict]);
 }

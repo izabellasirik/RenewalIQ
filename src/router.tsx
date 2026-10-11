@@ -25,6 +25,7 @@ import { ProfileGate } from './components/profile/ProfileGate';
 import { InvitePage } from './pages/InvitePage';
 import { TeamPage } from './pages/TeamPage';
 import { CarriersPage } from './pages/CarriersPage';
+import { MarketDirectoryPage } from './pages/MarketDirectoryPage';
 import { FounderAnalyticsPage } from './pages/FounderAnalyticsPage';
 
 export const router = createBrowserRouter([
@@ -63,6 +64,7 @@ export const router = createBrowserRouter([
       { path: '/team', element: <TeamPage /> },
       // Carrier appetite management lives inside Market Finder (admins reach it from there).
       { path: '/market-finder/appetite', element: <CarriersPage /> },
+      { path: '/market-finder/directory', element: <MarketDirectoryPage /> },
       { path: '/carriers', element: <Navigate to="/market-finder/appetite" replace /> },
       { path: '/accounts/new', element: <NewAccountPage /> },
       { path: '/accounts/:accountId', element: <AccountWorkspacePage /> },

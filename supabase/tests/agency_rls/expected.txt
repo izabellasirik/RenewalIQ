@@ -405,4 +405,33 @@ U6 agency admin sees verifications: no access
 U6 agency admin cannot change the switch
 U7 unchecked intake file refused: This file hasn't been checked yet — upload it again.
 U8 switch back off: false
+CR1 admin sets access: ready via Example Wholesale criteria kept=true
+CR2 non-web portal URL refused
+CR3 admin adds rule → own agency=true by_admin=true
+CR4 answers limited to yes/no/referral/unknown
+CR5 agent reads rules=1 and access=ready
+CR5 agent add rule denied
+CR5 agent rule update affected=0
+CR5 agent access update affected=0
+CR5 agent cannot delete rules
+CR6 other agency admin sees rules=0
+CR6 other agency cannot even see our markets
+CR6 other agency rule update affected=0
+CR7 rule on another agency's market refused: That market belongs to another agency.
+CR8 agent import denied: Only an agency admin can import the carrier directory.
+CR9 dry run: {"dryRun": true, "rulesAdded": 2, "marketsAdded": 1, "rulesUpdated": 0, "marketsUpdated": 1}
+CR9 dry run wrote nothing: markets=2 rules=1 imports=0
+CR10 import: {"dryRun": false, "rulesAdded": 2, "marketsAdded": 1, "rulesUpdated": 0, "marketsUpdated": 1}
+CR10 existing market linked by name, appetite untouched: name=Blue Ridge Mutual status=partial ref=m-blue criteria kept=true strictness=hard
+CR10 new market: Example Program Co source=import agency own=true
+CR11 re-import updates, no duplicates: {"dryRun": false, "rulesAdded": 0, "marketsAdded": 0, "rulesUpdated": 1, "marketsUpdated": 1} markets=1 rules=1
+CR12 invalid rule rejects the whole import
+CR12 nothing from the bad import: 0
+CR13 admin sees import log=2 file=directory.csv
+CR13 agent sees import log=0
+CR14 other agency imports into its own agency: {"dryRun": false, "rulesAdded": 0, "marketsAdded": 1, "rulesUpdated": 0, "marketsUpdated": 0}
+CR14 other agency sees only its own: markets=1 rules=0
+CR14 our market untouched by the other agency: partial code=PC-TEST-1
+CR15 anon cannot read rules
+CR15 anon cannot import
 AQ1 20 concurrent reads, limit 5, allowed: 5

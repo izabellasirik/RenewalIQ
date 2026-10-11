@@ -1,3 +1,6 @@
+import type { CarrierRule, MarketAccess } from './carrierAccess';
+import type { CoverageType } from './coverage';
+
 export type MarketType = 'direct' | 'mga';
 
 export type Verdict = 'likely_match' | 'possible_match' | 'needs_more_information' | 'not_eligible';
@@ -142,12 +145,16 @@ export interface AppetiteRecord {
   underwritingNotes: string;
   /** Present when this record comes from (or is the agency's version of) a carrier the agency maintains — see services/appetite/agencyCarriers.ts. */
   agencyCarrier?: { carrierId: string; website?: string; contactName?: string; contactEmail?: string; contactPhone?: string };
+  /** Carrier 101: how the agency reaches this market (agency carriers only). */
+  access?: MarketAccess;
+  /** Carrier 102: the agency's individual underwriting rules for this market. */
+  rules?: CarrierRule[];
 }
 
 export type ReasonStatus = 'pass' | 'fail' | 'warning';
 
 /** How a reason should be grouped in the "why this match" view — independent of its pass/fail/warning status. */
-export type ReasonGroup = 'matched' | 'failed' | 'needs_verification' | 'preference';
+export type ReasonGroup = 'matched' | 'failed' | 'needs_verification' | 'preference' | 'review' | 'info';
 
 export interface MatchReason {
   criterion: string;
@@ -165,6 +172,21 @@ export interface MatchReason {
   /** The rule type of the criterion this reason evaluated, for grouping/labeling in the UI. */
   ruleType: RuleType;
   group: ReasonGroup;
+  /** True when the gap is on the market's side (no verified appetite on file for this criterion). */
+  marketUnknown?: boolean;
+  /** Carrier 102: the rule behind this reason, and whether it is verified. */
+  ruleId?: string;
+  ruleVerified?: boolean;
+  ruleStrength?: 'hard' | 'soft' | 'info';
+  /** Carrier 102: where the rule came from, for "why" in the UI. */
+  ruleSource?: string;
+}
+
+/** Carrier 102: the verdict for one requested coverage line (null = the account has none listed). */
+export interface CoverageResult {
+  coverage: CoverageType | null;
+  verdict: Verdict;
+  reasons: MatchReason[];
 }
 
 export interface MatchResult {
@@ -189,4 +211,10 @@ export interface MatchResult {
   freshness: FreshnessState;
   freshnessMessage?: string;
   underwritingNotes: string;
+  /** Carrier 101: how to submit (agency carriers with access details). */
+  access?: MarketAccess;
+  /** Carrier 102: true when this market is matched on the agency's underwriting rules. */
+  rulesMode?: boolean;
+  /** Carrier 102: one verdict per requested coverage. */
+  coverageResults?: CoverageResult[];
 }

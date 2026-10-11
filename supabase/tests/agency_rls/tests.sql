@@ -1185,3 +1185,65 @@ reset role;
 do $$ begin insert into intake_documents (id, intake_submission_id, user_id, file_name, storage_path, size_bytes) select 'idoc_u48', s.id, s.user_id, 'x.pdf', s.id || '/k/x.pdf', 1 from intake_submissions s limit 1; raise notice 'U7 unchecked intake file recorded: ALLOWED (BAD)'; exception when others then raise notice 'U7 unchecked intake file refused: %', sqlerrm; end $$;
 update app_settings set value = 'false' where key = 'require_upload_verification';
 select 'U8 switch back off: ' || (value::text) from app_settings where key = 'require_upload_verification';
+
+\echo '== 0049: Carrier 101 access + Carrier 102 rules — agency-private, admins only, safe import'
+\i :MIG/0049_carrier_access_and_rules.sql
+\i :MIG/0049_carrier_access_and_rules.sql
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+update agency_carriers set access_route = 'indirect', access_status = 'ready', wholesaler_name = 'Example Wholesale', portal_url = 'https://portal.example.com/submit', contacts = '[{"name":"Sample UW","role":"underwriter","email":"uw@example.com"}]' where name = 'Blue Ridge Mutual';
+select 'CR1 admin sets access: ' || access_status || ' via ' || wholesaler_name || ' criteria kept=' || (criteria = '{"fleetSize":{"min":1,"max":25}}'::jsonb) from agency_carriers where name = 'Blue Ridge Mutual';
+do $$ begin update agency_carriers set portal_url = 'javascript:alert(1)' where name = 'Blue Ridge Mutual'; raise notice 'CR2 script URL saved: ALLOWED (BAD)'; exception when others then raise notice 'CR2 non-web portal URL refused'; end $$;
+insert into agency_carrier_rules (carrier_id, coverage, category, operator, value, answer, strength, source, source_date, last_verified_at)
+select id, 'auto_liability', 'commodity', 'any_of', '["hazmat"]', 'no', 'hard', 'Underwriter email', '2026-10-01', '2026-10-08' from agency_carriers where name = 'Blue Ridge Mutual';
+select 'CR3 admin adds rule → own agency=' || (agency_id = current_agency_id()) || ' by_admin=' || (created_by = auth.uid()) from agency_carrier_rules;
+do $$ begin insert into agency_carrier_rules (carrier_id, category, operator, answer) select id, 'other', 'text', 'maybe' from agency_carriers where name = 'Blue Ridge Mutual'; raise notice 'CR4 unknown answer saved: ALLOWED (BAD)'; exception when others then raise notice 'CR4 answers limited to yes/no/referral/unknown'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'CR5 agent reads rules=' || count(*) || ' and access=' || (select access_status from agency_carriers where name = 'Blue Ridge Mutual') from agency_carrier_rules;
+do $$ begin insert into agency_carrier_rules (carrier_id, category, operator, answer) select id, 'other', 'text', 'yes' from agency_carriers where name = 'Blue Ridge Mutual'; raise notice 'CR5 agent adds rule: ALLOWED (BAD)'; exception when others then raise notice 'CR5 agent add rule denied'; end $$;
+with u as (update agency_carrier_rules set answer = 'yes' returning 1) select 'CR5 agent rule update affected=' || count(*) from u;
+with u as (update agency_carriers set access_status = 'inactive' returning 1) select 'CR5 agent access update affected=' || count(*) from u;
+do $$ begin delete from agency_carrier_rules; if found then raise notice 'CR5 agent deletes rules: ALLOWED (BAD)'; else raise notice 'CR5 agent delete removed nothing'; end if; exception when others then raise notice 'CR5 agent cannot delete rules'; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select 'CR6 other agency admin sees rules=' || count(*) from agency_carrier_rules;
+do $$ begin insert into agency_carrier_rules (carrier_id, category, operator, answer) select c.id, 'other', 'text', 'yes' from public.agency_carriers c limit 1; if found then raise notice 'CR6 other agency attaches rule: ALLOWED (BAD)'; else raise notice 'CR6 other agency cannot even see our markets'; end if; exception when others then raise notice 'CR6 other agency attach denied'; end $$;
+with u as (update agency_carrier_rules set answer = 'yes' returning 1) select 'CR6 other agency rule update affected=' || count(*) from u;
+reset role;
+-- Even knowing the market's id, another agency can't attach a rule to it.
+select id as br_id from agency_carriers where name = 'Blue Ridge Mutual' \gset
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select set_config('my.br', :'br_id', false) is not null as _br \gset
+do $$ begin insert into agency_carrier_rules (carrier_id, category, operator, answer) values (current_setting('my.br')::uuid, 'other', 'text', 'yes'); raise notice 'CR7 rule on another agency''s market by id: ALLOWED (BAD)'; exception when others then raise notice 'CR7 rule on another agency''s market refused: %', sqlerrm; end $$;
+
+\echo '== 0049 import'
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+do $$ begin perform import_agency_carrier_directory('{"markets":[{"ref":"m1","name":"Agent Market"}]}', false); raise notice 'CR8 agent imports: ALLOWED (BAD)'; exception when others then raise notice 'CR8 agent import denied: %', sqlerrm; end $$;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'CR9 dry run: ' || (import_agency_carrier_directory($j${"fileName":"directory.csv","markets":[
+  {"ref":"m-blue","name":"blue ridge mutual","accessRoute":"direct","accessStatus":"partial","producerCode":"PC-TEST-1","rules":[{"ref":"r1","category":"fleet_size","operator":"gt","value":25,"answer":"no","strength":"hard","lastVerifiedAt":"2026-10-08"}]},
+  {"ref":"m-new","name":"Example Program Co","marketType":"mga","accessRoute":"indirect","accessStatus":"ready","mga":"Example MGA","paper":"Example Paper Insurance Co","portalUrl":"https://example.com/p","rules":[{"ref":"r1","category":"other","operator":"text","value":"Appetite not published","answer":"unknown","strength":"info"}]}
+]}$j$::jsonb, true))::text;
+select 'CR9 dry run wrote nothing: markets=' || (select count(*) from agency_carriers) || ' rules=' || (select count(*) from agency_carrier_rules) || ' imports=' || (select count(*) from agency_carrier_imports);
+select 'CR10 import: ' || (import_agency_carrier_directory($j${"fileName":"directory.csv","markets":[
+  {"ref":"m-blue","name":"blue ridge mutual","accessRoute":"direct","accessStatus":"partial","producerCode":"PC-TEST-1","rules":[{"ref":"r1","category":"fleet_size","operator":"gt","value":25,"answer":"no","strength":"hard","lastVerifiedAt":"2026-10-08"}]},
+  {"ref":"m-new","name":"Example Program Co","marketType":"mga","accessRoute":"indirect","accessStatus":"ready","mga":"Example MGA","paper":"Example Paper Insurance Co","portalUrl":"https://example.com/p","rules":[{"ref":"r1","category":"other","operator":"text","value":"Appetite not published","answer":"unknown","strength":"info"}]}
+]}$j$::jsonb, false))::text;
+select 'CR10 existing market linked by name, appetite untouched: name=' || name || ' status=' || access_status || ' ref=' || external_ref || ' criteria kept=' || (criteria = '{"fleetSize":{"min":1,"max":25}}'::jsonb) || ' strictness=' || rule_strictness from agency_carriers where external_ref = 'm-blue';
+select 'CR10 new market: ' || name || ' source=' || source || ' agency own=' || (agency_id = current_agency_id()) from agency_carriers where external_ref = 'm-new';
+select 'CR11 re-import updates, no duplicates: ' || (import_agency_carrier_directory($j${"markets":[{"ref":"m-new","name":"Example Program Co","accessStatus":"not_ready","rules":[{"ref":"r1","category":"other","operator":"text","value":"Appetite not published","answer":"unknown","strength":"info"}]}]}$j$::jsonb, false))::text
+  || ' markets=' || (select count(*) from agency_carriers where external_ref = 'm-new') || ' rules=' || (select count(*) from agency_carrier_rules r join agency_carriers c on c.id = r.carrier_id where c.external_ref = 'm-new');
+do $$ begin perform import_agency_carrier_directory('{"markets":[{"ref":"m-bad","name":"Bad Market","rules":[{"ref":"r1","category":"zodiac_sign","operator":"any_of","answer":"no"}]}]}', false); raise notice 'CR12 invalid rule imported: ALLOWED (BAD)'; exception when others then raise notice 'CR12 invalid rule rejects the whole import'; end $$;
+select 'CR12 nothing from the bad import: ' || count(*) from agency_carriers where external_ref = 'm-bad';
+select 'CR13 admin sees import log=' || count(*) || ' file=' || max(file_name) from agency_carrier_imports;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select 'CR13 agent sees import log=' || count(*) from agency_carrier_imports;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select 'CR14 other agency imports into its own agency: ' || (import_agency_carrier_directory('{"markets":[{"ref":"m-blue","name":"Blue Ridge Mutual","accessStatus":"ready"}]}', false))::text;
+select 'CR14 other agency sees only its own: markets=' || (select count(*) from agency_carriers) || ' rules=' || (select count(*) from agency_carrier_rules);
+reset role;
+select 'CR14 our market untouched by the other agency: ' || access_status || ' code=' || producer_code from agency_carriers where external_ref = 'm-blue' and agency_id = (select agency_id from profiles where user_id = '00000000-0000-0000-0000-00000000000d');
+set role anon;
+do $$ begin perform 1 from agency_carrier_rules; raise notice 'CR15 anon reads rules: ALLOWED (BAD)'; exception when others then raise notice 'CR15 anon cannot read rules'; end $$;
+do $$ begin perform import_agency_carrier_directory('{"markets":[{"ref":"x","name":"x"}]}', false); raise notice 'CR15 anon imports: ALLOWED (BAD)'; exception when others then raise notice 'CR15 anon cannot import'; end $$;
+reset role;

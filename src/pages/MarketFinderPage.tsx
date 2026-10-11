@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trackEvent } from '../services/productAnalytics/trackEvent';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronRight, Pencil, Search, Info, Plus, RotateCcw, X } from 'lucide-react';
+import { BookOpen, ChevronRight, Pencil, Search, Info, Plus, RotateCcw, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
@@ -221,6 +222,8 @@ function NeutralMarketList({ records, onOpen, onEdit }: { records: AppetiteRecor
 
 export function MarketFinderPage() {
   const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
+  const inAgency = useAccountsStore((s) => !!s.agencyAccess);
+  const navigate = useNavigate();
   const effectiveAppetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const loadEffectiveAppetiteRecords = useAccountsStore((s) => s.loadEffectiveAppetiteRecords);
   useEffect(() => {
@@ -311,6 +314,11 @@ export function MarketFinderPage() {
         <div className="lg:col-start-2 lg:row-start-1">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">Market Finder</h1>
+            {inAgency && (
+              <Button variant="secondary" icon={<BookOpen size={15} />} onClick={() => navigate('/market-finder/directory')}>
+                Market directory
+              </Button>
+            )}
             {/* Agency admins add a market here, and edit one by opening it (the database enforces who can). */}
             {isAgencyAdmin && (
               <Button icon={<Plus size={15} />} onClick={() => setEditRow('new')}>
