@@ -54,6 +54,11 @@ export function HowToSubmit({ access, marketName, agencyName }: { access: Market
         {access.route && <Badge tone="neutral">{ACCESS_ROUTE_LABELS[access.route]}</Badge>}
       </div>
       {access.status && <p className="text-xs text-[var(--color-ink-500)]">{ACCESS_STATUS_HELP[access.status]}</p>}
+      {access.documentedStatus && (
+        <p className="text-xs text-[var(--color-ink-600)]" data-testid="documented-access-status">
+          Documented status: <span className="font-medium">{access.documentedStatus}</span>
+        </p>
+      )}
       <RelationshipChain access={access} marketName={marketName} agencyName={agencyName} />
       <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
         {(access.portalName || url) && (
@@ -122,7 +127,7 @@ export function HowToSubmit({ access, marketName, agencyName }: { access: Market
         {access.source ? `Source: ${access.source}` : 'Source not recorded'}
         {access.sourceDate ? ` (${formatDate(access.sourceDate)})` : ''}
         {' · '}
-        {access.verifiedAt ? `Verified ${formatDate(access.verifiedAt)}` : 'Not verified'}
+        {access.verifiedAt ? `Verified ${formatDate(access.verifiedAt)}` : 'Not independently verified yet'}
       </p>
     </div>
   );
@@ -139,7 +144,8 @@ export function RuleSummary({ rule }: { rule: CarrierRule }) {
         <span className="font-medium text-[var(--color-ink-800)]">{describePredicate(rule)}</span>
         <Badge tone="neutral">{RULE_STRENGTH_LABELS[rule.strength]}</Badge>
         {rule.coverage && <Badge tone="info">{COVERAGE_LABELS[rule.coverage]}</Badge>}
-        {isVerified(rule) ? <Badge tone="success">Verified {formatDate(rule.lastVerifiedAt!)}</Badge> : <Badge tone="warning">Not verified</Badge>}
+        {rule.documentedStatus && <Badge tone="neutral" data-testid="documented-rule-status">Documented: {rule.documentedStatus}</Badge>}
+        {isVerified(rule) ? <Badge tone="success">Verified {formatDate(rule.lastVerifiedAt!)}</Badge> : <Badge tone="warning">Not verified in RenewalIQ</Badge>}
       </div>
       {(rule.conditions.length > 0 || rule.conditionsText) && (
         <p className="text-xs text-[var(--color-ink-500)]">

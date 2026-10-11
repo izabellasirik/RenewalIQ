@@ -22,12 +22,13 @@ imported by the agency's admin into its own database rows. Tests and examples us
 | Field | Values |
 |---|---|
 | coverage | every coverage, or one line (Auto Liability, Motor Truck Cargo, Physical Damage, …) |
-| category | state, commodity, operation type, radius, fleet size, years in business, driver age, driver experience, vehicle type, vehicle age, claims (3 yrs), telematics, dash cameras, DOT number, coverage written, other |
+| category | state, commodity, operation type, operations (cargo or equipment), radius, fleet size, years in business, driver age, driver experience, vehicle type, vehicle age, claims (3 yrs), telematics, dash cameras, DOT number, coverage written, other |
 | test + value | any of (list), under / over / between (numbers), none, missing, text |
 | answer | YES · NO · REFERRAL · UNKNOWN |
 | strength | Hard · Soft · Informational |
 | conditions | further tests that must hold (e.g. "fleet size over 10"), plus conditions in words |
 | provenance | source, source date, last verified date, verified by, notes |
+| documented status | the source's own wording (e.g. "VERIFIED", "SUPPORTED") kept exactly as written — a record, **not** a RenewalIQ verification |
 
 ### How a rule decides (one account, one coverage)
 
@@ -40,11 +41,23 @@ imported by the agency's admin into its own database rows. Tests and examples us
 | UNKNOWN | confirm (**never** a decline) | not relevant | confirm |
 | Informational / "other" | shown, not scored / checked by hand | | |
 
-Market verdict per coverage: any verified hard NO → **Not Eligible**; no verified passes or more to
-confirm than verified passes → **Needs More Information**; any review or confirm → **Possible Match /
-Underwriter Review**; otherwise **Likely Match**. The market shows its best coverage and lists each one.
-A market with an access route but no rules (unknown appetite) is **Needs More Information**, with
-its submission route shown.
+Matching details: a YES range must hold for **every** driver, unit and operating state (one driver
+outside "ages 25–70" is a review); a NO or REFERRAL triggers on **any** one. Keywords match the
+account's own words at a word start and skip negated wording ("non-hazmat tanker" is not hazmat).
+"Operations (cargo or equipment)" looks at commodities and vehicle types together.
+
+Market verdict per coverage: any verified hard NO → **Not Eligible**; nothing scorable, or more open
+questions than passes (an unverified pass counts half) → **Needs More Information**; any review or
+open question, or no *verified* pass → **Possible Match / Underwriter Review**; otherwise **Likely
+Match**. An unverified pass is evidence for Possible, never for Likely, so an account that clears every
+documented rule never ranks below one that hits an exclusion. Within a verdict, markets with fewer
+underwriter-review flags come first. The market shows its best coverage and lists each one. A market
+with an access route but no rules (unknown appetite) is **Needs More Information**, with its submission
+route shown.
+
+Verification: `last_verified_at` is set only by an agency admin after independent confirmation
+("Mark verified"). An imported document's own "VERIFIED" goes in *documented status* and does not let
+a rule decline.
 
 ## Import (secure, reviewable, agency-only)
 
@@ -59,13 +72,12 @@ passwords or logins are refused.
 ## Order of work and status
 
 1. Infrastructure, engine, directory, import, tests — **done** (synthetic data).
-2. Corgi / CarrierGuard as the first market: access route via CarrierGuard, appetite unknown →
-   import as a market with no rules (shows Needs More Information + route). **Waiting for the cheat
-   sheet.**
-3. Validate with a real DXP Risk Profile — on DXP's agency after 0049 is applied.
-4. STAR Mutual, County Hall, Cover Whale, Evolum, MTM rules — from the cheat sheet, each rule with its
-   source and date, unverified until Denis confirms.
-5. More markets after those pass.
+2. First real agency directory: prepared as a private import file outside this repository, checked
+   with the preview and the database dry run, and imported into a **local** test database only.
+   The first market (direct, portal route, appetite unknown) shows Needs More Information with its route.
+3. Agency review of the prepared rules (strengths, duplicates, open questions), then admin
+   verification rule by rule; nothing is imported into production until approved.
+4. More markets after those pass.
 
 ## Deployment
 
@@ -75,7 +87,7 @@ the V4 release (0047/0048) — `0049` is additive and re-runnable. No Edge Funct
 
 ## Tests
 
-- `src/services/appetite/__tests__/carrierRules.test.ts` — rule semantics (only verified hard NO declines, UNKNOWN never does, conditions, coverage by coverage, existing appetite preserved).
+- `src/services/appetite/__tests__/carrierRules.test.ts` — rule semantics (only verified hard NO declines, UNKNOWN never does, a source's own "VERIFIED" cannot decline, every-driver/any-driver ranges, negated keywords, operations, conditions, coverage by coverage, ordering on unverified markets, existing appetite preserved).
 - `src/services/appetite/__tests__/carrierScenarios.test.ts` — five anonymized accounts × six synthetic markets.
 - `src/services/appetite/__tests__/directoryImport.test.ts` — import parsing, matching, credential refusal, errors.
-- `supabase/tests/agency_rls` CR1–CR15 — member read / admin write, cross-agency isolation, import permissions, dry run, no overwrite of existing appetite, invalid import rolled back.
+- `supabase/tests/agency_rls` CR1–CR15 (incl. documented status kept as written, operations rules) — member read / admin write, cross-agency isolation, import permissions, dry run, no overwrite of existing appetite, invalid import rolled back.

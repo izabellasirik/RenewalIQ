@@ -261,7 +261,7 @@ export function MarketFinderPage() {
       });
     }
 
-    return [...results].sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.verifiedMatchCount - a.verifiedMatchCount);
+    return [...results].sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.verifiedMatchCount - a.verifiedMatchCount || b.matchScore - a.matchScore);
   }, [filters, filtersActive, effectiveAppetiteRecords]);
 
   // Founder Analytics: Market Finder updates live, so filter changes alone are not a search. A search

@@ -43,6 +43,8 @@ export interface MarketAccess {
   sourceDate: string | null;
   verifiedAt: string | null;
   notes: string | null;
+  /** The status exactly as the source states it (e.g. "PENDING VERIFICATION / PARTIAL"). A record of the source, not a RenewalIQ verification. */
+  documentedStatus?: string | null;
 }
 
 /**
@@ -60,6 +62,7 @@ export type RuleCategory =
   | 'driver_age'
   | 'driver_experience'
   | 'vehicle_type'
+  | 'operation_class'
   | 'vehicle_age'
   | 'claims_3y'
   | 'telematics'
@@ -81,6 +84,7 @@ export const RULE_CATEGORY_LABELS: Record<RuleCategory, string> = {
   driver_age: 'Driver age',
   driver_experience: 'Driver experience',
   vehicle_type: 'Vehicle types',
+  operation_class: 'Operations (cargo or equipment)',
   vehicle_age: 'Vehicle age',
   claims_3y: 'Claims (3 years)',
   telematics: 'Telematics',
@@ -113,5 +117,7 @@ export interface CarrierRule extends RulePredicate {
   lastVerifiedAt?: string | null;
   verifiedBy?: string | null;
   notes?: string | null;
+  /** The source's own verification wording ("VERIFIED", "SUPPORTED", "Underwriter-confirmed"). Never makes a rule decline by itself — only lastVerifiedAt does. */
+  documentedStatus?: string | null;
   archivedAt?: string | null;
 }

@@ -121,7 +121,7 @@ function ReasonRow({ reason, record }: { reason: MatchReason; record: AppetiteRe
           <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{reason.explanation}</p>
           {reason.ruleId && (
             <p className="mt-1 text-[11px] text-[var(--color-ink-400)]">
-              {reason.ruleVerified ? 'Verified rule' : 'Not verified'}
+              {reason.ruleVerified ? 'Verified rule' : 'Not verified in RenewalIQ'}
               {reason.ruleSource ? ` · ${reason.ruleSource}` : ''}
             </p>
           )}

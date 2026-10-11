@@ -33,6 +33,8 @@ export interface ImportRule {
   lastVerifiedAt: string | null;
   verifiedBy: string | null;
   notes: string | null;
+  /** The source's verification wording, kept as written (not a RenewalIQ verification). */
+  documentedStatus: string | null;
 }
 
 export interface ImportMarket {
@@ -55,6 +57,8 @@ export interface ImportMarket {
   sourceDate: string | null;
   verifiedAt: string | null;
   notes: string | null;
+  /** The access status exactly as the source states it. */
+  documentedStatus: string | null;
   rules: ImportRule[];
 }
 
@@ -74,7 +78,7 @@ export interface ImportPlan {
   warnings: string[];
 }
 
-const CATEGORIES: RuleCategory[] = ['state', 'commodity', 'operation_type', 'radius_miles', 'fleet_size', 'years_in_business', 'driver_age', 'driver_experience', 'vehicle_type', 'vehicle_age', 'claims_3y', 'telematics', 'dashcam', 'dot_number', 'coverage_offered', 'other'];
+const CATEGORIES: RuleCategory[] = ['state', 'commodity', 'operation_type', 'radius_miles', 'fleet_size', 'years_in_business', 'driver_age', 'driver_experience', 'vehicle_type', 'operation_class', 'vehicle_age', 'claims_3y', 'telematics', 'dashcam', 'dot_number', 'coverage_offered', 'other'];
 const OPERATORS: RuleOperator[] = ['any_of', 'lt', 'lte', 'gt', 'gte', 'between', 'is_true', 'is_false', 'missing', 'offered', 'text'];
 const NUMERIC: RuleOperator[] = ['lt', 'lte', 'gt', 'gte'];
 const CREDENTIAL_HEADER = /pass(word)?|credential|secret|login|username|pin\b|token/i;
@@ -210,6 +214,7 @@ export function planImport(rows: string[][], existing: AgencyCarrier[]): ImportP
         sourceDate: date(get('source_date'), 'source_date', where, errors),
         verifiedAt: date(get('verified_at'), 'verified_at', where, errors),
         notes: get('notes'),
+        documentedStatus: get('documented_status'),
         rules: [],
       });
     } else if (type === 'contact') {
@@ -228,7 +233,7 @@ export function planImport(rows: string[][], existing: AgencyCarrier[]): ImportP
       if (strength === 'hard' && answer === 'no' && !verifiedAt) warnings.push(`${where}: a hard NO without verified_at is treated as "underwriter review", not a decline, until it is verified.`);
       pendingRules.push([ref, {
         ref: ruleRef, coverage, category, operator, value: ruleValue(operator, get('value'), where, errors), answer, strength: strength ?? 'soft', conditions,
-        conditionsText: get('conditions_text'), source: get('source'), sourceDate: date(get('source_date'), 'source_date', where, errors), lastVerifiedAt: verifiedAt, verifiedBy: get('verified_by'), notes: get('notes'),
+        conditionsText: get('conditions_text'), source: get('source'), sourceDate: date(get('source_date'), 'source_date', where, errors), lastVerifiedAt: verifiedAt, verifiedBy: get('verified_by'), notes: get('notes'), documentedStatus: get('documented_status'),
       }, where]);
     } else {
       errors.push(`${where}: record_type "${get('record_type') ?? ''}" — use market, contact or rule.`);
@@ -270,7 +275,7 @@ export function planImportJson(text: string, existing: AgencyCarrier[]): ImportP
   } catch {
     return { markets: [], preview: [], errors: ['The file is not valid JSON.'], warnings: [] };
   }
-  const header = ['record_type', 'market_ref', 'market', 'market_type', 'access_route', 'access_status', 'wholesaler', 'mga', 'paper', 'portal_name', 'portal_url', 'submission_email', 'producer_code', 'appointment', 'appointment_notes', 'source', 'source_date', 'verified_at', 'notes', 'rule_ref', 'coverage', 'category', 'operator', 'value', 'answer', 'strength', 'conditions', 'conditions_text', 'verified_by', 'contact_name', 'contact_role', 'contact_email', 'contact_phone'];
+  const header = ['record_type', 'market_ref', 'market', 'market_type', 'access_route', 'access_status', 'wholesaler', 'mga', 'paper', 'portal_name', 'portal_url', 'submission_email', 'producer_code', 'appointment', 'appointment_notes', 'source', 'source_date', 'verified_at', 'notes', 'rule_ref', 'coverage', 'category', 'operator', 'value', 'answer', 'strength', 'conditions', 'conditions_text', 'verified_by', 'contact_name', 'contact_role', 'contact_email', 'contact_phone', 'documented_status'];
   if (JSON.stringify(data).match(CREDENTIAL_HEADER)) {
     const keys = Object.keys(data.markets?.[0] ?? {}).filter((k) => CREDENTIAL_HEADER.test(k));
     if (keys.length) return { markets: [], preview: [], errors: [`Remove ${keys.join(', ')} — passwords and logins are never imported or stored.`], warnings: [] };
@@ -279,12 +284,12 @@ export function planImportJson(text: string, existing: AgencyCarrier[]): ImportP
   const at = (h: string) => header.indexOf(h);
   const row = (vals: Record<string, unknown>) => { const r = header.map(() => ''); for (const [k, v] of Object.entries(vals)) if (at(k) >= 0 && v !== null && v !== undefined) r[at(k)] = Array.isArray(v) ? v.join('|') : String(v); return r; };
   for (const m of data.markets ?? []) {
-    rows.push(row({ record_type: 'market', market_ref: m.ref, market: m.name, market_type: m.marketType, access_route: m.accessRoute, access_status: m.accessStatus, wholesaler: m.wholesaler, mga: m.mga, paper: m.paper, portal_name: m.portalName, portal_url: m.portalUrl, submission_email: m.submissionEmail, producer_code: m.producerCode, appointment: m.appointment, appointment_notes: m.appointmentNotes, source: m.source, source_date: m.sourceDate, verified_at: m.verifiedAt, notes: m.notes }));
+    rows.push(row({ record_type: 'market', market_ref: m.ref, market: m.name, market_type: m.marketType, access_route: m.accessRoute, access_status: m.accessStatus, wholesaler: m.wholesaler, mga: m.mga, paper: m.paper, portal_name: m.portalName, portal_url: m.portalUrl, submission_email: m.submissionEmail, producer_code: m.producerCode, appointment: m.appointment, appointment_notes: m.appointmentNotes, source: m.source, source_date: m.sourceDate, verified_at: m.verifiedAt, notes: m.notes, documented_status: m.documentedStatus }));
     for (const c of m.contacts ?? []) rows.push(row({ record_type: 'contact', market_ref: m.ref, contact_name: c.name, contact_role: c.role, contact_email: c.email, contact_phone: c.phone, coverage: c.coverage, notes: c.notes }));
     for (const r of m.rules ?? []) {
       const value = Array.isArray(r.value) && r.operator === 'between' ? `${r.value[0]}-${r.value[1]}` : r.value;
       const conditions = (r.conditions ?? []).map((c) => `${c.category} ${c.operator}${c.value !== undefined && c.value !== null ? ` ${Array.isArray(c.value) ? (c.operator === 'between' ? `${c.value[0]}-${c.value[1]}` : c.value.join('|')) : c.value}` : ''}`).join(' AND ');
-      rows.push(row({ record_type: 'rule', market_ref: m.ref, rule_ref: r.ref, coverage: r.coverage, category: r.category, operator: r.operator, value, answer: r.answer, strength: r.strength, conditions, conditions_text: r.conditionsText, source: r.source, source_date: r.sourceDate, verified_at: r.lastVerifiedAt, verified_by: r.verifiedBy, notes: r.notes }));
+      rows.push(row({ record_type: 'rule', market_ref: m.ref, rule_ref: r.ref, coverage: r.coverage, category: r.category, operator: r.operator, value, answer: r.answer, strength: r.strength, conditions, conditions_text: r.conditionsText, source: r.source, source_date: r.sourceDate, verified_at: r.lastVerifiedAt, verified_by: r.verifiedBy, notes: r.notes, documented_status: r.documentedStatus }));
     }
   }
   return planImport(rows, existing);

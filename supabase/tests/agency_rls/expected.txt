@@ -422,11 +422,13 @@ CR8 agent import denied: Only an agency admin can import the carrier directory.
 CR9 dry run: {"dryRun": true, "rulesAdded": 2, "marketsAdded": 1, "rulesUpdated": 0, "marketsUpdated": 1}
 CR9 dry run wrote nothing: markets=2 rules=1 imports=0
 CR10 import: {"dryRun": false, "rulesAdded": 2, "marketsAdded": 1, "rulesUpdated": 0, "marketsUpdated": 1}
+CR10 documented status kept as written: ACTIVE / READY / SUPPORTED verified_in_app=false
 CR10 existing market linked by name, appetite untouched: name=Blue Ridge Mutual status=partial ref=m-blue criteria kept=true strictness=hard
 CR10 new market: Example Program Co source=import agency own=true
 CR11 re-import updates, no duplicates: {"dryRun": false, "rulesAdded": 0, "marketsAdded": 0, "rulesUpdated": 1, "marketsUpdated": 1} markets=1 rules=1
 CR12 invalid rule rejects the whole import
 CR12 nothing from the bad import: 0
+CR12 operations rule (cargo or equipment) accepted: 1
 CR13 admin sees import log=2 file=directory.csv
 CR13 agent sees import log=0
 CR14 other agency imports into its own agency: {"dryRun": false, "rulesAdded": 0, "marketsAdded": 1, "rulesUpdated": 0, "marketsUpdated": 0}

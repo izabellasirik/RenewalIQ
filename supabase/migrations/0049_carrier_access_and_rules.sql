@@ -13,6 +13,9 @@
 --      producer_code, appointment_status, appointment_notes
 --      contacts         jsonb array of {name, role, email, phone, coverage, notes}
 --      access_source, access_source_date, access_verified_at, access_notes
+--      access_documented_status   the status exactly as the agency's source states it (e.g.
+--                       "PENDING VERIFICATION / PARTIAL") — kept apart from access_verified_at,
+--                       which is set only when the agency has independently confirmed the route
 --    Passwords/credentials are never stored (there is no column for them).
 --
 -- 2. Carrier 102 — agency_carrier_rules: one row per underwriting rule of one market:
@@ -23,6 +26,9 @@
 --      strength         hard | soft | info
 --      conditions       extra tests that must hold for the rule to apply (+ conditions_text)
 --      source, source_date, last_verified_at, verified_by, notes
+--      documented_status   the verification wording of the source (e.g. "VERIFIED", "SUPPORTED",
+--                          "Underwriter-confirmed") — a record of what the source says, NOT a
+--                          RenewalIQ verification; it never makes a rule decline on its own
 --    Only a VERIFIED (last_verified_at set) HARD "no" can make Market Finder say Not Eligible.
 --    "unknown" never declines. Unverified rules are shown as "confirm with the market".
 --
@@ -56,7 +62,8 @@ alter table public.agency_carriers
   add column if not exists access_source text,
   add column if not exists access_source_date date,
   add column if not exists access_verified_at date,
-  add column if not exists access_notes text;
+  add column if not exists access_notes text,
+  add column if not exists access_documented_status text;
 
 do $$ begin
   alter table public.agency_carriers add constraint agency_carriers_access_route_check check (access_route is null or access_route in ('direct', 'indirect'));
@@ -75,7 +82,7 @@ do $$ begin
     coalesce(length(mga_name), 0) <= 200 and coalesce(length(wholesaler_name), 0) <= 200 and coalesce(length(paper_carrier), 0) <= 200
     and coalesce(length(portal_name), 0) <= 200 and coalesce(length(portal_url), 0) <= 1000 and coalesce(length(submission_email), 0) <= 320
     and coalesce(length(producer_code), 0) <= 200 and coalesce(length(appointment_status), 0) <= 200 and coalesce(length(appointment_notes), 0) <= 4000
-    and coalesce(length(access_source), 0) <= 500 and coalesce(length(access_notes), 0) <= 4000);
+    and coalesce(length(access_source), 0) <= 500 and coalesce(length(access_notes), 0) <= 4000 and coalesce(length(access_documented_status), 0) <= 500);
 exception when duplicate_object then null; end $$;
 -- One market per import reference per agency.
 create unique index if not exists agency_carriers_external_ref_idx on public.agency_carriers (agency_id, external_ref) where external_ref is not null;
@@ -98,6 +105,7 @@ create table if not exists public.agency_carrier_rules (
   source_date date,
   last_verified_at date,
   verified_by text,
+  documented_status text,
   notes text,
   archived_at timestamptz,
   created_by uuid references auth.users (id) on delete set null,
@@ -105,7 +113,7 @@ create table if not exists public.agency_carrier_rules (
   updated_by uuid references auth.users (id) on delete set null,
   updated_at timestamptz not null default now(),
   constraint agency_carrier_rules_coverage_check check (coverage is null or coverage in ('auto_liability', 'motor_truck_cargo', 'physical_damage', 'general_liability', 'warehouse_legal_liability', 'trailer_interchange', 'non_trucking_liability')),
-  constraint agency_carrier_rules_category_check check (category in ('state', 'commodity', 'operation_type', 'radius_miles', 'fleet_size', 'years_in_business', 'driver_age', 'driver_experience', 'vehicle_type', 'vehicle_age', 'claims_3y', 'telematics', 'dashcam', 'dot_number', 'coverage_offered', 'other')),
+  constraint agency_carrier_rules_category_check check (category in ('state', 'commodity', 'operation_type', 'radius_miles', 'fleet_size', 'years_in_business', 'driver_age', 'driver_experience', 'vehicle_type', 'operation_class', 'vehicle_age', 'claims_3y', 'telematics', 'dashcam', 'dot_number', 'coverage_offered', 'other')),
   constraint agency_carrier_rules_operator_check check (operator in ('any_of', 'lt', 'lte', 'gt', 'gte', 'between', 'is_true', 'is_false', 'missing', 'offered', 'text')),
   constraint agency_carrier_rules_answer_check check (answer in ('yes', 'no', 'referral', 'unknown')),
   constraint agency_carrier_rules_strength_check check (strength in ('hard', 'soft', 'info')),
@@ -113,8 +121,12 @@ create table if not exists public.agency_carrier_rules (
   constraint agency_carrier_rules_value_check check (value is null or length(value::text) <= 4000),
   constraint agency_carrier_rules_text_check check (
     coalesce(length(external_ref), 0) <= 200 and coalesce(length(conditions_text), 0) <= 2000 and coalesce(length(source), 0) <= 500
-    and coalesce(length(verified_by), 0) <= 200 and coalesce(length(notes), 0) <= 4000)
+    and coalesce(length(verified_by), 0) <= 200 and coalesce(length(notes), 0) <= 4000 and coalesce(length(documented_status), 0) <= 300)
 );
+alter table public.agency_carrier_rules add column if not exists documented_status text;
+-- Re-runnable: the category list is (re)set here, so a re-run picks up the full list.
+alter table public.agency_carrier_rules drop constraint if exists agency_carrier_rules_category_check;
+alter table public.agency_carrier_rules add constraint agency_carrier_rules_category_check check (category in ('state', 'commodity', 'operation_type', 'radius_miles', 'fleet_size', 'years_in_business', 'driver_age', 'driver_experience', 'vehicle_type', 'operation_class', 'vehicle_age', 'claims_3y', 'telematics', 'dashcam', 'dot_number', 'coverage_offered', 'other'));
 create index if not exists agency_carrier_rules_carrier_idx on public.agency_carrier_rules (carrier_id);
 create index if not exists agency_carrier_rules_agency_idx on public.agency_carrier_rules (agency_id);
 create unique index if not exists agency_carrier_rules_external_ref_idx on public.agency_carrier_rules (carrier_id, external_ref) where external_ref is not null;
@@ -261,7 +273,8 @@ begin
         access_source = nullif(btrim(m ->> 'source'), ''),
         access_source_date = nullif(m ->> 'sourceDate', '')::date,
         access_verified_at = nullif(m ->> 'verifiedAt', '')::date,
-        access_notes = nullif(btrim(m ->> 'notes'), '')
+        access_notes = nullif(btrim(m ->> 'notes'), ''),
+        access_documented_status = nullif(btrim(m ->> 'documentedStatus'), '')
       where id = v_carrier;
 
       for r in select * from jsonb_array_elements(coalesce(m -> 'rules', '[]'::jsonb)) loop
@@ -270,17 +283,17 @@ begin
         end if;
         select id into v_rule from public.agency_carrier_rules where carrier_id = v_carrier and external_ref = r ->> 'ref';
         if v_rule is null then
-          insert into public.agency_carrier_rules (agency_id, carrier_id, external_ref, coverage, category, operator, value, answer, strength, conditions, conditions_text, source, source_date, last_verified_at, verified_by, notes)
+          insert into public.agency_carrier_rules (agency_id, carrier_id, external_ref, coverage, category, operator, value, answer, strength, conditions, conditions_text, source, source_date, last_verified_at, verified_by, notes, documented_status)
           values (v_agency, v_carrier, r ->> 'ref', nullif(r ->> 'coverage', ''), r ->> 'category', r ->> 'operator', r -> 'value', r ->> 'answer', coalesce(nullif(r ->> 'strength', ''), 'soft'),
                   coalesce(r -> 'conditions', '[]'::jsonb), nullif(btrim(r ->> 'conditionsText'), ''), nullif(btrim(r ->> 'source'), ''), nullif(r ->> 'sourceDate', '')::date,
-                  nullif(r ->> 'lastVerifiedAt', '')::date, nullif(btrim(r ->> 'verifiedBy'), ''), nullif(btrim(r ->> 'notes'), ''));
+                  nullif(r ->> 'lastVerifiedAt', '')::date, nullif(btrim(r ->> 'verifiedBy'), ''), nullif(btrim(r ->> 'notes'), ''), nullif(btrim(r ->> 'documentedStatus'), ''));
           n_rules_added := n_rules_added + 1;
         else
           update public.agency_carrier_rules set
             coverage = nullif(r ->> 'coverage', ''), category = r ->> 'category', operator = r ->> 'operator', value = r -> 'value', answer = r ->> 'answer',
             strength = coalesce(nullif(r ->> 'strength', ''), 'soft'), conditions = coalesce(r -> 'conditions', '[]'::jsonb), conditions_text = nullif(btrim(r ->> 'conditionsText'), ''),
             source = nullif(btrim(r ->> 'source'), ''), source_date = nullif(r ->> 'sourceDate', '')::date, last_verified_at = nullif(r ->> 'lastVerifiedAt', '')::date,
-            verified_by = nullif(btrim(r ->> 'verifiedBy'), ''), notes = nullif(btrim(r ->> 'notes'), ''), archived_at = null
+            verified_by = nullif(btrim(r ->> 'verifiedBy'), ''), notes = nullif(btrim(r ->> 'notes'), ''), documented_status = nullif(btrim(r ->> 'documentedStatus'), ''), archived_at = null
           where id = v_rule;
           n_rules_updated := n_rules_updated + 1;
         end if;

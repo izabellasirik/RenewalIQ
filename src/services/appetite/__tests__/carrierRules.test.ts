@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyRiskProfile } from '../../extraction/emptyRiskProfile';
-import { evaluateMarket, matchAllMarkets } from '../matchingEngine';
-import { evaluateRule } from '../carrierRules';
+import { evaluateMarket, matchAllMarkets, VERDICT_RANK } from '../matchingEngine';
+import { evaluateRule, mentions } from '../carrierRules';
 import { agencyCarrierToRecord, type AgencyCarrier } from '../agencyCarriers';
 import { sampleAppetiteRecords } from '../../../data/carriers';
 import type { AppetiteRecord, CarrierRule, CoverageType, MarketAccess, RiskProfile } from '../../../types';
@@ -53,6 +53,12 @@ describe('Carrier 102 — only a verified hard NO declines', () => {
     }
   });
 
+  it("a source's own 'VERIFIED' wording is a record, not a RenewalIQ verification — it cannot decline", () => {
+    const r = evaluateMarket(market([hazmatNo({ lastVerifiedAt: null, documentedStatus: 'VERIFIED' }), fleetNo()]), account({ fleet: 5, commodities: ['Hazmat'] }));
+    expect(r.verdict).not.toBe('not_eligible');
+    expect(r.reasons.find((x) => x.group === 'review')?.ruleSource).toMatch(/documented VERIFIED/);
+  });
+
   it('UNKNOWN never means declined', () => {
     const o = evaluateRule(rule({ category: 'commodity', operator: 'any_of', value: ['hazmat'], answer: 'unknown', strength: 'hard' }), account({ commodities: ['Hazmat'] }), ASOF);
     expect(o.status).toBe('confirm');
@@ -78,8 +84,21 @@ describe('Carrier 102 — passes, referrals, YES ranges, conditions', () => {
     expect(r.verifiedMatchCount).toBe(3);
   });
 
-  it('an unverified pass is not enough evidence for Likely Match', () => {
-    expect(evaluateMarket(market([hazmatNo({ lastVerifiedAt: null }), fleetNo({ lastVerifiedAt: null })]), account({ fleet: 8, commodities: ['Dry van'] })).verdict).toBe('needs_more_information');
+  it('an unverified pass is not enough evidence for Likely Match — it reads Possible (underwriter review)', () => {
+    expect(evaluateMarket(market([hazmatNo({ lastVerifiedAt: null }), fleetNo({ lastVerifiedAt: null })]), account({ fleet: 8, commodities: ['Dry van'] })).verdict).toBe('possible_match');
+  });
+
+  it('on an unverified market, an account that clears every rule never ranks below one that hits an exclusion', () => {
+    const m = market([hazmatNo({ lastVerifiedAt: null }), fleetNo({ lastVerifiedAt: null }), rule({ category: 'driver_experience', operator: 'gte', value: 2, answer: 'yes', lastVerifiedAt: null })]);
+    const clean = evaluateMarket(m, account({ fleet: 8, commodities: ['Dry van'] }));
+    const hazmat = evaluateMarket(m, account({ fleet: 8, commodities: ['Hazmat'] }));
+    expect(clean.verdict).toBe('possible_match');
+    expect(VERDICT_RANK[hazmat.verdict]).toBeGreaterThanOrEqual(VERDICT_RANK[clean.verdict]);
+    expect(clean.matchScore).toBeGreaterThan(hazmat.matchScore);
+  });
+
+  it('an UNKNOWN that applies outweighs a single unverified pass → Needs More Information', () => {
+    expect(evaluateMarket(market([fleetNo({ lastVerifiedAt: null }), rule({ category: 'commodity', operator: 'any_of', value: ['hazmat'], answer: 'unknown' })]), account({ fleet: 8, commodities: ['Hazmat'] })).verdict).toBe('needs_more_information');
   });
 
   it('REFERRAL → Possible Match / underwriter review', () => {
@@ -109,6 +128,58 @@ describe('Carrier 102 — passes, referrals, YES ranges, conditions', () => {
 
   it('archived rules are ignored', () => {
     expect(evaluateMarket(market([hazmatNo({ archivedAt: '2026-10-01' }), fleetNo()]), account({ fleet: 3, commodities: ['Hazmat'] })).verdict).not.toBe('not_eligible');
+  });
+});
+
+describe('Carrier 102 — every driver, every unit, every state', () => {
+  const withDrivers = (dobs: string[]) => Object.assign(account({}), { drivers: dobs.map((dob, i) => ({ id: `d${i}`, dob })) });
+  const withUnits = (years: number[]) => Object.assign(account({}), { vehicles: years.map((year, i) => ({ id: `v${i}`, year })) });
+
+  it('a YES age range must hold for every driver; one outside it is a review', () => {
+    const r = rule({ category: 'driver_age', operator: 'between', value: [25, 70], answer: 'yes', strength: 'hard' });
+    expect(evaluateRule(r, withDrivers(['1980-01-01', '1990-01-01']), ASOF).status).toBe('pass');
+    expect(evaluateRule(r, withDrivers(['1980-01-01', '2004-06-01']), ASOF).status).toBe('review');
+  });
+
+  it('an exclusion triggers on any one driver or unit', () => {
+    expect(evaluateRule(rule({ category: 'driver_age', operator: 'lt', value: 23, answer: 'no', strength: 'hard' }), withDrivers(['1980-01-01', '2005-01-01']), ASOF).status).toBe('fail');
+    expect(evaluateRule(rule({ category: 'vehicle_age', operator: 'gt', value: 20, answer: 'no', strength: 'hard' }), withUnits([2020, 2001]), ASOF).status).toBe('fail');
+    expect(evaluateRule(rule({ category: 'vehicle_age', operator: 'gt', value: 20, answer: 'no', strength: 'hard' }), withUnits([2020, 2015]), ASOF).status).toBe('pass');
+  });
+
+  it('a YES state list must cover every operating state; a NO list triggers on any one', () => {
+    const acct = account({ state: 'TX' });
+    acct.transportation.statesOfOperation = Object.assign(acct.transportation.statesOfOperation, { value: ['OK', 'NY'], isMissing: false });
+    expect(evaluateRule(rule({ category: 'state', operator: 'any_of', value: ['TX', 'OK'], answer: 'yes', strength: 'hard' }), acct, ASOF).status).toBe('review');
+    expect(evaluateRule(rule({ category: 'state', operator: 'any_of', value: ['NY', 'NJ'], answer: 'no', strength: 'hard' }), acct, ASOF).status).toBe('fail');
+  });
+});
+
+describe('Carrier 102 — keywords in the account\'s own words', () => {
+  it('negated wording does not match', () => {
+    expect(mentions('Tanker (non-hazmat)', 'hazmat')).toBe(false);
+    expect(mentions('Dry van, no hazmat', 'hazmat')).toBe(false);
+    expect(mentions('General freight without hazmat', 'hazmat')).toBe(false);
+    expect(mentions('Hazmat class 3', 'hazmat')).toBe(true);
+    expect(mentions('Non-hazmat chemicals; hazmat placarded loads', 'hazmat')).toBe(true);
+  });
+
+  it('only matches at a word start (no "log" in "catalog")', () => {
+    expect(mentions('Catalog shipments', 'log')).toBe(false);
+    expect(mentions('Logs and lumber', 'log')).toBe(true);
+  });
+
+  it('a non-hazmat tanker is clear of a hazmat exclusion', () => {
+    expect(evaluateRule(hazmatNo(), account({ commodities: ['Tanker (non-hazmat)'] }), ASOF).status).toBe('pass');
+  });
+
+  it('operations look at both cargo and equipment', () => {
+    const r = rule({ category: 'operation_class', operator: 'any_of', value: ['auto hauler'], answer: 'no', strength: 'hard' });
+    const acct = account({ commodities: ['Vehicles'] });
+    acct.transportation.vehicleTypes = Object.assign(acct.transportation.vehicleTypes, { value: ['Auto hauler trailer'], isMissing: false });
+    expect(evaluateRule(r, acct, ASOF).status).toBe('fail');
+    expect(evaluateRule(r, account({ commodities: ['Dry van'] }), ASOF).status).toBe('pass');
+    expect(evaluateRule(r, account({}), ASOF).status).toBe('confirm');
   });
 });
 

@@ -1,7 +1,7 @@
 import type { AppetiteRecord, MatchReason, MatchResult, RiskProfile, Verdict } from '../../types';
 import { ALL_RULES } from './rules';
 import { computeRecordFreshness, computeRulesMarketFreshness } from './freshness';
-import { bestCoverageVerdict, evaluateRulesByCoverage } from './carrierRules';
+import { bestCoverageVerdict, evaluateRulesByCoverage, rulesFitScore } from './carrierRules';
 
 /** Below this many verified (not data-gap) pass criteria, there isn't enough real signal to make a useful call either way. */
 const MIN_VERIFIED_FOR_A_VERDICT = 2;
@@ -70,7 +70,7 @@ function evaluateRulesMarket(record: AppetiteRecord, profile: RiskProfile): Matc
     availableThrough: record.availableThrough,
     verdict,
     reasons,
-    matchScore: verdict === 'not_eligible' || reasons.length === 0 ? 0 : computeMatchScore(reasons),
+    matchScore: verdict === 'not_eligible' || reasons.length === 0 ? 0 : rulesFitScore(reasons),
     verifiedMatchCount: reasons.filter((r) => r.status === 'pass' && r.ruleVerified !== false).length,
     needsVerificationCount: reasons.filter((r) => r.status === 'warning' && r.isDataGap).length,
     freshness: freshness.state,
@@ -120,5 +120,5 @@ export function matchAllMarkets(records: AppetiteRecord[], profile: RiskProfile)
     // An inactive market (Carrier 101) is not suggested at all.
     .filter((record) => record.access?.status !== 'inactive')
     .map((record) => evaluateMarket(record, profile))
-    .sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict]);
+    .sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.verifiedMatchCount - a.verifiedMatchCount || b.matchScore - a.matchScore);
 }

@@ -54,6 +54,15 @@ describe('directory import (Carrier 101 + 102)', () => {
     expect(plan.warnings.some((w) => /Row 6: a hard NO without verified_at/.test(w))).toBe(true);
   });
 
+  it('keeps the documented status of markets and rules exactly as written', () => {
+    const csv = ['record_type,market_ref,market,access_status,documented_status,rule_ref,category,operator,value,answer,strength,verified_at', 'market,M1,Example,partial,PENDING VERIFICATION / PARTIAL,,,,,,,', 'rule,M1,,,SUPPORTED,R1,other,text,Team driving,no,hard,'].join('\n');
+    const plan = planImport(parseCsvText(csv), []);
+    expect(plan.errors).toEqual([]);
+    expect(plan.markets[0].documentedStatus).toBe('PENDING VERIFICATION / PARTIAL');
+    expect(plan.markets[0].rules[0]).toMatchObject({ documentedStatus: 'SUPPORTED', lastVerifiedAt: null });
+    expect(planImportJson(JSON.stringify({ markets: plan.markets }), []).markets).toEqual(plan.markets);
+  });
+
   it('accepts the same content as JSON', () => {
     const csvPlan = planImport(parseCsvText(IMPORT_TEMPLATE_CSV), []);
     const json = JSON.stringify({ markets: csvPlan.markets });

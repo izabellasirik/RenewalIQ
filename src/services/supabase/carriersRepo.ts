@@ -58,6 +58,7 @@ interface CarrierRow {
   access_source_date?: string | null;
   access_verified_at?: string | null;
   access_notes?: string | null;
+  access_documented_status?: string | null;
 }
 
 function accessFromRow(r: CarrierRow): MarketAccess | null {
@@ -79,6 +80,7 @@ function accessFromRow(r: CarrierRow): MarketAccess | null {
     sourceDate: r.access_source_date ?? null,
     verifiedAt: r.access_verified_at ?? null,
     notes: r.access_notes ?? null,
+    documentedStatus: r.access_documented_status ?? null,
   };
 }
 
@@ -99,6 +101,7 @@ interface RuleRow {
   last_verified_at: string | null;
   verified_by: string | null;
   notes: string | null;
+  documented_status?: string | null;
   archived_at: string | null;
 }
 
@@ -119,6 +122,7 @@ function ruleFromRow(r: RuleRow): CarrierRule {
     lastVerifiedAt: r.last_verified_at,
     verifiedBy: r.verified_by,
     notes: r.notes,
+    documentedStatus: r.documented_status ?? null,
     archivedAt: r.archived_at,
   };
 }
@@ -241,6 +245,7 @@ export async function saveMarketAccess(carrierId: string, a: MarketAccess): Prom
     access_source_date: t(a.sourceDate),
     access_verified_at: t(a.verifiedAt),
     access_notes: t(a.notes),
+    access_documented_status: t(a.documentedStatus),
   };
   try {
     const { data, error } = await supabase.from('agency_carriers').update(row).eq('id', carrierId).select('*');
@@ -271,6 +276,7 @@ export async function saveCarrierRule(carrierId: string, input: RuleInput, id?: 
     last_verified_at: t(input.lastVerifiedAt),
     verified_by: t(input.verifiedBy),
     notes: t(input.notes),
+    documented_status: t(input.documentedStatus),
   };
   try {
     const q = id

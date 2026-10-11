@@ -1,6 +1,7 @@
 import type { CarrierRule, CoverageResult, CoverageType, MatchReason, RiskProfile, RulePredicate, Verdict } from '../../types';
 import { COVERAGE_LABELS, RULE_ANSWER_LABELS, RULE_CATEGORY_LABELS } from '../../types';
 import { toMonths, toYears } from '../../utils/duration';
+import { driverExperience } from '../../utils/driverExperience';
 import { classifyOperationType, minDriverExperienceMonths, parseLeadingMiles } from './rules';
 
 /**
@@ -28,10 +29,15 @@ export interface RuleOutcome {
   explanation: string;
 }
 
-type Test = { known: false; need: string } | { known: true; matches: boolean; actual: string };
+/**
+ * The account against one test. `matches` = at least one of the account's values matches (what an
+ * exclusion, referral or UNKNOWN needs); `matchesAll` = every value matches (what a YES range needs,
+ * e.g. every driver aged 25–70). For a single value they're the same.
+ */
+type Test = { known: false; need: string } | { known: true; matches: boolean; matchesAll: boolean; actual: string };
 
 const unknown = (need: string): Test => ({ known: false, need });
-const known = (matches: boolean, actual: string): Test => ({ known: true, matches, actual });
+const known = (matches: boolean, actual: string, matchesAll = matches): Test => ({ known: true, matches, matchesAll, actual });
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : typeof v === 'string' && v.trim() ? v.split(',').map((x) => x.trim()).filter(Boolean) : []);
 const lc = (s: string) => s.toLowerCase();
 
@@ -70,68 +76,102 @@ export function describePredicate(p: RulePredicate): string {
   }
 }
 
-function numeric(p: RulePredicate, actual: number | null, need: string, show: (n: number) => string): Test {
-  if (actual === null) return unknown(need);
-  const m = compare(p.operator, actual, p.value);
-  return m === null ? unknown('a usable rule value') : known(m, show(actual));
+function numeric(p: RulePredicate, values: number[], need: string, show: (values: number[]) => string): Test {
+  if (!values.length) return unknown(need);
+  const each = values.map((v) => compare(p.operator, v, p.value));
+  if (each.some((m) => m === null)) return unknown('a usable rule value');
+  return known(each.some(Boolean), show(values), each.every(Boolean));
 }
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * Keyword in the account's own words, at a word start, and not negated: "Tanker (non-hazmat)" or
+ * "no hazmat" does not match "hazmat".
+ */
+export function mentions(text: string, keyword: string): boolean {
+  const t = text.toLowerCase();
+  const k = keyword.trim().toLowerCase();
+  if (!k) return false;
+  const re = new RegExp(`(^|[^a-z0-9])${escapeRe(k)}`, 'g');
+  for (let m = re.exec(t); m; m = re.exec(t)) {
+    const before = t.slice(0, m.index + m[1].length);
+    if (!/(?:\bnon[\s-]?|\bno\s+|\bnot\s+|\bwithout\s+)$/.test(before)) return true;
+  }
+  return false;
+}
+
+function keywords(p: RulePredicate, have: string[], need: string): Test {
+  if (!have.length) return unknown(need);
+  const want = asList(p.value);
+  const hits = have.filter((h) => want.some((w) => mentions(h, w)));
+  // A YES list ("eligible: dry van, flatbed") is met when the account does any of them; other work is caught by the market's other rules.
+  return known(hits.length > 0, hits.length ? hits.join(', ') : have.join(', '));
+}
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
 
 /** Does this account match the predicate? Unknown when the account doesn't say. */
 export function testPredicate(p: RulePredicate, profile: RiskProfile, asOf = new Date()): Test {
   const t = profile.transportation;
+  const commodities = t.commoditiesHauled.value ?? [];
+  const vehicleTypes = [...(t.vehicleTypes.value ?? []), ...profile.vehicles.map((v) => v.bodyType ?? '').filter(Boolean)];
   switch (p.category) {
     case 'state': {
-      const states = [profile.business.state.value, ...(t.statesOfOperation.value ?? [])].filter((s): s is string => !!s).map((s) => s.toUpperCase());
+      const states = [...new Set([profile.business.state.value, ...(t.statesOfOperation.value ?? [])].filter((s): s is string => !!s).map((s) => s.toUpperCase()))];
       if (!states.length) return unknown('domicile / operating states');
       const want = asList(p.value).map((s) => s.toUpperCase());
       const hits = states.filter((s) => want.includes(s));
-      return known(hits.length > 0, hits.length ? hits.join(', ') : [...new Set(states)].join(', '));
+      return known(hits.length > 0, hits.length ? hits.join(', ') : states.join(', '), hits.length === states.length);
     }
     case 'commodity':
-    case 'vehicle_type': {
-      const have = p.category === 'commodity'
-        ? (t.commoditiesHauled.value ?? [])
-        : [...(t.vehicleTypes.value ?? []), ...profile.vehicles.map((v) => v.bodyType ?? '').filter(Boolean)];
-      if (!have.length) return unknown(p.category === 'commodity' ? 'commodities hauled' : 'vehicle types');
-      const want = asList(p.value).map(lc);
-      const hits = have.filter((h) => want.some((w) => lc(h).includes(w) || w.includes(lc(h))));
-      return known(hits.length > 0, hits.length ? hits.join(', ') : have.join(', '));
-    }
+      return keywords(p, commodities, 'commodities hauled');
+    case 'vehicle_type':
+      return keywords(p, vehicleTypes, 'vehicle types');
+    case 'operation_class':
+      return keywords(p, [...commodities, ...vehicleTypes], 'commodities / equipment');
     case 'operation_type': {
       const op = classifyOperationType(t.operatingRadius.value);
       if (!op) return unknown('operation type / radius');
       return known(asList(p.value).map(lc).includes(op), op.replace('_', ' '));
     }
-    case 'radius_miles':
-      return numeric(p, parseLeadingMiles(t.operatingRadius.value), 'operating radius in miles', (n) => `${n} miles`);
-    case 'fleet_size':
-      return numeric(p, t.fleetSize.value ?? (profile.vehicles.length || null), 'fleet size', (n) => `${n} units`);
-    case 'years_in_business':
-      return numeric(p, toYears(profile.business.yearsInBusiness.value), 'years in business', (n) => `${Math.round(n * 10) / 10} years`);
+    case 'radius_miles': {
+      const miles = parseLeadingMiles(t.operatingRadius.value);
+      return numeric(p, miles === null ? [] : [miles], 'operating radius in miles', ([n]) => `${n} miles`);
+    }
+    case 'fleet_size': {
+      const fleet = t.fleetSize.value ?? (profile.vehicles.length || null);
+      return numeric(p, fleet === null ? [] : [fleet], 'fleet size', ([n]) => `${n} unit${n === 1 ? '' : 's'}`);
+    }
+    case 'years_in_business': {
+      const y = toYears(profile.business.yearsInBusiness.value);
+      return numeric(p, y === null ? [] : [y], 'years in business', ([n]) => `${round1(n)} years`);
+    }
     case 'driver_age': {
       const ages = profile.drivers.map((d) => (d.dob ? ageOn(d.dob, asOf) : null)).filter((a): a is number => a !== null);
-      const youngest = ages.length ? Math.min(...ages) : t.minDriverAge.value;
-      return numeric(p, youngest ?? null, 'driver ages', (n) => `youngest driver ${n}`);
+      const values = ages.length ? ages : t.minDriverAge.value !== null ? [t.minDriverAge.value] : [];
+      return numeric(p, values, 'driver ages', (v) => (v.length > 1 ? `drivers aged ${Math.min(...v)}–${Math.max(...v)}` : `driver age ${v[0]}`));
     }
     case 'driver_experience': {
-      const months = minDriverExperienceMonths(profile).months ?? toMonths(t.minDriverExperienceYears.value);
-      return numeric(p, months === null ? null : months / 12, 'driver experience', (n) => `least experienced driver ${Math.round(n * 10) / 10} years`);
+      const each = profile.drivers.map((d) => toMonths(driverExperience(d))).filter((m): m is number => m !== null);
+      const fallback = minDriverExperienceMonths(profile).months ?? toMonths(t.minDriverExperienceYears.value);
+      const values = (each.length ? each : fallback !== null ? [fallback] : []).map((m) => m / 12);
+      return numeric(p, values, 'driver experience', (v) => (v.length > 1 ? `driver experience ${round1(Math.min(...v))}–${round1(Math.max(...v))} years` : `driver experience ${round1(v[0])} years`));
     }
     case 'vehicle_age': {
-      const years = profile.vehicles.map((v) => v.year).filter((y): y is number => typeof y === 'number' && y > 1900);
-      return numeric(p, years.length ? asOf.getFullYear() - Math.min(...years) : null, 'vehicle years', (n) => `oldest unit ${n} years`);
+      const ages = profile.vehicles.map((v) => v.year).filter((y): y is number => typeof y === 'number' && y > 1900).map((y) => asOf.getFullYear() - y);
+      return numeric(p, ages, 'vehicle years', (v) => (v.length > 1 ? `units ${Math.min(...v)}–${Math.max(...v)} years old` : `unit ${v[0]} years old`));
     }
     case 'claims_3y': {
       if (!profile.lossHistory.length) return unknown('loss runs');
       const since = new Date(asOf); since.setFullYear(since.getFullYear() - 3);
       const n = profile.lossHistory.filter((l) => { const d = new Date(l.lossDate); return !Number.isNaN(d.getTime()) && d >= since; }).length;
-      return numeric(p, n, 'loss runs', (x) => `${x} claim${x === 1 ? '' : 's'} in 3 years`);
+      return numeric(p, [n], 'loss runs', ([x]) => `${x} claim${x === 1 ? '' : 's'} in 3 years`);
     }
     case 'telematics':
     case 'dashcam': {
       const v = p.category === 'telematics' ? t.telematics.value : t.dashcams.value;
       if (v === null || v === undefined) return unknown(p.category === 'telematics' ? 'telematics' : 'dash cameras');
-      return known(p.operator === 'is_false' ? v === false : v === true, v ? 'yes' : 'no');
+      return known(p.operator === 'is_false' ? v === false : v === true, `${p.category === 'telematics' ? 'telematics' : 'dash cameras'}: ${v ? 'yes' : 'no'}`);
     }
     case 'dot_number': {
       // An empty DOT field is missing data, not proof there is no DOT number.
@@ -191,7 +231,7 @@ export function evaluateRule(rule: CarrierRule, profile: RiskProfile, asOf = new
     case 'referral':
       return t.matches ? out('review', `${t.actual} — ${said}: refer to the underwriter.`) : out('pass', `Clear: ${t.actual} (referral only for ${what}).`);
     case 'yes':
-      return t.matches ? out('pass', `${t.actual} — market: ${said}.`) : out('review', `${t.actual} is outside what the market says YES to (${what}) — underwriter review.`);
+      return t.matchesAll ? out('pass', `${t.actual} — market: ${said}.`) : out('review', `${t.actual} is outside what the market says YES to (${what}) — underwriter review.`);
     default:
       return t.matches ? out('confirm', `${t.actual} — market's position on ${what} is unknown; confirm.`) : out('not_applicable', `Not relevant: ${t.actual}.`);
   }
@@ -207,7 +247,7 @@ export function outcomeToReason(o: RuleOutcome): MatchReason {
     ruleId: o.rule.id,
     ruleVerified: isVerified(o.rule),
     ruleStrength: o.rule.strength,
-    ruleSource: [o.rule.source, o.rule.sourceDate].filter(Boolean).join(', ') || undefined,
+    ruleSource: [[o.rule.source, o.rule.sourceDate].filter(Boolean).join(', '), o.rule.documentedStatus ? `documented ${o.rule.documentedStatus}` : ''].filter(Boolean).join(' · ') || undefined,
   };
   switch (o.status) {
     case 'pass': return { ...base, status: 'pass', group: 'matched' };
@@ -220,23 +260,41 @@ export function outcomeToReason(o: RuleOutcome): MatchReason {
 
 /**
  * The verdict from reasons (rule outcomes plus any verified built-in criteria):
- *   any fail (verified hard)              → Not Eligible
- *   nothing scorable / nothing verified   → Needs More Information
- *   more to confirm than verified passes  → Needs More Information
- *   any review or confirm                 → Possible Match / Underwriter Review
- *   otherwise                             → Likely Match
+ *   any fail (verified hard)                     → Not Eligible
+ *   nothing scorable                             → Needs More Information
+ *   no passes at all: reviews only → Possible, anything left to confirm → Needs More Information
+ *   more to confirm than passes (an unverified pass counts half) → Needs More Information
+ *   any review or confirm, or no VERIFIED pass   → Possible Match / Underwriter Review
+ *   otherwise                                    → Likely Match
+ * An unverified pass (a rule the agency hasn't verified yet) counts as evidence for Possible, never
+ * for Likely — so an account that clears every documented rule never ranks below one that doesn't.
  */
 export function verdictFromReasons(reasons: MatchReason[]): Verdict {
   if (reasons.some((r) => r.status === 'fail')) return 'not_eligible';
   const scored = reasons.filter((r) => r.group !== 'info');
-  const verifiedPasses = scored.filter((r) => r.status === 'pass' && r.ruleVerified !== false).length;
+  const passes = scored.filter((r) => r.status === 'pass');
+  const verifiedPasses = passes.filter((r) => r.ruleVerified !== false).length;
   const confirms = scored.filter((r) => r.group === 'needs_verification').length;
   const reviews = scored.filter((r) => r.group === 'review' || r.group === 'preference').length;
   if (scored.length === 0) return 'needs_more_information';
-  if (verifiedPasses === 0) return reviews > 0 && confirms === 0 ? 'possible_match' : 'needs_more_information';
-  if (confirms > verifiedPasses) return 'needs_more_information';
-  if (reviews > 0 || confirms > 0) return 'possible_match';
+  if (passes.length === 0) return reviews > 0 && confirms === 0 ? 'possible_match' : 'needs_more_information';
+  // An unverified pass is half the evidence of a verified one when weighed against open questions.
+  if (confirms > verifiedPasses + (passes.length - verifiedPasses) / 2) return 'needs_more_information';
+  if (reviews > 0 || confirms > 0 || verifiedPasses === 0) return 'possible_match';
   return 'likely_match';
+}
+
+/**
+ * Order within a verdict, for rules markets: fewer underwriter-review flags first (being outside a
+ * market's documented appetite is worse than an open question), then more passes, then fewer open
+ * questions. Internal only — never shown as a number.
+ */
+export function rulesFitScore(reasons: MatchReason[]): number {
+  const scored = reasons.filter((r) => r.group !== 'info');
+  const passes = scored.filter((r) => r.status === 'pass').length;
+  const reviews = scored.filter((r) => r.group === 'review' || r.group === 'preference').length;
+  const confirms = scored.filter((r) => r.group === 'needs_verification').length;
+  return Math.max(0, Math.min(100, 50 + 5 * passes - 20 * reviews - 3 * confirms));
 }
 
 const RANK: Record<Verdict, number> = { likely_match: 0, possible_match: 1, needs_more_information: 2, not_eligible: 3 };

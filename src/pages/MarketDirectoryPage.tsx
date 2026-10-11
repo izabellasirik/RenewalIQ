@@ -270,7 +270,8 @@ function DirectoryDrawer({ carrier, agencyName, isAdmin, onClose, onChanged }: {
             )}
           </div>
           <p className="mb-3 text-xs text-[var(--color-ink-500)]">
-            Only a verified hard NO can make Market Finder say Not Eligible. UNKNOWN never declines; unverified rules ask for confirmation.
+            Only a verified hard NO can make Market Finder say Not Eligible. UNKNOWN never declines; unverified rules ask for confirmation. A source's
+            own wording ("Documented: VERIFIED") is kept as a record — a rule counts as verified only once your agency confirms it here.
           </p>
           {editingRule && (
             <div className="mb-3 rounded-lg border border-[var(--color-brand-100)] bg-[var(--color-brand-50)] p-3">
@@ -397,6 +398,7 @@ function AccessForm({ initial, onCancel, onSave }: { initial: MarketAccess; onCa
         <Field label="Source date"><input className={inputClass} type="date" {...text('sourceDate')} /></Field>
         <Field label="Verified on"><input className={inputClass} type="date" {...text('verifiedAt')} /></Field>
       </div>
+      <Field label="Documented status (exactly as the source states it)"><input className={inputClass} placeholder="e.g. ACTIVE / READY" {...text('documentedStatus')} /></Field>
       <Field label="Notes"><textarea className={inputClass} rows={2} {...text('notes')} /></Field>
       <p className="text-[11px] text-[var(--color-ink-400)]">Never enter passwords or logins here — they are not stored.</p>
       {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
@@ -424,6 +426,7 @@ function RuleForm({ initial, onCancel, onSave }: { initial: CarrierRule | null; 
   const [verifiedAt, setVerifiedAt] = useState(initial?.lastVerifiedAt ?? '');
   const [verifiedBy, setVerifiedBy] = useState(initial?.verifiedBy ?? '');
   const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [documentedStatus, setDocumentedStatus] = useState(initial?.documentedStatus ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -440,7 +443,7 @@ function RuleForm({ initial, onCancel, onSave }: { initial: CarrierRule | null; 
         setBusy(true);
         const err = await onSave({
           coverage: coverage || null, category, operator, value: v.value, answer, strength, conditions: c.conditions,
-          conditionsText: conditionsText || null, source: source || null, sourceDate: sourceDate || null, lastVerifiedAt: verifiedAt || null, verifiedBy: verifiedBy || null, notes: notes || null, ref: initial?.ref ?? null,
+          conditionsText: conditionsText || null, source: source || null, sourceDate: sourceDate || null, lastVerifiedAt: verifiedAt || null, verifiedBy: verifiedBy || null, notes: notes || null, documentedStatus: documentedStatus || null, ref: initial?.ref ?? null,
         });
         setBusy(false);
         setError(err);
@@ -485,6 +488,7 @@ function RuleForm({ initial, onCancel, onSave }: { initial: CarrierRule | null; 
         <Field label="Last verified"><input className={inputClass} type="date" value={verifiedAt} onChange={(e) => setVerifiedAt(e.target.value)} /></Field>
         <Field label="Verified by"><input className={inputClass} value={verifiedBy} onChange={(e) => setVerifiedBy(e.target.value)} /></Field>
         <Field label="Notes" className="sm:col-span-2"><input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+        <Field label="Documented status (as the source states it)" className="sm:col-span-3"><input className={inputClass} value={documentedStatus} onChange={(e) => setDocumentedStatus(e.target.value)} placeholder="e.g. VERIFIED, SUPPORTED — kept as a record, not a RenewalIQ verification" /></Field>
       </div>
       {answer === 'no' && strength === 'hard' && !verifiedAt && (
         <p className="text-xs text-[var(--color-warning-600)]">Not verified yet: Market Finder will ask for underwriter review rather than say Not Eligible.</p>
