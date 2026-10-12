@@ -103,9 +103,30 @@ apart:
 
 ## Deployment
 
-`0049` needs 0011 and 0023; it does not depend on 0047/0048 and changes no existing row. Apply it after
-the V4 release (0047/0048) — `0049` is additive and re-runnable. No Edge Function change. Branch:
-`claude/carrier-101-102` (Preview only). Nothing is imported into production until approved.
+`0049` needs 0011 and 0023; it does not depend on 0047/0048 and touches none of their tables, and the
+V4 release check applies only up to 0046 plus 0047/0048, so it is unaffected. No Edge Function change.
+Tested both ways on a local copy: the V4 app on a database **with** 0049 (and an imported directory),
+and this app on a database **without** 0049 (Market Finder and Carrier Appetite work as before; the
+directory lists markets as "Access not on file" and an import says the database update is needed).
+
+Rollback: `supabase/release/rollback_0049.sql` — nothing to change; redeploy the previous app and the
+data waits for the new one (the file only reports counts). `supabase/release/remove_0049.sql` deletes
+the feature's data and structure, keeps the markets themselves, and refuses to run unless the session
+sets `renewaliq.confirm_remove_0049 = 'yes'`. Re-running 0049 afterwards restores the structure.
+
+### Launch order
+
+1. Ship the V4 release first, exactly as planned in RELEASE_V4.md.
+2. Ship the built-in dataset withdrawal on its own (it applies cleanly to the release branch).
+   Before it, run a read-only check in production for agency markets, saved quotes, appetite
+   overrides, update requests and feedback that refer to the withdrawn built-ins. They keep working
+   (agency versions stay on their own details; saved quotes keep the market name).
+3. Merge this branch; back up the database; apply `0049` in the SQL editor (re-runnable); confirm
+   with `rollback_0049.sql` (counts only); promote the Preview; smoke-test Market Finder, Carrier
+   Appetite and the Market Access Directory as an admin and as a broker.
+4. The agency's admin imports its directory in production through the app (preview → Check → Import),
+   only after the new app is live. Nothing is verified by the import; an admin verifies rules one by
+   one against an independent source.
 
 ## Tests
 
