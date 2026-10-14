@@ -32,11 +32,22 @@ export interface ReadDeps {
   /** How long a request waits for the same page's in-flight read before giving up. */
   waitBudgetMs?: number;
   now?: () => number;
+  /** Paid reads per day (UTC) across the whole platform; past it, reads are refused until midnight. */
+  globalDailyLimit?: number;
 }
+
+/** A spend ceiling for the whole project, whatever happens to per-broker limits. Override with AI_DAILY_LIMIT_GLOBAL. */
+export const DEFAULT_GLOBAL_DAILY_LIMIT = 3000;
+
+export const GLOBAL_LIMIT_MESSAGE =
+  'AI document reading has reached today’s limit for RenewalIQ. It resets at midnight UTC — until then documents are read with on-device text recognition and held for review.';
 
 export type ReadResponse = { status: 200; body: unknown; fromCache: boolean } | { status: number; body: { error: string } };
 
 export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<ReadResponse> {
+  // Never a paid call, a cache entry or a usage row without a signed-in broker (index.ts verifies
+  // the caller with Supabase Auth; this is the backstop if that wiring ever changes).
+  if (!req.userId) return { status: 401, body: { error: 'Sign in to use AI document reading.' } };
   const { store } = deps;
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const now = deps.now ?? (() => Date.now());
@@ -84,7 +95,18 @@ export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<Read
     }
   }
 
-  // 2. The paid call.
+  // 2. The platform-wide daily ceiling — counted only when a read will be paid for. If the count
+  //    can't be read (database trouble), the read goes ahead: brokers are never blocked by our own outage.
+  if (store?.paidReadsToday) {
+    const used = await store.paidReadsToday();
+    if (used !== null && used >= (deps.globalDailyLimit ?? DEFAULT_GLOBAL_DAILY_LIMIT)) {
+      if (key) await store.release(key);
+      await store.logUsage(row({ error_code: 'global_daily_limit' }));
+      return { status: 429, body: { error: GLOBAL_LIMIT_MESSAGE } };
+    }
+  }
+
+  // 3. The paid call.
   let result: ModelCallResult;
   try {
     result = await deps.callModel();
@@ -103,7 +125,7 @@ export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<Read
       : { status: 502, body: { error: result.status === 0 ? 'Could not reach the vision model provider.' : 'The vision model provider returned an error.' } };
   }
 
-  // 3. Kept, so this page is never paid for again.
+  // 4. Kept, so this page is never paid for again.
   if (key && store) await store.complete(key, output, model);
   await store?.logUsage(row({ model, ...tokens, cost_usd: cost, succeeded: true }));
   return { status: 200, body: output, fromCache: false };

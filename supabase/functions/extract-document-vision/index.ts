@@ -6,10 +6,12 @@
 // straight to the browser) — this Edge Function is the one place that key is allowed to exist,
 // read from an Edge Function secret (never a VITE_-prefixed variable, never committed).
 //
-// Auth: Supabase verifies the caller's JWT before this function body runs (the default for every
-// Edge Function unless deployed with --no-verify-jwt, which this one deliberately is NOT) — so an
-// anonymous request never reaches here, and never reaches the metered Anthropic API. Deploy and
-// invoke this normally; do not add --no-verify-jwt.
+// Auth: Supabase verifies the token's signature before this function body runs (verify_jwt — the
+// default; never deploy with --no-verify-jwt). That alone does NOT mean a signed-in broker: the
+// public anon key is a validly signed token too. So before anything else the caller is confirmed
+// with Supabase Auth (auth.ts: a real, confirmed, non-anonymous user) and every other request is
+// refused with no provider call. A platform-wide daily ceiling (AI_DAILY_LIMIT_GLOBAL, default
+// 3,000 paid reads) caps spend whatever else happens.
 //
 // Deployed automatically (GitHub Action .github/workflows/deploy-extract-document-vision.yml) whenever this
 // folder changes on the production branch. Manual deployment, if ever needed:
@@ -20,8 +22,9 @@
 // Every read is kept (ai_read_cache, migration 0046) and reused — the same page is paid for once —
 // and every request is logged with its token counts and cost (ai_usage_events; prices in pricing.ts).
 
-import { handleRead, type ModelCallResult } from './handler.ts';
-import { restStore, sanitizeContext, userIdFromJwt } from './store.ts';
+import { verifyCaller } from './auth.ts';
+import { DEFAULT_GLOBAL_DAILY_LIMIT, handleRead, type ModelCallResult } from './handler.ts';
+import { restStore, sanitizeContext } from './store.ts';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -280,6 +283,12 @@ function jsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
 }
 
+/** Platform-wide paid reads per day (UTC); AI_DAILY_LIMIT_GLOBAL overrides the default. */
+function globalDailyLimit(): number {
+  const v = Deno.env.get('AI_DAILY_LIMIT_GLOBAL');
+  return v && /^\d+$/.test(v) ? Number(v) : DEFAULT_GLOBAL_DAILY_LIMIT;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders() });
@@ -287,6 +296,12 @@ Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, 405);
   }
+
+  // A signed-in broker, confirmed with Supabase Auth — before the body is read or anything is paid for.
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const caller = await verifyCaller(req.headers.get('Authorization'), supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') || serviceKey);
+  if (!caller.ok) return jsonResponse({ error: caller.error }, caller.status);
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) {
@@ -310,9 +325,7 @@ Deno.serve(async (req: Request) => {
   if (!mimeType || !ALLOWED_MIME_TYPES.has(mimeType)) return jsonResponse({ error: 'Unsupported image type' }, 400);
 
   const model = Deno.env.get('ANTHROPIC_VISION_MODEL') || DEFAULT_MODEL;
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  // Without these (only outside Supabase), reads still work — just uncached and unlogged.
+  // Without the service key (only outside Supabase), reads still work — just uncached and unlogged.
   const store = supabaseUrl && serviceKey ? restStore(supabaseUrl, serviceKey) : null;
 
   const callModel = async (): Promise<ModelCallResult> => {
@@ -371,9 +384,9 @@ Deno.serve(async (req: Request) => {
       imageBase64,
       fileName: typeof fileName === 'string' ? fileName : null,
       context: sanitizeContext(body.context),
-      userId: userIdFromJwt(req.headers.get('Authorization')),
+      userId: caller.userId,
     },
-    { store, callModel, configuredModel: model }
+    { store, callModel, configuredModel: model, globalDailyLimit: globalDailyLimit() }
   );
   return jsonResponse(result.body, result.status);
 });

@@ -55,7 +55,10 @@ export function sanitizeContext(raw: unknown): ReadContext {
   return ctx;
 }
 
-/** The signed-in user's id from the request's JWT. The platform has already verified the token (verify_jwt is on) before this function runs. */
+/**
+ * The user id a token claims, when it is a signed-in user's (role authenticated). Only a first, offline
+ * gate: verify_jwt proves the signature, and auth.ts confirms the user with Supabase Auth.
+ */
 export function userIdFromJwt(authorization: string | null): string | null {
   const token = authorization?.replace(/^Bearer\s+/i, '');
   const payload = token?.split('.')[1];
@@ -94,6 +97,8 @@ export interface Store {
   complete(key: string, result: unknown, model: string | null): Promise<void>;
   release(key: string): Promise<void>;
   logUsage(row: UsageRow): Promise<void>;
+  /** Paid reads so far today (UTC), platform-wide — same rule as 0047's quota. null = couldn't count. */
+  paidReadsToday?(): Promise<number | null>;
 }
 
 export function restStore(url: string, serviceKey: string, fetchImpl: typeof fetch = fetch): Store {
@@ -135,6 +140,23 @@ export function restStore(url: string, serviceKey: string, fetchImpl: typeof fet
         await rpc('ai_read_release', { p_key: key });
       } catch {
         // a stale claim is taken over after a few minutes anyway
+      }
+    },
+    async paidReadsToday() {
+      try {
+        const day = new Date();
+        day.setUTCHours(0, 0, 0, 0);
+        const q = `select=id&from_cache=is.false&occurred_at=gte.${encodeURIComponent(day.toISOString())}&or=(succeeded.is.true,cost_usd.gt.0)`;
+        const res = await fetchImpl(`${url}/rest/v1/ai_usage_events?${q}`, { method: 'HEAD', headers: { ...headers, Prefer: 'count=exact' } });
+        const total = res.ok ? /\/(\d+)$/.exec(res.headers.get('content-range') ?? '')?.[1] : undefined;
+        if (total === undefined) {
+          console.error('extract-document-vision: daily count failed (read allowed)', res.status);
+          return null;
+        }
+        return Number(total);
+      } catch (err) {
+        console.error('extract-document-vision: daily count failed (read allowed)', String(err));
+        return null;
       }
     },
     async logUsage(row) {
