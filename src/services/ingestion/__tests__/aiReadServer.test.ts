@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_GLOBAL_DAILY_LIMIT, GLOBAL_LIMIT_MESSAGE, handleRead, type ModelCallResult } from '../../../../supabase/functions/extract-document-vision/handler.ts';
+import { readFileSync } from 'node:fs';
+import { DEFAULT_GLOBAL_DAILY_LIMIT, GLOBAL_LIMIT_MESSAGE, PAUSED_MESSAGE, handleRead, pausedRefusal, type ModelCallResult } from '../../../../supabase/functions/extract-document-vision/handler.ts';
 import { AUTH_MESSAGES, verifyCaller, type Caller } from '../../../../supabase/functions/extract-document-vision/auth.ts';
 import { costUsd, priceFor } from '../../../../supabase/functions/extract-document-vision/pricing.ts';
 import { cacheKeyFor, restStore, sanitizeContext, userIdFromJwt, type ClaimState, type Store, type UsageRow } from '../../../../supabase/functions/extract-document-vision/store.ts';
@@ -276,5 +277,25 @@ describe('AI read: platform-wide daily ceiling', () => {
     expect(decodeURIComponent(seen!.url)).toMatch(/\/rest\/v1\/ai_usage_events\?select=id&from_cache=is\.false&occurred_at=gte\.\d{4}-\d\d-\d\dT00:00:00\.000Z&or=\(succeeded\.is\.true,cost_usd\.gt\.0\)$/);
     expect(await restStore('u', 'k', (async () => new Response(null, { status: 500 })) as typeof fetch).paidReadsToday!()).toBeNull();
     expect(await restStore('u', 'k', (async () => { throw new Error('down'); }) as typeof fetch).paidReadsToday!()).toBeNull();
+  });
+});
+
+describe('AI read: pause switch (the safe rollback)', () => {
+  it('AI_READING_PAUSED=true / 1 / yes / on refuses with 503; anything else leaves AI on', () => {
+    for (const v of ['true', 'TRUE', '1', 'yes', 'on', ' true ']) expect(pausedRefusal(v)).toEqual({ status: 503, body: { error: PAUSED_MESSAGE } });
+    for (const v of [undefined, null, '', 'false', '0', 'no', 'off', 'paused?']) expect(pausedRefusal(v)).toBeNull();
+  });
+
+  it('index.ts checks the caller first, then the pause switch, and only then reads the body or the API key', () => {
+    const src = readFileSync(new URL('../../../../supabase/functions/extract-document-vision/index.ts', import.meta.url), 'utf8');
+    const at = (needle: string) => src.indexOf(needle);
+    expect(at("import { verifyCaller } from './auth.ts'")).toBeGreaterThan(-1);
+    const verify = at('await verifyCaller(');
+    const refuse = at('if (!caller.ok) return');
+    const pause = at("pausedRefusal(Deno.env.get('AI_READING_PAUSED'))");
+    const key = at("Deno.env.get('ANTHROPIC_API_KEY')");
+    const body = at('await req.json()');
+    expect(verify).toBeGreaterThan(-1);
+    expect([verify, refuse, pause, key, body].every((v, i, a) => v > -1 && (i === 0 || v > a[i - 1]))).toBe(true);
   });
 });

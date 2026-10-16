@@ -18,12 +18,14 @@
 //   supabase functions deploy extract-document-vision
 //   supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 //   (optional) supabase secrets set ANTHROPIC_VISION_MODEL=claude-sonnet-5
+// To pause AI reading (the rollback — never redeploy an older function, it would reopen anonymous use):
+//   supabase secrets set AI_READING_PAUSED=true      (and AI_READING_PAUSED=false to resume)
 //
 // Every read is kept (ai_read_cache, migration 0046) and reused — the same page is paid for once —
 // and every request is logged with its token counts and cost (ai_usage_events; prices in pricing.ts).
 
 import { verifyCaller } from './auth.ts';
-import { DEFAULT_GLOBAL_DAILY_LIMIT, handleRead, type ModelCallResult } from './handler.ts';
+import { DEFAULT_GLOBAL_DAILY_LIMIT, handleRead, pausedRefusal, type ModelCallResult } from './handler.ts';
 import { restStore, sanitizeContext } from './store.ts';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -302,6 +304,11 @@ Deno.serve(async (req: Request) => {
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   const caller = await verifyCaller(req.headers.get('Authorization'), supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') || serviceKey);
   if (!caller.ok) return jsonResponse({ error: caller.error }, caller.status);
+
+  // Kill switch (the rollback): AI_READING_PAUSED=true refuses every read, after the sign-in check so
+  // an anonymous request still gets 401. Never roll back by redeploying an older function.
+  const paused = pausedRefusal(Deno.env.get('AI_READING_PAUSED'));
+  if (paused) return jsonResponse(paused.body, paused.status);
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) {

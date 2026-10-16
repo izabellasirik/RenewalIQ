@@ -42,6 +42,18 @@ export const DEFAULT_GLOBAL_DAILY_LIMIT = 3000;
 export const GLOBAL_LIMIT_MESSAGE =
   'AI document reading has reached today’s limit for RenewalIQ. It resets at midnight UTC — until then documents are read with on-device text recognition and held for review.';
 
+export const PAUSED_MESSAGE =
+  'AI document reading is paused for RenewalIQ right now. Documents are read with on-device text recognition and held for review.';
+
+/**
+ * The safe way to roll back: set the function secret AI_READING_PAUSED=true and every AI read is
+ * refused (no provider call, no cache read, no usage row) — instead of redeploying an older
+ * function. The app then reads documents on the device. Anything else ("", "false", unset) = on.
+ */
+export function pausedRefusal(flag: string | undefined | null): { status: 503; body: { error: string } } | null {
+  return flag && /^(1|true|yes|on)$/i.test(flag.trim()) ? { status: 503, body: { error: PAUSED_MESSAGE } } : null;
+}
+
 export type ReadResponse = { status: 200; body: unknown; fromCache: boolean } | { status: number; body: { error: string } };
 
 export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<ReadResponse> {
