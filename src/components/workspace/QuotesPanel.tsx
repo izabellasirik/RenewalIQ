@@ -15,6 +15,7 @@ import { QuoteOptionsList } from './QuoteOptionsList';
 import { inputClass, labelClass, smallInputClass } from './formStyles';
 import { cn } from '../../utils/cn';
 import { MarketDetailsDialog } from './MarketDetailsDialog';
+import { latestMarketNote } from '../../services/workflow/clientHistory';
 
 
 export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; focusQuoteId?: string }) {
@@ -213,6 +214,12 @@ function QuoteCard({
     setForm('edit');
   }
 
+  // Opened from the client history (or a link to this market): bring it into view.
+  useEffect(() => {
+    if (highlighted) document.getElementById(`market-${quote.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [highlighted, quote.id]);
+  const latestNote = latestMarketNote(quote);
+
   const closed = quote.status === 'declined' || quote.status === 'bound';
   const followUpDue = !closed && quote.followUpDate && quote.followUpDate <= todayKey();
 
@@ -264,7 +271,7 @@ function QuoteCard({
   const waitingOn = requestedItems.filter((i) => i.status !== 'waived' && !forwardedAt(i, quote.id)).length;
 
   return (
-    <Card className={cn(highlighted && 'ring-2 ring-[var(--color-brand-500)]')}>
+    <Card id={`market-${quote.id}`} className={cn('scroll-mt-4', highlighted && 'ring-2 ring-[var(--color-brand-500)]')}>
       <MarketDetailsDialog accountId={accountId} quote={quote} requestedItems={requestedItems} open={detailsOpen} onClose={() => setDetailsOpen(false)} />
       <CardBody className="pt-4">
         {/* Clicking the card's header (anywhere but its own buttons and fields) collapses / expands it. */}
@@ -276,7 +283,8 @@ function QuoteCard({
           className="-m-2 flex cursor-pointer flex-wrap items-start justify-between gap-2 rounded-lg p-2 hover:bg-[var(--color-ink-50)]"
           title={collapsed ? 'Click to show details' : 'Click to collapse'}
         >
-          <div className="min-w-0">
+          {/* Takes the free width (and no more), so a long latest note is cut short instead of pushing the status down. */}
+          <div className="min-w-0 flex-1 basis-64">
             <div className="flex flex-wrap items-center gap-2">
               <button
                 onClick={onToggleCollapsed}
@@ -311,6 +319,11 @@ function QuoteCard({
                 </>
               )}
             </p>
+            {collapsed && latestNote && (
+              <p className="mt-1 line-clamp-1 max-w-2xl text-xs text-[var(--color-ink-600)]" data-testid="latest-note" title={latestNote.text}>
+                <span className="font-medium text-[var(--color-ink-700)]">Latest note{latestNote.authorName ? ` (${latestNote.authorName}, ${formatShortDate(latestNote.updatedAt ?? latestNote.createdAt)})` : ` (${formatShortDate(latestNote.updatedAt ?? latestNote.createdAt)})`}:</span> {latestNote.text}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-1">
             <select

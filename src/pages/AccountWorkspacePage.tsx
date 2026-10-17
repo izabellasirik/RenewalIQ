@@ -12,6 +12,7 @@ import { FollowUpsCard } from '../components/workspace/FollowUpsCard';
 import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
 import { ClientRequestsCard } from '../components/workspace/ClientRequestsCard';
 import { ReviewFlagsPanel } from '../components/riskProfile/ReviewFlagsPanel';
+import { ClientHistoryPanel } from '../components/workspace/ClientHistoryPanel';
 import { QuotesPanel } from '../components/workspace/QuotesPanel';
 import { ActionList } from '../components/workspace/ActionList';
 import { AddMissingDocumentsDialog } from '../components/workspace/AddMissingDocumentsDialog';
@@ -214,7 +215,27 @@ export function AccountWorkspacePage() {
         </div>
       )}
 
-      {tab === 'quotes' && <QuotesPanel accountId={accountId} focusQuoteId={focusQuoteId} />}
+      {tab === 'quotes' && (
+        // The client's history beside the markets on wide screens; above them (latest few) on narrower ones.
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
+          <div className="min-w-0 xl:order-1">
+            <QuotesPanel accountId={accountId} focusQuoteId={focusQuoteId} />
+          </div>
+          <div className="order-first min-w-0 xl:order-2">
+            <ClientHistoryPanel
+              accountId={accountId}
+              onOpenMarket={(quoteId) =>
+                setParams((p) => {
+                  const n = new URLSearchParams(p);
+                  n.set('tab', 'quotes');
+                  n.set('quote', quoteId);
+                  return n;
+                })
+              }
+            />
+          </div>
+        </div>
+      )}
 
       {tab === 'notes' && <NotesPanel accountId={accountId} notes={account.notes ?? []} />}
 
