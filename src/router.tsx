@@ -27,6 +27,7 @@ import { TeamPage } from './pages/TeamPage';
 import { CarriersPage } from './pages/CarriersPage';
 import { MarketDirectoryPage } from './pages/MarketDirectoryPage';
 import { FounderAnalyticsPage } from './pages/FounderAnalyticsPage';
+import { CommissionsRoute } from './components/commissions/CommissionsRoute';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -60,6 +61,8 @@ export const router = createBrowserRouter([
       { path: '/analytics', element: <AnalyticsComingSoonPage /> },
       // Founder only — the page asks the database (is_founder) and the data RPC refuses everyone else.
       { path: '/founder-analytics', element: <FounderAnalyticsPage /> },
+      // Agency admins only, and switched off unless VITE_FEATURE_COMMISSIONS=true (fictional sample data for now).
+      { path: '/commissions', element: <CommissionsRoute /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },
       { path: '/team', element: <TeamPage /> },
       // Carrier appetite management lives inside Market Finder (admins reach it from there).

@@ -1,5 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart, HandCoins } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { isSupabaseConfigured } from '../../services/supabase/client';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -8,6 +8,7 @@ import { BrandLogo } from '../branding/Logo';
 import { useEffect, useState } from 'react';
 import { checkIsAdmin } from '../../services/supabase/adminAuth';
 import { checkIsFounder } from '../../services/productAnalytics/founderRepo';
+import { commissionsFeatureEnabled } from '../../services/commissions/access';
 
 /** Whether the signed-in user may review product feedback and appetite-update requests — asks the database (is_admin()). */
 function useIsReviewer(): boolean {
@@ -238,6 +239,25 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
           >
             <Users size={17} />
             Team
+          </NavLink>
+        )}
+
+        {/* Agency admins only, and only when the section is switched on (sample data for now). */}
+        {isAgencyAdmin && commissionsFeatureEnabled() && (
+          <NavLink
+            to="/commissions"
+            className={({ isActive }) =>
+              cn(
+                navItemClass,
+                isActive
+                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+              )
+            }
+          >
+            <HandCoins size={17} />
+            <span className="flex-1">Commissions</span>
+            <span className="rounded-full bg-[var(--color-warning-100)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-warning-600)]">Sample</span>
           </NavLink>
         )}
 
