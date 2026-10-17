@@ -1,0 +1,408 @@
+L1 roman sees own legacy accounts: acct_r1,acct_r2
+L2 denis (no profile yet) sees: []
+T1 roman: acct_r1,acct_r2
+T2 agentB: acct_b1
+T3 select by id rows=0
+T3 field_values rows=0
+T3 alternates rows=0
+T3 activity rows=0
+T3 storage rows=0
+T3 update affected=0
+T3 delete affected=0
+T3 upsert-over denied: new row violates row-level security policy (USING expression) for table "submissions"
+T3 child insert denied: new row violates row-level security policy for table "field_values"
+T3 activity insert denied: new row violates row-level security policy for table "activity_events"
+T3 agent reassign own account denied: Only an agency admin can reassign an account.
+T3 profiles visible to agentB: agentb@agency.com
+T3 is_agency_admin(agentB)=false
+T3 self-promote denied: new row violates row-level security policy for table "profiles"
+T3 self-promote update affected=0
+T3 spoof creator → row user_id=00000000-0000-0000-0000-00000000000b
+T5 admin: acct_b1,acct_r1,acct_r2
+T5 admin sees roman field_values=1
+T5 admin sees roman file=1
+T5 admin sees agents: agentb@agency.com:agent,denis@agency.com:admin,roman@agency.com:agent
+T5 admin sees acct_n1 (newbie not in agency yet)=0
+T6 assign outside agency denied: The assigned agent is not a member of this agency.
+T6 after admin edit: creator=00000000-0000-0000-0000-00000000000a assigned=00000000-0000-0000-0000-00000000000a name=Roman Trucking LLC
+T7 roman: acct_r1
+T7 roman stale save denied: new row violates row-level security policy (USING expression) for table "submissions"
+T8 agentB: acct_b1,acct_r2
+T9 new: agency=Agency assigned=00000000-0000-0000-0000-00000000000a
+T10 roman children r3 fv=1 act=1 files=2
+T10 upload to acct_r2 denied: new row violates row-level security policy for table "objects"
+T10 upload into someone else's folder denied: new row violates row-level security policy for table "objects"
+T10 agentB sees r3 children fv=0 act=0 files=0
+T10 agentB sees r2 (reassigned) file rows via roman folder: 0
+X outsider admin: acct_o1
+X outsider profiles: outsider@other.com
+N newbie: acct_n1
+N newbie new account agency=null visible=1
+A no-uid sees rows=0
+S admin save ok: fv="OK"
+F agentB reads roman-uploaded file on acct_r1: 1
+F agentB sees admin's field edit + activity: fv=1 act=2
+F roman after losing acct_r1: accounts=acct_r3 files=0 fv=0
+F roman delete own old upload on lost account affected=0
+U unassigned acct_r3 visible to admin=1
+U unassigned acct_r3 visible to roman (creator)=0
+P1 roman saves own profile, in agency=true
+P1 row: Roman Smith|555-0111|Broker|agent
+P2 blank name denied: Full name is required
+P3 roman edits agentB directly affected=0
+P3 direct update of own row affected=0
+P4 newbie (no agency) save → in agency=false rows=0
+P5 admin reads agency profiles: Agent B:-,Denis:-,Roman Smith:Broker
+P6 no user denied: Not signed in
+I1 agent invites denied: Only an agency admin can invite team members
+I1 agent self-admin invite denied: Only an agency admin can invite team members
+I1 agent sees invitations=0
+I2 admin invites: newbie@agency.com agent token_len=64
+I3 invite existing member denied: This person is already on your team
+I3 bad role denied: Role must be agent or admin
+I3 direct insert denied: new row violates row-level security policy for table "agency_invitations"
+I2 admin sees own agency invitations=4
+I4 other agency admin sees Agency invitations=0
+I4 other agency admin revokes Agency invitation=false
+I5 link lookup (signed out): Agency|newbie@agency.com|agent|open
+I5 lookup with a made-up token rows=0
+I6 other user accepts denied: This invitation was sent to a different email address — sign in as newbie@agency.com
+I7 newbie before: in agency=0
+I7 newbie accepts → Agency
+I7 newbie profile: agent agency=Agency
+I7 newbie is admin=false sees: acct_n1,acct_n2
+I7 accept again (same person)=Agency
+I7 admin sees newbie's pre-agency accounts=0
+I7 admin sees members: agentb@agency.com:agent,denis@agency.com:admin,newbie@agency.com:agent,roman@agency.com:agent
+I8 unconfirmed email denied: Confirm your email address first, then open the invitation again
+I8 confirmed invitee accepts → Agency
+I8 invitee profile: admin|Ivy Invitee|Account Manager
+I9 member of another agency denied: You are already a member of another agency. Contact support to move to Agency
+I9 outsider still in: Other Agency as admin
+I10 admin revokes=true
+I10 status after revoke: revoked
+I11 expired status: expired
+I12 agent direct update affected=0
+A1 agent archives own account affected=1
+A1 stamped by db: by_agentB=true recent=true
+A2 agent can_delete_account(archived own)=false
+A2 agent deletes archived own affected=0
+A3 agent restore attempt → archived=true by_agentB=true
+A3 stale full save (archived=false) → archived=true
+A4 agent deletes active account affected=0
+A5 other agency admin can_delete_account(acct_b1)=false
+A5 other agency admin deletes affected=0
+A6 admin can_delete_account(active acct_r3)=false
+A6 admin deletes active account affected=0
+A6 admin sees archived acct_b1=1
+A7 admin restores → archived=false at=null by=null
+A8 admin archives: by_admin=true can_delete=true
+A8 admin deletes archived affected=1
+A8 after delete: row=0 activity=0
+A9 personal account owner can_delete=true
+A9 owner deletes own archived personal account affected=1
+A10 signed out can_delete_account(acct_r1)=false
+G1 assign own personal outside agency denied: The assigned agent is not a member of this agency.
+G2 admin assigns own personal → in agency=true assigned_agentB=true
+G2 agentB now sees it=1
+G3 agent reassign own personal denied: Only an agency admin can reassign an account.
+G3 acct_n2 still personal=true
+G4 other agency admin assigns it affected=0
+G4 acct_d_old2 still personal=true unassigned=true
+C1 admin adds carrier → own agency=true created_by_admin=true
+C2 second version of same built-in denied
+C3 admin archives: stamped_now=true by_admin=true
+C4 agent reads agency carriers=2
+C5 agent add denied
+C5 agent update affected=0
+C5 agent delete affected=0
+C6 admin delete affected=0
+C7 other agency admin sees=0
+C7 other agency admin update affected=0
+C8 newbie (agent) sees=2
+C9 names intact: Blue Ridge Mutual,Built-in edited
+K0 roman sees acct_r2 before=0
+K1 roman (collaborator) sees acct_r2=1 children=0
+K1 roman notified: assigned:You were assigned to Roman Freight,collaborator_added:You were added as a collaborator on Roman Freight
+K2 collaborator edits account affected=1
+K2 collaborator adds collaborator denied: Only an agency admin or the assigned broker can change collaborators.
+K2 collaborator reassign denied: Only an agency admin can reassign an account.
+K2 collaborator deletes affected=0
+K3 primary broker adds newbie: 2
+K4 other-agency collaborator denied: A collaborator must be a member of this agency.
+K4 agentB reads roman's notifications=0
+K5 roman marks own read=3
+K5 message unchanged after edit attempt=true
+K5 forge notification denied
+K6 original stays roman (first assignee) after two reassignments: true now newbie=true
+K6 newbie notified of assignment: You were assigned to Roman New (by Denis)
+K7 other agency admin sees anyone else's notifications=0
+K7 other agency admin sees acct_r2=0
+K8 agent sees teammate names (own agency only): agent,admin,admin,agent,agent count=5
+K8 other agency admin sees Agency names=0
+K8 signed out sees names=0
+M1 agent change role denied: Only an agency admin can change roles.
+M1 agent remove denied: Only an agency admin can remove team members.
+M2 other agency admin denied: That person is not a member of your agency.
+M2 other agency admin remove denied: That person is not a member of your agency.
+M3 roman promoted: is admin=true sees=4
+M3 roman demoted: is admin=false
+M4 last admin denied: The agency needs at least one admin — make someone else an admin first.
+M4 unknown role denied: Unknown role.
+M5 remove self denied: You can't remove yourself from the agency.
+M5 remove without reassign denied: Choose who takes over their 3 account(s) before removing them.
+M5 reassign outside agency denied: The person taking over is not a member of your agency.
+M5 agentB still a member=1
+M6 remove agentB → roman, moved=3
+M6 accounts now: acct_r2→00000000-0000-0000-0000-00000000000a collab=1
+M6 activity: Reassigned from Agent B to Roman Smith — Agent B was removed from the agency by Denis. | Reassigned from Agent B to Roman Smith — Agent B was removed from the agency by Denis. | Reassigned from Agent B to Roman Smith — Agent B was removed from the agency by Denis.
+M6 agentB profile rows=0
+M7 removed agentB: agency=none sees agency accounts=0
+M7 roman sees taken-over accounts: acct_d_old,acct_r1,acct_r2
+M8 remove newbie (collaborator + 1 account) → denis, moved=1
+M8 acct_r2 collaborators=0 acct_r3 → denis=true
+M8 removed newbie keeps personal accounts: acct_n2
+M9 member without accounts removed, moved=0
+R1 saved: drivers=2 details=X1 losses=1 created_at set=true
+R2 refused save rolled back
+R2 previous rows intact: drivers=Ann,Bob losses=1 fields=1
+R3 row for another account denied: Every row must belong to account acct_r1.
+R4 other agency denied: You don't have access to this account.
+R4 insert helper still RLS-checked
+R4 other table refused
+R5 after all: acct_r1 drivers=2
+D1 created: status=waiting items=3 next=2026-10-01
+D1 same click again, same request: true total=1
+D1 other agency create denied: You don't have access to this account.
+D1 other agency reads requests=0
+D1 agency admin reads requests=1
+D2 client view: Roman Trucking LLC | Current MVR — Alex Smith:false, Q2 IFTA:false, Updated Loss Runs:false | status=waiting | keys=accountName,agencyName,contactFirstName,folder,items,requestId,status,submittedAt,unassigned
+D2 unknown link: null
+D2 client reads tables denied
+D3 upload outside an open request denied
+D3 attach a file not in storage denied: The file isn't in storage.
+D3 path outside this request denied: The file path doesn't belong to this request.
+D3 attach: status=partial mvr received=true
+D3 same file again (retry/double click): partial
+D3 files=1 upload activity=1
+D3 activity: John Smith uploaded mvr.pdf for Current MVR — Alex Smith (secure request link). (by John Smith)
+D4 other request's item denied: That item isn't part of this request.
+D4 request 2 sees only its own: Application
+D5 claim=true claim again=false
+D5 after import: request=partial mvr=satisfied
+D5 other agency change denied: You don't have access to this request.
+D6 client uploads to IFTA: partial
+D6 needs review: ifta=needs_review
+D6 rejected → asked again: ifta=requested request=partial
+D6 client sees remaining: Q2 IFTA, Updated Loss Runs
+D7 follow-up: count=1 next=2026-10-05 last set=true
+D8 last upload (still open until verified): partial
+D8 complete: status=complete next=none closed=true
+D8 activity: Everything requested from John Smith has been received — request complete.
+D9 upload after complete denied
+D9 anon broker functions denied
+D10 cancelled link shows: cancelled
+D10 upload to cancelled denied
+D11 settled another way: 1
+D11 → partial
+D11 all settled: complete next=none
+D12 expired link shows: expired
+E1 held: match=needs_review imported=false doc=none item=needs_review
+E1 accept without a document denied
+E1b auto-check claims held file: false | confirm claims it: true
+E1b released: true
+E2 client sees: Loss runs=loss.pdf:checking:false | MVR — John Smith=scan.pdf:checking:true
+E2 after remove: Loss runs received=true files=1 | MVR — John Smith received=false files=0
+E2 file kept as record: withdrawn / Removed by the client
+E2 remove again (retry) ok: true
+E3 remove while importing denied: Your agent has already received this file — contact them if it's the wrong one.
+E3 remove accepted file denied
+E4 other link denied: That file isn't part of this request.
+E5 confirm without importing denied
+E5 confirmed: match=satisfied doc=doc_mvr4 request=complete
+E6 wrong: match=rejected note=last year's MVR item=requested request=partial closed=false
+E6 again is a no-op: note=last year's MVR
+E6 client can upload it again: partial
+E7 anon cannot mark wrong
+E7 other agency cannot mark wrong
+E8 details columns: coverage_lines,field_values
+E8 saved: support=docB
+E8 saved: coverage sources=docA
+H1 sharing someone else's account denied: Only the person who created this account can share it with the agency.
+H1 admin can't see the agent's personal account=0
+H2 agent shares own: in agency=true assigned to self=true creator kept=true
+H2 again is a no-op: still in agency=true
+H3 a plain update can't move it: still personal=true
+H4 admin now sees the shared account=1
+H4 admin still can't see the unshared one=0
+H5 other agency denied
+H6 without an agency: Join or create an agency first.
+H5 acct_a_old2 still personal=true
+J1 upload without an item: unassigned=1 first=many1.pdf removable=true
+J1 retry is no duplicate: unassigned=1
+J2 agency name shown: Agency
+J2 nothing else about the account: keys=accountName,agencyName,contactFirstName,folder,items,requestId,status,submittedAt,unassigned
+J3 other link denied: The file path doesn't belong to this request.
+J4 placing on an item outside the request denied
+J4 placed: item=true match=satisfied mvr=satisfied
+J5 held without item: item=none match=needs_review
+J5 satisfy without an item denied: Choose which requested item this file is.
+J5 placed by broker: match=reassigned resolved=true
+J6 client sees it under its item: Loss runs=loss.pdf:accepted,many2.pdf:accepted | MVR — John Smith=many1.pdf:accepted | unassigned=0
+Q1 submit with no files denied: Upload at least one file first.
+Q2 unknown link denied: This link isn't valid.
+Q3 submitted: submittedAt set=true
+Q4 submitting again with nothing new changes nothing: same time=true
+Q4 broker told once: events=1
+Q5 nothing accepted or counted by it: files still=5
+W1 admin sees every link of the agency's members: Denis link (Denis, open 0), Roman busy link (Roman Smith, open 1), Roman link (Roman Smith, open 0)
+W2 agent sees only own: Roman busy link, Roman link
+W3 agent deleting a colleague's link denied: You can't delete this link.
+W3 agent pausing a colleague's link denied
+W4 other agency admin denied: You can't delete this link.
+W4 other agency admin sees only its own: Other agency link
+W5 open submission blocks delete: 1 submission from this link has not been imported or dismissed yet — deal with it first, or deactivate the link instead.
+W5 admin paused it instead: active=false
+W6 admin deleted a member's link: left=0
+W6 its imported submission went with it; the open one stays: isub_open_r
+V1 agent reads only own links: Roman busy link
+V2 admin reads the agency's links, no other agency's: Denis link, Roman busy link
+V3 other agency admin reads only its own: Other agency link, Other agency second link
+V4 other agency looking up Agency A codes directly: rows=0
+V4 other agency cannot list codes through the admin list either: tok-out, tok-out2
+V5 anonymous can't list links: rows=0
+V6 client opens a valid code: Denis link active=true
+V6 unknown / empty / wildcard codes find nothing: 0,0,0,0
+V6 a paused link reads as inactive: active=false
+V7 old-style submit through an active link still works
+V7 submit claiming another broker denied
+O1 admin sees the agency's submissions: Denis Client Co, Open Co
+O1 admin reads a member's files: docs=1 storage=1
+O2 agent sees only own: Open Co
+O2 agent can't read the admin's submission files: docs=0
+O3 other agency admin sees only its own: Outside Client Co
+O3 other agency: Agency A docs=0 files=0 events=0
+O3 other agency dismissing Agency A's submission: rows=0
+O4 admin dismisses a submission: rows=1
+O5 moving a submission to another broker denied: A submission can't be moved to another link or broker.
+O4 state: isub_o_denis=dismissed/00000000-0000-0000-0000-00000000000d, isub_open_r=pending/00000000-0000-0000-0000-00000000000a
+Y1 same DOT inside the agency only: acct_y_dot dot=7654321 open=true addr=120 Main St
+Y2 same name: acct_y_name email=true open=false addr=hidden broker=Denis, acct_y_samename email=false open=true addr=- broker=Roman Smith
+Y3 admin may open it: acct_y_name open=true, acct_y_samename open=true
+Y4 other agency denied: You can't see this submission.
+Y5 other agency's own submission matches only its own accounts: acct_y_out
+Y6 anonymous denied
+Z0 a Submit before the dispatcher is configured is still queued: request:pending
+Z1 client submission verified: true
+Z1 queued by the database, no client call: pending attempts=0 broker=denis@agency.com
+Z1 server asked to send exactly this event (pg_net): requests=1 secret=hook-secret url=https://preview.renewaliq.test/api/notify-submission
+Z2 failed upload: ok=false
+Z2 nothing queued for it: rows=0
+Z3 dispatcher unavailable, submission still succeeds: ok=true
+Z3 and it stays queued for the retry sweep: pending
+Z4 anonymous can't claim
+Z4 signed-in users can't list or claim
+Z4 queue rows visible to a user: 0
+Z4 dispatch secret visible to a user: 0 rows
+Z5 claim: true to=denis@agency.com reply=zoe@client.com files=["z_loss_runs.pdf"] account=Zed Trucking agency=Agency
+Z5 a second delivery while sending → not_due
+Z6 failed → not due until its back-off: not_due due=0
+Z6 back-off passed → due again: 1, retried as attempt 2
+Z6 once sent, never again: already_sent due=0
+Z7 missing client email → claimed=true reply=none to=denis@agency.com
+Z8 Submit (Q3) was queued: 1
+Z8 Submit again with nothing new → still one: 1
+Z8 a later Submit is a new event: 2
+Z8 request email → account=acct_r1 broker=roman@agency.com files=4
+Z9 after 8 attempts → gave_up due=0
+Z10 queue: request:failed x8, intake:sent x2, intake:sending x1, request:pending x0
+B1 each Submit with new files is one event: 2 on acct_r1
+B1 facts: Client submitted documents — 4 files received | files=["loss.pdf", "other.pdf", "many1.pdf", "many2.pdf"] | link sent to=John Smith | at submit time=true | actor=Client
+B2 the old free-text line is no longer written: 0
+B2 a repeated Submit / refresh adds nothing: 2
+B3 intake → event on that account: Client submitted documents — 1 file received | files=["z_loss_runs.pdf"] | email=zoe@client.com | ref ok=true | at completion time=true
+B4 re-import / re-delivered notification adds nothing: 1
+B5 no document types in the history: 0
+B6 other agency sees none of these events: 0
+B6 the account's broker sees them: 3
+FA1 broker records an event: true
+FA1 stored with who/where, metadata cut to safe keys: true org=true account=acct_y_dot metadata={"count": 2, "source": "manual"}
+FA2 unknown event name refused quietly: false
+FA3 another agency's account is not attached: true
+FA4 once-only key: true,true
+FA5 broker reads product_events: 0 rows
+FA5 broker denied Founder Analytics: Founder Analytics is not available for this account.
+FA5 agency admin denied too
+FA5 only the founder marks Real/Test
+FA6 look-alike email denied
+FA6 anonymous can't record events: false
+FA6 rows by anyone but the broker: 0
+FA2/FA3 stored: account_opened_on_later_day@acct_y_dot, market_added@none
+FA7 automatic: sample=true named test=true normal=false
+FA7 founder's call wins: named test → false, normal → true
+FA7 back to automatic: false
+FA8 intake submitted (trigger): 1
+FA8 intake imported (trigger): 1 account=acct_y_name
+FA9 time saved recorded once: true,true
+FA9 bad answer refused: false
+FA9 broker reads answers: 0 rows
+FA10 founder snapshot: events=true users have names=true brokerages=Agency,Other Agency timeSaved=1
+FA11 unconfirmed founder email denied
+LK1 request created with the link the email already showed: true
+LK2 a token can never be reused
+LK3 without a token the database still makes one: true
+LK4 other agency still denied
+AI1 first request claims the page: claimed
+AI1 same page while in flight: busy
+AI2 reopened / refreshed: hit result=loss_run
+AI3 failed call frees the page: claimed
+AI3 next request tries again: claimed
+AI4 abandoned claim taken over: claimed
+AI5 total tokens stored: 0,3000,2500
+AI6 broker sees AI usage rows: 0
+AI6 broker sees cached AI reads: 0
+AI6 broker writes usage: no access
+AI6 broker claims cache: no access
+AI7 broker denied AI cost: Founder Analytics is not available for this account.
+AI7 agency admin denied AI cost too
+AI7 anonymous denied AI cost
+AI8 founder: today=0.043500 month=0.043500 docs=2 pages=2 paid=4 failed=1 cached=1 top=loss run.pdf models=claude-sonnet-5 trendDays=30 brokerages=Agency,No brokerage ops=structured_extraction:3/1,transcription:1/0
+AI8 bad time zone falls back: UTC
+S1 historical request after 0047: unconfirmed sent_at=none
+S2 a new request starts: prepared sent_at=none
+S3 broker without access denied: Request not found.
+S3 other agency denied: Request not found.
+S3 still prepared: prepared
+S4 owner marks it sent: sent
+S4 stored: sent sent=2026-10-02 15:00 requested=2026-10-02 next=2026-10-07
+S5 confirm an unconfirmed one, a future date is clamped: true
+S6 anonymous denied
+Q1 broker limit 2: true,true,user_daily_limit
+Q2 limit reached: false
+Q2 a failed read frees its slot: true
+Q3 agency limit 4 counts paid reads of every broker today (cached + yesterday free): true,agency_daily_limit
+Q4 broker cannot touch quotas
+Q4 broker sees quota holds: no access
+G1 unconfirmed email denied: Confirm your email address first.
+G2 already in an agency: You already belong to an agency.
+G3 name validated: Enter your agency's name (2–120 characters).
+G4 owner creates their agency: true
+G4 owner is its admin: admin agency=Fresh Freight Agency name=Olive Owner
+G5 only one agency per owner: You already belong to an agency.
+G6 sees only their own agency: Fresh Freight Agency
+G6 sees no other agency's accounts: 0
+G6 sees no other agency's people: Olive Owner
+G7 can invite brokers to their agency: true
+G8 anonymous denied
+F1 snapshot v2: members listed=4 owner without activity listed=1 re-open is not meaningful=true open invitations=newbroker@freshfreight.com unaffiliated=5
+F2 snapshot v2 still founder-only
+U1 bucket limits: intake-uploads=26214400 bytes, 12 types, html allowed=false; submission-documents=26214400 bytes, 12 types, html allowed=false
+U2 switch off: an unchecked file attaches as before: true
+U3 switch on, unchecked file refused: This file hasn't been checked yet — upload it again.
+U4 client cannot mark files verified
+U5 switch on, server-checked file attaches: true
+U6 agency admin sees verifications: no access
+U6 agency admin cannot change the switch
+U7 unchecked intake file refused: This file hasn't been checked yet — upload it again.
+U8 switch back off: false
+AQ1 20 concurrent reads, limit 5, allowed: 5

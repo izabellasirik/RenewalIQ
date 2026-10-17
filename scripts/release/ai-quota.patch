@@ -1,0 +1,160 @@
+diff --git a/supabase/functions/extract-document-vision/handler.ts b/supabase/functions/extract-document-vision/handler.ts
+index 1c5eb16..2596152 100644
+--- a/supabase/functions/extract-document-vision/handler.ts
++++ b/supabase/functions/extract-document-vision/handler.ts
+@@ -24,8 +24,17 @@ export interface ReadRequest {
+   userId: string | null;
+ }
+ 
++/** Paid AI reads per day (UTC): per broker and per agency. A read answered from the cache is free and never counted. */
++export const DEFAULT_DAILY_LIMITS = { perUser: 200, perAgency: 1000 };
++
++export const QUOTA_MESSAGES = {
++  user_daily_limit: 'You’ve reached today’s limit for AI document reading. It resets at midnight UTC — until then documents are read with on-device text recognition and held for review.',
++  agency_daily_limit: 'Your agency has reached today’s limit for AI document reading. It resets at midnight UTC — until then documents are read with on-device text recognition and held for review.',
++} as const;
++
+ export interface ReadDeps {
+   store: Store | null;
++  limits?: { perUser: number; perAgency: number };
+   callModel: () => Promise<ModelCallResult>;
+   configuredModel: string;
+   sleep?: (ms: number) => Promise<void>;
+@@ -42,7 +51,7 @@ export const DEFAULT_GLOBAL_DAILY_LIMIT = 3000;
+ export const GLOBAL_LIMIT_MESSAGE =
+   'AI document reading has reached today’s limit for RenewalIQ. It resets at midnight UTC — until then documents are read with on-device text recognition and held for review.';
+ 
+-export type ReadResponse = { status: 200; body: unknown; fromCache: boolean } | { status: number; body: { error: string } };
++export type ReadResponse = { status: 200; body: unknown; fromCache: boolean } | { status: number; body: { error: string; quota?: 'user_daily_limit' | 'agency_daily_limit' } };
+ 
+ export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<ReadResponse> {
+   // Never a paid call, a cache entry or a usage row without a signed-in broker (index.ts verifies
+@@ -106,7 +115,21 @@ export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<Read
+     }
+   }
+ 
+-  // 3. The paid call.
++  // 3. Today's quota — only for a read that will actually be paid for. If the quota can't be
++  //    checked (database trouble), the read goes ahead: brokers are never blocked by our own outage.
++  const limits = deps.limits ?? DEFAULT_DAILY_LIMITS;
++  let holdId: string | null = null;
++  if (store) {
++    const quota = await store.quotaTake(req.userId, orgId, limits.perUser, limits.perAgency);
++    if (quota && !quota.allowed) {
++      if (key) await store.release(key);
++      await store.logUsage(row({ error_code: quota.reason }));
++      return { status: 429, body: { error: QUOTA_MESSAGES[quota.reason], quota: quota.reason } };
++    }
++    if (quota?.allowed) holdId = quota.holdId;
++  }
++
++  // 4. The paid call.
+   let result: ModelCallResult;
+   try {
+     result = await deps.callModel();
+@@ -120,13 +143,16 @@ export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<Read
+   if (!result.ok || !output || typeof output !== 'object') {
+     if (key && store) await store.release(key);
+     await store?.logUsage(row({ model, ...tokens, cost_usd: cost, error_code: !result.ok ? `provider_${result.status}` : 'no_structured_output' }));
++    if (holdId) await store?.quotaRelease(holdId);
+     return result.ok
+       ? { status: 502, body: { error: 'The vision model did not return structured data.' } }
+       : { status: 502, body: { error: result.status === 0 ? 'Could not reach the vision model provider.' : 'The vision model provider returned an error.' } };
+   }
+ 
+-  // 4. Kept, so this page is never paid for again.
++  // 5. Kept, so this page is never paid for again. (The usage row now counts towards the quota,
++  //    so the hold can go.)
+   if (key && store) await store.complete(key, output, model);
+   await store?.logUsage(row({ model, ...tokens, cost_usd: cost, succeeded: true }));
++  if (holdId) await store?.quotaRelease(holdId);
+   return { status: 200, body: output, fromCache: false };
+ }
+diff --git a/supabase/functions/extract-document-vision/index.ts b/supabase/functions/extract-document-vision/index.ts
+index 944342e..230a452 100644
+--- a/supabase/functions/extract-document-vision/index.ts
++++ b/supabase/functions/extract-document-vision/index.ts
+@@ -21,9 +21,10 @@
+ //
+ // Every read is kept (ai_read_cache, migration 0046) and reused — the same page is paid for once —
+ // and every request is logged with its token counts and cost (ai_usage_events; prices in pricing.ts).
++// Paid reads are capped per broker and per agency per day (0047 ai_quota_take; 200 / 1,000 by default).
+ 
+ import { verifyCaller } from './auth.ts';
+-import { DEFAULT_GLOBAL_DAILY_LIMIT, handleRead, type ModelCallResult } from './handler.ts';
++import { DEFAULT_DAILY_LIMITS, DEFAULT_GLOBAL_DAILY_LIMIT, handleRead, type ModelCallResult } from './handler.ts';
+ import { restStore, sanitizeContext } from './store.ts';
+ 
+ const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+@@ -283,6 +284,12 @@ function jsonResponse(body: unknown, status: number): Response {
+   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+ }
+ 
++/** Daily paid-read limits; AI_DAILY_LIMIT_PER_USER / AI_DAILY_LIMIT_PER_AGENCY override the defaults. */
++function dailyLimits() {
++  const n = (v: string | undefined, d: number) => (v && /^\d+$/.test(v) ? Number(v) : d);
++  return { perUser: n(Deno.env.get('AI_DAILY_LIMIT_PER_USER'), DEFAULT_DAILY_LIMITS.perUser), perAgency: n(Deno.env.get('AI_DAILY_LIMIT_PER_AGENCY'), DEFAULT_DAILY_LIMITS.perAgency) };
++}
++
+ /** Platform-wide paid reads per day (UTC); AI_DAILY_LIMIT_GLOBAL overrides the default. */
+ function globalDailyLimit(): number {
+   const v = Deno.env.get('AI_DAILY_LIMIT_GLOBAL');
+@@ -386,7 +393,7 @@ Deno.serve(async (req: Request) => {
+       context: sanitizeContext(body.context),
+       userId: caller.userId,
+     },
+-    { store, callModel, configuredModel: model, globalDailyLimit: globalDailyLimit() }
++    { store, callModel, configuredModel: model, limits: dailyLimits(), globalDailyLimit: globalDailyLimit() }
+   );
+   return jsonResponse(result.body, result.status);
+ });
+diff --git a/supabase/functions/extract-document-vision/store.ts b/supabase/functions/extract-document-vision/store.ts
+index 8b743cd..a477000 100644
+--- a/supabase/functions/extract-document-vision/store.ts
++++ b/supabase/functions/extract-document-vision/store.ts
+@@ -39,6 +39,9 @@ export interface UsageRow {
+ 
+ export type ClaimState = { state: 'hit'; result: unknown; model: string | null } | { state: 'claimed' } | { state: 'busy' };
+ 
++/** A paid read's place in today's quota (0047): allowed with a hold to release, or refused and why. */
++export type QuotaDecision = { allowed: true; holdId: string } | { allowed: false; reason: 'user_daily_limit' | 'agency_daily_limit' };
++
+ const ID_RE = /^[A-Za-z0-9_.:-]{1,100}$/;
+ const HASH_RE = /^[a-f0-9]{64}$/;
+ 
+@@ -97,6 +100,9 @@ export interface Store {
+   complete(key: string, result: unknown, model: string | null): Promise<void>;
+   release(key: string): Promise<void>;
+   logUsage(row: UsageRow): Promise<void>;
++  /** null = the quota couldn't be checked (database down, 0047 not applied) — the caller lets the read through. */
++  quotaTake(userId: string | null, orgId: string | null, userLimit: number, orgLimit: number): Promise<QuotaDecision | null>;
++  quotaRelease(holdId: string): Promise<void>;
+   /** Paid reads so far today (UTC), platform-wide — same rule as 0047's quota. null = couldn't count. */
+   paidReadsToday?(): Promise<number | null>;
+ }
+@@ -142,6 +148,25 @@ export function restStore(url: string, serviceKey: string, fetchImpl: typeof fet
+         // a stale claim is taken over after a few minutes anyway
+       }
+     },
++    async quotaTake(userId, orgId, userLimit, orgLimit) {
++      try {
++        const out = (await rpc('ai_quota_take', { p_user: userId, p_org: orgId, p_user_limit: userLimit, p_org_limit: orgLimit })) as { allowed?: boolean; holdId?: string; reason?: string } | null;
++        if (!out || typeof out.allowed !== 'boolean') return null;
++        if (out.allowed && out.holdId) return { allowed: true, holdId: out.holdId };
++        if (!out.allowed && (out.reason === 'user_daily_limit' || out.reason === 'agency_daily_limit')) return { allowed: false, reason: out.reason };
++        return null;
++      } catch (err) {
++        console.error('extract-document-vision: quota check failed (read allowed)', String(err));
++        return null;
++      }
++    },
++    async quotaRelease(holdId) {
++      try {
++        await rpc('ai_quota_release', { p_hold: holdId });
++      } catch {
++        // holds expire after 10 minutes anyway
++      }
++    },
+     async paidReadsToday() {
+       try {
+         const day = new Date();

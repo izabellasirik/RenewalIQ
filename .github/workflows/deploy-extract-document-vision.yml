@@ -1,0 +1,153 @@
+# Deploys the extract-document-vision Supabase Edge Function when — and only when — its own code
+# changes on the branch production is built from. Nothing else in the repo triggers it.
+#
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN  a Supabase personal access token (supabase.com/dashboard/account/tokens)
+#   SUPABASE_PROJECT_REF   the project id from the dashboard URL (supabase.com/dashboard/project/<ref>)
+#                          — must be the production project below, or nothing is deployed
+# The function's own secret (ANTHROPIC_API_KEY) stays in Supabase and is never touched here.
+name: Deploy extract-document-vision
+
+on:
+  push:
+    branches:
+      - claude/dreamy-pasteur-j9a9d9
+    paths:
+      - 'supabase/functions/extract-document-vision/**'
+
+# Read-only repository access; the workflow only needs to check out the code.
+permissions:
+  contents: read
+
+# The only project this workflow may deploy to. A project ref isn't secret (it's the host name in the
+# app's public Supabase URL); the secret is compared with it so a changed or mistyped secret can't
+# send the function to another project.
+env:
+  PRODUCTION_PROJECT_REF: mtkgrlzadxbebldruolr
+  # Exact Supabase CLI version (not "latest 2.x"), so a new CLI release can't change how we deploy.
+  SUPABASE_CLI_VERSION: 2.118.0
+
+# One deploy at a time; a newer push waits for the running one instead of racing it.
+concurrency:
+  group: deploy-extract-document-vision
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check the secrets are set
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error::Add the SUPABASE_ACCESS_TOKEN and SUPABASE_PROJECT_REF repository secrets first. Nothing was deployed."
+            exit 1
+          fi
+
+      # Refuse to deploy unless the secret names exactly the production project (no trimming: a stray
+      # space or newline also stops the deploy). The secret's value is never printed.
+      - name: Confirm the target is the production project
+        env:
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ "$SUPABASE_PROJECT_REF" != "$PRODUCTION_PROJECT_REF" ]; then
+            echo "::error::SUPABASE_PROJECT_REF is not the production project ($PRODUCTION_PROJECT_REF). Nothing was deployed."
+            exit 1
+          fi
+          echo "Target confirmed: production project $PRODUCTION_PROJECT_REF."
+
+      - uses: actions/checkout@v5
+
+      # The function must still confirm every caller before doing anything. A function without that
+      # check (for example an older version restored by a revert) is never deployed: pausing AI
+      # reading (AI_READING_PAUSED=true) is the rollback, not redeploying old code.
+      - name: Refuse a function without the sign-in check
+        run: |
+          fn=supabase/functions/extract-document-vision
+          fail() { echo "::error::$1 Not deploying — to roll back, set AI_READING_PAUSED=true instead."; exit 1; }
+          [ -f "$fn/auth.ts" ] || fail "$fn/auth.ts (the caller check) is missing."
+          grep -qF "import { verifyCaller } from './auth.ts'" "$fn/index.ts" || fail "index.ts does not import the caller check."
+          verify=$(grep -n 'await verifyCaller(' "$fn/index.ts" | head -1 | cut -d: -f1)
+          body=$(grep -n 'await req.json()' "$fn/index.ts" | head -1 | cut -d: -f1)
+          [ -n "$verify" ] || fail "index.ts never calls verifyCaller."
+          [ -n "$body" ] && [ "$verify" -lt "$body" ] || fail "index.ts reads the request before checking the caller."
+          echo "The function checks the caller (line $verify) before reading the request (line $body)."
+
+      # The function's own tests (caller check, pause switch, cache, ceiling) must pass before deploying.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Run the function's tests
+        run: |
+          npm ci --no-audit --no-fund
+          npm run test -- src/services/ingestion/__tests__/aiReadServer.test.ts
+
+      # The function must keep requiring a signed-in user (Supabase's default). JWT verification is
+      # decided by two things only: supabase/config.toml ([functions.<name>] verify_jwt) and the
+      # deploy command's flag. Source comments don't matter. This step reads the real config the CLI
+      # will use; the Deploy step forces verification on; the step after it reads back what was deployed.
+      - name: Keep JWT verification on
+        run: |
+          python3 - <<'PY'
+          import os, sys, tomllib
+          path = 'supabase/config.toml'
+          if not os.path.exists(path):
+              print('No supabase/config.toml: the CLI default applies (JWT verification on).')
+              sys.exit(0)
+          try:
+              with open(path, 'rb') as f:
+                  cfg = tomllib.load(f)
+          except Exception as err:
+              print(f'::error::supabase/config.toml cannot be read ({err}). Not deploying.')
+              sys.exit(1)
+          fn = cfg.get('functions', {}).get('extract-document-vision', {})
+          if 'verify_jwt' in fn and fn['verify_jwt'] is not True:
+              print('::error::supabase/config.toml turns JWT verification off for extract-document-vision. Not deploying.')
+              sys.exit(1)
+          print('supabase/config.toml keeps JWT verification on for extract-document-vision.')
+          PY
+
+      # The official Supabase CLI, straight from npm, at the exact version pinned above — no third-party action.
+      - name: Deploy
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        # Checked again right here, so the deploy can't run against anything else even if the steps
+        # above are ever reordered or removed.
+        run: |
+          if [ "$SUPABASE_PROJECT_REF" != "$PRODUCTION_PROJECT_REF" ]; then
+            echo "::error::SUPABASE_PROJECT_REF is not the production project ($PRODUCTION_PROJECT_REF). Nothing was deployed."
+            exit 1
+          fi
+          # An explicit "=false" overrides any config.toml setting: the function is always deployed
+          # with JWT verification on.
+          npx --yes "supabase@$SUPABASE_CLI_VERSION" functions deploy extract-document-vision --project-ref "$PRODUCTION_PROJECT_REF" --no-verify-jwt=false
+
+      # What production now runs, not what the repo says: the deployed function's own setting, and a
+      # request with no token, which must be refused by the platform before the function's code runs.
+      - name: Confirm JWT verification is on in production
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          fail() {
+            echo "::error::$1 JWT verification may be OFF for extract-document-vision in production — pause AI reading now: set the function secret AI_READING_PAUSED=true (deployment plan)."
+            exit 1
+          }
+          code=$(curl -sS --max-time 30 --retry 3 --retry-all-errors -o api.json -w '%{http_code}' \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/$PRODUCTION_PROJECT_REF/functions/extract-document-vision") || fail "The Management API could not be reached."
+          [ "$code" = "200" ] || fail "The Management API answered $code."
+          jq -e '.verify_jwt == true' api.json >/dev/null || fail "The deployed function does not report verify_jwt = true."
+          echo "Deployed function reports verify_jwt = true (version $(jq -r '.version // "?"' api.json))."
+
+          code=$(curl -sS --max-time 30 --retry 3 --retry-all-errors -o probe.json -w '%{http_code}' -X POST \
+            -H 'content-type: application/json' -d '{}' \
+            "https://$PRODUCTION_PROJECT_REF.supabase.co/functions/v1/extract-document-vision") || fail "The function URL could not be reached."
+          [ "$code" = "401" ] || fail "A request with no token got HTTP $code instead of 401."
+          # The function's own refusal would mean the platform let the request through.
+          if grep -q 'Sign in to use AI document reading' probe.json; then fail "A request with no token reached the function's code."; fi
+          echo "A request with no token is refused by the platform (401)."

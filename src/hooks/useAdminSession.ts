@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase, isSupabaseConfigured } from '../services/supabase/client';
 import { checkIsAdmin } from '../services/supabase/adminAuth';
+import { passwordRecoveryPending } from '../services/supabase/authRedirect';
 
 export type AdminSessionStatus = 'loading' | 'not_configured' | 'signed_out' | 'unauthorized' | 'admin' | 'password_recovery';
 
@@ -28,6 +29,13 @@ export function useAdminSession(): AdminSession {
         if (!cancelled) {
           setStatus('signed_out');
           setEmail(null);
+        }
+        return;
+      }
+      if (passwordRecoveryPending()) {
+        if (!cancelled) {
+          setEmail(sessionEmail);
+          setStatus('password_recovery');
         }
         return;
       }

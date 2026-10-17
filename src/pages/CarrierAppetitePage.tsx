@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -7,6 +8,8 @@ import { Tabs, EmptyState, Button } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketCardSkeleton } from '../components/appetite/MarketCardSkeleton';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
+import { AddToQuotesAction } from '../components/appetite/AddToQuotesAction';
+import { CarrierDrawer, carrierRowFor, type Row as CarrierRow } from './CarriersPage';
 import { useAccountsStore } from '../state/useAccountsStore';
 import type { MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
@@ -28,10 +31,34 @@ export function CarrierAppetitePage() {
   useEffect(() => {
     loadEffectiveAppetiteRecords();
   }, [loadEffectiveAppetiteRecords]);
-  const [filter, setFilter] = useState<FilterKey>('all');
+  // Possible Match is the main view — first tab and open by default.
+  const [filter, setFilter] = useState<FilterKey>('possible_match');
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<MatchResult | null>(null);
+  // By id, so the market shows its fresh verdict after an edit re-runs matching.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected: MatchResult | null = matchResults.find((r) => r.appetiteRecordId === selectedId) ?? null;
+  const setSelected = (r: MatchResult | null) => {
+    setSelectedId(r?.appetiteRecordId ?? null);
+    if (r) trackEvent('carrier_match_opened', { accountId, metadata: { source: 'carrier_appetite' }, dedupeKey: `match_opened:${accountId}:${r.appetiteRecordId}:${dayKey()}` });
+  };
+  // Founder Analytics: appetite results were produced for this account (once a day per account).
+  const hasResults = matchResults.length > 0 && !!account;
+  useEffect(() => {
+    if (hasResults) trackEvent('carrier_appetite_generated', { accountId, dedupeKey: `appetite:${accountId}:${dayKey()}` });
+  }, [accountId, hasResults]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Agency admins edit a market's appetite right here — the same form as Manage Carrier Appetite; the
+  // database only accepts it from an admin (0023). Saving re-matches every account.
+  const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
+  const reloadCarrierAppetite = useAccountsStore((s) => s.reloadCarrierAppetite);
+  const [editRow, setEditRow] = useState<CarrierRow | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const editMarket = (recordId: string) => {
+    const record = effectiveAppetiteRecords.find((r) => r.id === recordId);
+    if (!record) return;
+    setDrawerOpen(false);
+    setEditRow(carrierRowFor(record, useAccountsStore.getState().agencyCarriers));
+  };
   const isAnalyzing = matchResults.length === 0 && documents.some((d) => d.status === 'processing');
 
   const counts = useMemo(() => {
@@ -61,9 +88,10 @@ export function CarrierAppetitePage() {
         ) : undefined
       }
     >
+      {notice && <p className="mb-4 rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2 text-sm text-[var(--color-ink-700)]" role="status">{notice}</p>}
       <p className="mb-5 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
         <Info size={13} className="mt-0.5 shrink-0" />
-        Carrier appetite changes frequently. Renewal IQ recommendations are based on the latest information available and should be confirmed with the market before binding.
+        Carrier appetite changes frequently. RenewalIQ recommendations are based on the latest information available and should be confirmed with the market before binding.
       </p>
 
       {isAnalyzing ? (
@@ -94,9 +122,9 @@ export function CarrierAppetitePage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <Tabs
               items={[
+                { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
                 { key: 'all', label: 'All Markets', count: matchResults.length },
                 { key: 'likely_match', label: VERDICT_LABELS.likely_match, count: counts.likely_match },
-                { key: 'possible_match', label: VERDICT_LABELS.possible_match, count: counts.possible_match },
                 { key: 'needs_more_information', label: VERDICT_LABELS.needs_more_information, count: counts.needs_more_information },
                 { key: 'not_eligible', label: VERDICT_LABELS.not_eligible, count: counts.not_eligible },
               ]}
@@ -126,6 +154,7 @@ export function CarrierAppetitePage() {
                       setSelected(result);
                       setDrawerOpen(true);
                     }}
+                    onEdit={isAgencyAdmin ? () => editMarket(result.appetiteRecordId) : undefined}
                   />
                 </motion.div>
               ))}
@@ -134,7 +163,29 @@ export function CarrierAppetitePage() {
         </>
       )}
 
-      <MarketDetailDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} record={selectedRecord} result={selected} />
+      <MarketDetailDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        record={selectedRecord}
+        result={selected}
+        actions={(record) => <AddToQuotesAction record={record} accountId={accountId} />}
+        onEdit={isAgencyAdmin ? (record) => editMarket(record.id) : undefined}
+      />
+      <CarrierDrawer
+        row={editRow}
+        onClose={() => setEditRow(null)}
+        onSaved={async (name) => {
+          setEditRow(null);
+          const res = await reloadCarrierAppetite();
+          setNotice(res.ok ? `${name} saved — this account and every other account were re-matched.` : (res.message ?? `${name} saved, but matching couldn't refresh.`));
+        }}
+        onArchived={async (name) => {
+          setEditRow(null);
+          setSelectedId(null);
+          await reloadCarrierAppetite();
+          setNotice(`${name} archived — Market Finder no longer suggests it.`);
+        }}
+      />
     </PageContainer>
   );
 }

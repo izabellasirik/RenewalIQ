@@ -1,4 +1,5 @@
 import type { DocumentFileType } from '../../types';
+import type { LayoutLine } from './pdfLayout';
 
 export interface RawDocumentPage {
   pageNumber: number;
@@ -24,12 +25,20 @@ export interface RawDocument {
   text: string;
   /** Per-page text, PDF only — lets extraction attribute a match to a page number. */
   pages?: RawDocumentPage[];
+  /** PDF only — every line with its cells and position (see pdfLayout.ts), for reading tables by column. */
+  layout?: LayoutLine[];
   /** Structured tables found in the document, if any. */
   tables?: RawTable[];
   /** Non-fatal problems parsing this file, e.g. a scanned PDF with no embedded text. */
   warnings: string[];
   /** Image documents only — a resized, compressed JPEG data URL for on-screen preview. See parseImage.ts. */
   imagePreviewDataUrl?: string;
+  /** Set when the uploaded file was only a link: the URL it pointed to (kept for traceability). */
+  sourceUrl?: string;
+  /** Set when the uploaded file was only a link: the document downloaded from it (store/preview this, not the shortcut). */
+  linkedFile?: File;
   /** Image documents only — Tesseract's overall mean-confidence score (0-100) for the recognized text, so downstream code can scale field confidence to actual image/OCR quality rather than treating OCR text like verbatim embedded PDF text. */
   ocrConfidence?: number;
+  /** PDF only — pages with no embedded text (scans), up to the OCR limit; these are the pages the AI reads. */
+  scannedPages?: number[];
 }

@@ -1,25 +1,31 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { trackEvent } from '../services/productAnalytics/trackEvent';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Compass, Search, Info, RotateCcw, X } from 'lucide-react';
+import { ChevronRight, Pencil, Search, Info, Plus, RotateCcw, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Badge, EmptyState } from '../components/ui';
 import { MarketCard } from '../components/appetite/MarketCard';
 import { MarketDetailDrawer } from '../components/appetite/MarketDetailDrawer';
+import { AddToQuotesAction } from '../components/appetite/AddToQuotesAction';
+import { StateListInput } from '../components/appetite/StateListInput';
+import { CarrierDrawer, carrierRowFor, type Row as CarrierRow } from './CarriersPage';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { matchAllMarkets, VERDICT_RANK } from '../services/appetite/matchingEngine';
 import {
   buildProfileFromFilters,
   hasAnyFilter,
   EMPTY_MARKET_FINDER_FILTERS,
+  filterDuration,
   OPERATION_TYPE_OPTIONS,
   COVERAGE_OPTIONS,
   type MarketFinderFilters,
   type TriState,
 } from '../services/appetite/marketFinderInput';
-import { US_STATES, parseStateList } from '../utils/usStates';
+import { US_STATES } from '../utils/usStates';
 import type { AppetiteRecord, MatchResult, Verdict } from '../types';
 import { VERDICT_LABELS } from '../types';
 import { cn } from '../utils/cn';
+import { formatDuration } from '../utils/duration';
 
 const VERDICT_ORDER: Verdict[] = ['likely_match', 'possible_match', 'needs_more_information', 'not_eligible'];
 
@@ -104,8 +110,17 @@ function buildFilterChips(filters: MarketFinderFilters, update: <K extends keyof
 
   if (filters.newVenture) {
     chips.push({ id: 'newVenture', label: 'New Venture', onRemove: () => update('newVenture', false) });
-  } else if (filters.yearsInBusiness) {
-    chips.push({ id: 'yearsInBusiness', label: `${filters.yearsInBusiness} Years in Business`, onRemove: () => update('yearsInBusiness', '') });
+  } else {
+    const yib = filterDuration(filters.yearsInBusiness, filters.yearsInBusinessMonths);
+    if (yib)
+      chips.push({
+        id: 'yearsInBusiness',
+        label: `${formatDuration(yib)} in Business`,
+        onRemove: () => {
+          update('yearsInBusiness', '');
+          update('yearsInBusinessMonths', '');
+        },
+      });
   }
 
   if (filters.operatingRadius.trim()) chips.push({ id: 'operatingRadius', label: filters.operatingRadius.trim(), onRemove: () => update('operatingRadius', '') });
@@ -134,7 +149,16 @@ function buildFilterChips(filters: MarketFinderFilters, update: <K extends keyof
       });
     });
 
-  if (filters.minDriverExperienceYears) chips.push({ id: 'minExp', label: `${filters.minDriverExperienceYears}+ yrs driver experience`, onRemove: () => update('minDriverExperienceYears', '') });
+  const minExp = filterDuration(filters.minDriverExperienceYears, filters.minDriverExperienceMonths);
+  if (minExp)
+    chips.push({
+      id: 'minExp',
+      label: `${formatDuration({ ...minExp, orMore: true })} driver experience`,
+      onRemove: () => {
+        update('minDriverExperienceYears', '');
+        update('minDriverExperienceMonths', '');
+      },
+    });
   if (filters.minDriverAge) chips.push({ id: 'minAge', label: `Driver age ${filters.minDriverAge}+`, onRemove: () => update('minDriverAge', '') });
   if (filters.telematics !== 'unknown') chips.push({ id: 'telematics', label: `Telematics: ${filters.telematics === 'yes' ? 'Yes' : 'No'}`, onRemove: () => update('telematics', 'unknown') });
   if (filters.dashcams !== 'unknown') chips.push({ id: 'dashcams', label: `Dashcams: ${filters.dashcams === 'yes' ? 'Yes' : 'No'}`, onRemove: () => update('dashcams', 'unknown') });
@@ -157,18 +181,37 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
   );
 }
 
-function NeutralMarketList({ records }: { records: AppetiteRecord[] }) {
+function NeutralMarketList({ records, onOpen, onEdit }: { records: AppetiteRecord[]; onOpen: (record: AppetiteRecord) => void; /** Agency admins only. */ onEdit?: (record: AppetiteRecord) => void }) {
   return (
     <div>
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">All Markets ({records.length})</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">All Markets</p>
       <div className="divide-y divide-[var(--color-ink-100)] overflow-hidden rounded-lg border border-[var(--color-ink-100)] bg-white">
         {records.map((r) => (
-          <div key={r.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{r.marketName}</p>
-              {r.parentCompany !== r.marketName && <p className="truncate text-xs text-[var(--color-ink-400)]">{r.parentCompany}</p>}
-            </div>
-            <Badge tone="neutral">{r.marketType === 'direct' ? 'Direct' : 'MGA'}</Badge>
+          <div key={r.id} className="flex items-center hover:bg-[var(--color-ink-50)]">
+            <button
+              type="button"
+              onClick={() => onOpen(r)}
+              className="flex min-w-0 flex-1 items-center justify-between gap-3 px-4 py-2.5 text-left focus-visible:bg-[var(--color-ink-50)] focus-visible:outline-none cursor-pointer"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-[var(--color-ink-800)]">{r.marketName}</p>
+                {r.parentCompany !== r.marketName && <p className="truncate text-xs text-[var(--color-ink-400)]">{r.parentCompany}</p>}
+              </div>
+              <span className="flex shrink-0 items-center gap-2">
+                <Badge tone="neutral">{r.marketType === 'direct' ? 'Direct' : 'MGA'}</Badge>
+                {!onEdit && <ChevronRight size={14} className="text-[var(--color-ink-300)]" />}
+              </span>
+            </button>
+            {onEdit && (
+              <button
+                type="button"
+                onClick={() => onEdit(r)}
+                className="mr-3 inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-brand-800)]/8 cursor-pointer"
+                aria-label={`Edit ${r.marketName}`}
+              >
+                <Pencil size={12} /> Edit
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -177,6 +220,7 @@ function NeutralMarketList({ records }: { records: AppetiteRecord[] }) {
 }
 
 export function MarketFinderPage() {
+  const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   const effectiveAppetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const loadEffectiveAppetiteRecords = useAccountsStore((s) => s.loadEffectiveAppetiteRecords);
   useEffect(() => {
@@ -185,7 +229,11 @@ export function MarketFinderPage() {
 
   const [filters, setFilters] = useState<MarketFinderFilters>(EMPTY_MARKET_FINDER_FILTERS);
   const [selected, setSelected] = useState<MatchResult | null>(null);
+  /** A market opened from All Markets (no filters yet) — shown without a match verdict. */
+  const [browsedRecordId, setBrowsedRecordId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editRow, setEditRow] = useState<CarrierRow | 'new' | null>(null);
+  const reloadCarrierAppetite = useAccountsStore((s) => s.reloadCarrierAppetite);
 
   function update<K extends keyof MarketFinderFilters>(key: K, value: MarketFinderFilters[K]) {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -213,6 +261,22 @@ export function MarketFinderPage() {
     return [...results].sort((a, b) => VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.verifiedMatchCount - a.verifiedMatchCount);
   }, [filters, filtersActive, effectiveAppetiteRecords]);
 
+  // Founder Analytics: Market Finder updates live, so filter changes alone are not a search. A search
+  // counts as completed only when the broker opens a market from its results — once per set of filters.
+  // Market Finder isn't tied to an account; the account counts come from "Add to Quotes".
+  const searchSignature = filtersActive ? JSON.stringify(filters) : '';
+  const usedSearches = useRef(new Set<string>());
+  function recordSearchUsed() {
+    if (!searchSignature || usedSearches.current.has(searchSignature)) return;
+    usedSearches.current.add(searchSignature);
+    trackEvent('market_search_completed', { metadata: { source: 'market_finder', count: visibleResults.length } });
+  }
+
+  // After an edit (or any appetite change) the open market shows its recalculated verdict.
+  useEffect(() => {
+    setSelected((cur) => (cur ? (visibleResults.find((r) => r.appetiteRecordId === cur.appetiteRecordId) ?? cur) : cur));
+  }, [visibleResults]);
+
   const countsByVerdict = useMemo(() => {
     const counts: Record<Verdict, number> = { likely_match: 0, possible_match: 0, needs_more_information: 0, not_eligible: 0 };
     for (const r of visibleResults) counts[r.verdict]++;
@@ -220,7 +284,8 @@ export function MarketFinderPage() {
   }, [visibleResults]);
 
   const chips = useMemo(() => buildFilterChips(filters, update), [filters]);
-  const selectedRecord = selected ? effectiveAppetiteRecords.find((r) => r.id === selected.appetiteRecordId) ?? null : null;
+  const selectedRecordId = selected?.appetiteRecordId ?? browsedRecordId;
+  const selectedRecord = selectedRecordId ? effectiveAppetiteRecords.find((r) => r.id === selectedRecordId) ?? null : null;
 
   function handleClear() {
     setFilters(EMPTY_MARKET_FINDER_FILTERS);
@@ -244,15 +309,22 @@ export function MarketFinderPage() {
       */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr] lg:items-start">
         <div className="lg:col-start-2 lg:row-start-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">Market Finder</h1>
-          <p className="mt-1 text-sm text-[var(--color-ink-500)]">Search trucking markets based on risk characteristics — no submission required.</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-ink-900)]">Market Finder</h1>
+            {/* Agency admins add a market here, and edit one by opening it (the database enforces who can). */}
+            {isAgencyAdmin && (
+              <Button icon={<Plus size={15} />} onClick={() => setEditRow('new')}>
+                Add Market
+              </Button>
+            )}
+          </div>
           <p className="mt-2 flex items-start gap-1.5 text-xs text-[var(--color-ink-400)]">
             <Info size={13} className="mt-0.5 shrink-0" />
-            Carrier appetite changes frequently. Renewal IQ recommendations are based on the latest information available and should be confirmed with the market before binding.
+            Carrier appetite changes frequently. RenewalIQ recommendations are based on the latest information available and should be confirmed with the market before binding.
           </p>
         </div>
 
-        <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-4 lg:sticky lg:top-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto scrollbar-thin">
+        <div className="flex flex-col gap-4 rounded-xl border border-[var(--color-ink-100)] bg-white p-4 lg:sticky lg:top-4 lg:col-start-1 lg:row-start-1 lg:row-span-2 lg:max-h-[calc(100dvh-5.5rem)] lg:overflow-y-auto lg:overscroll-contain scrollbar-thin">
           <p className="text-sm font-semibold text-[var(--color-ink-900)]">Filters</p>
 
           <div>
@@ -269,30 +341,19 @@ export function MarketFinderPage() {
 
           <div>
             <label className={fieldLabelClass()}>Operating States</label>
-            <input
-              value={filters.operatingStates.join(', ')}
-              onChange={(e) => update('operatingStates', parseStateList(e.target.value))}
-              placeholder="e.g. NJ, NY, PA"
-              className={inputClass()}
-            />
+            <StateListInput value={filters.operatingStates} onChange={(states) => update('operatingStates', states)} placeholder="e.g. NJ, NY, PA" className={inputClass()} />
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <label className={fieldLabelClass()}>Fleet Size</label>
-              <input type="number" min={0} value={filters.fleetSize} onChange={(e) => update('fleetSize', e.target.value)} placeholder="Units" className={inputClass()} />
-            </div>
-            <div>
-              <label className={fieldLabelClass()}>Years in Business</label>
-              <input
-                type="number"
-                min={0}
-                value={filters.yearsInBusiness}
-                onChange={(e) => update('yearsInBusiness', e.target.value)}
-                placeholder="Years"
-                className={inputClass()}
-                disabled={filters.newVenture}
-              />
+          <div>
+            <label className={fieldLabelClass()}>Fleet Size</label>
+            <input type="number" min={0} value={filters.fleetSize} onChange={(e) => update('fleetSize', e.target.value)} placeholder="Units" className={inputClass()} />
+          </div>
+
+          <div>
+            <p className={fieldLabelClass()}>Years in Business</p>
+            <div className="grid grid-cols-2 gap-2.5">
+              <input type="number" min={0} value={filters.yearsInBusiness} onChange={(e) => update('yearsInBusiness', e.target.value)} placeholder="Years" aria-label="Years in business — years" className={inputClass()} disabled={filters.newVenture} />
+              <input type="number" min={0} max={11} value={filters.yearsInBusinessMonths} onChange={(e) => update('yearsInBusinessMonths', e.target.value)} placeholder="Months" aria-label="Years in business — months" className={inputClass()} disabled={filters.newVenture} />
             </div>
           </div>
 
@@ -321,15 +382,17 @@ export function MarketFinderPage() {
             <input value={filters.cargoText} onChange={(e) => update('cargoText', e.target.value)} placeholder="e.g. steel, produce" className={inputClass()} />
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <label className={fieldLabelClass()}>Min. Driver Experience</label>
-              <input type="number" min={0} value={filters.minDriverExperienceYears} onChange={(e) => update('minDriverExperienceYears', e.target.value)} placeholder="Years" className={inputClass()} />
+          <div>
+            <p className={fieldLabelClass()}>Min. Driver Experience</p>
+            <div className="grid grid-cols-2 gap-2.5">
+              <input type="number" min={0} value={filters.minDriverExperienceYears} onChange={(e) => update('minDriverExperienceYears', e.target.value)} placeholder="Years" aria-label="Minimum driver experience — years" className={inputClass()} />
+              <input type="number" min={0} max={11} value={filters.minDriverExperienceMonths} onChange={(e) => update('minDriverExperienceMonths', e.target.value)} placeholder="Months" aria-label="Minimum driver experience — months" className={inputClass()} />
             </div>
-            <div>
-              <label className={fieldLabelClass()}>Min. Driver Age</label>
-              <input type="number" min={0} value={filters.minDriverAge} onChange={(e) => update('minDriverAge', e.target.value)} placeholder="Age" className={inputClass()} />
-            </div>
+          </div>
+
+          <div>
+            <label className={fieldLabelClass()}>Min. Driver Age</label>
+            <input type="number" min={0} value={filters.minDriverAge} onChange={(e) => update('minDriverAge', e.target.value)} placeholder="Age" className={inputClass()} />
           </div>
 
           <div>
@@ -354,8 +417,24 @@ export function MarketFinderPage() {
         <div className="min-w-0 lg:col-start-2 lg:row-start-2">
           {!filtersActive ? (
             <div className="flex flex-col gap-6">
-              <EmptyState icon={<Compass size={28} strokeWidth={1.5} />} title="Start by selecting any risk characteristic." description="Pick a state, fleet size, or anything else you know — results appear immediately, no search button needed." />
-              <NeutralMarketList records={effectiveAppetiteRecords} />
+              <NeutralMarketList
+                records={effectiveAppetiteRecords}
+                onOpen={(record) => {
+                  setSelected(null);
+                  setBrowsedRecordId(record.id);
+                  setDrawerOpen(true);
+                }}
+                onEdit={
+                  isAgencyAdmin
+                    ? (record) => {
+                        // After saving (or cancelling), the form returns to this market's details.
+                        setSelected(null);
+                        setBrowsedRecordId(record.id);
+                        setEditRow(carrierRowFor(record, useAccountsStore.getState().agencyCarriers));
+                      }
+                    : undefined
+                }
+              />
             </div>
           ) : (
             <>
@@ -396,9 +475,23 @@ export function MarketFinderPage() {
                         <MarketCard
                           result={result}
                           onClick={() => {
+                            setBrowsedRecordId(null);
                             setSelected(result);
+                            recordSearchUsed();
+                            trackEvent('carrier_match_opened', { metadata: { source: 'market_finder' } });
                             setDrawerOpen(true);
                           }}
+                          onEdit={
+                            isAgencyAdmin
+                              ? () => {
+                                  const record = effectiveAppetiteRecords.find((r) => r.id === result.appetiteRecordId);
+                                  if (!record) return;
+                                  setBrowsedRecordId(null);
+                                  setSelected(result);
+                                  setEditRow(carrierRowFor(record, useAccountsStore.getState().agencyCarriers));
+                                }
+                              : undefined
+                          }
                         />
                       </motion.div>
                     ))}
@@ -410,7 +503,42 @@ export function MarketFinderPage() {
         </div>
       </div>
 
-      <MarketDetailDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} record={selectedRecord} result={selected} />
+      <MarketDetailDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        record={selectedRecord}
+        result={selected}
+        actions={(record) => <AddToQuotesAction key={record.id} record={record} />}
+        onEdit={
+          isAgencyAdmin
+            ? (record) => {
+                setDrawerOpen(false);
+                setEditRow(carrierRowFor(record, useAccountsStore.getState().agencyCarriers));
+              }
+            : undefined
+        }
+      />
+      {/* The same carrier form as Manage Appetite; saving updates matching at once and reopens the market. */}
+      <CarrierDrawer
+        row={editRow}
+        onClose={() => {
+          // Back to the market it was opened from (not after "Add Market").
+          if (editRow !== 'new') setDrawerOpen(true);
+          setEditRow(null);
+        }}
+        onSaved={async () => {
+          const wasNew = editRow === 'new';
+          setEditRow(null);
+          await reloadCarrierAppetite();
+          if (!wasNew) setDrawerOpen(true);
+        }}
+        onArchived={async () => {
+          setEditRow(null);
+          setSelected(null);
+          setBrowsedRecordId(null);
+          await reloadCarrierAppetite();
+        }}
+      />
     </PageContainer>
   );
 }

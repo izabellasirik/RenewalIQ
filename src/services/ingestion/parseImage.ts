@@ -1,6 +1,7 @@
-import { createWorker } from 'tesseract.js';
 import type { RawDocument } from './types';
 import { decodeOriented, drawToCanvas } from './imageUtils';
+import { ocrCanvases, prepareForOcr } from './ocr';
+import { buildLines } from './pdfLayout';
 
 /**
  * On-device OCR (Tesseract.js — WebAssembly, runs entirely in the broker's browser). This is no
@@ -22,8 +23,6 @@ import { decodeOriented, drawToCanvas } from './imageUtils';
  * app needs to be configured with.
  */
 
-/** Long edge, in pixels, of the image actually fed to OCR — enough to read normal document/label text without making recognition unreasonably slow on a large phone photo. */
-const OCR_MAX_DIMENSION = 2200;
 /** Long edge of the smaller copy kept for on-screen preview — deliberately small so it survives being stored as a data URL in the persisted UploadedDocument (and, by extension, localStorage). */
 const PREVIEW_MAX_DIMENSION = 1000;
 const PREVIEW_QUALITY = 0.72;
@@ -36,7 +35,12 @@ const MIN_READABLE_CHARS = 6;
 
 const UNREADABLE_MESSAGE = "We couldn't reliably read this image. Try uploading a clearer photo or review the fields manually.";
 
-export async function parseImage(file: File): Promise<RawDocument> {
+export interface ParseImageOptions {
+  /** Run OCR now (default true). False: only decode and make the preview — the AI reads the photo first and OCR runs only if it can't (readDocument.ts). */
+  ocr?: boolean;
+}
+
+export async function parseImage(file: File, options: ParseImageOptions = {}): Promise<RawDocument> {
   const warnings: string[] = [];
 
   let bitmap: ImageBitmap;
@@ -51,16 +55,17 @@ export async function parseImage(file: File): Promise<RawDocument> {
   let ocrCanvas: HTMLCanvasElement;
   try {
     imagePreviewDataUrl = drawToCanvas(bitmap, PREVIEW_MAX_DIMENSION).toDataURL('image/jpeg', PREVIEW_QUALITY);
-    ocrCanvas = drawToCanvas(bitmap, OCR_MAX_DIMENSION);
+    if (options.ocr === false) return { documentName: file.name, fileType: 'image', text: '', warnings, imagePreviewDataUrl };
+    // Grayscale, contrast-stretched and sized for OCR (small license photos are enlarged) — see ocr.ts.
+    ocrCanvas = prepareForOcr(bitmap);
   } finally {
     bitmap.close();
   }
 
-  const worker = await createWorker('eng');
   try {
-    const { data } = await worker.recognize(ocrCanvas);
-    const confidence = data.confidence;
-    const text = data.text ?? '';
+    const [page] = await ocrCanvases([ocrCanvas]);
+    const confidence = page.confidence;
+    const text = page.text;
 
     if (confidence < UNREADABLE_CONFIDENCE || text.trim().length < MIN_READABLE_CHARS) {
       warnings.push(UNREADABLE_MESSAGE);
@@ -71,11 +76,10 @@ export async function parseImage(file: File): Promise<RawDocument> {
       warnings.push('This image was only partially readable — some fields may be missing, and anything extracted is worth double-checking against the photo.');
     }
 
-    return { documentName: file.name, fileType: 'image', text, warnings, imagePreviewDataUrl, ocrConfidence: confidence };
+    // Word positions too, so a photographed table (a driver list, a loss run) is read by column.
+    return { documentName: file.name, fileType: 'image', text, layout: buildLines(page.pieces, 1), warnings, imagePreviewDataUrl, ocrConfidence: confidence };
   } catch (err) {
     warnings.push(`${UNREADABLE_MESSAGE} (${err instanceof Error ? err.message : 'OCR engine error'})`);
     return { documentName: file.name, fileType: 'image', text: '', warnings, imagePreviewDataUrl };
-  } finally {
-    await worker.terminate();
   }
 }

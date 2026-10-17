@@ -17,6 +17,11 @@ export interface RiskProfile {
   /** Itemized drivers, e.g. from a driver schedule spreadsheet. */
   drivers: DriverEntry[];
   updatedAt: string;
+  /**
+   * Loss-run records just read from a document, waiting to become the account's LossRun records
+   * (see settleLossRuns). Transient — never saved; settled as soon as the extraction is merged.
+   */
+  pendingLossRuns?: import('../services/extraction/fieldExtraction/lossRunPatterns').LossRunDraft[];
 }
 
 /** A flattened pointer to any FieldValue-bearing field in the profile, used by the UI to render/edit generically. */

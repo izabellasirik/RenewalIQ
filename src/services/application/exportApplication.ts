@@ -1,7 +1,11 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { MappedApplication } from '../../types';
+import { buildApplicationPrintPlan, printedCellValue } from './printPlan';
 import { applicationTitleFor } from './applicationTitle';
 import { DEFAULT_APPLICATION_BRANDING, type ApplicationBranding } from './branding';
+
+// What gets printed — fields, sections, table columns and rows — is decided once, in printPlan.ts,
+// which the on-screen Review Application preview reads too.
 
 const PAGE_WIDTH = 612; // US Letter, points
 const PAGE_HEIGHT = 792;
@@ -148,6 +152,8 @@ export async function generateApplicationPdf(
   // unwrapped single drawText call here would run a long company name past the page's right edge,
   // clipped rather than overlapping other text, but still a "long text" failure the same fix belongs to.
   const title = applicationTitleFor(accountName, application.templateName);
+  // Shown as the file's name in a browser's PDF viewer (the preview), instead of a random id.
+  doc.setTitle(title, { showInWindowTitleBar: true });
   const titleLines = wrapText(bold, title, 16, CONTENT_WIDTH);
   drawLines(titleLines, MARGIN, y, 16, bold, INK_900, 19);
   y -= titleLines.length * 19 + 4;
@@ -158,13 +164,14 @@ export async function generateApplicationPdf(
   rule();
   y -= 22;
 
+  const plan = buildApplicationPrintPlan(application);
+
   // --- Scalar sections, two columns ---
-  for (const section of application.sections) {
-    // An optional field with nothing in it doesn't get a row at all — no blank label, no "Not
-    // provided" placeholder, nothing. A required field still renders (blank) even when empty, since
-    // silently hiding an incomplete required field would misrepresent the application as more
-    // complete than it is; that gap belongs in the broker's "What's Missing?" panel, not erased here.
-    const fieldsToRender = section.fields.filter((f) => f.required || f.value);
+  for (const section of plan.sections) {
+    // Only fields that have data are printed — an empty field (required or not) gets no row at all,
+    // and a section with nothing filled is left out. What's still missing is shown to the broker in
+    // the "What's Missing?" panel, not on the application.
+    const fieldsToRender = section.printed;
     if (fieldsToRender.length === 0) continue;
 
     const colWidth = CONTENT_WIDTH / 2;
@@ -229,7 +236,9 @@ export async function generateApplicationPdf(
   }
 
   // --- Table sections ---
-  for (const table of application.tableSections) {
+  for (const table of plan.tables) {
+    // Same rule for itemized sections: drop columns that are empty on every row, and empty rows.
+    if (!table.prints) continue;
     const colWidth = CONTENT_WIDTH / table.columns.length;
     const usableWidth = colWidth - TABLE_COLUMN_GUTTER;
 
@@ -250,17 +259,12 @@ export async function generateApplicationPdf(
       y -= 14;
     }
 
-    // An itemized section with no rows at all is omitted entirely — no title, no "No X on file"
-    // placeholder — same "only render what's actually populated" rule as the scalar sections above.
-    if (table.rows.length === 0) continue;
+    // An itemized section with no rows at all is omitted entirely (table.prints above) — no title, no
+    // "No X on file" placeholder — same "only render what's actually populated" rule as the scalar sections.
 
     function layoutTableRow(rowIndex: number) {
       const row = table.rows[rowIndex];
-      const cellLines = table.columns.map((col) => {
-        const cell = row.cells[col.key];
-        const value = cell?.status === 'missing' ? '' : (cell?.value ?? '');
-        return wrapText(font, value, TABLE_VALUE_SIZE, usableWidth);
-      });
+      const cellLines = table.columns.map((col) => wrapText(font, printedCellValue(row, col.key), TABLE_VALUE_SIZE, usableWidth));
       const lineCount = Math.max(1, ...cellLines.map((l) => l.length));
       const height = lineCount * TABLE_LINE_STEP + TABLE_ROW_BOTTOM_PADDING;
       return { cellLines, height };
@@ -275,8 +279,12 @@ export async function generateApplicationPdf(
     }
 
     const firstRow = layoutTableRow(0);
-    ensureSpace(40 + 24 + firstRow.height);
+    ensureSpace(40 + 24 + (table.note ? 18 : 0) + firstRow.height);
     tableTitle();
+    if (table.note) {
+      text(table.note, MARGIN, VALUE_SIZE + 1, bold, INK_900);
+      y -= 18;
+    }
     columnHeaders();
 
     for (let r = 0; r < table.rows.length; r++) {
@@ -307,32 +315,31 @@ export async function generateApplicationPdf(
   return doc.save();
 }
 
-export function generateApplicationJson(application: MappedApplication): string {
-  return JSON.stringify(application, null, 2);
-}
-
 function csvEscape(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
-/** Flat CSV — one row per scalar field, plus one row per itemized cell — for debugging/testing, not intended as the primary deliverable. */
-export function generateApplicationCsv(application: MappedApplication): string {
-  const rows: string[][] = [['Section', 'Field', 'Value', 'Status']];
+/**
+ * The application as a spreadsheet a broker can send to a carrier or client: a title, then each
+ * section as a heading followed by "Field, Value" rows, then each itemized list (drivers, vehicles,
+ * losses) as its own small table with real column headers. Same rule as the PDF — only filled-in
+ * data, no internal statuses. Starts with a UTF-8 BOM so Excel shows characters like "—" correctly.
+ */
+export function generateApplicationCsv(application: MappedApplication, accountName: string): string {
+  const rows: string[][] = [[applicationTitleFor(accountName, application.templateName)], [`Generated ${new Date(application.generatedAt).toLocaleDateString('en-US')}`]];
 
-  for (const section of application.sections) {
-    for (const field of section.fields) {
-      rows.push([section.title, field.targetLabel, field.value, field.status]);
-    }
+  const plan = buildApplicationPrintPlan(application);
+  for (const section of plan.sections) {
+    if (section.printed.length === 0) continue;
+    rows.push([], [section.title], ['Field', 'Value']);
+    for (const field of section.printed) rows.push([field.targetLabel, field.value]);
   }
 
-  for (const table of application.tableSections) {
-    table.rows.forEach((row, i) => {
-      for (const col of table.columns) {
-        const cell = row.cells[col.key];
-        rows.push([table.title, `Row ${i + 1} — ${col.label}`, cell?.value ?? '', cell?.status ?? 'missing']);
-      }
-    });
+  for (const table of plan.tables) {
+    if (!table.prints) continue;
+    rows.push([], [table.title], ...(table.note ? [[table.note]] : []), table.columns.map((c) => c.label));
+    for (const row of table.rows) rows.push(table.columns.map((c) => printedCellValue(row, c.key)));
   }
 
-  return rows.map((r) => r.map(csvEscape).join(',')).join('\n');
+  return '\uFEFF' + rows.map((r) => r.map(csvEscape).join(',')).join('\r\n');
 }

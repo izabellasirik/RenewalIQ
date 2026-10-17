@@ -1,3 +1,4 @@
+import { makeFromCode } from './rowValues';
 import type { Confidence, DriverEntry, VehicleEntry } from '../../../types';
 import type { TextLine } from './textLines';
 import { parseCount } from './money';
@@ -118,6 +119,93 @@ export function normalizePlainName(raw: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Insurance application — checked BEFORE the card detectors below
+// ---------------------------------------------------------------------------
+
+/** Labels an application's business section carries; a license, MVR, title or registration never has several. */
+const APPLICATION_LABELS = [
+  /named\s+insured/i,
+  /\bf\.?e\.?i\.?n\b|federal\s+(?:employer|tax)\s+id/i,
+  /\b(?:us)?dot\s*(?:#|no\.?|number)/i,
+  /\bmc\s*(?:#|no\.?|number)/i,
+  /years?\s+in\s+business/i,
+  /(?:radius|operating\s+radius|radius\s+of\s+operation)/i,
+  /commodit(?:y|ies)/i,
+  /legal\s+entity|type\s+of\s+(?:business|entity)/i,
+  /(?:mailing|business|garaging)\s+address/i,
+  /annual\s+(?:revenue|gross\s+receipts)/i,
+  /(?:requested\s+)?effective\s+date/i,
+  /description\s+of\s+operations/i,
+];
+
+/**
+ * An insurance application (ACORD or a carrier's trucking application). It usually mentions
+ * "Driver License #", "CDL" and "MVR" in its driver section — which is why it must be recognized
+ * first: read as a license card or an MVR, its business fields were never read at all.
+ */
+export function detectApplication(text: string): boolean {
+  if (/\bacord\b|insurance\s+application|(?:commercial\s+auto|trucking|motor\s+carrier|transportation)\s+(?:insurance\s+)?application|applicant\s+information/i.test(text)) return true;
+  return APPLICATION_LABELS.filter((re) => re.test(text)).length >= 3;
+}
+
+// ---------------------------------------------------------------------------
+// MVR / driving record: whose record it is
+// ---------------------------------------------------------------------------
+
+/** A motor vehicle record / driving record — about one driver, its license holder. */
+const MVR_TEXT = /\bmvr\b|motor\s+vehicle\s+(?:record|report)|driving\s+record|driver\s+record\s+abstract|record\s+of\s+convictions|driver\s+history\s+record|^\s*driver'?s?\s+(?:record|history)\b/im;
+export function detectMvr(text: string): boolean {
+  return MVR_TEXT.test(text);
+}
+
+/**
+ * Sections and lines about SOMEONE ELSE than the record's subject. A driving record also names the
+ * medical examiner (with their own license/registry number), whoever requested or reviewed the
+ * report, the employer and its contact, officials and clerks, and people in notes and history. Read
+ * as the driver's fields, any of them became the driver — or a second driver.
+ */
+const OTHER_PERSON = new RegExp(
+  [
+    'medical\\s+(?:examiner|certificate|certification)', 'examiner', 'national\\s+registry', 'registry\\s+(?:no|number|#)', 'practitioner', 'physician',
+    'speciality', 'specialty', 'self[\\s-]*certification', 'emergency\\s+contact',
+    'request(?:ed|er|or)\\b', 'ordered\\s+by', 'prepared\\s+by', 'reviewed\\s+by', 'reviewer', 'certif(?:ied|ying)\\s+(?:by|official)', 'custodian', 'clerk', '\\bofficer\\b',
+    '\\bcourt\\b', '\\bjudge\\b', 'employer', 'company\\s+contact', 'contact\\s+person', 'account\\s+(?:name|holder|contact)', '\\b(?:insurance\\s+)?agent\\b', '(?:insurance|requesting)\\s+agency', 'agency\\s+(?:name|contact)', 'carrier\\s+contact', 'insurer',
+    'associated', 'co[\\s-]*driver', 'witness', 'signature', '\\battn\\b', 'attention', '^\\s*notes?\\b', '^\\s*comments?\\b', '^\\s*remarks?\\b',
+  ].join('|'),
+  'i'
+);
+/** Headings that start the subject's own section again. */
+const SUBJECT_SECTION = /^(?:driver|licensee|subject|personal)\b.*\b(?:information|details|data)\b|^driver\s+licen[cs]e\s+information|^licen[cs]e\s+(?:information|holder)\b|^licensee\b|^license\s+holder\b|^driver\s+(?:information|details|record)\b/i;
+/** Lines that describe a person — the ones that follow "Employer: …" or "Examiner Name: …" belong to them. */
+const PERSON_DESCRIPTOR = /^\s*(?:(?:full\s+)?name|title|position|phone|tel|telephone|fax|e-?mail|company|organization|contact|address|city|license\s*(?:no\.?|number|#)|lic(?:ense)?\s*#|reg(?:istry)?\.?\s*(?:no\.?|number|#)|npi)\b/i;
+
+export function subjectLines(lines: TextLine[]): TextLine[] {
+  const out: TextLine[] = [];
+  let inOtherSection = false;
+  let afterOtherLine = false;
+  for (const line of lines) {
+    const t = line.text.trim();
+    if (SUBJECT_SECTION.test(t) && !OTHER_PERSON.test(t.replace(SUBJECT_SECTION, ''))) {
+      inOtherSection = false;
+      afterOtherLine = false;
+    } else if (OTHER_PERSON.test(t)) {
+      // A heading ("Medical Examiner Information", "Requested By") opens the other person's section;
+      // a labelled line ("Employer: Coastal Freight", "Examiner Name: …") is skipped, and so are
+      // the name/phone/license lines right after it, which describe that same person.
+      if (!/:\s*\S/.test(t)) inOtherSection = true;
+      else afterOtherLine = true;
+      continue;
+    } else if (afterOtherLine && PERSON_DESCRIPTOR.test(t)) {
+      continue;
+    } else {
+      afterOtherLine = false;
+    }
+    if (!inOtherSection) out.push(line);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Driver's license
 // ---------------------------------------------------------------------------
 
@@ -142,13 +230,58 @@ export function detectDriverLicense(text: string): boolean {
 
 export interface DriverLicenseExtraction {
   entry: Omit<DriverEntry, 'id' | 'source'>;
+  /** The line the original CDL issue date was read from (its provenance). */
+  cdlOriginalIssueLine?: TextLine;
   matchedText: string;
   /** How many license fields had a label match at all, whether or not the value passed validation — for debug/telemetry only, never logged with the actual values. */
   fieldsAttempted: number;
 }
 
+const COMMERCIAL = "(?:cdl|commercial(?:\\s+driver'?s?)?(?:\\s+licen[cs]e)?|class\\s+[ab]\\b(?:\\s+(?:cdl|licen[cs]e))?)";
+const ORIGINAL = '(?:original(?:ly)?|orig\\.?|first)';
+const ISSUED = '(?:issue|iss\\.?|issued)(?:\\s*date)?';
+const DATE_CAPTURE = '\\s*[:#-]?\\s*(\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{4}-\\d{2}-\\d{2})';
+/** "Original CDL Issue Date: 07/13/2013", "CDL Original Issue 07/13/2013", "Commercial License Originally Issued: …", "Date CDL First Issued …", "CDL Since …". */
+export const CDL_ORIGINAL_ISSUE_PATTERNS = [
+  new RegExp(`${ORIGINAL}\\s+${COMMERCIAL}\\s+${ISSUED}${DATE_CAPTURE}`, 'i'),
+  new RegExp(`${COMMERCIAL}\\s+${ORIGINAL}\\s+${ISSUED}${DATE_CAPTURE}`, 'i'),
+  new RegExp(`${COMMERCIAL}\\s+${ISSUED}\\s+\\(?${ORIGINAL}\\)?${DATE_CAPTURE}`, 'i'),
+  new RegExp(`date\\s+${COMMERCIAL}\\s+(?:was\\s+)?${ORIGINAL}\\s+issued${DATE_CAPTURE}`, 'i'),
+  new RegExp(`${COMMERCIAL}\\s+(?:holder\\s+)?since${DATE_CAPTURE}`, 'i'),
+  // "CDL   Class A   Original Issue: 08/15/2013" — one row of a license table.
+  new RegExp(`\\b${COMMERCIAL}\\b[^\\n]{0,40}?${ORIGINAL}\\s+${ISSUED}${DATE_CAPTURE}`, 'i'),
+];
+
+/** A bare "Original Issue Date: …" — taken as the CDL's only inside a CDL/commercial section. */
+const BARE_ORIGINAL_ISSUE = new RegExp(`^\\s*${ORIGINAL}\\s+${ISSUED}${DATE_CAPTURE}`, 'i');
+const CDL_SECTION_HEADING = /^\s*(?:cdl|commercial(?:\s+driver'?s?)?\s+licen[cs]e|commercial)\b[^:]*$|^\s*(?:cdl|commercial)\s+(?:information|details|status|data)\b/i;
+const OTHER_SECTION_HEADING = /^\s*(?:medical|examiner|non[-\s]?commercial|regular|class\s+[cde]\b|identification|id\s+card|violations?|convictions?|accidents?|suspensions?)\b/i;
+
+/** The original CDL/commercial issue date printed on a document, and the line it's on — see CDL_ORIGINAL_ISSUE_PATTERNS. */
+export function findCdlOriginalIssue(lines: TextLine[]): { value: string; line: TextLine } | null {
+  return firstValidMatch(lines, CDL_ORIGINAL_ISSUE_PATTERNS, normalizeDate) ?? originalIssueInCdlSection(lines);
+}
+
+/** "Original Issue Date" lines under a CDL heading (before any other section starts). */
+function originalIssueInCdlSection(lines: TextLine[]): { value: string; line: TextLine } | null {
+  let inCdl = false;
+  for (const line of lines) {
+    const t = line.text.trim();
+    if (CDL_SECTION_HEADING.test(t) && !/\d{1,2}[/-]\d{1,2}[/-]\d{2,4}/.test(t)) {
+      inCdl = true;
+      continue;
+    }
+    if (OTHER_SECTION_HEADING.test(t)) inCdl = false;
+    if (!inCdl) continue;
+    const m = t.match(BARE_ORIGINAL_ISSUE);
+    const value = m ? normalizeDate(m[1]) : null;
+    if (value) return { value, line };
+  }
+  return null;
+}
+
 export function extractDriverLicenseFields(lines: TextLine[], fullText: string): DriverLicenseExtraction | null {
-  if (!detectDriverLicense(fullText)) return null;
+  if (!detectDriverLicense(fullText) && !detectMvr(fullText)) return null;
 
   const entry: Omit<DriverEntry, 'id' | 'source'> = {};
   const fieldConfidence: Partial<Record<string, Confidence>> = {};
@@ -167,16 +300,33 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
       excerpts.push(ln.line.text, fn.line.text);
     }
   }
+  // The license holder's name, labelled as theirs ("Driver Name", "Licensee", "License Holder").
   if (!entry.name) {
-    const plain = firstMatch(lines, [/^(?:full\s*)?name\s*:?\s*(.+)$/i]);
-    if (plain) {
-      attempted++;
-      const norm = normalizePlainName(plain.raw);
-      if (norm) {
-        entry.name = norm;
-        fieldConfidence.name = 'medium';
-        excerpts.push(plain.line.text);
-      }
+    const labelled = firstMatch(lines, [/^(?:driver'?s?|licensee'?s?|license\s+holder'?s?|subject'?s?|operator'?s?)\s*(?:full\s+)?name\s*:?\s*(.+)$/i, /^(?:driver|licensee|license\s+holder|subject)\s*:\s*(.+)$/i]);
+    const norm = labelled ? normalizePlainName(labelled.raw) : null;
+    if (labelled) attempted++;
+    if (labelled && norm) {
+      entry.name = norm;
+      fieldConfidence.name = 'medium';
+      excerpts.push(labelled.line.text);
+    }
+  }
+  if (!entry.name) {
+    // A plain "Name:" — only lines about the subject reach here (see subjectLines). Two different
+    // plain names left means it's unclear whose record this is: never guess — kept as a conflict,
+    // which sends the driver to review.
+    const plainNames = lines
+      .map((line) => ({ line, m: line.text.match(/^(?:full\s*)?name\s*:?\s*(.+)$/i) }))
+      .filter((x): x is { line: TextLine; m: RegExpMatchArray } => !!x.m)
+      .map(({ line, m }) => ({ line, norm: normalizePlainName(m[1]) }))
+      .filter((x): x is { line: TextLine; norm: string } => !!x.norm);
+    if (plainNames.length) attempted++;
+    const distinct = [...new Set(plainNames.map((x) => x.norm.toLowerCase()))];
+    if (plainNames.length) {
+      entry.name = plainNames[0].norm;
+      fieldConfidence.name = distinct.length > 1 ? 'low' : 'medium';
+      excerpts.push(plainNames[0].line.text);
+      if (distinct.length > 1) (entry as { conflicts?: Record<string, unknown> }).conflicts = { name: plainNames.map((x) => x.norm) };
     }
   }
 
@@ -184,7 +334,16 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
   // business's address. Free text (no fixed token shape to validate against), so it's only
   // accepted if it looks address-like (contains a digit, within a sane length) rather than
   // capturing an unrelated sentence.
-  const address = firstMatch(lines, [/^address\s*:?\s*(.+)$/i]);
+  // Also the standard numbered layout: "8 1402 ELM STREET" with "DALLAS, TX 75201" on the next line.
+  const numbered = (() => {
+    const i = lines.findIndex((l) => /^\s*8\s+\d{1,6}\s+[A-Za-z0-9 .#'-]{3,60}$/.test(l.text));
+    if (i === -1) return null;
+    const street = lines[i].text.trim().replace(/^8\s+/, '');
+    const next = lines[i + 1]?.text.trim();
+    const cityLine = next && /^[A-Za-z .'-]+,?\s+[A-Z]{2}\s+\d{5}(?:-\d{4})?$/.test(next) ? next : null;
+    return { raw: cityLine ? `${street}, ${cityLine}` : street, line: lines[i] };
+  })();
+  const address = firstMatch(lines, [/^address\s*:?\s*(.+)$/i]) ?? numbered;
   if (address) {
     attempted++;
     const raw = address.raw.trim().replace(/[.,;]+$/, '');
@@ -211,6 +370,8 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
     lines,
     [
       ...withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}(?:dl|lic(?:ense)?)\\s*#\\s*:?\\s*(\\S+)`, 'i')),
+      // "4d DL 30417729" / "DLN 30417729" / "DL NO 30417729" — the numbered card layout, no "#".
+      new RegExp(`${FIELD_NUM_PREFIX}(?:dln|dl|lic)\\b\\s*(?:no\\.?|number)?\\s*:?\\s*([A-Z0-9-]{5,17})\\b`, 'i'),
       /\blicense\s*(?:no\.?|number)\s*:?\s*(\S+)/i,
       // Real OCR can split "License number:" from its value onto separate lines, leaving a line
       // that just reads "License 123456789" with no "number"/"no" token at all — confirmed against
@@ -259,7 +420,8 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
   }
 
   const iss = firstValidMatch(
-    lines,
+    // The current license's issue date — never the "Original CDL Issue Date" line.
+    lines.filter((l) => !CDL_ORIGINAL_ISSUE_PATTERNS.some((re) => re.test(l.text)) && !/\b(?:original(?:ly)?|orig\.?|first)\s+(?:issue|iss)/i.test(l.text)),
     withSkipOneTokenFallback(new RegExp(`${FIELD_NUM_PREFIX}iss(?:ue)?(?:\\s*date)?\\b\\s*:?\\s*(\\S+)`, 'i')),
     normalizeDate
   );
@@ -284,6 +446,18 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
     entry.expirationDate = exp.value;
     fieldConfidence.expirationDate = 'medium';
     excerpts.push(exp.line.text);
+  }
+
+  // When the driver FIRST got a commercial license — what driving experience is counted from. Only
+  // a label that says so ("Original CDL Issue Date", "CDL Orig Iss", "Commercial License Originally
+  // Issued", "CDL Since"): a bare "Original Issue Date" may be their first (non-commercial) license
+  // and is left alone rather than guessed at.
+  const cdlOrig = findCdlOriginalIssue(lines);
+  if (cdlOrig) {
+    attempted++;
+    entry.cdlOriginalIssueDate = cdlOrig.value;
+    fieldConfidence.cdlOriginalIssueDate = 'medium';
+    excerpts.push(cdlOrig.line.text);
   }
 
   // restrictions/endorsements have no fixed format to validate against (unlike a date or an
@@ -314,7 +488,7 @@ export function extractDriverLicenseFields(lines: TextLine[], fullText: string):
   if (populatedFields === 0) return null;
 
   entry.fieldConfidence = fieldConfidence;
-  return { entry, matchedText: excerpts.slice(0, 3).join(' | ') || 'Driver license fields', fieldsAttempted: attempted };
+  return { entry, matchedText: excerpts.slice(0, 3).join(' | ') || 'Driver license fields', fieldsAttempted: attempted, ...(cdlOrig ? { cdlOriginalIssueLine: cdlOrig.line } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -328,9 +502,15 @@ export function detectVehicleRegistration(text: string): boolean {
   if (/\bvin\b/.test(t)) signals++;
   if (/\bplate\b/.test(t)) signals++;
   if (/\bmake\b/.test(t) && /\bmodel\b/.test(t)) signals++;
-  if (/\bregistration\b/.test(t)) signals++;
+  if (/\bregistration\b|\breg\.?\s*(?:no|number|#)/.test(t)) signals++;
+  if (/\bdecal\b/.test(t)) signals++;
+  if (/\btitle\s*(?:no\.?|number|#)/.test(t)) signals++;
+  if (/\bhsmv\b|\bodometer\b/.test(t)) signals++;
   return signals >= 3;
 }
+
+/** A registration's other box labels — what follows "Make"/"Model" on a header line. */
+const REGISTRATION_LABELS = /^(?:year|make|model|body|color|colour|type|vin|plate|title|weight|use|class|fuel|odometer|owner|decal|expires?|issued?)$/i;
 
 export interface VehicleRegistrationExtraction {
   entry: Omit<VehicleEntry, 'id' | 'source'>;
@@ -369,7 +549,12 @@ export function extractVehicleRegistrationFields(lines: TextLine[], fullText: st
   if (make) {
     attempted++;
     const t = make.raw.trim().replace(/[.,;]+$/, '');
-    if (/^[A-Za-z][A-Za-z-]*$/.test(t)) {
+    // "YEAR MAKE BODY …" header: the next word is another box's label, not the make.
+    const code = makeFromCode(t);
+    if (code) {
+      entry.make = code;
+      excerpts.push(make.line.text);
+    } else if (/^[A-Za-z][A-Za-z-]*$/.test(t) && !REGISTRATION_LABELS.test(t)) {
       entry.make = t.toUpperCase();
       excerpts.push(make.line.text);
     }
@@ -379,7 +564,7 @@ export function extractVehicleRegistrationFields(lines: TextLine[], fullText: st
   if (model) {
     attempted++;
     const t = model.raw.trim().replace(/[.,;]+$/, '');
-    if (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(t)) {
+    if (/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(t) && !REGISTRATION_LABELS.test(t)) {
       entry.model = t.toUpperCase();
       excerpts.push(model.line.text);
     }
@@ -435,7 +620,7 @@ export function findGenericBusinessName(lines: TextLine[]): LineMatch | null {
   );
 }
 
-const CITY_STATE_LINE = /^([A-Z][A-Za-z.\- ]{1,40}?),?\s+([A-Z]{2})\s*\d{0,5}$/;
+const CITY_STATE_LINE = /^([A-Z][A-Za-z.\- ]{1,40}?),?\s+([A-Z]{2})\.?,?\s*(?:\d{5}(?:-\d{4})?)?$/;
 
 export interface CityStateMatch {
   city: string;
@@ -455,4 +640,17 @@ export function findGenericCityState(lines: TextLine[]): CityStateMatch | null {
     return { city, state: stateRaw.toUpperCase(), line };
   }
   return null;
+}
+
+/**
+ * Who a driving record / license is about, read from its subject lines only — used to check that a
+ * driver read from it (by text, OCR or the vision model) really is its license holder.
+ */
+export function documentSubjectIdentity(text: string): { name?: string; licenseNumber?: string; dob?: string } | null {
+  if (!detectMvr(text) && !detectDriverLicense(text)) return null;
+  const lines: TextLine[] = text.split(/\r?\n/).map((t) => ({ text: t })).filter((l) => l.text.trim());
+  const found = extractDriverLicenseFields(subjectLines(lines), text);
+  if (!found) return null;
+  const { name, licenseNumber, dob } = found.entry;
+  return { name, licenseNumber, dob };
 }

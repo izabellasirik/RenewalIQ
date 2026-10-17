@@ -5,6 +5,7 @@
  */
 
 import { formatCurrencyValue } from '../../utils/currency';
+import { toMonths } from '../../utils/duration';
 
 /** Re-exported for callers already importing formatCurrency from here — see utils/currency.ts for the single shared implementation used across the read-only export layer and the editable broker UI. */
 export const formatCurrency = formatCurrencyValue;
@@ -24,9 +25,9 @@ export function formatYesNo(value: unknown): string {
 
 /** Derived from years-in-business, not a separate tracked fact — a deterministic read of an existing field, never a guess. */
 export function formatNewVenture(value: unknown): string {
-  const years = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(years)) return '';
-  return years < 2 ? 'Yes' : 'No';
+  const months = toMonths(value);
+  if (months === null) return '';
+  return months < 24 ? 'Yes' : 'No';
 }
 
 export function formatStatus(value: unknown): string {

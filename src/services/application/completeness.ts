@@ -1,5 +1,6 @@
 import type { DocumentCategory, RiskProfile, UploadedDocument } from '../../types';
-import { DOCUMENT_CATEGORY_LABELS } from '../../types';
+import { COVERAGE_LABELS, DOCUMENT_CATEGORY_LABELS } from '../../types';
+import type { CoverageType } from '../../types';
 import { mapRiskProfileToApplication } from './fieldMappingEngine';
 import { APPLICATION_TEMPLATES, DEFAULT_APPLICATION_TEMPLATE_ID } from './templates';
 import { buildSubmissionWarnings } from '../extraction/reconciliation';
@@ -23,9 +24,16 @@ import { buildSubmissionWarnings } from '../extraction/reconciliation';
  *     to extract from is still fully supported — it's just never a completeness requirement).
  */
 
+/** Where in the app an item is fixed, for items that aren't a single Risk Profile field. */
+export type CompletenessGoTo = 'documents' | 'drivers' | 'vehicles';
+
 export interface CompletenessItem {
   label: string;
   detail?: string;
+  /** Clicking the item goes here (when there's no riskProfilePath to go to). */
+  goTo?: CompletenessGoTo;
+  /** False for a derived field (e.g. "New Venture", computed from Years in Business) — it links to its source but isn't edited in place. */
+  editable?: boolean;
   /** Present only for a scalar field the broker can actually edit in place (the "What's Missing?" panel's Edit/Add action) — a synthetic item like "Driver information" or a missing document has nowhere single to write a value back to, so it's left undefined and stays read-only there. */
   riskProfilePath?: string;
 }
@@ -64,6 +72,16 @@ const RECOMMENDED_WEIGHT = 1;
 // extract from (still fully supported), never a submission-completeness requirement.
 const RECOMMENDED_DOCUMENT_CATEGORIES: DocumentCategory[] = ['loss_run'];
 
+/** Where a cross-field warning (see buildSubmissionWarnings) gets fixed. */
+function warningTarget(warning: string): Pick<CompletenessItem, 'riskProfilePath' | 'goTo' | 'editable'> {
+  if (/fleet size/i.test(warning)) return { riskProfilePath: 'transportation.fleetSize', editable: true };
+  if (/vehicle/i.test(warning)) return { goTo: 'vehicles' };
+  if (/driver/i.test(warning)) return { goTo: 'drivers' };
+  const coverage = (Object.entries(COVERAGE_LABELS) as [CoverageType, string][]).find(([, label]) => warning.startsWith(label));
+  if (coverage) return { riskProfilePath: `coverage.${coverage[0]}.requestedLimit`, editable: /no limit/i.test(warning) };
+  return {};
+}
+
 export function computeSubmissionCompleteness(profile: RiskProfile, documents: UploadedDocument[]): SubmissionCompleteness {
   const template = APPLICATION_TEMPLATES.find((t) => t.id === DEFAULT_APPLICATION_TEMPLATE_ID) ?? APPLICATION_TEMPLATES[0];
   const application = mapRiskProfileToApplication(profile, template);
@@ -82,12 +100,12 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
 
       if (field.status === 'missing') {
         if (!field.neverFlagMissing) {
-          (field.required ? missingRequiredFields : missingRecommendedFields).push({ label: field.targetLabel, detail: field.reviewReason, riskProfilePath: field.riskProfilePath });
+          (field.required ? missingRequiredFields : missingRecommendedFields).push({ label: field.targetLabel, detail: field.reviewReason, riskProfilePath: field.riskProfilePath, editable: field.editable !== false });
         }
       } else if (field.status === 'needs_review') {
-        needsReview.push({ label: field.targetLabel, detail: field.reviewReason });
+        needsReview.push({ label: field.targetLabel, detail: field.reviewReason, riskProfilePath: field.riskProfilePath, editable: field.editable !== false });
       } else if (field.status === 'conflict') {
-        conflicts.push({ label: field.targetLabel, detail: field.reviewReason });
+        conflicts.push({ label: field.targetLabel, detail: field.reviewReason, riskProfilePath: field.riskProfilePath, editable: field.editable !== false });
       }
     }
   }
@@ -97,15 +115,15 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
   // fillable data (add a row directly in the Risk Profile), not a missing upload. Always applicable
   // (every account can have drivers/vehicles), so always counted toward recommendedTotal below.
   recommendedTotal += 2;
-  if (profile.drivers.length === 0) missingRecommendedFields.push({ label: 'Driver information', detail: 'No drivers on file yet — add at least one in the Risk Profile.' });
-  if (profile.vehicles.length === 0) missingRecommendedFields.push({ label: 'Vehicle information', detail: 'No vehicle schedule on file yet — add at least one in the Risk Profile.' });
+  if (profile.drivers.length === 0) missingRecommendedFields.push({ label: 'Driver information', detail: 'No drivers on file yet — add at least one in the Risk Profile.', goTo: 'drivers' });
+  if (profile.vehicles.length === 0) missingRecommendedFields.push({ label: 'Vehicle information', detail: 'No vehicle schedule on file yet — add at least one in the Risk Profile.', goTo: 'vehicles' });
 
   const missingRecommendedDocuments: CompletenessItem[] = [];
   for (const category of RECOMMENDED_DOCUMENT_CATEGORIES) {
     recommendedTotal++;
     const label = DOCUMENT_CATEGORY_LABELS[category];
     const hasOne = documents.some((d) => d.category === category && d.status !== 'error');
-    if (!hasOne) missingRecommendedDocuments.push({ label, detail: `No ${label.toLowerCase()} uploaded yet.` });
+    if (!hasOne) missingRecommendedDocuments.push({ label, detail: `No ${label.toLowerCase()} uploaded yet.`, goTo: 'documents' });
   }
 
   // Cross-field submission-quality checks (e.g. "fleet size says 12 but the vehicle schedule has
@@ -117,7 +135,7 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
   const alreadyFlaggedLabels = [...missingRequiredFields, ...missingRecommendedFields, ...needsReview, ...conflicts].map((i) => i.label);
   for (const warning of buildSubmissionWarnings(profile)) {
     if (!alreadyFlaggedLabels.some((label) => warning.includes(label))) {
-      needsReview.push({ label: 'Submission quality', detail: warning });
+      needsReview.push({ label: 'Submission quality', detail: warning, ...warningTarget(warning) });
     }
   }
 
@@ -130,10 +148,13 @@ export function computeSubmissionCompleteness(profile: RiskProfile, documents: U
   const filledWeight = requiredFilled * REQUIRED_WEIGHT + recommendedFilled * RECOMMENDED_WEIGHT;
   let percent = totalWeight === 0 ? 100 : Math.round((filledWeight / totalWeight) * 100);
   // Belt-and-suspenders floor: whatever the weighted math rounds to, never show 100% while
-  // something applicable is still actually missing — a broker should never see a "complete" score
-  // above the What's Missing list while that same list isn't empty.
-  const anythingMissing = missingRequiredFields.length > 0 || recommendedMissingCount > 0;
-  if (anythingMissing && percent >= 100) percent = 99;
+  // anything applicable is still actually outstanding — a broker should never see a "complete"
+  // score while What's Missing still lists something, and a needs-review or unresolved-conflict
+  // field is exactly as outstanding as a missing one (the weighted math above only ever subtracts
+  // a *missing* field from requiredFilled/recommendedFilled, so a field stuck at 'needs_review' or
+  // 'conflict' would otherwise still count as "filled" here and could round this to 100 on its own).
+  const anythingOutstanding = missingRequiredFields.length > 0 || recommendedMissingCount > 0 || needsReview.length > 0 || conflicts.length > 0;
+  if (anythingOutstanding && percent >= 100) percent = 99;
 
   return { percent, percentRequired, missingRequiredFields, missingRecommendedFields, missingRecommendedDocuments, needsReview, conflicts };
 }

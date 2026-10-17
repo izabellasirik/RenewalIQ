@@ -31,6 +31,17 @@ export interface FieldSource {
 }
 
 /**
+ * Left on a value or row when removing a document couldn't safely undo it — the broker edited or
+ * confirmed it, or added notes to it — so it's kept and shown for review instead of deleted.
+ */
+export interface ReviewFlag {
+  documentId: string;
+  documentName: string;
+  reason: string;
+  flaggedAt: string;
+}
+
+/**
  * Wraps every extracted (or manually entered) value with its provenance.
  * Nothing in the risk profile is ever presented as ground truth without this.
  */
@@ -56,6 +67,13 @@ export interface FieldValue<T> {
   confirmedByBroker?: boolean;
   /** ISO timestamp this specific field was last populated/edited — distinct from the whole-profile updatedAt. */
   lastUpdatedAt?: string;
+  /**
+   * Other documents that stated this same value (besides `source`). Removing one document keeps
+   * the value when another still supports it.
+   */
+  support?: FieldSource[];
+  /** Kept for review after a document it came from was removed — see ReviewFlag. */
+  reviewFlag?: ReviewFlag;
 }
 
 /**

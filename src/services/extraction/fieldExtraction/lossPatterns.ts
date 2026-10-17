@@ -27,6 +27,8 @@ export interface LossRowMatch {
   incurred: number;
   matchedText: string;
   page?: number;
+  /** Where the claim sits in the document (TextLine.index), for linking it to its loss-run section. */
+  index?: number;
 }
 
 /** Scans lines for loss-run table rows rendered as text (PDF/CSV/plain text loss runs). */
@@ -50,6 +52,7 @@ export function extractLossRows(lines: TextLine[]): LossRowMatch[] {
       incurred,
       matchedText: line.text,
       page: line.page,
+      index: line.index,
     });
   }
   return results;
@@ -127,6 +130,7 @@ export function extractLossBlocks(lines: TextLine[]): LossRowMatch[] {
       incurred,
       matchedText: block.map((l) => l.text).join(' · '),
       page: block[0]?.page,
+      index: block[0]?.index,
     });
   }
 

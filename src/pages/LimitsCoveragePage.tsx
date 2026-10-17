@@ -1,4 +1,6 @@
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import type { CoverageType } from '../types';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
@@ -23,16 +25,32 @@ export function LimitsCoveragePage() {
   const resolveCoverageConflict = useAccountsStore((s) => s.resolveCoverageConflict);
   const addCoverageLine = useAccountsStore((s) => s.addCoverageLine);
   const deleteCoverageLine = useAccountsStore((s) => s.deleteCoverageLine);
+  const location = useLocation();
+  const [highlightType, setHighlightType] = useState<CoverageType | null>(null);
+
+  // Deep link from What's Missing: scroll to and briefly highlight one coverage line.
+  useEffect(() => {
+    const type = (location.state as { focusCoverage?: CoverageType } | null)?.focusCoverage;
+    if (!type) return;
+    setHighlightType(type);
+    const scroll = setTimeout(() => document.getElementById(`coverage-${type}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+    const clear = setTimeout(() => setHighlightType((cur) => (cur === type ? null : cur)), 2200);
+    return () => {
+      clearTimeout(scroll);
+      clearTimeout(clear);
+    };
+  }, [location.state]);
 
   if (!account || !profile) {
     return <AccountNotFound />;
   }
 
   return (
-    <PageContainer title={`Limits & Coverage — ${account.namedInsured}`} description="Expiring limits (from loss run) vs. requested limits (from application).">
+    <PageContainer title={`Limits & Coverage — ${account.namedInsured}`} description="Expiring limits vs. Requested limits">
       <SectionCard title="Coverage">
         <CoverageSection
           coverage={profile.coverage}
+          highlightType={highlightType}
           onSave={(coverageType, field, value) => updateCoverage(accountId, coverageType, field, value)}
           onResolve={(coverageType, field, resolution) => resolveCoverageConflict(accountId, coverageType, field, resolution)}
           onAdd={(coverageType) => addCoverageLine(accountId, coverageType)}

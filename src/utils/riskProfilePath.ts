@@ -1,4 +1,4 @@
-import type { CoverageType, FieldValue, RiskProfile } from '../types';
+import type { CoverageField, CoverageType, FieldValue, RiskProfile } from '../types';
 
 /**
  * Resolves a dot-path like "business.namedInsured" or "coverage.auto_liability.requestedLimit"
@@ -9,7 +9,7 @@ export function getFieldValueByPath(profile: RiskProfile, path: string): FieldVa
   const parts = path.split('.');
 
   if (parts[0] === 'coverage') {
-    const [, coverageType, sub] = parts as [string, CoverageType, 'currentLimit' | 'requestedLimit'];
+    const [, coverageType, sub] = parts as [string, CoverageType, CoverageField];
     const line = profile.coverage.find((c) => c.type === coverageType);
     if (!line) return null;
     return (line[sub] as FieldValue<unknown> | undefined) ?? null;
@@ -26,13 +26,13 @@ export function getFieldValueByPath(profile: RiskProfile, path: string): FieldVa
 /** Where a dot-path's value actually needs to be written back — a scalar business/transportation field, or one side of a coverage line. Shared by every surface that edits a MappedField's riskProfilePath back into the canonical Risk Profile (Submission Assistant, the "What's Missing?" panel), so there's one parser instead of each screen re-deriving it. */
 export type RiskProfileSaveTarget =
   | { kind: 'field'; section: 'business' | 'transportation'; key: string }
-  | { kind: 'coverage'; coverageType: CoverageType; field: 'currentLimit' | 'requestedLimit' }
+  | { kind: 'coverage'; coverageType: CoverageType; field: CoverageField }
   | null;
 
 export function parseRiskProfilePath(path: string): RiskProfileSaveTarget {
   const parts = path.split('.');
   if (parts[0] === 'coverage') {
-    return { kind: 'coverage', coverageType: parts[1] as CoverageType, field: (parts[2] as 'currentLimit' | 'requestedLimit') ?? 'requestedLimit' };
+    return { kind: 'coverage', coverageType: parts[1] as CoverageType, field: (parts[2] as CoverageField) ?? 'requestedLimit' };
   }
   if (parts[0] === 'business' || parts[0] === 'transportation') {
     return { kind: 'field', section: parts[0], key: parts[1] };

@@ -7,9 +7,22 @@ import { cn } from '../../utils/cn';
 import { relativeTime } from '../../utils/dates';
 import { DATA_STATUS_LABELS, fieldDataStatus } from '../../utils/dataStatus';
 import { formatCurrencyValue, parseCurrencyInput } from '../../utils/currency';
+import { normalizeDateKey } from '../../services/workflow/dates';
+import { formatDuration, isDuration, parseDurationText } from '../../utils/duration';
+import { DurationInput } from './DurationInput';
+import { decodeDurationDraft, draftToDuration, encodeDurationDraft, isValidDurationDraft } from '../../utils/durationDraft';
 
 /** 'currency' is for true numeric monetary fields (e.g. annualRevenue) — stores/parses a clean number, displays with $ and comma separators. A monetary field that's fundamentally free text (coverage limits, which can legitimately hold "$1M/$2M CSL") stays 'text' and is normalized at its own save call site instead — see utils/currency.ts's normalizeCurrencyText. */
-export type FieldValueType = 'text' | 'textarea' | 'number' | 'currency' | 'boolean' | 'list';
+/** 'date' stores a YYYY-MM-DD string and edits with a date picker; an older free-text value ("10/01/2026") is still shown and pre-fills the picker when it can be read. */
+/** 'duration' edits as Years + Months (+ "or more") and stores a Duration in months — see utils/duration.ts; an older plain number still reads as years. */
+export type FieldValueType = 'text' | 'textarea' | 'number' | 'currency' | 'boolean' | 'list' | 'date' | 'duration';
+
+/** Initial edit-draft text for a stored value of this type. */
+function draftFor(valueType: FieldValueType, value: unknown): string {
+  if (valueType === 'currency') return value === null || value === undefined ? '' : String(value);
+  if (valueType === 'duration') return encodeDurationDraft(value);
+  return displayReadValue(value);
+}
 
 const EXTRACTION_METHOD_LABELS: Record<ExtractionMethod, string> = {
   ai_extraction: 'AI-extracted',
@@ -32,11 +45,16 @@ interface FieldRowProps<T> {
   pending?: boolean;
   /** Auto-opens the source/conflict detail panel — used when another page deep-links straight to this field. */
   autoExpand?: boolean;
+  /** Free text kept next to the value (Telematics/Dashcams: provider, which units). With onSaveDetails, editing shows a text box beside the Yes/No. */
+  details?: string | null;
+  onSaveDetails?: (text: string) => void;
+  detailsPlaceholder?: string;
 }
 
 export function displayReadValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) return value.join(', ');
+  if (isDuration(value)) return formatDuration(value);
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value === 'number' && Math.abs(value) >= 1000) return value.toLocaleString('en-US');
   return String(value);
@@ -47,7 +65,23 @@ export function parseDraft(valueType: FieldValueType, raw: string): unknown {
   if (valueType === 'currency') return parseCurrencyInput(raw);
   if (valueType === 'list') return raw.split(',').map((s) => s.trim()).filter(Boolean);
   if (valueType === 'boolean') return raw === 'Yes';
+  if (valueType === 'date') return raw.trim() === '' ? null : (normalizeDateKey(raw) ?? raw.trim());
+  if (valueType === 'duration') return raw.includes('|') ? draftToDuration(decodeDurationDraft(raw)) : parseDurationText(raw);
   return raw;
+}
+
+/** Read-only display for a value of this type ('date' → "Oct 1, 2026"). */
+function displayTypedValue(valueType: FieldValueType, value: unknown): string {
+  if (valueType === 'currency') return formatCurrencyValue(value as number | null);
+  if (valueType === 'duration') return formatDuration(value);
+  if (valueType === 'date' && typeof value === 'string') {
+    const key = normalizeDateKey(value);
+    if (key) {
+      const [y, m, d] = key.split('-').map(Number);
+      return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  }
+  return displayReadValue(value);
 }
 
 /**
@@ -60,6 +94,16 @@ export function parseDraft(valueType: FieldValueType, raw: string): unknown {
 export function isValidDraft(valueType: FieldValueType, raw: string): boolean {
   if ((valueType === 'currency' || valueType === 'number') && raw.trim() !== '') {
     return parseDraft(valueType, raw) !== null;
+  }
+  if (valueType === 'duration' && raw.trim() !== '') {
+    return raw.includes('|') ? isValidDurationDraft(decodeDurationDraft(raw)) : parseDurationText(raw) !== null;
+  }
+  // Yes/No must actually be picked — a blank draft never saves as "No".
+  if (valueType === 'boolean') return raw === 'Yes' || raw === 'No';
+  // Picker values are always complete; the year guard stops a half-typed "0002-…" from saving.
+  if (valueType === 'date' && raw.trim() !== '') {
+    const key = normalizeDateKey(raw);
+    return !!key && Number(key.slice(0, 4)) >= 1900;
   }
   return true;
 }
@@ -109,9 +153,35 @@ export function ValueInput({
   autoFocus?: boolean;
   onKeyDown?: (e: React.KeyboardEvent) => void;
 }) {
+  if (valueType === 'date') {
+    return (
+      <input
+        type="date"
+        autoFocus={autoFocus}
+        value={normalizeDateKey(value) ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        className="w-full rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
+      />
+    );
+  }
+  if (valueType === 'duration') {
+    return (
+      <div onKeyDown={onKeyDown}>
+        <DurationInput
+          value={decodeDurationDraft(value)}
+          onChange={(d) => onChange(`${d.years}|${d.months}|${d.orMore ? 1 : 0}`)}
+          autoFocus={autoFocus}
+          inputClassName="rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
+        />
+      </div>
+    );
+  }
   if (valueType === 'boolean') {
     return (
       <select autoFocus={autoFocus} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} className="rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none">
+        {/* A blank draft shows as blank — not as a "Yes" that would silently save as No. */}
+        {value !== 'Yes' && value !== 'No' && <option value="">Select…</option>}
         <option value="Yes">Yes</option>
         <option value="No">No</option>
       </select>
@@ -226,9 +296,10 @@ function ConflictResolver<T>({
   );
 }
 
-export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOnly, pending, autoExpand }: FieldRowProps<T>) {
+export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOnly, pending, autoExpand, details, onSaveDetails, detailsPlaceholder }: FieldRowProps<T>) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<string>(displayReadValue(field.value));
+  const [detailsDraft, setDetailsDraft] = useState(details ?? '');
   const [showDetail, setShowDetail] = useState(false);
 
   useEffect(() => {
@@ -236,8 +307,11 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
   }, [autoExpand]);
 
   function commit() {
-    if (!isValidDraft(valueType, draft)) return;
-    onSave(parseDraft(valueType, draft) as T);
+    const detailsChanged = !!onSaveDetails && detailsDraft.trim() !== (details ?? '').trim();
+    // Details can be saved on their own (the Yes/No left as it is).
+    if (!isValidDraft(valueType, draft) && !detailsChanged) return;
+    if (isValidDraft(valueType, draft)) onSave(parseDraft(valueType, draft) as T);
+    if (detailsChanged) onSaveDetails!(detailsDraft.trim());
     setIsEditing(false);
   }
 
@@ -263,8 +337,10 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
             <div className="mt-1 flex items-center gap-2">
               {field.isMissing && pending ? (
                 <Skeleton width="60%" />
-              ) : field.isMissing ? (
+              ) : field.isMissing && !details ? (
                 <span className="text-sm italic text-[var(--color-ink-400)]">Not documented</span>
+              ) : field.isMissing ? (
+                <span className="text-sm text-[var(--color-ink-900)]" data-testid="field-details">{details}</span>
               ) : valueType === 'boolean' ? (
                 <button
                   onClick={() => setShowDetail((v) => !v)}
@@ -276,8 +352,9 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                   {displayReadValue(field.value)}
                 </button>
               ) : (
-                <p className="text-sm text-[var(--color-ink-900)]">{valueType === 'currency' ? formatCurrencyValue(field.value) : displayReadValue(field.value)}</p>
+                <p className="text-sm text-[var(--color-ink-900)]">{displayTypedValue(valueType, field.value)}</p>
               )}
+              {!field.isMissing && details && <span className="min-w-0 text-sm text-[var(--color-ink-700)] [overflow-wrap:anywhere]" data-testid="field-details">{details}</span>}
             </div>
           ) : (
             <div className="mt-1.5 flex items-center gap-2">
@@ -292,6 +369,16 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                 />
               ) : (
                 <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus onKeyDown={singleLineEditKeyDown(commit, cancelEdit)} />
+              )}
+              {onSaveDetails && (
+                <input
+                  value={detailsDraft}
+                  onChange={(e) => setDetailsDraft(e.target.value)}
+                  onKeyDown={singleLineEditKeyDown(commit, cancelEdit)}
+                  placeholder={detailsPlaceholder ?? 'Details (optional)'}
+                  aria-label={`${label} details`}
+                  className="min-w-0 flex-1 rounded-md border border-[var(--color-brand-500)] px-2 py-1.5 text-sm outline-none"
+                />
               )}
               <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
                 <Check size={14} />
@@ -353,6 +440,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
               <button
                 onClick={() => {
                   setDraft('');
+                  setDetailsDraft(details ?? '');
                   setIsEditing(true);
                 }}
                 className="inline-flex items-center gap-1 rounded-md bg-[var(--color-brand-800)] px-2.5 py-1 text-xs font-medium text-white hover:bg-[var(--color-brand-700)] cursor-pointer"
@@ -366,7 +454,8 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
                   // Currency fields re-enter edit mode showing the plain number (no $, no commas) —
                   // easy to backspace/retype, exactly like typing it in fresh. Formatting only ever
                   // happens for display, never inside the editable input.
-                  setDraft(valueType === 'currency' ? String(field.value ?? '') : displayReadValue(field.value));
+                  setDraft(draftFor(valueType, field.value));
+                  setDetailsDraft(details ?? '');
                   setIsEditing(true);
                 }}
                 className="rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer"

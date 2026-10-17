@@ -11,3 +11,4 @@ export * from './Tabs';
 export * from './Skeleton';
 export * from './ScoreRing';
 export * from './OverflowMenu';
+export * from './Modal';

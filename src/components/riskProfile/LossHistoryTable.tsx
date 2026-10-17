@@ -4,17 +4,18 @@ import type { LossEntry, LossStatus } from '../../types';
 import { Button, ConfirmDialog } from '../ui';
 import { formatDate } from '../../utils/dates';
 
-type Draft = { lossDate: string; claimType: string; paid: string; reserved: string; incurred: string; status: LossStatus };
+type Draft = { lossDate: string; claimNumber: string; claimType: string; paid: string; reserved: string; incurred: string; status: LossStatus };
 
-const EMPTY_DRAFT: Draft = { lossDate: '', claimType: '', paid: '', reserved: '', incurred: '', status: 'open' };
+const EMPTY_DRAFT: Draft = { lossDate: '', claimNumber: '', claimType: '', paid: '', reserved: '', incurred: '', status: 'open' };
 
 function toDraft(l: LossEntry): Draft {
-  return { lossDate: l.lossDate, claimType: l.claimType, paid: String(l.paid), reserved: String(l.reserved), incurred: String(l.incurred), status: l.status };
+  return { lossDate: l.lossDate, claimNumber: l.claimNumber ?? '', claimType: l.claimType, paid: String(l.paid), reserved: String(l.reserved), incurred: String(l.incurred), status: l.status };
 }
 
 function fromDraft(d: Draft): Omit<LossEntry, 'id'> {
   return {
     lossDate: d.lossDate.trim(),
+    claimNumber: d.claimNumber.trim() || undefined,
     claimType: d.claimType.trim(),
     paid: Number(d.paid || 0),
     reserved: Number(d.reserved || 0),
@@ -30,8 +31,13 @@ export function LossHistoryTable({
   onAdd,
   onUpdate,
   onDelete,
+  newEntryDefaults,
+  addLabel = 'Add loss',
 }: {
   losses: LossEntry[];
+  /** Merged into every claim added here (e.g. the loss run it belongs to). */
+  newEntryDefaults?: Partial<LossEntry>;
+  addLabel?: string;
   onAdd: (entry: Omit<LossEntry, 'id'>) => void;
   onUpdate: (id: string, patch: Partial<LossEntry>) => void;
   onDelete: (id: string) => void;
@@ -52,7 +58,7 @@ export function LossHistoryTable({
     setEditingId(null);
   }
   function save() {
-    if (editingId === 'new') onAdd(fromDraft(draft));
+    if (editingId === 'new') onAdd({ ...newEntryDefaults, ...fromDraft(draft) });
     else if (editingId) onUpdate(editingId, fromDraft(draft));
     setEditingId(null);
   }
@@ -62,6 +68,7 @@ export function LossHistoryTable({
     return (
       <tr key={l?.id ?? 'new'} className="border-b border-[var(--color-ink-100)] bg-[var(--color-brand-50)]/40">
         <td className="py-2 pr-4"><input className={inputCls} placeholder="YYYY-MM-DD" value={draft.lossDate} onChange={(e) => setDraft({ ...draft, lossDate: e.target.value })} autoFocus={isNew} /></td>
+        <td className="py-2 pr-4"><input className={inputCls} placeholder="Claim #" value={draft.claimNumber} onChange={(e) => setDraft({ ...draft, claimNumber: e.target.value })} aria-label="Claim number" /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="Claim type" value={draft.claimType} onChange={(e) => setDraft({ ...draft, claimType: e.target.value })} /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="0" value={draft.paid} onChange={(e) => setDraft({ ...draft, paid: e.target.value })} /></td>
         <td className="py-2 pr-4"><input className={inputCls} placeholder="0" value={draft.reserved} onChange={(e) => setDraft({ ...draft, reserved: e.target.value })} /></td>
@@ -87,13 +94,14 @@ export function LossHistoryTable({
     <div className="overflow-x-auto">
       <div className="mb-3 flex justify-end">
         <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={startAdd} disabled={editingId !== null}>
-          Add loss
+          {addLabel}
         </Button>
       </div>
       <table className="w-full text-left text-sm">
         <thead>
           <tr className="border-b border-[var(--color-ink-100)] text-xs text-[var(--color-ink-500)]">
             <th className="py-2 pr-4 font-medium">Loss Date</th>
+            <th className="py-2 pr-4 font-medium">Claim #</th>
             <th className="py-2 pr-4 font-medium">Claim Type</th>
             <th className="py-2 pr-4 font-medium">Paid</th>
             <th className="py-2 pr-4 font-medium">Reserved</th>
@@ -114,6 +122,7 @@ export function LossHistoryTable({
               ) : (
                 <tr key={entry.id} className="border-b border-[var(--color-ink-100)] last:border-0">
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{formatDate(entry.lossDate)}</td>
+                  <td className="py-2.5 pr-4 font-mono text-xs text-[var(--color-ink-600)]">{entry.claimNumber ?? '—'}</td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">{entry.claimType}</td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">${entry.paid.toLocaleString('en-US')}</td>
                   <td className="py-2.5 pr-4 text-[var(--color-ink-800)]">${entry.reserved.toLocaleString('en-US')}</td>

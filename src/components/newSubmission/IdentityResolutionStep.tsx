@@ -5,16 +5,25 @@ import { US_STATES } from '../../utils/usStates';
 
 type InputKind = 'text' | 'state';
 
+/** Something the documents suggest but that wasn't applied on its own — the broker can use it with one click. */
+export interface IdentitySuggestion {
+  value: string;
+  /** Where it's from and why it wasn't applied ("SERGEY.pdf — the driver’s license state"). */
+  note: string;
+}
+
 function IdentityField({
   label,
   field,
   inputKind,
   onResolve,
+  suggestions = [],
 }: {
   label: string;
   field: FieldValue<string>;
   inputKind: InputKind;
   onResolve: (value: string) => void;
+  suggestions?: IdentitySuggestion[];
 }) {
   const [manualOpen, setManualOpen] = useState(false);
   const [manualValue, setManualValue] = useState('');
@@ -38,6 +47,7 @@ function IdentityField({
         ...(field.alternateValues ?? []),
       ]
     : [];
+  const unconfirmed = field.isMissing ? suggestions.filter((sug, i) => suggestions.findIndex((x) => x.value === sug.value) === i) : [];
 
   function submitManual() {
     const trimmed = manualValue.trim();
@@ -69,6 +79,25 @@ function IdentityField({
               </div>
               <button
                 onClick={() => onResolve(opt.value as string)}
+                className="shrink-0 cursor-pointer rounded-md bg-[var(--color-brand-800)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-brand-700)]"
+              >
+                Use this value
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {unconfirmed.length > 0 && (
+        <div className="mt-3 space-y-2" data-testid="identity-suggestions">
+          {unconfirmed.map((opt, i) => (
+            <div key={i} className="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-[var(--color-ink-900)]">{opt.value}</p>
+                <p className="text-xs text-[var(--color-ink-500)]">{opt.note}</p>
+              </div>
+              <button
+                onClick={() => onResolve(opt.value)}
                 className="shrink-0 cursor-pointer rounded-md bg-[var(--color-brand-800)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-brand-700)]"
               >
                 Use this value
@@ -135,16 +164,20 @@ export function IdentityResolutionStep({
   domicileState,
   onResolveNamedInsured,
   onResolveState,
+  nameSuggestions,
+  stateSuggestions,
 }: {
   namedInsured: FieldValue<string>;
   domicileState: FieldValue<string>;
   onResolveNamedInsured: (value: string) => void;
   onResolveState: (value: string) => void;
+  nameSuggestions?: IdentitySuggestion[];
+  stateSuggestions?: IdentitySuggestion[];
 }) {
   return (
     <div className="flex flex-col gap-3">
-      <IdentityField label="Named Insured" field={namedInsured} inputKind="text" onResolve={onResolveNamedInsured} />
-      <IdentityField label="Domicile State" field={domicileState} inputKind="state" onResolve={onResolveState} />
+      <IdentityField label="Named Insured" field={namedInsured} inputKind="text" onResolve={onResolveNamedInsured} suggestions={nameSuggestions} />
+      <IdentityField label="Domicile State" field={domicileState} inputKind="state" onResolve={onResolveState} suggestions={stateSuggestions} />
     </div>
   );
 }

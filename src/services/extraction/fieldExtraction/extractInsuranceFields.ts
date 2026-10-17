@@ -5,16 +5,26 @@ import { SCALAR_FIELD_PATTERNS } from './scalarPatterns';
 import { extractBooleanFields } from './booleanPatterns';
 import { extractLossRows, extractLossBlocks } from './lossPatterns';
 import { extractDesiredCoverageLine, extractCurrentPolicyCoverageLines } from './coveragePatterns';
-import { classifyTable, mapVehicleTable, mapDriverTable, mapLossTable, mapCoverageTable } from './tableMappers';
-import { parseAddressComponents } from './addressPatterns';
+import { classifyTable, mapVehicleTable, mapDriverTable, mapLossTable, mapCoverageTable, lossColumns, parseAmount } from './tableMappers';
+import { extractVehiclesFromText } from './vinText';
+import { extractLossRunDrafts, labeledTotals, looksLikeLossRun, type StatedTotals } from './lossRunPatterns';
+import { findTables, type LayoutTable } from '../../ingestion/pdfLayout';
+import type { RawTable } from '../../ingestion';
+import { parseAddressComponents, stateFromAddress } from './addressPatterns';
+import { isReadableText } from './textQuality';
 import {
+  subjectLines,
+  detectMvr,
   extractDriverLicenseFields,
   extractVehicleRegistrationFields,
   findGenericBusinessName,
   findGenericCityState,
   detectDriverLicense,
   detectVehicleRegistration,
+  findCdlOriginalIssue,
+  detectApplication,
 } from './idDocumentPatterns';
+import { toMonths, type DurationValue } from '../../../utils/duration';
 
 export interface ExtractionSourceMeta {
   documentId: string;
@@ -72,8 +82,11 @@ function synthesizeKeyValueLines(doc: RawDocument): TextLine[] {
   return lines;
 }
 
-function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedFieldResult[] {
-  const lines = [...toTextLines(doc), ...synthesizeKeyValueLines(doc)];
+// The lines about the document's subject (the driver) — see idDocumentPatterns.ts.
+export { subjectLines } from './idDocumentPatterns';
+
+function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta, textLines: TextLine[], hasDriverTable: boolean): ExtractedFieldResult[] {
+  const lines = [...textLines, ...synthesizeKeyValueLines(doc)];
   const results: ExtractedFieldResult[] = [];
 
   // A driver's license or vehicle registration never legitimately carries applicant-business
@@ -84,7 +97,8 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   // patterns below. Skipping the business/transportation prose patterns entirely for a
   // detected ID-card document is what keeps a driver's personal details out of the applicant's
   // business section, rather than trying to out-guess which label "wins".
-  const isIdCardDocument = detectDriverLicense(doc.text) || detectVehicleRegistration(doc.text);
+  // An application mentions licenses, CDLs and VINs too — it's never read as a card.
+  const isIdCardDocument = !detectApplication(doc.text) && (detectDriverLicense(doc.text) || detectVehicleRegistration(doc.text));
 
   if (!isIdCardDocument) {
     for (const field of SCALAR_FIELD_PATTERNS) {
@@ -93,7 +107,10 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
           for (const line of lines) {
             const m = line.text.match(pattern);
             if (!m || !m[1]) continue;
-            const value = field.coerce(m[1]);
+            let value = field.coerce(m[1]);
+            // OCR noise after a label ("Address: {=a") is not a value.
+            if (typeof value === 'string' && !isReadableText(value)) continue;
+            if (Array.isArray(value)) value = value.filter((v) => typeof v !== 'string' || isReadableText(v));
             if (value === null || value === undefined || (Array.isArray(value) && value.length === 0)) continue;
             results.push({
               fieldPath: field.fieldPath,
@@ -120,16 +137,6 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
     });
   }
 
-  const lossRows = [...extractLossRows(lines), ...extractLossBlocks(lines)];
-  for (const l of lossRows) {
-    results.push({
-      fieldPath: 'lossHistory',
-      value: { lossDate: l.lossDate, claimType: l.claimType, paid: l.paid, reserved: l.reserved, incurred: l.incurred, status: l.status },
-      confidence: capConfidence('high', meta),
-      source: scalarSource(meta, l.page, l.matchedText),
-      extractionMethod: extractionMethodFor(meta),
-    });
-  }
 
   const desiredCoverage = extractDesiredCoverageLine(lines);
   if (desiredCoverage) {
@@ -155,13 +162,18 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   }
 
   // A "Street, City, ST 12345"-shaped address also yields city/state/ZIP as their own fields —
-  // never invented, only ever read off the same matched address line.
+  // never invented, only ever read off the same matched address line. The state is the
+  // domicile unless the document states one explicitly.
   const addressResult = results.find((r) => r.fieldPath === 'business.address');
   if (addressResult && typeof addressResult.value === 'string') {
     const components = parseAddressComponents(addressResult.value);
     if (components) {
       results.push({ fieldPath: 'business.city', value: components.city, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
       results.push({ fieldPath: 'business.zip', value: components.zip, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
+    }
+    const state = components?.state ?? stateFromAddress(addressResult.value);
+    if (state && !results.some((r) => r.fieldPath === 'business.state')) {
+      results.push({ fieldPath: 'business.state', value: state, confidence: addressResult.confidence, source: addressResult.source, extractionMethod: extractionMethodFor(meta) });
     }
   }
 
@@ -170,18 +182,23 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   // are built for, so they need their own dedicated, narrowly-gated extractors — see
   // idDocumentPatterns.ts for why this exists and how it avoids hallucinating a value from a
   // partially-unreadable field.
-  const licenseMatch = extractDriverLicenseFields(lines, doc.text);
+  // A driver list (a table of drivers) is not a license, even though it says "License #", "DOB" and "Class".
+  const isApplication = detectApplication(doc.text);
+  // An MVR is about one driver even when it carries a table (violations, associated persons): its
+  // license holder is still read, and the table's rows are never taken as its driver (see the gate).
+  const licenseMatch = (hasDriverTable && !detectMvr(doc.text)) || isApplication ? null : extractDriverLicenseFields(subjectLines(lines), doc.text);
   if (licenseMatch) {
+    const cdlLine = licenseMatch.cdlOriginalIssueLine;
     results.push({
       fieldPath: 'drivers',
-      value: licenseMatch.entry,
+      value: cdlLine ? { ...licenseMatch.entry, cdlOriginalIssueSource: scalarSource(meta, cdlLine.page, cdlLine.text) } : licenseMatch.entry,
       confidence: capConfidence('medium', meta),
       source: scalarSource(meta, undefined, licenseMatch.matchedText),
       extractionMethod: extractionMethodFor(meta),
     });
   }
 
-  const registrationMatch = extractVehicleRegistrationFields(lines, doc.text);
+  const registrationMatch = isApplication ? null : extractVehicleRegistrationFields(lines, doc.text);
   if (registrationMatch) {
     results.push({
       fieldPath: 'vehicles',
@@ -235,11 +252,17 @@ function extractScalarText(doc: RawDocument, meta: ExtractionSourceMeta): Extrac
   return results;
 }
 
-function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedFieldResult[] {
-  if (!doc.tables || doc.tables.length === 0) return [];
+/** A claim result and where it sits in the document (for linking it to its loss-run section). */
+interface PositionedClaim {
+  result: ExtractedFieldResult;
+  position: number | undefined;
+}
+
+function extractTables(tables: (RawTable | LayoutTable)[], meta: ExtractionSourceMeta, claims: PositionedClaim[]): ExtractedFieldResult[] {
+  if (tables.length === 0) return [];
   const results: ExtractedFieldResult[] = [];
 
-  for (const table of doc.tables) {
+  for (const table of tables) {
     const kind = classifyTable(table.headers);
 
     if (kind === 'vehicles') {
@@ -275,6 +298,7 @@ function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedF
       const rows = mapDriverTable(table);
       for (const { row, entry } of rows) {
         const desc = [entry.name, entry.licenseState && `License ${entry.licenseState}`].filter(Boolean).join(' ');
+        if (entry.cdlOriginalIssueDate) entry.cdlOriginalIssueSource = tableSource(meta, table.sheetName, row, `${entry.name ?? 'Driver'} — original CDL issue date ${entry.cdlOriginalIssueDate}`);
         results.push({ fieldPath: 'drivers', value: entry, confidence: 'high', source: tableSource(meta, table.sheetName, row, desc || 'driver'), extractionMethod: 'deterministic_import' });
       }
       if (rows.length > 0) {
@@ -285,11 +309,11 @@ function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedF
           source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `${rows.length} driver${rows.length === 1 ? '' : 's'} listed in ${table.sheetName ?? 'the driver schedule'}` },
           extractionMethod: 'deterministic_import',
         });
-        const experienceValues = rows.map((r) => r.entry.yearsExperience).filter((v): v is number => v !== undefined);
+        const experienceValues = rows.map((r) => r.entry.yearsExperience).filter((v): v is DurationValue => v !== undefined && toMonths(v) !== null);
         if (experienceValues.length > 0) {
           results.push({
             fieldPath: 'transportation.minDriverExperienceYears',
-            value: Math.min(...experienceValues),
+            value: experienceValues.reduce((min, v) => (toMonths(v)! < toMonths(min)! ? v : min)),
             confidence: 'high',
             source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: `Minimum years of experience across ${table.sheetName ?? 'the driver schedule'}` },
             extractionMethod: 'deterministic_import',
@@ -302,13 +326,15 @@ function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedF
     if (kind === 'losses') {
       const rows = mapLossTable(table);
       for (const { row, entry } of rows) {
-        results.push({
+        const result: ExtractedFieldResult = {
           fieldPath: 'lossHistory',
           value: entry,
           confidence: 'high',
-          source: tableSource(meta, table.sheetName, row, `${entry.lossDate} ${entry.claimType}`),
+          source: tableSource(meta, table.sheetName, row, [entry.claimNumber && `Claim ${entry.claimNumber}`, entry.lossDate, entry.claimType].filter(Boolean).join(' ')),
           extractionMethod: 'deterministic_import',
-        });
+        };
+        results.push(result);
+        claims.push({ result, position: 'rowLines' in table ? table.rowLines[row] : undefined });
       }
       continue;
     }
@@ -339,5 +365,85 @@ function extractTables(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedF
  * as missing, so nothing here ever invents a value.
  */
 export function extractInsuranceFields(doc: RawDocument, meta: ExtractionSourceMeta): ExtractedFieldResult[] {
-  return [...extractScalarText(doc, meta), ...extractTables(doc, meta)];
+  // PDF tables are rebuilt from the page layout; their lines are read as rows, not as prose.
+  const layoutTables = doc.layout ? findTables(doc.layout, (headers) => classifyTable(headers) !== 'unrecognized') : [];
+  const tableLines = new Set<number>();
+  for (const t of layoutTables) for (let k = t.headerLine; k <= (t.totalsLine ?? t.rowLines[t.rowLines.length - 1]); k++) tableLines.add(k);
+  const allLines = toTextLines(doc);
+  const textLines = allLines.filter((l) => l.index === undefined || !tableLines.has(l.index));
+  const tables = [...(doc.tables ?? []), ...layoutTables];
+  // A "driver table" that yields no actual driver (a license record's labels laid out in columns)
+  // doesn't stop the license reader.
+  const hasDriverTable = tables.some((t) => classifyTable(t.headers) === 'drivers' && mapDriverTable(t).length > 0);
+
+  const claims: PositionedClaim[] = [];
+  const scalar = extractScalarText(doc, meta, textLines, hasDriverTable);
+  // A registration is one vehicle, read by the registration reader; its boxes laid out in columns
+  // are not a vehicle schedule.
+  const registrationRead = scalar.some((r) => r.fieldPath === 'vehicles');
+  const results = [...scalar, ...extractTables(registrationRead ? tables.filter((t) => classifyTable(t.headers) !== 'vehicles') : tables, meta, claims)];
+
+  // VINs printed outside a table (declarations pages, emails, questionnaires). A license or
+  // registration card already has its own extractor.
+  if (detectApplication(doc.text) || (!detectDriverLicense(doc.text) && !detectVehicleRegistration(doc.text))) {
+    const known = new Set(results.filter((r) => r.fieldPath === 'vehicles').map((r) => (r.value as { vin?: string }).vin).filter((v): v is string => !!v));
+    for (const { entry, line } of extractVehiclesFromText(textLines, known)) {
+      results.push({
+        fieldPath: 'vehicles',
+        value: entry,
+        confidence: capConfidence('medium', meta),
+        source: scalarSource(meta, line.page, line.text),
+        extractionMethod: extractionMethodFor(meta),
+      });
+    }
+  }
+
+  // A document about one driver (an MVR read as a grid, a one-row list) with its original CDL issue
+  // date printed outside that row: the date is that driver's. With several drivers it's anyone's — left alone.
+  const driverResults = results.filter((r) => r.fieldPath === 'drivers');
+  if (driverResults.length === 1 && !(driverResults[0].value as { cdlOriginalIssueDate?: string }).cdlOriginalIssueDate) {
+    const cdl = findCdlOriginalIssue(subjectLines(textLines));
+    if (cdl) driverResults[0].value = { ...(driverResults[0].value as object), cdlOriginalIssueDate: cdl.value, cdlOriginalIssueSource: scalarSource(meta, cdl.line.page, cdl.line.text) };
+  }
+
+  // Claims printed as text (one line per claim, or a labeled block per claim).
+  const textLossRows = [...extractLossRows(textLines), ...extractLossBlocks(textLines)];
+  for (const l of textLossRows) {
+    const result: ExtractedFieldResult = {
+      fieldPath: 'lossHistory',
+      value: { lossDate: l.lossDate, claimType: l.claimType, paid: l.paid, reserved: l.reserved, incurred: l.incurred, status: l.status },
+      confidence: capConfidence('high', meta),
+      source: scalarSource(meta, l.page, l.matchedText),
+      extractionMethod: extractionMethodFor(meta),
+    };
+    results.push(result);
+    claims.push({ result, position: l.index });
+  }
+
+  // A loss run: one record per policy section, with its claims linked to it.
+  if (looksLikeLossRun(doc.text, claims.length > 0)) {
+    const pos = (l: TextLine, i: number) => l.index ?? i;
+    const stated: StatedTotals[] = labeledTotals(textLines, pos);
+    for (const t of layoutTables) {
+      if (!t.totals || t.totalsLine === undefined || classifyTable(t.headers) !== 'losses') continue;
+      const c = lossColumns(t.headers);
+      const count = t.totals.join(' ').match(/\b(\d+)\s+claims?\b/i);
+      const amount = (k: number) => (k >= 0 ? (parseAmount(t.totals![k]) ?? undefined) : undefined);
+      stated.push({ position: t.totalsLine, claims: count ? Number(count[1]) : undefined, paid: amount(c.paid), reserve: amount(c.reserved), incurred: amount(c.incurred) });
+    }
+    const { drafts, claimKeys } = extractLossRunDrafts(textLines, { documentId: meta.documentId, claimPositions: claims.map((c) => c.position), statedTotals: stated });
+    claims.forEach((c, i) => {
+      if (claimKeys[i]) c.result.value = { ...(c.result.value as object), lossRunKey: claimKeys[i] };
+    });
+    for (const draft of drafts) {
+      results.push({
+        fieldPath: 'lossRun',
+        value: draft,
+        confidence: capConfidence('high', meta),
+        source: { documentId: meta.documentId, documentName: meta.documentName, excerpt: ['Loss run', draft.carrier, draft.policyNumber && `policy ${draft.policyNumber}`].filter(Boolean).join(' — ') },
+        extractionMethod: extractionMethodFor(meta),
+      });
+    }
+  }
+  return results;
 }
