@@ -211,7 +211,7 @@ function normalizeQuotes(value: unknown, accountId: string): MarketQuote[] | und
   if (!arr) return undefined;
   return arr
     .filter((q): q is Partial<MarketQuote> & { id: string; marketName: string } => !!q && typeof q.id === 'string' && typeof q.marketName === 'string')
-    .map((q) => ({ ...q, accountId, status: q.status ?? 'preparing', notes: Array.isArray(q.notes) ? q.notes : [], createdAt: q.createdAt ?? new Date().toISOString(), updatedAt: q.updatedAt ?? new Date().toISOString() }) as MarketQuote);
+    .map((q) => ({ ...q, accountId, status: q.status ?? 'preparing', notes: Array.isArray(q.notes) ? q.notes : [], ...(q.policies !== undefined ? { policies: normalizePolicies(q.policies) ?? [] } : {}), createdAt: q.createdAt ?? new Date().toISOString(), updatedAt: q.updatedAt ?? new Date().toISOString() }) as MarketQuote);
 }
 
 function normalizeItems(value: unknown, accountId: string): MissingItem[] | undefined {
@@ -843,6 +843,7 @@ export async function submissionsRevoked(ids: string[]): Promise<Record<string, 
 // ---------------------------------------------------------------------------------------------
 
 import { precheckUpload, storageBody, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
+import { normalizePolicies } from '../workflow/policies';
 
 const BUCKET = 'submission-documents';
 

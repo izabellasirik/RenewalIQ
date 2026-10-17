@@ -19,6 +19,7 @@ import type {
   LossRun,
   LossEntry,
   MarketQuote,
+  PolicyRecord,
   QuoteOption,
   FollowUp,
   MatchResult,
@@ -66,6 +67,7 @@ import { trackEvent, markAccountDemo } from '../services/productAnalytics/trackE
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
+import { formatCents, policyTotalCents, type PolicyFields } from '../services/workflow/policies';
 import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { isSupabaseConfigured } from '../services/supabase/client';
 import type { MyProfile } from '../services/supabase/profileRepo';
@@ -296,6 +298,10 @@ interface AccountsState {
   markItemSentToCarrier: (accountId: string, itemId: string, quoteId?: string) => void;
   addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
   updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason'>>) => void;
+  /** A policy written from a bound market (Carrier 103 Phase 1 — no commission). Returns its id, or '' if the market is gone. */
+  addPolicy: (accountId: string, quoteId: string, fields: PolicyFields) => string;
+  updatePolicy: (accountId: string, quoteId: string, policyId: string, fields: PolicyFields) => void;
+  removePolicy: (accountId: string, quoteId: string, policyId: string) => void;
   addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
   /** Edit a dated market note: the original date stays; who edited it and when are recorded. */
   updateQuoteNote: (accountId: string, quoteId: string, noteId: string, text: string) => void;
@@ -2333,6 +2339,63 @@ export const useAccountsStore = create<AccountsState>()(
         } else if (patch.premium !== undefined && next.premium !== before.premium) {
           trackEvent(before.premium ? 'quote_updated' : 'quote_added', { accountId, metadata: { source: 'premium' } });
         }
+      },
+
+      addPolicy: (accountId, quoteId, fields) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!quote) return '';
+        const now = new Date().toISOString();
+        const policy: PolicyRecord = { ...fields, id: generateId('policy'), createdAt: now, updatedAt: now, createdByName: actorName(get()) };
+        set((s) => ({
+          quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, policies: [...(q.policies ?? []), policy], updatedAt: now })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(
+            s.activityLog,
+            accountId,
+            'policy_bound',
+            `Policy ${policy.policyNumber ?? '(number to come)'} recorded with ${policy.carrier}${quote.marketName !== policy.carrier ? ` via ${quote.marketName}` : ''}: bound ${formatShortDate(policy.boundDate)}, total ${formatCents(policyTotalCents(policy))}${actorSuffix(s.currentUserEmail)}.`
+          ),
+        }));
+        syncNow(accountId);
+        return policy.id;
+      },
+
+      updatePolicy: (accountId, quoteId, policyId, fields) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const before = quote?.policies?.find((p) => p.id === policyId);
+        if (!quote || !before) return;
+        // Every field the form sets is replaced; the record's identity and history stay.
+        const next: PolicyRecord = { id: before.id, createdAt: before.createdAt, createdByName: before.createdByName, ...fields, updatedAt: new Date().toISOString() };
+        const strip = (p: PolicyRecord) => JSON.stringify(Object.entries({ ...p, updatedAt: '' }).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)));
+        if (strip(next) === strip(before)) return;
+        const changes: string[] = [];
+        if (next.policyNumber !== before.policyNumber) changes.push(`policy number ${next.policyNumber ?? 'cleared'}`);
+        if (next.carrier !== before.carrier) changes.push(`carrier ${next.carrier}`);
+        if (next.boundDate !== before.boundDate) changes.push(`bound ${formatShortDate(next.boundDate)}`);
+        if (next.effectiveDate !== before.effectiveDate || next.expirationDate !== before.expirationDate) changes.push(`term ${formatShortDate(next.effectiveDate)} – ${formatShortDate(next.expirationDate)}`);
+        if (policyTotalCents(next) !== policyTotalCents(before) || next.netPremiumCents !== before.netPremiumCents) changes.push(`net ${formatCents(next.netPremiumCents)}, total ${formatCents(policyTotalCents(next))}`);
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, policies: (q.policies ?? []).map((p) => (p.id === policyId ? next : p)), updatedAt: next.updatedAt })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Edited policy ${next.policyNumber ?? before.policyNumber ?? 'with ' + next.carrier}${changes.length ? `: ${changes.join(', ')}` : ''}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      removePolicy: (accountId, quoteId, policyId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const policy = quote?.policies?.find((p) => p.id === policyId);
+        if (!quote || !policy) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, policies: (q.policies ?? []).filter((p) => p.id !== policyId), updatedAt: now })) },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Removed policy ${policy.policyNumber ?? `with ${policy.carrier}`} (bound ${formatShortDate(policy.boundDate)})${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
       },
 
       addQuoteNote: (accountId, quoteId, text) => {

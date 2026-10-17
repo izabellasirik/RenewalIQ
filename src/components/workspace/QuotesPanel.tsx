@@ -15,6 +15,8 @@ import { QuoteOptionsList } from './QuoteOptionsList';
 import { inputClass, labelClass, smallInputClass } from './formStyles';
 import { cn } from '../../utils/cn';
 import { MarketDetailsDialog } from './MarketDetailsDialog';
+import { PoliciesSection } from './PoliciesSection';
+import { policiesFeatureEnabled } from '../../services/workflow/policies';
 
 
 export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; focusQuoteId?: string }) {
@@ -306,6 +308,7 @@ function QuoteCard({
                     <span className={cn(followUpDue && 'font-medium text-[var(--color-danger-600)]')}> · Follow up {formatShortDate(quote.followUpDate)}{followUpDue ? ' (due)' : ''}</span>
                   )}
                   {(quote.options?.length ?? 0) > 0 && ` · ${quote.options!.length} quote${quote.options!.length === 1 ? '' : 's'}`}
+                  {policiesFeatureEnabled() && (quote.policies?.length ?? 0) > 0 && ` · ${quote.policies!.length} polic${quote.policies!.length === 1 ? 'y' : 'ies'}`}
                   {waitingOn > 0 && ` · ${waitingOn} requested item${waitingOn === 1 ? '' : 's'} outstanding`}
                   {quote.notes.length > 0 && ` · ${quote.notes.length} note${quote.notes.length === 1 ? '' : 's'}`}
                 </>
@@ -496,6 +499,8 @@ function QuoteCard({
         )}
 
         <QuoteOptionsList accountId={accountId} quote={quote} />
+
+        <PoliciesSection accountId={accountId} quote={quote} />
 
         {requestedItems.length > 0 && (
           <div className="mt-4">

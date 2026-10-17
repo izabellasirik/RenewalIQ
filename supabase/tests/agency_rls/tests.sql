@@ -1265,3 +1265,32 @@ do $$ begin perform import_agency_carrier_directory(jsonb_build_object('markets'
 do $$ begin perform import_agency_carrier_directory('{"markets":[{"ref":"m-x","name":"X","baseRecordId":"x; drop table agency_carriers"}]}', true); raise notice 'CR16 malformed built-in id: ALLOWED (BAD)'; exception when others then raise notice 'CR16 malformed built-in id refused'; end $$;
 reset role;
 select 'CR16 other agency''s market untouched: ref=' || coalesce(external_ref, 'none') from agency_carriers where id = current_setting('my.other_carrier')::uuid;
+
+\echo '== N. Policies on bound markets (Carrier 103 Phase 1): stored in market_quotes, so they follow the account''s own access rules — no new table, no migration'
+set role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+with u as (
+  update submissions set market_quotes = '[{"id":"q_n1","marketName":"Prairie Mutual (sample)","status":"bound","notes":[],"policies":[{"id":"policy_n1","carrier":"Prairie Mutual (sample)","policyNumber":"SMP-AL-1001","businessType":"new","boundDate":"2026-10-14","effectiveDate":"2026-11-01","expirationDate":"2027-11-01","netPremiumCents":1875000,"taxesCents":56250,"feesCents":15000},{"id":"policy_n2","carrier":"Prairie Mutual (sample)","businessType":"renewal","boundDate":"2026-10-15","netPremiumCents":420000,"taxesCents":0,"feesCents":2500}]}]'::jsonb
+  where id = 'acct_r1' returning 1)
+select 'N1 roman records two policies on his own account: affected=' || count(*) from u;
+select 'N2 roman reads them back exactly: policies=' || count(*) || ' net=' || sum((p->>'netPremiumCents')::bigint) || ' taxes=' || sum((p->>'taxesCents')::bigint) || ' fees=' || sum((p->>'feesCents')::bigint)
+  from submissions s, jsonb_array_elements(s.market_quotes) q, jsonb_array_elements(coalesce(q->'policies', '[]'::jsonb)) p where s.id = 'acct_r1';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
+select 'N3 agentB (same agency, not on the account) sees roman''s policies: rows=' || count(*) from submissions s, jsonb_array_elements(s.market_quotes) q, jsonb_array_elements(coalesce(q->'policies', '[]'::jsonb)) p where s.id = 'acct_r1';
+with u as (update submissions set market_quotes = '[]'::jsonb where id = 'acct_r1' returning 1) select 'N3 agentB wipes roman''s policies: affected=' || count(*) from u;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000c');
+select 'N4 other agency sees roman''s policies: rows=' || count(*) from submissions s, jsonb_array_elements(s.market_quotes) q, jsonb_array_elements(coalesce(q->'policies', '[]'::jsonb)) p where s.id = 'acct_r1';
+with u as (update submissions set market_quotes = '[]'::jsonb where id = 'acct_r1' returning 1) select 'N4 other agency wipes them: affected=' || count(*) from u;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select 'N5 agency admin sees the account''s policies, as with the account itself: ' || count(*) from submissions s, jsonb_array_elements(s.market_quotes) q, jsonb_array_elements(coalesce(q->'policies', '[]'::jsonb)) p where s.id = 'acct_r1';
+select 'N6 agency-wide total by bound date (Oct 2026) is a plain query: net=' || coalesce(sum((p->>'netPremiumCents')::bigint), 0)
+  from submissions s, jsonb_array_elements(s.market_quotes) q, jsonb_array_elements(coalesce(q->'policies', '[]'::jsonb)) p where p->>'boundDate' between '2026-10-01' and '2026-10-31';
+do $$ begin update submissions set market_quotes = '{"policies":[]}'::jsonb where id = 'acct_r1'; raise notice 'N7 market_quotes as an object: ALLOWED (BAD)'; exception when others then raise notice 'N7 market_quotes must stay an array: refused'; end $$;
+reset role;
+set role anon;
+do $$ declare n int; begin select count(*) into n from submissions where id = 'acct_r1'; raise notice 'N8 anonymous sees the account: rows=%', n; exception when others then raise notice 'N8 anonymous cannot read submissions'; end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+set role authenticated;
+with u as (update submissions set market_quotes = '[]'::jsonb where id = 'acct_r1' returning 1) select 'N9 cleanup by the owner: affected=' || count(*) from u;
+reset role;

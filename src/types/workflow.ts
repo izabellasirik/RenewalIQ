@@ -173,6 +173,35 @@ export function quoteOptionFiles(option: Pick<QuoteOption, 'attachment' | 'attac
   return [...(option.attachment ? [option.attachment] : []), ...(option.attachments ?? [])];
 }
 
+export type PolicyBusinessType = 'new' | 'renewal';
+
+/**
+ * A policy written from a bound market. An account (one client) can hold several — e.g. Auto
+ * Liability and Cargo with different carriers. Operational details only: no commission figures are
+ * ever stored here (anyone who can open the account can read it). Amounts are whole cents.
+ */
+export interface PolicyRecord {
+  id: string;
+  /** The quote it was bound from (QuoteOption.id), when the market has recorded quotes. */
+  quoteOptionId?: string;
+  /** Often only known once the carrier issues the policy. */
+  policyNumber?: string;
+  /** The writing carrier (the market may be an MGA or wholesaler). */
+  carrier: string;
+  coverage?: import('./coverage').CoverageType;
+  businessType: PolicyBusinessType;
+  /** Local calendar dates, YYYY-MM-DD. */
+  boundDate: string;
+  effectiveDate?: string;
+  expirationDate?: string;
+  netPremiumCents: number;
+  taxesCents: number;
+  feesCents: number;
+  createdAt: string;
+  updatedAt: string;
+  createdByName?: string;
+}
+
 export interface MarketQuote {
   id: string;
   accountId: string;
@@ -190,6 +219,8 @@ export interface MarketQuote {
   /** The quote the broker chose (e.g. the one being bound). */
   selectedOptionId?: string;
   declineReason?: string;
+  /** Policies written from this market once bound (absent on markets saved before policies existed). */
+  policies?: PolicyRecord[];
   notes: QuoteNote[];
   createdAt: string;
   updatedAt: string;
