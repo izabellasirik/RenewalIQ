@@ -85,6 +85,9 @@ select pg_temp.check('H8 binding the main renewal keeps the date it was for — 
 update submissions set renewals = jsonb_set(renewals, '{0}', ((renewals->0) - 'boundQuoteId' - 'renewalDate') || '{"status":"open"}') where id = 'acct_sqlt_1';
 select pg_temp.check('H9 un-binding reopens it (following the account’s date again)', (select renewals->0->>'status' = 'open' and not (renewals->0 ? 'renewalDate') from submissions where id = 'acct_sqlt_1'));
 
+update submissions set done_actions = '{"renewal-acct_sqlt_1|2026-12-16|Renewal effective Dec 16":"2026-10-17T00:00:00Z","checklist-acct_sqlt_1|x|y":"2026-10-17T00:00:00Z"}' where id = 'acct_sqlt_1';
+select pg_temp.check('H10 the helper cannot mark a renewal reminder done (other tasks: yes)', (select not (done_actions ? 'renewal-acct_sqlt_1|2026-12-16|Renewal effective Dec 16') and done_actions ? 'checklist-acct_sqlt_1|x|y' from submissions where id = 'acct_sqlt_1'));
+
 \echo '== the main renewal date (the Risk Profile effective date) on an account that tracks renewals'
 update field_values set value = '"2027-06-01"' where id = 'acct_sqlt_1::business::effectiveDate';
 select pg_temp.check('E1 a helper’s direct change to the effective date is not kept', (select value #>> '{}' = '2026-12-16' from field_values where id = 'acct_sqlt_1::business::effectiveDate'));
@@ -136,6 +139,8 @@ select public.replace_submission_children('acct_sqlt_1',
   '[{"id":"acct_sqlt_1::business::effectiveDate","submission_id":"acct_sqlt_1","user_id":"00000000-0000-0000-0000-00000000000a","section":"business","field_key":"effectiveDate","value":"2027-01-10","confidence":"manual","is_missing":false,"is_conflicting":false,"extraction_method":"manual_entry"},
     {"id":"acct_sqlt_1::transportation::dotNumber","submission_id":"acct_sqlt_1","user_id":"00000000-0000-0000-0000-00000000000a","section":"transportation","field_key":"dotNumber","value":"2222222","confidence":"manual","is_missing":false,"is_conflicting":false,"extraction_method":"manual_entry"}]',
   '[]', '[]', '[]', '[]', '[]');
+update submissions set done_actions = done_actions || '{"renewal-acct_sqlt_1|2027-01-10|Renewal effective Jan 10":"2026-10-17T00:00:00Z"}' where id = 'acct_sqlt_1';
+select pg_temp.check('A13 the assigned broker marks the renewal reminder done', (select done_actions ? 'renewal-acct_sqlt_1|2027-01-10|Renewal effective Jan 10' from submissions where id = 'acct_sqlt_1'));
 select pg_temp.check('A0 the assigned broker changes the renewal date (the effective date)', (select value #>> '{}' = '2027-01-10' from field_values where id = 'acct_sqlt_1::business::effectiveDate'));
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
 update field_values set value = '"2027-02-01"' where id = 'acct_sqlt_1::business::effectiveDate';

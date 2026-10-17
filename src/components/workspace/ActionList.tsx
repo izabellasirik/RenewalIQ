@@ -4,6 +4,7 @@ import { ArrowRight, CalendarClock, Check, ListChecks, Mail, PackageCheck, Send 
 import type { ActionItem } from '../../services/workflow/nextActions';
 import { ACTION_KIND_META, workspaceHref } from './actionMeta';
 import { useAccountsStore } from '../../state/useAccountsStore';
+import { useCanManageRenewals } from '../../hooks/useAccountRenewals';
 import { Button } from '../ui';
 import { RequestItemsDialog } from './RequestItemsDialog';
 import { ReceiveItemDialog } from './ReceiveItemDialog';
@@ -62,6 +63,8 @@ function ActionRow({
   const updateFollowUp = useAccountsStore((s) => s.updateFollowUp);
   const completeFollowUp = useAccountsStore((s) => s.completeFollowUp);
   const markActionDone = useAccountsStore((s) => s.markActionDone);
+  // A renewal reminder is the assigned broker's (or an admin's) to mark done — the database keeps it otherwise.
+  const managesRenewals = useCanManageRenewals(action.accountId);
   const isGroup = (action.itemIds?.length ?? 0) > 1;
   const navigate = useNavigate();
   const location = useLocation();
@@ -154,7 +157,7 @@ function ActionRow({
           </Button>
         )}
         {/* Every other task can be marked done too (it comes back if its date or wording changes). */}
-        {!action.followUpId && !action.requestId && action.kind !== 'ready_to_send' && (
+        {!action.followUpId && !action.requestId && action.kind !== 'ready_to_send' && (action.kind !== 'renewal' || managesRenewals) && (
           <Button size="sm" variant="secondary" icon={<Check size={13} />} onClick={() => markActionDone(action)} title="Mark this task done">
             Done
           </Button>

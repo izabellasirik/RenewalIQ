@@ -29,3 +29,11 @@ export function useRenewalDatesLocked(accountId: string): boolean {
   const { account, canManage } = useAccountRenewals(accountId);
   return !!account && (account.businessType !== undefined || (account.renewals?.length ?? 0) > 0) && !canManage;
 }
+
+/** Just whether this user can manage the account's renewals (cheap: for lists of tasks). */
+export function useCanManageRenewals(accountId: string): boolean {
+  const assignedUserId = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId)?.assignedUserId);
+  const ownerId = useAccountsStore((s) => s.accountOwners[accountId] ?? null);
+  const viewer = useRenewalViewer();
+  return canManageRenewals({ assignedUserId }, { ...viewer, ownerId });
+}
