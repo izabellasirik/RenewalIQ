@@ -4,6 +4,7 @@ import { router } from './router';
 import { supabase } from './services/supabase/client';
 import { isPublicLinkPath } from './services/publicLinks';
 import { useAccountsStore } from './state/useAccountsStore';
+import { COMMISSIONS_DEMO, DEMO_AGENCY } from './services/commissions/demo';
 
 /**
  * Keeps useAccountsStore.currentUserId in sync with the live Supabase session — the store never
@@ -47,6 +48,9 @@ function useBrokerCloudBootstrap() {
 
 function App() {
   useBrokerCloudBootstrap();
+  useEffect(() => {
+    if (COMMISSIONS_DEMO) useAccountsStore.setState({ agencyAccess: DEMO_AGENCY });
+  }, []);
   return <RouterProvider router={router} />;
 }
 

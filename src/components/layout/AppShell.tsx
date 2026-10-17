@@ -5,6 +5,7 @@ import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { FeedbackWidget } from '../feedback/FeedbackWidget';
 import { TimeSavedPrompt } from '../productAnalytics/TimeSavedPrompt';
+import { COMMISSIONS_DEMO } from '../../services/commissions/demo';
 
 export function AppShell() {
   const location = useLocation();
@@ -20,6 +21,11 @@ export function AppShell() {
       <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} />
       {mobileNavOpen && <div className="fixed inset-0 z-30 bg-[var(--color-ink-950)]/30 md:hidden" onClick={() => setMobileNavOpen(false)} />}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {COMMISSIONS_DEMO && (
+          <p data-testid="demo-banner" className="bg-[var(--color-ink-900)] px-4 py-1.5 text-center text-xs text-white">
+            Demo — not connected to RenewalIQ. No sign-in and no customer data; everything here is fictional and stays in this browser.
+          </p>
+        )}
         <TopBar onOpenNav={() => setMobileNavOpen(true)} />
         <main ref={mainRef} className="flex-1 overflow-y-auto scrollbar-thin [overflow-anchor:none]">
           {/* No AnimatePresence/mode="wait" here: combined with StrictMode it caused a delayed phantom
