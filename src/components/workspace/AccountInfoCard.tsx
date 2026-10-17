@@ -7,6 +7,7 @@ import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { formatShortDate } from '../../services/workflow/dates';
 import { US_STATES } from '../../utils/usStates';
 import { AssignedAgent } from './AssignedAgent';
+import { useRenewalDatesLocked } from '../../hooks/useAccountRenewals';
 import { inputClass, labelClass } from './formStyles';
 
 /**
@@ -21,6 +22,7 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
   const setAssignedBroker = useAccountsStore((s) => s.setAssignedBroker);
   const session = useBrokerSession();
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
+  const dateLocked = useRenewalDatesLocked(accountId);
 
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
@@ -48,7 +50,7 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
     if (!account) return;
     updateAccountInfo(accountId, { namedInsured: name, state });
     if (dot.trim() !== (dotNumber ?? '')) updateField(accountId, 'transportation', 'dotNumber', dot.trim() || null);
-    if (eff !== (effectiveDate ?? '')) updateField(accountId, 'business', 'effectiveDate', eff || null);
+    if (!dateLocked && eff !== (effectiveDate ?? '')) updateField(accountId, 'business', 'effectiveDate', eff || null);
     // In an agency the assignment is the database's (admin → Agent dropdown), not this free-text label.
     if (agencyAccess) {
       setEditing(false);
@@ -104,7 +106,8 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
             </div>
             <div>
               <label className={labelClass}>Renewal / effective date</label>
-              <input type="date" value={eff} onChange={(e) => setEff(e.target.value)} className={inputClass} />
+              <input type="date" value={eff} onChange={(e) => setEff(e.target.value)} className={inputClass} disabled={dateLocked} />
+              {dateLocked && <p className="mt-1 text-xs text-[var(--color-ink-500)]">The renewal date is set by the assigned broker or an admin.</p>}
             </div>
             <div />
             {!agencyAccess && (

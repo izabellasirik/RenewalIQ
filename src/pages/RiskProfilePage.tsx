@@ -21,6 +21,7 @@ import { WhatsMissingPanel } from '../components/review/WhatsMissingPanel';
 import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
 import { archiveConfirmText } from '../components/dashboard/AccountCard';
 import { useRiskProfileStats } from '../hooks/useRiskProfileStats';
+import { useRenewalDatesLocked } from '../hooks/useAccountRenewals';
 import { computeSubmissionCompleteness } from '../services/application';
 import { deriveVehicleSummary, deriveDriverSummary, deriveLossSummary } from '../utils/deriveInsights';
 import { RISK_PROFILE_GROUPS } from './riskProfileFieldConfig';
@@ -52,6 +53,7 @@ type TabKey = 'details' | 'fleet' | 'drivers' | 'loss-history';
 
 export function RiskProfilePage() {
   const { accountId = '' } = useParams();
+  const renewalDatesLocked = useRenewalDatesLocked(accountId);
   const navigate = useNavigate();
   const location = useLocation();
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
@@ -196,6 +198,8 @@ export function RiskProfilePage() {
                       label={f.label}
                       valueType={f.type}
                       pending={anyProcessing}
+                      // The renewal date of an account tracking renewals is the assigned broker's (or an admin's) to change.
+                      readOnly={renewalDatesLocked && f.section === 'business' && f.key === 'effectiveDate'}
                       // Falls back to an empty field rather than reading profile[section][key]
                       // directly — a profile persisted before a field config entry existed (e.g. an
                       // account created before "Requested Effective Date" was added) has no key for

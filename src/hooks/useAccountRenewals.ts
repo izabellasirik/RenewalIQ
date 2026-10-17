@@ -19,3 +19,13 @@ export function useAccountRenewals(accountId: string) {
   const canManage = !!account && canManageRenewals(account, { ...viewer, ownerId });
   return { account, quotes, effectiveDate, renewals, canManage };
 }
+
+/**
+ * The account tracks renewals and this user isn't its assigned broker or an admin: its renewal date
+ * (the Renewal / effective date) is theirs to set, not this user's — the database keeps it as it is
+ * either way (0054), so it's shown read-only here.
+ */
+export function useRenewalDatesLocked(accountId: string): boolean {
+  const { account, canManage } = useAccountRenewals(accountId);
+  return !!account && (account.businessType !== undefined || (account.renewals?.length ?? 0) > 0) && !canManage;
+}
