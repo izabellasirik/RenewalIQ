@@ -157,6 +157,11 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
   };
 }
 
+/** The policies still in force on a market (removed ones stay in the data, hidden). */
+export function activePolicies(q: Pick<MarketQuote, 'policies'>): PolicyRecord[] {
+  return (q.policies ?? []).filter((p) => !p.removedAt);
+}
+
 /** Keeps only well-formed policies when a market is read back (bad entries are skipped, never invented). */
 export function normalizePolicies(value: unknown): PolicyRecord[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -190,7 +195,7 @@ export function policyRows(accounts: Pick<Account, 'id' | 'namedInsured' | 'arch
   for (const a of accounts) {
     if (a.archived && !includeArchived) continue;
     for (const q of quotes[a.id] ?? []) {
-      for (const policy of q.policies ?? []) rows.push({ policy, accountId: a.id, insured: a.namedInsured, quoteId: q.id, marketName: q.marketName, marketBound: q.status === 'bound' });
+      for (const policy of q.policies ?? []) if (!policy.removedAt) rows.push({ policy, accountId: a.id, insured: a.namedInsured, quoteId: q.id, marketName: q.marketName, marketBound: q.status === 'bound' });
     }
   }
   return rows;

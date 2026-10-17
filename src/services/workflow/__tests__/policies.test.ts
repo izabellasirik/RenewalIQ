@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useAccountsStore } from '../../../state/useAccountsStore';
-import type { PolicyRecord } from '../../../types';
+import type { MarketQuote, PolicyRecord } from '../../../types';
+import { mergeQuotes } from '../mergeCloud';
 import {
+  activePolicies,
   checkPolicy,
   filterPolicies,
   formatCents,
@@ -152,9 +154,19 @@ describe('policies on bound markets (store)', () => {
     const p = store().addPolicy(id, q, fields());
     store().removePolicy(id, q, p);
     const quote = store().quotes[id][0];
-    expect(quote.policies).toEqual([]);
+    // Kept in the data, marked removed, and hidden everywhere.
+    expect(quote.policies).toHaveLength(1);
+    expect(quote.policies![0]).toMatchObject({ id: p, policyNumber: 'SMP-AL-1001', netPremiumCents: 1_875_000 });
+    expect(quote.policies![0].removedAt).toBeTruthy();
+    expect(activePolicies(quote)).toEqual([]);
+    expect(policyRows(store().accounts, store().quotes)).toEqual([]);
     expect(quote).toMatchObject({ status: 'bound', premium: 18750 });
     expect(quote.options).toHaveLength(1);
+    // A removed policy can't be edited or removed again.
+    const removedAt = quote.policies![0].removedAt;
+    store().updatePolicy(id, q, p, fields({ netPremium: '1' }));
+    store().removePolicy(id, q, p);
+    expect(store().quotes[id][0].policies![0]).toMatchObject({ removedAt, netPremiumCents: 1_875_000 });
   });
 
   it('a market moved off "Bound" keeps its policies, flagged', () => {
@@ -238,5 +250,42 @@ describe('switched on only where intended', () => {
     expect(policiesFeatureEnabled({ DEV: false, VITE_FEATURE_POLICIES: 'true' })).toBe(true);
     expect(policiesFeatureEnabled({ DEV: true })).toBe(true);
     expect(policiesFeatureEnabled({ DEV: true, VITE_FEATURE_POLICIES: 'false' })).toBe(false);
+  });
+});
+
+describe('two copies of the same account (someone else saved in the meantime)', () => {
+  const pol = (id: string, updatedAt: string, over: Partial<PolicyRecord> = {}): PolicyRecord => ({ id, carrier: 'Prairie Mutual (sample)', businessType: 'new', boundDate: '2026-10-14', netPremiumCents: 100_000, taxesCents: 0, feesCents: 0, createdAt: updatedAt, updatedAt, ...over });
+  const quote = (updatedAt: string, policies: PolicyRecord[]): MarketQuote => ({ id: 'q1', accountId: 'a1', marketName: 'Prairie Mutual (sample)', status: 'bound', notes: [], policies, createdAt: '2026-10-01T00:00:00Z', updatedAt });
+  const SEEN = '2026-10-14T09:00:00Z';
+
+  it('policies added on both sides to the same market are all kept', () => {
+    const local = [quote('2026-10-14T10:05:00Z', [pol('p-mine', '2026-10-14T10:05:00Z')])];
+    const cloud = [quote('2026-10-14T10:00:00Z', [pol('p-theirs', '2026-10-14T10:00:00Z')])];
+    expect(mergeQuotes(local, cloud, SEEN)[0].policies!.map((p) => p.id).sort()).toEqual(['p-mine', 'p-theirs']);
+    // …whichever side saved last.
+    expect(mergeQuotes(cloud, local, SEEN)[0].policies!.map((p) => p.id).sort()).toEqual(['p-mine', 'p-theirs']);
+  });
+  it('the same policy edited on both sides: the newest edit wins', () => {
+    const local = [quote('2026-10-14T10:00:00Z', [pol('p1', '2026-10-14T10:00:00Z', { netPremiumCents: 111 })])];
+    const cloud = [quote('2026-10-14T11:00:00Z', [pol('p1', '2026-10-14T11:00:00Z', { netPremiumCents: 222 })])];
+    expect(mergeQuotes(local, cloud, SEEN)[0].policies).toEqual([expect.objectContaining({ id: 'p1', netPremiumCents: 222 })]);
+  });
+  it('a removal is not undone by an older copy that still has the policy', () => {
+    const removed = [quote('2026-10-14T12:00:00Z', [pol('p1', '2026-10-14T12:00:00Z', { removedAt: '2026-10-14T12:00:00Z' })])];
+    const stale = [quote('2026-10-14T10:00:00Z', [pol('p1', '2026-10-14T10:00:00Z')])];
+    for (const [l, c] of [[removed, stale], [stale, removed]]) {
+      const out = mergeQuotes(l, c, SEEN)[0];
+      expect(out.policies).toHaveLength(1);
+      expect(out.policies![0].removedAt).toBe('2026-10-14T12:00:00Z');
+    }
+  });
+  it('other market changes still follow the newest copy, and markets without policies are untouched', () => {
+    const local = [{ ...quote('2026-10-14T10:00:00Z', [pol('p1', '2026-10-14T10:00:00Z')]), notes: [] }];
+    const cloud = [{ ...quote('2026-10-14T11:00:00Z', []), status: 'quoted' as const }];
+    const out = mergeQuotes(local, cloud, SEEN)[0];
+    expect(out.status).toBe('quoted');
+    expect(out.policies!.map((p) => p.id)).toEqual(['p1']);
+    const plain = [quote('2026-10-14T10:00:00Z', [])];
+    expect(mergeQuotes(plain, plain, SEEN)).toEqual(plain);
   });
 });

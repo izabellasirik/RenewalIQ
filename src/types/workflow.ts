@@ -200,6 +200,13 @@ export interface PolicyRecord {
   createdAt: string;
   updatedAt: string;
   createdByName?: string;
+  /**
+   * Set when the policy is removed. A removed policy stays in the account's data (hidden everywhere)
+   * so another copy of the account can't bring it back, and so later commission records always
+   * have the policy they refer to.
+   */
+  removedAt?: string;
+  removedByName?: string;
 }
 
 export interface MarketQuote {

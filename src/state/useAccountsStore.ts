@@ -72,7 +72,7 @@ import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFi
 import { isSupabaseConfigured } from '../services/supabase/client';
 import type { MyProfile } from '../services/supabase/profileRepo';
 import * as cloudRepo from '../services/supabase/submissionsRepo';
-import { mergeById, mergeNewerFields, mergeWorkflowList, noteChangedAt, toMs } from '../services/workflow/mergeCloud';
+import { mergeById, mergeNewerFields, mergeQuotes, mergeWorkflowList, noteChangedAt, toMs } from '../services/workflow/mergeCloud';
 import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/documents/localFileStore';
 import { inferFileType as inferQuoteFileType } from '../utils/documents';
 import { actionDoneKey, type ActionItem } from '../services/workflow/nextActions';
@@ -555,7 +555,7 @@ export const useAccountsStore = create<AccountsState>()(
                 ? { ...a, notes: mergeById(a.notes ?? [], bundle.account.notes ?? [], noteChangedAt), lossRuns: merge(a.lossRuns, bundle.account.lossRuns ?? []) }
                 : a
             ),
-            ...(bundle.quotes ? { quotes: { ...st.quotes, [accountId]: merge(st.quotes[accountId], bundle.quotes) } } : {}),
+            ...(bundle.quotes ? { quotes: { ...st.quotes, [accountId]: mergeQuotes(st.quotes[accountId] ?? [], bundle.quotes, seen) } } : {}),
             ...(bundle.missingItems ? { missingItems: { ...st.missingItems, [accountId]: merge(st.missingItems[accountId], bundle.missingItems) } } : {}),
             ...(bundle.followUps ? { followUps: { ...st.followUps, [accountId]: merge(st.followUps[accountId], bundle.followUps) } } : {}),
             cloudSeenAt: { ...st.cloudSeenAt, [accountId]: cloudAt },
@@ -2363,7 +2363,7 @@ export const useAccountsStore = create<AccountsState>()(
       updatePolicy: (accountId, quoteId, policyId, fields) => {
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         const before = quote?.policies?.find((p) => p.id === policyId);
-        if (!quote || !before) return;
+        if (!quote || !before || before.removedAt) return;
         // Every field the form sets is replaced; the record's identity and history stay.
         const next: PolicyRecord = { id: before.id, createdAt: before.createdAt, createdByName: before.createdByName, ...fields, updatedAt: new Date().toISOString() };
         const strip = (p: PolicyRecord) => JSON.stringify(Object.entries({ ...p, updatedAt: '' }).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)));
@@ -2388,10 +2388,18 @@ export const useAccountsStore = create<AccountsState>()(
       removePolicy: (accountId, quoteId, policyId) => {
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         const policy = quote?.policies?.find((p) => p.id === policyId);
-        if (!quote || !policy) return;
+        if (!quote || !policy || policy.removedAt) return;
         const now = new Date().toISOString();
+        // Kept in the data, marked removed — never dropped (see PolicyRecord.removedAt).
         set((s) => ({
-          quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, policies: (q.policies ?? []).filter((p) => p.id !== policyId), updatedAt: now })) },
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              policies: (q.policies ?? []).map((p) => (p.id === policyId ? { ...p, removedAt: now, removedByName: actorName(s), updatedAt: now } : p)),
+              updatedAt: now,
+            })),
+          },
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Removed policy ${policy.policyNumber ?? `with ${policy.carrier}`} (bound ${formatShortDate(policy.boundDate)})${actorSuffix(s.currentUserEmail)}.`),
         }));

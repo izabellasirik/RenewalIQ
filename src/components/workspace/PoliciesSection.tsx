@@ -5,7 +5,7 @@ import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { formatShortDate, todayKey } from '../../services/workflow/dates';
-import { centsInput, checkPolicy, formatCents, oneYearAfter, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
+import { activePolicies, centsInput, checkPolicy, formatCents, oneYearAfter, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
 import { inputClass, labelClass } from './formStyles';
 
 /**
@@ -17,7 +17,7 @@ export function PoliciesSection({ accountId, quote }: { accountId: string; quote
   const removePolicy = useAccountsStore((s) => s.removePolicy);
   const [editing, setEditing] = useState<PolicyRecord | 'new' | null>(null);
   const [removing, setRemoving] = useState<PolicyRecord | null>(null);
-  const policies = quote.policies ?? [];
+  const policies = activePolicies(quote);
   if (!policiesFeatureEnabled() || (quote.status !== 'bound' && policies.length === 0)) return null;
 
   return (
