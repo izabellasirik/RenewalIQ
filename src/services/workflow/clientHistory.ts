@@ -52,6 +52,7 @@ export const KEY_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<ActivityE
   'client_submitted',
   'follow_up_completed',
   'email_draft_opened',
+  'renewal_updated',
 ]);
 
 const NOTE_EVENT = /^Note on (.+?): ([\s\S]*)$/;

@@ -31,6 +31,7 @@ import {
   Flag,
   Inbox,
   ExternalLink,
+  CalendarSync,
   type LucideIcon,
 } from 'lucide-react';
 import type { ActivityEventType } from '../../types';
@@ -87,6 +88,7 @@ export const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   request_sent: Send,
   item_not_applicable: Ban,
   item_verified: ShieldCheck,
+  renewal_updated: CalendarSync,
 };
 
 export const EVENT_TONE: Partial<Record<ActivityEventType, string>> = {
@@ -99,5 +101,6 @@ export const EVENT_TONE: Partial<Record<ActivityEventType, string>> = {
   submission_sent: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
   item_sent_to_carrier: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
   client_submitted: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
+  renewal_updated: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
 };
 

@@ -12,6 +12,7 @@ import { normalizeDateKey, toLocalDateKey, todayKey } from '../services/workflow
 import { deriveAccountActions, deriveDoneActions, sortActions, summarizeWaiting, type ActionItem, type ActionKind } from '../services/workflow/nextActions';
 import { ALL_BROKERS, ASSIGNED_TO_ME, UNASSIGNED, matchesBroker } from '../services/workflow/brokerFilter';
 import { useRememberedView } from '../hooks/useRememberedView';
+import { receivesRenewalReminders } from '../services/workflow/renewals';
 import { aBoolean, aString, defined, oneOf } from '../services/preferences/viewPreferences';
 
 /** Today's Plate filters remembered between visits (per user, on this device). */
@@ -34,7 +35,7 @@ const SECTION_ORDER: { kind: ActionKind; title: string; hint: string }[] = [
   { kind: 'carrier_follow_up', title: 'Carrier follow-ups', hint: 'Submissions waiting on a carrier or MGA.' },
   { kind: 'follow_up', title: 'Follow-ups', hint: 'Follow-ups you scheduled on an account.' },
   { kind: 'client_follow_up', title: 'Client follow-ups', hint: 'Items requested from the client that are due for a nudge.' },
-  { kind: 'renewal', title: 'Renewals coming up', hint: 'Effective within 45 days and not bound yet.' },
+  { kind: 'renewal', title: 'Renewals coming up', hint: 'From each renewal’s start-working date (45 days before unless changed) until it’s bound.' },
 ];
 
 /**
@@ -58,6 +59,7 @@ export function TodaysPlatePage() {
   const reopenFollowUp = useAccountsStore((s) => s.reopenFollowUp);
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const agencyMembers = useAccountsStore((s) => s.agencyMembers);
+  const accountOwners = useAccountsStore((s) => s.accountOwners);
   // An agent only ever has their own accounts (RLS), so filtering by broker only means something for an
   // admin (a broker list) or outside an agency (the earlier "only mine" checkbox).
   const byAgent = agencyAccess?.role === 'admin';
@@ -111,8 +113,10 @@ export function TodaysPlatePage() {
       for (const f of input.followUps) {
         if (f.doneAt && isToday(f.doneAt)) doneRows.push({ ...base, id: f.id, title: `Follow up: ${f.subject}`, doneAt: f.doneAt, undo: () => reopenFollowUp(account.id, f.id) });
       }
-      allNow.push(...derived.now);
-      allUpcoming.push(...derived.upcoming);
+      // Renewal reminders go to the assigned broker; someone only helping on the account doesn't get them.
+      const reminded = (a: ActionItem) => a.kind !== 'renewal' || receivesRenewalReminders(account, { role: agencyAccess?.role ?? null, userId: session.userId, ownerId: accountOwners[account.id] ?? null });
+      allNow.push(...derived.now.filter(reminded));
+      allUpcoming.push(...derived.upcoming.filter(reminded));
       const w = summarizeWaiting(missingItems[account.id] ?? [], quotes[account.id] ?? []);
       if (w.onClient > 0 || w.onCarriers.length > 0) waitingRows.push({ accountId: account.id, accountName: account.namedInsured, onClient: w.onClient, onCarriers: w.onCarriers });
     }
@@ -120,7 +124,7 @@ export function TodaysPlatePage() {
     doneRows.sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
     const kept = (a: ActionItem) => !renewalsOnly || a.kind === 'renewal';
     return { now: sortActions(allNow.filter(kept)), upcoming: sortActions(allUpcoming.filter(kept)), waiting: renewalsOnly ? [] : waitingRows, doneToday: doneRows };
-  }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, byAgent, broker, renewalsOnly, session.userId, session.email, today, undoActionDone, reopenFollowUp]);
+  }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, byAgent, broker, renewalsOnly, session.userId, session.email, today, undoActionDone, reopenFollowUp, agencyAccess?.role, accountOwners]);
 
   const overdue = now.filter((a) => a.overdue).length;
   const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });

@@ -10,6 +10,7 @@ import { formatShortDate, todayKey } from '../../services/workflow/dates';
 import { cn } from '../../utils/cn';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { effectiveAccountStage } from '../../services/workflow/accountStage';
+import { nextOpenRenewal, resolveRenewals } from '../../services/workflow/renewals';
 import { StageBadge } from '../workspace/StageBadge';
 import { agentLabel } from '../../services/agency/agentLabel';
 
@@ -40,6 +41,9 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   // Only something genuinely overdue earns the red flag — otherwise the card stays calm.
   const needsAttention = actions.now.some((a) => a.overdue);
   const { stage, manual } = effectiveAccountStage(account, items, quotes);
+  // The soonest open renewal (another policy's may come before the account's own); else the effective date.
+  const shownDate = nextOpenRenewal(resolveRenewals(account, effectiveDate, quotes))?.renewalDate ?? effectiveDate;
+  const newVenture = account.businessType === 'new_venture' && !account.renewals?.length;
   // Checklist documents not in yet (missing or requested from the client).
   const missingDocuments = items.filter((i) => i.type === 'document' && (i.status === 'missing' || i.status === 'requested')).length;
   // The earliest follow-up still open: scheduled follow-ups, client requests, and markets.
@@ -177,7 +181,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
           {/* Renewal and DOT on one line; below it, what's missing and when to follow up. */}
           <div className="mt-4 flex items-center justify-between gap-4 border-t border-[var(--color-ink-100)] pt-3 text-sm">
             <p className="text-[var(--color-ink-500)]">
-              Renewal: <span className="font-semibold text-[var(--color-ink-900)]">{effectiveDate ? formatShortDate(effectiveDate) : '—'}</span>
+              {newVenture ? 'Effective' : 'Renewal'}: <span className="font-semibold text-[var(--color-ink-900)]" data-testid="card-renewal">{shownDate ? formatShortDate(shownDate) : '—'}</span>
             </p>
             <p className="text-right text-[var(--color-ink-500)]">
               DOT # <span className="font-semibold text-[var(--color-ink-900)]">{dotNumber || '—'}</span>

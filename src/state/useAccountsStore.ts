@@ -4,6 +4,7 @@ import { createDebouncedJSONStorage, createSafeStorage } from './safeStorage';
 import type {
   FieldValue,
   Account,
+  AccountBusinessType,
   AccountNote,
   ActivityEvent,
   ActivityEventType,
@@ -32,7 +33,17 @@ import type {
 } from '../types';
 import { emptyField, ACCOUNT_STAGE_LABELS, AWAITING_CARRIER_STATUSES, MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES, quoteOptionFiles } from '../types';
 import { getAccountContacts } from '../services/workflow/contacts';
-import { addBusinessDays, formatShortDate, parseDateKey, todayKey } from '../services/workflow/dates';
+import { addBusinessDays, addDays, formatShortDate, normalizeDateKey, parseDateKey, todayKey } from '../services/workflow/dates';
+import {
+  addRenewal,
+  closeRenewal,
+  prepareNextRenewal as prepareNextInList,
+  reopenRenewal,
+  renewalsBoundBy,
+  resolveRenewals,
+  updateRenewal,
+  DEFAULT_LEAD_DAYS,
+} from '../services/workflow/renewals';
 import { carriersFor, findRequirement, forwardedAt, normalizeMissingItems } from '../services/workflow/requirementKey';
 import { DocumentLinkError } from '../services/ingestion/documentLinks';
 import type { FieldResolution } from '../services/extraction';
@@ -165,7 +176,7 @@ interface AccountsState {
   /** The broker's "Not now" action — stops the import prompt from asking about these ids again this device, without changing anything about the accounts themselves. */
   dismissLocalImport: (accountIds: string[]) => void;
 
-  createAccount: (namedInsured: string, state: string) => string;
+  createAccount: (namedInsured: string, state: string, setup?: NewAccountSetup) => string;
   /** Commits an account whose documents were already parsed/extracted (e.g. by the upload-first New Submission flow) in one transaction, instead of creating an empty account and processing files afterward. `files`, when given, are the original File objects in the same order as `documents` — used only to upload bytes to cloud Storage when this account turns out to be cloud-backed; never required for the local-only path. `contact`, when given (the intake-form import flow — see services/intake/importIntakeSubmission.ts), stamps the applicant's own contact info onto the account envelope. */
   createAccountFromExtraction: (
     namedInsured: string,
@@ -175,7 +186,7 @@ interface AccountsState {
     files?: File[],
     contact?: { name?: string; email?: string; phone?: string },
     /** skipAutoSync: the caller saves it itself with saveAccountNow (e.g. intake import) — avoids two overlapping saves. */
-    options?: { skipAutoSync?: boolean; /** Founder Analytics: an account made from a client's intake submission. */ source?: 'intake' }
+    options?: { skipAutoSync?: boolean; /** Founder Analytics: an account made from a client's intake submission. */ source?: 'intake'; /** New venture or renewal, chosen on New Submission. */ setup?: NewAccountSetup }
   ) => string;
   /**
    * Saves one account to the cloud now and waits for the result (the same save syncNow runs in the
@@ -315,6 +326,21 @@ interface AccountsState {
   selectQuoteOption: (accountId: string, quoteId: string, optionId: string) => void;
   deleteQuoteOption: (accountId: string, quoteId: string, optionId: string) => void;
   deleteQuote: (accountId: string, quoteId: string) => void;
+  // Renewal tracking (services/workflow/renewals.ts, 0054).
+  setBusinessType: (accountId: string, type: AccountBusinessType) => void;
+  /** Starts tracking a renewal: the main one (its date is the account's Renewal / effective date) or another policy's. */
+  trackRenewal: (accountId: string, input: { main?: boolean; renewalDate: string; leadDays: number; label?: string }) => void;
+  editRenewal: (accountId: string, renewalId: string, patch: { renewalDate?: string; leadDays?: number; label?: string }) => void;
+  setRenewalNotRenewing: (accountId: string, renewalId: string, notRenewing: boolean) => void;
+  /** Stops tracking a renewal added by mistake. */
+  removeRenewal: (accountId: string, renewalId: string) => void;
+  /** Which renewal a bound market was for (null: none — another policy). Only this closes a renewal. */
+  linkBoundQuote: (accountId: string, quoteId: string, renewalId: string | null) => void;
+  /**
+   * Next year's renewal, after one was bound — only when the broker confirms. From a tracked renewal
+   * (fromRenewalId) or, for an account not tracking renewals yet, from the market just bound (quoteId).
+   */
+  prepareNextRenewal: (accountId: string, input: { fromRenewalId?: string; quoteId?: string; renewalDate: string; leadDays: number }) => { ok: boolean; message?: string };
   /** A carrier/MGA asked for more — links the carrier to the account's existing requirement for that document (same logical requirement, see requirementKey), or creates it; flags the quote. Returns the item id. */
   recordCarrierRequest: (accountId: string, quoteId: string, input: { label: string; type: MissingItemType; notes?: string }) => string;
 }
@@ -351,6 +377,49 @@ function newAccount(namedInsured: string, state: string): Account {
 
 function touchAccount(accounts: Account[], accountId: string): Account[] {
   return accounts.map((a) => (a.id === accountId ? { ...a, updatedAt: new Date().toISOString() } : a));
+}
+
+/** New venture or renewal, chosen when the account is created. A renewal's date becomes the account's Renewal / effective date. */
+export interface NewAccountSetup {
+  businessType: AccountBusinessType;
+  renewalDate?: string;
+  leadDays?: number;
+}
+
+const renewalClock = () => ({ now: new Date().toISOString(), newId: () => generateId('rnw') });
+
+/** A market stopped being bound (status changed or removed): the renewal it was bound for is open again. */
+function reopenFor(accounts: Account[], accountId: string, quoteId: string): { accounts: Account[]; message?: string } | null {
+  const account = accounts.find((a) => a.id === accountId);
+  const bound = renewalsBoundBy(account?.renewals ?? [], quoteId);
+  if (!account || bound.length === 0) return null;
+  const now = new Date().toISOString();
+  let list = account.renewals ?? [];
+  for (const r of bound) list = reopenRenewal(list, r.id, now);
+  if (list === account.renewals) return null;
+  return { accounts: accounts.map((a) => (a.id === accountId ? { ...a, renewals: list } : a)), message: 'The renewal is open again — its market is no longer bound.' };
+}
+
+function effectiveDateOf(profile: RiskProfile | undefined): string | null {
+  return normalizeDateKey((profile?.business?.effectiveDate?.value as string | null | undefined) ?? null);
+}
+
+/** "Renewal effective Nov 16 (start working Oct 2)" for the Activity log. */
+function renewalWhen(date: string, leadDays: number, label?: string): string {
+  return `${label ? `${label} renewal` : 'Renewal'} effective ${formatShortDate(date)} (start working ${formatShortDate(addDays(date, -leadDays))})`;
+}
+
+/** Applies a new account's setup: its type, and for a renewal the renewal date (on the Risk Profile) and the main renewal. */
+function applyNewAccountSetup(account: Account, profile: RiskProfile, setup: NewAccountSetup | undefined): { account: Account; profile: RiskProfile; message?: string } {
+  if (!setup) return { account, profile };
+  if (setup.businessType === 'new_venture' || !setup.renewalDate) return { account: { ...account, businessType: setup.businessType }, profile, message: setup.businessType === 'new_venture' ? 'New venture.' : undefined };
+  const leadDays = setup.leadDays ?? DEFAULT_LEAD_DAYS;
+  const withDate = applyManualEdit({ ...profile, business: { ...profile.business } }, 'business', 'effectiveDate', setup.renewalDate);
+  return {
+    account: { ...account, businessType: 'renewal', renewals: addRenewal([], { main: true, leadDays }, renewalClock()) },
+    profile: withDate,
+    message: `${renewalWhen(setup.renewalDate, leadDays)}.`,
+  };
 }
 
 /** Who's signed in, stamped on every activity event as it's created (kept current by setCurrentUserId / hydrate). */
@@ -802,6 +871,8 @@ export const useAccountsStore = create<AccountsState>()(
                 ...(bundle.account.collaboratorIds !== undefined ? { collaboratorIds: bundle.account.collaboratorIds } : {}),
                 ...(bundle.account.originalAssignedUserId !== undefined ? { originalAssignedUserId: bundle.account.originalAssignedUserId } : {}),
                 notes: mergeById(local.notes ?? [], bundle.account.notes ?? [], noteChangedAt),
+                // Renewals: both devices' changes kept (by when each was last changed); one deleted here stays deleted.
+                ...(bundle.hasRenewalsColumn ? { renewals: mergeWorkflowList(local.renewals ?? [], bundle.account.renewals ?? [], s.cloudSeenAt[id]), businessType: local.businessType ?? bundle.account.businessType } : {}),
               };
               riskProfiles[id] = mergeNewerFields(s.riskProfiles[id], bundle.profile);
               needsPush.push(id);
@@ -831,6 +902,7 @@ export const useAccountsStore = create<AccountsState>()(
               ...(!bundle.hasDoneColumn && local?.doneActions ? { doneActions: local.doneActions } : {}),
               ...(!bundle.hasNotesColumn && local?.notes ? { notes: local.notes } : {}),
               ...(!bundle.hasLossRunsColumn && local?.lossRuns ? { lossRuns: local.lossRuns } : {}),
+              ...(!bundle.hasRenewalsColumn && local ? { businessType: local.businessType, renewals: local.renewals } : {}),
             };
             if (idx === -1) accounts.push(merged);
             else accounts[idx] = merged;
@@ -931,16 +1003,19 @@ export const useAccountsStore = create<AccountsState>()(
       effectiveAppetiteRecords: sampleAppetiteRecords,
       agencyCarriers: [],
 
-      createAccount: (namedInsured, state) => {
-        const account = ownedByMe(newAccount(namedInsured, state));
+      createAccount: (namedInsured, state, setup) => {
+        const base = ownedByMe(newAccount(namedInsured, state));
+        const { account, profile, message } = applyNewAccountSetup(base, createEmptyRiskProfile(base.id), setup);
         const cloud = isSupabaseConfigured && !!get().currentUserId;
         set((s) => ({
           accounts: [...s.accounts, account],
-          riskProfiles: { ...s.riskProfiles, [account.id]: createEmptyRiskProfile(account.id) },
+          riskProfiles: { ...s.riskProfiles, [account.id]: profile },
           documents: { ...s.documents, [account.id]: [] },
           // In the same update as the account, so its first cloud save already includes it.
           missingItems: { ...s.missingItems, [account.id]: [] },
-          activityLog: appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`),
+          activityLog: message
+            ? appendEvent(appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`), account.id, 'renewal_updated', message)
+            : appendEvent(s.activityLog, account.id, 'account_created', `Submission created for ${namedInsured}.`),
           activeAccountId: account.id,
           cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
         }));
@@ -949,9 +1024,11 @@ export const useAccountsStore = create<AccountsState>()(
         return account.id;
       },
 
-      createAccountFromExtraction: (namedInsured, state, documents, profile, files, contact, options) => {
-        const account = {
-          ...ownedByMe(newAccount(namedInsured, state)),
+      createAccountFromExtraction: (namedInsured, state, documents, extractedProfile, files, contact, options) => {
+        const created = applyNewAccountSetup(ownedByMe(newAccount(namedInsured, state)), extractedProfile, options?.setup);
+        const profile = created.profile;
+        const account: Account = {
+          ...created.account,
           status: 'documents_uploaded' as const,
           ...(contact?.name ? { contactName: contact.name } : {}),
           ...(contact?.email ? { contactEmail: contact.email } : {}),
@@ -973,6 +1050,7 @@ export const useAccountsStore = create<AccountsState>()(
             'account_created',
             `Submission created for ${namedInsured} from ${documents.length} uploaded document${documents.length === 1 ? '' : 's'}.`
           );
+          if (created.message) log = appendEvent(log, account.id, 'renewal_updated', created.message);
           for (const doc of finalDocs) {
             log = appendEvent(log, account.id, 'document_uploaded', `Uploaded ${doc.name}.`);
             if (doc.status === 'processed') {
@@ -1692,7 +1770,8 @@ export const useAccountsStore = create<AccountsState>()(
         const now = new Date().toISOString();
         // A copy is a new account owned by whoever made it — in an agency it lands in that agency
         // (the database's insert trigger does the same), never the source's assignment.
-        const { agencyId: _agencyId, assignedUserId: _assignedUserId, collaboratorIds: _collaborators, originalAssignedUserId: _original, ...sourceFields } = source;
+        // Renewals tracked on the source belong to it (they point at its markets); the copy starts without.
+        const { agencyId: _agencyId, assignedUserId: _assignedUserId, collaboratorIds: _collaborators, originalAssignedUserId: _original, renewals: _renewals, ...sourceFields } = source;
         const clonedAccount: Account = ownedByMe({ ...sourceFields, id: newId, namedInsured: `${source.namedInsured} (Copy)`, createdAt: now, updatedAt: now, archived: false });
         const clonedDocs = (s.documents[accountId] ?? []).map((d) => ({ ...d, id: generateId('doc'), accountId: newId }));
         // Rows need their own ids (a row id is unique across all accounts in the database), and
@@ -2317,12 +2396,17 @@ export const useAccountsStore = create<AccountsState>()(
           events.push(['follow_up_scheduled', next.followUpDate ? `Carrier follow-up with ${name} set for ${formatShortDate(next.followUpDate)}.` : `Cleared the follow-up date for ${name}.`]);
         }
 
+        // No longer bound: the renewal it was bound for is open again (it reminds again).
+        const unbound = statusChanged && before.status === 'bound';
+        if (unbound) delete next.renewalId;
         set((s) => {
           let log = s.activityLog;
           for (const [type, message] of events) log = appendEvent(log, accountId, type, message);
+          const reopened = unbound ? reopenFor(s.accounts, accountId, quoteId) : null;
+          if (reopened?.message) log = appendEvent(log, accountId, 'renewal_updated', reopened.message);
           return {
             quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], quoteId, () => next) },
-            accounts: touchAccount(s.accounts, accountId),
+            accounts: touchAccount(reopened?.accounts ?? s.accounts, accountId),
             activityLog: log,
           };
         });
@@ -2624,10 +2708,154 @@ export const useAccountsStore = create<AccountsState>()(
               return { ...i, neededByQuoteId: undefined, forwardedToCarrierAt: undefined, neededByQuoteIds: remaining.length ? remaining : undefined, forwardedTo: Object.keys(forwardedTo).length ? forwardedTo : undefined };
             }),
           },
-          accounts: touchAccount(s.accounts, accountId),
-          activityLog: appendEvent(s.activityLog, accountId, 'market_removed', `Removed ${quote.marketName} from Markets & Quotes.`),
+          ...(() => {
+            const reopened = quote.status === 'bound' ? reopenFor(s.accounts, accountId, quoteId) : null;
+            const log = appendEvent(s.activityLog, accountId, 'market_removed', `Removed ${quote.marketName} from Markets & Quotes.`);
+            return {
+              accounts: touchAccount(reopened?.accounts ?? s.accounts, accountId),
+              activityLog: reopened?.message ? appendEvent(log, accountId, 'renewal_updated', reopened.message) : log,
+            };
+          })(),
         }));
         syncNow(accountId);
+      },
+
+      setBusinessType: (accountId, type) => {
+        const account = get().accounts.find((a) => a.id === accountId);
+        if (!account || account.businessType === type) return;
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, businessType: type } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'renewal_updated', `Marked as ${type === 'renewal' ? 'a renewal' : 'a new venture'}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      trackRenewal: (accountId, input) => {
+        const s0 = get();
+        const account = s0.accounts.find((a) => a.id === accountId);
+        if (!account) return;
+        const list = addRenewal(account.renewals ?? [], { main: input.main, renewalDate: input.main ? undefined : input.renewalDate, leadDays: input.leadDays, label: input.main ? undefined : input.label }, renewalClock());
+        // The main renewal's date is the account's Renewal / effective date — set there, not copied.
+        if (input.main && input.renewalDate !== effectiveDateOf(s0.riskProfiles[accountId])) get().updateField(accountId, 'business', 'effectiveDate', input.renewalDate);
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, businessType: input.main ? 'renewal' : (a.businessType ?? 'renewal'), renewals: list } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'renewal_updated', `Tracking ${renewalWhen(input.renewalDate, input.leadDays, input.main ? undefined : input.label?.trim())}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      editRenewal: (accountId, renewalId, patch) => {
+        const s0 = get();
+        const account = s0.accounts.find((a) => a.id === accountId);
+        const record = account?.renewals?.find((r) => r.id === renewalId);
+        if (!account || !record) return;
+        if (record.main && patch.renewalDate && patch.renewalDate !== effectiveDateOf(s0.riskProfiles[accountId])) get().updateField(accountId, 'business', 'effectiveDate', patch.renewalDate);
+        const list = updateRenewal(account.renewals ?? [], renewalId, record.main ? { ...patch, renewalDate: undefined } : patch, new Date().toISOString());
+        const r = resolveRenewals({ ...account, renewals: list }, effectiveDateOf(get().riskProfiles[accountId]), []).find((x) => x.id === renewalId);
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, renewals: list } : a)),
+            accountId
+          ),
+          activityLog: r?.renewalDate ? appendEvent(s.activityLog, accountId, 'renewal_updated', `Updated: ${renewalWhen(r.renewalDate, r.leadDays, r.label)}.`) : s.activityLog,
+        }));
+        syncNow(accountId);
+      },
+
+      setRenewalNotRenewing: (accountId, renewalId, notRenewing) => {
+        const s0 = get();
+        const account = s0.accounts.find((a) => a.id === accountId);
+        if (!account?.renewals?.some((r) => r.id === renewalId)) return;
+        const r = resolveRenewals(account, effectiveDateOf(s0.riskProfiles[accountId]), []).find((x) => x.id === renewalId);
+        const now = new Date().toISOString();
+        const list = notRenewing ? closeRenewal(account.renewals, renewalId, { status: 'not_renewing', date: r?.renewalDate ?? null }, now) : reopenRenewal(account.renewals, renewalId, now);
+        if (list === account.renewals) return;
+        const what = r?.renewalDate ? `${r.label ? `${r.label} renewal` : 'Renewal'} effective ${formatShortDate(r.renewalDate)}` : 'Renewal';
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, renewals: list } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'renewal_updated', notRenewing ? `${what}: not renewing.` : `${what}: tracking again.`),
+        }));
+        syncNow(accountId);
+      },
+
+      removeRenewal: (accountId, renewalId) => {
+        const account = get().accounts.find((a) => a.id === accountId);
+        const record = account?.renewals?.find((r) => r.id === renewalId);
+        if (!account || !record || record.status !== 'open') return;
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, renewals: (a.renewals ?? []).filter((r) => r.id !== renewalId) } : a)),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'renewal_updated', `Stopped tracking ${record.label ? `the ${record.label} renewal` : 'this renewal'}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      linkBoundQuote: (accountId, quoteId, renewalId) => {
+        const s0 = get();
+        const account = s0.accounts.find((a) => a.id === accountId);
+        const quote = (s0.quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        if (!account || !quote) return;
+        const now = new Date().toISOString();
+        let list = account.renewals ?? [];
+        // A market binds one renewal: one it was linked to before goes back to open.
+        for (const r of renewalsBoundBy(list, quoteId)) if (r.id !== renewalId) list = reopenRenewal(list, r.id, now);
+        const target = renewalId ? resolveRenewals({ ...account, renewals: list }, effectiveDateOf(s0.riskProfiles[accountId]), []).find((r) => r.id === renewalId) : undefined;
+        if (renewalId && quote.status === 'bound' && target?.status === 'open') list = closeRenewal(list, renewalId, { status: 'bound', boundQuoteId: quoteId, date: target.renewalDate }, now);
+        set((s) => ({
+          quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, ...(renewalId ? { renewalId } : { renewalId: undefined }), updatedAt: now })) },
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, renewals: list } : a)),
+            accountId
+          ),
+          activityLog: target?.renewalDate
+            ? appendEvent(s.activityLog, accountId, 'renewal_updated', `Renewed: ${quote.marketName} bound for the ${target.label ? `${target.label} renewal` : 'renewal'} effective ${formatShortDate(target.renewalDate)}.`)
+            : s.activityLog,
+        }));
+        syncNow(accountId);
+      },
+
+      prepareNextRenewal: (accountId, input) => {
+        const s0 = get();
+        const account = s0.accounts.find((a) => a.id === accountId);
+        if (!account) return { ok: false, message: 'Account not found.' };
+        const clock = renewalClock();
+        let list = account.renewals ?? [];
+        let fromId = input.fromRenewalId;
+        if (!fromId) {
+          // Not tracking renewals yet (an account from before, or a new venture): the term just bound
+          // becomes the main renewal, closed by that market, and next year's follows it.
+          if (list.some((r) => r.main && r.status === 'open')) return { ok: false, message: 'This account already has an open renewal.' };
+          list = addRenewal(list, { main: true }, clock);
+          fromId = list[list.length - 1].id;
+          list = closeRenewal(list, fromId, { status: 'bound', boundQuoteId: input.quoteId, date: effectiveDateOf(s0.riskProfiles[accountId]) ?? todayKey() }, clock.now);
+        }
+        const result = prepareNextInList(list, fromId, { renewalDate: input.renewalDate, leadDays: input.leadDays }, clock);
+        if (!result.created) return { ok: false, message: 'Next year’s renewal is already set up.' };
+        const created = result.created;
+        // The main renewal's date is the account's Renewal / effective date: it moves to next year's.
+        if (created.main && input.renewalDate !== effectiveDateOf(get().riskProfiles[accountId])) get().updateField(accountId, 'business', 'effectiveDate', input.renewalDate);
+        const linkQuote = !input.fromRenewalId && input.quoteId ? fromId : undefined;
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => (a.id === accountId ? { ...a, businessType: 'renewal' as const, renewals: result.list } : a)),
+            accountId
+          ),
+          ...(linkQuote ? { quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], input.quoteId!, (q) => ({ ...q, renewalId: linkQuote })) } } : {}),
+          activityLog: appendEvent(s.activityLog, accountId, 'renewal_updated', `Next year’s renewal set up: ${renewalWhen(input.renewalDate, input.leadDays, created.label)}.`),
+        }));
+        syncNow(accountId);
+        return { ok: true };
       },
 
       recordCarrierRequest: (accountId, quoteId, input) => {

@@ -5,6 +5,7 @@ import { Badge, Button, Card, CardBody } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { effectiveAccountStage } from '../../services/workflow/accountStage';
+import { nextOpenRenewal, resolveRenewals } from '../../services/workflow/renewals';
 import { formatShortDate, toLocalDateKey, todayKey } from '../../services/workflow/dates';
 import { buildClientHistory, searchHistory, type HistoryEntry, type HistoryScope } from '../../services/workflow/clientHistory';
 import { EVENT_ICON, EVENT_TONE } from '../history/activityIcons';
@@ -47,6 +48,7 @@ export function ClientHistoryPanel({ accountId, onOpenMarket }: { accountId: str
   const compact = !wide && !expanded && !query;
   const list = matches.slice(0, compact ? COMPACT : shown);
   const { stage, manual } = effectiveAccountStage(account, items, quotes);
+  const renewalShown = account.businessType === 'new_venture' && !account.renewals?.length ? null : (nextOpenRenewal(resolveRenewals(account, effectiveDate, quotes))?.renewalDate ?? effectiveDate);
   const lastAt = all[0]?.at;
   const actor = (e: HistoryEntry) => (e.actorId && e.actorId === currentUserId ? 'You' : (members.find((m) => m.userId === e.actorId)?.name ?? e.actorName));
 
@@ -68,7 +70,7 @@ export function ClientHistoryPanel({ accountId, onOpenMarket }: { accountId: str
             </h2>
             <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--color-ink-500)]" data-testid="history-summary">
               <Badge tone="neutral">{ACCOUNT_STAGE_LABELS[stage]}{manual ? '' : ' · auto'}</Badge>
-              {effectiveDate && <span>Renewal {formatShortDate(effectiveDate)}</span>}
+              {renewalShown && <span>Renewal {formatShortDate(renewalShown)}</span>}
               {lastAt && <span>Last update {formatShortDate(lastAt)}</span>}
             </p>
           </div>

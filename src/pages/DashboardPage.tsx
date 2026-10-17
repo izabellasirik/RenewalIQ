@@ -9,8 +9,8 @@ import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
 import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
 import { cn } from '../utils/cn';
 import { effectiveAccountStage } from '../services/workflow/accountStage';
-import { daysBetween, normalizeDateKey, todayKey } from '../services/workflow/dates';
-import { RENEWAL_WINDOW_DAYS } from '../services/workflow/nextActions';
+import { normalizeDateKey, todayKey } from '../services/workflow/dates';
+import { isRenewalDue, resolveRenewals } from '../services/workflow/renewals';
 import { ACCOUNT_STAGE_LABELS, ACCOUNT_STAGE_ORDER, type AccountStage } from '../types';
 import { ALL_BROKERS, UNASSIGNED, matchesBroker } from '../services/workflow/brokerFilter';
 import { useRememberedView } from '../hooks/useRememberedView';
@@ -20,6 +20,7 @@ import { aBoolean, aString, defined, oneOf } from '../services/preferences/viewP
 interface AccountsView {
   stage: AccountStage | 'all';
   broker: string;
+  /** "Upcoming renewals" (the key is kept from the earlier "Renewal within 45 days", so a saved choice still applies). */
   renewalSoon: boolean;
 }
 const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stage: 'all', broker: ALL_BROKERS, renewalSoon: false };
@@ -82,17 +83,19 @@ export function DashboardPage() {
       : ALL_BROKERS;
   const setBrokerFilter = (broker: string) => updateView({ broker });
 
-  // Days until each account's renewal/effective date (Risk Profile → Requested Effective Date); absent when unknown.
-  const daysToRenewal = useMemo(() => {
+  // Each account's soonest renewal that work has started on and that isn't bound (see renewals.ts) —
+  // the same renewals Today's Plate reminds about. Absent when there's none.
+  const dueRenewal = useMemo(() => {
     const today = todayKey();
-    const map: Record<string, number> = {};
+    const map: Record<string, string> = {};
     for (const a of accounts) {
       const eff = normalizeDateKey((riskProfiles[a.id]?.business?.effectiveDate?.value as string | null | undefined) ?? null);
-      if (eff) map[a.id] = daysBetween(today, eff);
+      const due = resolveRenewals(a, eff, quotes[a.id] ?? []).find((r) => isRenewalDue(r, today));
+      if (due?.renewalDate) map[a.id] = due.renewalDate;
     }
     return map;
-  }, [accounts, riskProfiles]);
-  const renewsSoon = (id: string) => daysToRenewal[id] !== undefined && daysToRenewal[id] >= 0 && daysToRenewal[id] <= RENEWAL_WINDOW_DAYS;
+  }, [accounts, riskProfiles, quotes]);
+  const renewsSoon = (id: string) => dueRenewal[id] !== undefined;
   const renewalSoonCount = accounts.filter((a) => a.archived === showArchived && renewsSoon(a.id)).length;
 
   const visible = useMemo(() => {
@@ -102,10 +105,10 @@ export function DashboardPage() {
       .filter((a) => stageFilter === 'all' || stageOf[a.id] === stageFilter)
       // An agent's accounts: assigned to them, or ones they collaborate on (see matchesBroker).
       .filter((a) => matchesBroker(a, brokerFilter, { byAgent }))
-      .filter((a) => !renewalSoon || (daysToRenewal[a.id] !== undefined && daysToRenewal[a.id] >= 0 && daysToRenewal[a.id] <= RENEWAL_WINDOW_DAYS))
+      .filter((a) => !renewalSoon || dueRenewal[a.id] !== undefined)
       // Renewal filter on: soonest renewal first. Otherwise most recently updated first.
-      .sort((a, b) => (renewalSoon ? daysToRenewal[a.id] - daysToRenewal[b.id] : a.updatedAt < b.updatedAt ? 1 : -1));
-  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalSoon, daysToRenewal, byAgent]);
+      .sort((a, b) => (renewalSoon ? dueRenewal[a.id].localeCompare(dueRenewal[b.id]) : a.updatedAt < b.updatedAt ? 1 : -1));
+  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalSoon, dueRenewal, byAgent]);
 
   const stageCounts = useMemo(() => {
     const counts: Partial<Record<AccountStage, number>> = {};
@@ -220,6 +223,7 @@ export function DashboardPage() {
               type="button"
               onClick={() => updateView({ renewalSoon: !renewalSoon })}
               aria-pressed={renewalSoon}
+              title="Renewals whose start-working date has come and that aren’t bound yet, soonest first"
               className={cn(
                 'inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm cursor-pointer',
                 renewalSoon
@@ -228,7 +232,7 @@ export function DashboardPage() {
               )}
             >
               <CalendarClock size={14} />
-              Renewal within {RENEWAL_WINDOW_DAYS} days ({renewalSoonCount})
+              Upcoming renewals ({renewalSoonCount})
             </button>
             {filtersActive && (
               <button
@@ -244,7 +248,7 @@ export function DashboardPage() {
             <EmptyState
               icon={<Search size={24} strokeWidth={1.5} />}
               title={showArchived ? 'No archived accounts' : 'No matching accounts'}
-              description={showArchived ? undefined : renewalSoon ? `No accounts renew in the next ${RENEWAL_WINDOW_DAYS} days. An account shows here once its Risk Profile has a Requested Effective Date.` : 'Try a different search term or clear the filters.'}
+              description={showArchived ? undefined : renewalSoon ? 'No renewals to work on right now. A renewal shows here from its start-working date (45 days before, unless changed) until it’s bound.' : 'Try a different search term or clear the filters.'}
             />
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
