@@ -13,8 +13,9 @@
 -- agency admin, or — on a personal or unassigned account — whoever created it. Someone only helping on
 -- the account can do what binding or un-binding a market does (a renewal renewed by a market, or open
 -- again), nothing else:
--- their changes to the type, dates, start dates, labels, or the list itself are quietly kept as they
--- were — like the archive guard (0021) — so a helper's ordinary save never fails.
+-- their changes to the type, dates, start dates, labels, the list itself, or a renewal reminder's done
+-- mark are quietly kept as they were — like the archive guard (0021) — so a helper's ordinary save
+-- never fails.
 -- The account's main renewal date is the Risk Profile's effective date: on an account that tracks
 -- renewals it's guarded the same way (field_values / field_alternates triggers), so a helper's save —
 -- which rewrites every Risk Profile row (0028) — keeps the date as it was. On an account that doesn't
@@ -65,6 +66,12 @@ begin
   if public.can_manage_renewals(old.organization_id, old.assigned_user_id, old.user_id) then
     return new;
   end if;
+  -- On an account that tracks renewals, a renewal reminder marked done (or undone) is the assigned
+  -- broker's call too: its done marks ("renewal-…" keys) stay as they were; other tasks' marks go through.
+  if old.business_type is not null or old.renewals <> '[]'::jsonb then
+    new.done_actions := coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(coalesce(new.done_actions, '{}'::jsonb)) e where e.key not like 'renewal-%'), '{}'::jsonb)
+                     || coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(coalesce(old.done_actions, '{}'::jsonb)) e where e.key like 'renewal-%'), '{}'::jsonb);
+  end if;
   new.business_type := old.business_type;
   if new.renewals is not distinct from old.renewals then
     return new;
@@ -98,7 +105,7 @@ end;
 $$;
 
 drop trigger if exists submissions_renewal_guard on public.submissions;
-create trigger submissions_renewal_guard before update of business_type, renewals on public.submissions
+create trigger submissions_renewal_guard before update of business_type, renewals, done_actions on public.submissions
   for each row execute function public.submissions_renewal_guard();
 
 -- Whether the signed-in user may NOT change this account's renewal dates: it tracks renewals and they
