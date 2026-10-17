@@ -4,6 +4,7 @@ import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { formatShortDate, todayKey } from '../../services/workflow/dates';
 import { addYears, isRenewalDue, type ResolvedRenewal } from '../../services/workflow/renewals';
+import { activePolicies } from '../../services/workflow/policies';
 import { RenewalDateFields } from './RenewalDateFields';
 import { readRenewalDates, renewalDatesFrom, type RenewalDates } from './renewalForm';
 import { cn } from '../../utils/cn';
@@ -51,8 +52,10 @@ export function AfterBindDialog({ accountId, quoteId, onClose }: { accountId: st
   function offerNext(r: ResolvedRenewal | null) {
     if (r && tracked.some((x) => x.record?.previousRenewalId === r.id)) return onClose();
     const base = r?.renewalDate ?? effectiveDate ?? todayKey();
+    // Policies already recorded on the market: next year's renewal is when the first of them expires.
+    const expires = quote ? activePolicies(quote).map((p) => p.expirationDate).filter((d): d is string => !!d).sort()[0] : undefined;
     setFrom(r);
-    setDates(renewalDatesFrom(addYears(base, 1), r?.leadDays ?? 45));
+    setDates(renewalDatesFrom(expires ?? addYears(base, 1), r?.leadDays ?? 45));
     setStep('next');
   }
 

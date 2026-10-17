@@ -1,4 +1,4 @@
-import type { AccountNote, FieldValue, RiskProfile } from '../../types';
+import type { AccountNote, FieldValue, MarketQuote, RiskProfile } from '../../types';
 
 /**
  * When this device is about to save an account that someone else saved in the meantime, these keep
@@ -45,4 +45,22 @@ export function mergeWorkflowList<T extends { id: string; createdAt?: string; up
   const seen = toMs(seenAt);
   const fresh = cloud.filter((c) => localIds.has(c.id) || toMs(c.createdAt) > seen);
   return mergeById(local, fresh, (x) => toMs(x.updatedAt));
+}
+
+/**
+ * Markets & quotes: as mergeWorkflowList, and when both copies have the same market its policies are
+ * merged one by one (newest change of each wins), so two people adding or editing policies on the
+ * same market at the same time both keep their work. Removed policies stay as removed (they're never
+ * dropped from the data), so an older copy can't bring one back.
+ */
+export function mergeQuotes(local: MarketQuote[], cloud: MarketQuote[], seenAt: string | undefined): MarketQuote[] {
+  const merged = mergeWorkflowList(local, cloud, seenAt);
+  const localById = new Map(local.map((q) => [q.id, q]));
+  const cloudById = new Map(cloud.map((q) => [q.id, q]));
+  return merged.map((q) => {
+    const l = localById.get(q.id);
+    const c = cloudById.get(q.id);
+    if (!l || !c || (!l.policies?.length && !c.policies?.length)) return q;
+    return { ...q, policies: mergeById(l.policies ?? [], c.policies ?? [], (p) => toMs(p.updatedAt)) };
+  });
 }

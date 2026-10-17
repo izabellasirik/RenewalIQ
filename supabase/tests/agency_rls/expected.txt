@@ -445,4 +445,15 @@ CR16 linked market keeps its name, gets the reference: name=Own Market Without R
 CR16 link to another agency's market refused: Market m-steal: the market to link to is not one of your agency's markets.
 CR16 malformed built-in id refused
 CR16 other agency's market untouched: ref=m-blue
+N1 roman records two policies on his own account: affected=1
+N2 roman reads them back exactly: policies=2 net=2295000 taxes=56250 fees=17500
+N3 agentB (same agency, not on the account) sees roman's policies: rows=0
+N3 agentB wipes roman's policies: affected=0
+N4 other agency sees roman's policies: rows=0
+N4 other agency wipes them: affected=0
+N5 agency admin sees the account's policies, as with the account itself: 2
+N6 agency-wide total by bound date (Oct 2026) is a plain query: net=2295000
+N7 market_quotes must stay an array: refused
+N8 anonymous cannot read submissions
+N9 cleanup by the owner: affected=1
 AQ1 20 concurrent reads, limit 5, allowed: 5
