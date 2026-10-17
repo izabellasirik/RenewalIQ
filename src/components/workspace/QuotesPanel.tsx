@@ -15,6 +15,9 @@ import { QuoteOptionsList } from './QuoteOptionsList';
 import { inputClass, labelClass, smallInputClass } from './formStyles';
 import { cn } from '../../utils/cn';
 import { MarketDetailsDialog } from './MarketDetailsDialog';
+import { useAccountRenewals } from '../../hooks/useAccountRenewals';
+import { AfterBindDialog } from '../renewals/AfterBindDialog';
+import { bindAsksAboutRenewal } from '../renewals/renewalForm';
 
 
 export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; focusQuoteId?: string }) {
@@ -23,6 +26,17 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
   const [adding, setAdding] = useState(false);
   const [requestIds, setRequestIds] = useState<string[] | null>(null);
   const [collapsed, setCollapsed] = useCollapsedMarkets(accountId);
+  // Just bound: ask which renewal it was for, then offer next year's (see AfterBindDialog).
+  const { account, renewals } = useAccountRenewals(accountId);
+  const [justBound, setJustBound] = useState<string | null>(null);
+  const asksAboutRenewal = bindAsksAboutRenewal(renewals, account?.businessType);
+  const openTracked = renewals.filter((r) => !r.legacy && r.status === 'open');
+  const renewalNote = (q: MarketQuote): { text: string; canLink: boolean } | undefined => {
+    if (q.status !== 'bound') return undefined;
+    const r = renewals.find((x) => x.id === q.renewalId);
+    if (r?.renewalDate) return { text: `For the ${r.label ? `${r.label} ` : ''}renewal effective ${formatShortDate(r.renewalDate)}`, canLink: false };
+    return openTracked.length > 0 ? { text: 'Not tied to a renewal', canLink: true } : undefined;
+  };
 
   // Newest market first, so one just added is right at the top.
   const sorted = useMemo(() => [...quotes].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)), [quotes]);
@@ -75,9 +89,13 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
             requestedItems={items.filter((i) => carriersFor(i).includes(quote.id))}
             contactName={(id) => contacts.find((c) => c.id === id)?.name}
             onRequestFromClient={(ids) => setRequestIds(ids)}
+            onBound={() => asksAboutRenewal && setJustBound(quote.id)}
+            renewalNote={renewalNote(quote)}
           />
         ))
       )}
+
+      <AfterBindDialog accountId={accountId} quoteId={justBound} onClose={() => setJustBound(null)} />
 
       <datalist id="market-name-options">
         {marketNames.map((n) => (
@@ -176,6 +194,8 @@ function QuoteCard({
   requestedItems,
   contactName,
   onRequestFromClient,
+  onBound,
+  renewalNote,
 }: {
   accountId: string;
   quote: MarketQuote;
@@ -186,8 +206,17 @@ function QuoteCard({
   requestedItems: MissingItem[];
   contactName: (id?: string) => string | undefined;
   onRequestFromClient: (itemIds: string[]) => void;
+  /** Marked bound here (any of the ways): ask about the renewal. Also "Link to a renewal" on a bound market. */
+  onBound: () => void;
+  /** On a bound market: which renewal it was for, or that it isn't tied to one. */
+  renewalNote?: { text: string; canLink: boolean };
 }) {
-  const updateQuote = useAccountsStore((s) => s.updateQuote);
+  const storeUpdateQuote = useAccountsStore((s) => s.updateQuote);
+  const updateQuote: typeof storeUpdateQuote = (accId, quoteId, patch) => {
+    const binding = patch.status === 'bound' && quote.status !== 'bound';
+    storeUpdateQuote(accId, quoteId, patch);
+    if (binding) onBound();
+  };
   const deleteQuote = useAccountsStore((s) => s.deleteQuote);
   const addQuoteNote = useAccountsStore((s) => s.addQuoteNote);
   const recordCarrierRequest = useAccountsStore((s) => s.recordCarrierRequest);
@@ -311,6 +340,16 @@ function QuoteCard({
                 </>
               )}
             </p>
+            {renewalNote && (
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-[var(--color-ink-600)]" data-testid="bound-for">
+                <span>{renewalNote.text}</span>
+                {renewalNote.canLink && (
+                  <button onClick={onBound} className="font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
+                    Link to a renewal
+                  </button>
+                )}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-1">
             <select

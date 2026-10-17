@@ -6,6 +6,7 @@ import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Badge, Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { AccountInfoCard } from '../components/workspace/AccountInfoCard';
+import { RenewalsCard } from '../components/renewals/RenewalsCard';
 import { AccountStageSelect } from '../components/workspace/AccountStageSelect';
 import { ContactsCard } from '../components/workspace/ContactsCard';
 import { FollowUpsCard } from '../components/workspace/FollowUpsCard';
@@ -179,6 +180,7 @@ export function AccountWorkspacePage() {
 
           <div className="flex min-w-0 flex-col gap-5">
             <AccountInfoCard accountId={accountId} />
+            <RenewalsCard accountId={accountId} />
             <ContactsCard accountId={accountId} />
           </div>
         </div>

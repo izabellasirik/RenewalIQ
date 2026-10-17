@@ -2,6 +2,7 @@ import type { Account, Contact, DocumentRequest, FollowUp, MarketQuote, MissingI
 import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, isOpenRequest, outstandingRequestItems } from '../../types';
 import { daysBetween, describeDue, formatShortDate, todayKey } from './dates';
 import { carriersFor, forwardedAt } from './requirementKey';
+import { describeRenewalTiming, isRenewalDue, renewalTaskId, renewalTitle, resolveRenewals } from './renewals';
 
 /**
  * ACCOUNT STATE → NEXT ACTION. Everything on Today's Plate and every "what happens next" hint on
@@ -59,7 +60,6 @@ export interface DerivedActions {
 }
 
 export const UPCOMING_WINDOW_DAYS = 7;
-export const RENEWAL_WINDOW_DAYS = 45;
 
 const KIND_PRIORITY: Record<ActionKind, number> = {
   ready_to_send: 0,
@@ -334,21 +334,21 @@ function deriveAllAccountActions(input: AccountWorkflowInput, today: string): De
     }
   }
 
-  if (effectiveDate && !anyBound) {
-    const days = daysBetween(today, effectiveDate);
-    if (days >= 0 && days <= RENEWAL_WINDOW_DAYS) {
-      now.push({
-        ...base,
-        id: `renewal-${account.id}`,
-        kind: 'renewal',
-        title: `Renewal effective ${formatShortDate(effectiveDate)}`,
-        detail: days === 0 ? 'Effective today — not bound yet' : `${days} day${days === 1 ? '' : 's'} out · not bound yet`,
-        dueDate: effectiveDate,
-        overdue: false,
-        // Getting it quoted and bound happens on Markets & Quotes.
-        tab: 'quotes',
-      });
-    }
+  // One task per renewal whose work has started (see renewals.ts): binding a market for one renewal
+  // never clears another's, and an account from before renewal tracking keeps its original reminder.
+  for (const r of resolveRenewals(account, effectiveDate, quotes)) {
+    if (!r.renewalDate || !isRenewalDue(r, today)) continue;
+    now.push({
+      ...base,
+      id: renewalTaskId(account.id, r),
+      kind: 'renewal',
+      title: renewalTitle(r),
+      detail: describeRenewalTiming(r, today),
+      dueDate: r.renewalDate,
+      overdue: r.renewalDate < today,
+      // Getting it quoted and bound happens on Markets & Quotes.
+      tab: 'quotes',
+    });
   }
 
   return { now: sortActions(now), upcoming: sortActions(upcoming) };

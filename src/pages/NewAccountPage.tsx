@@ -13,6 +13,9 @@ import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFi
 import { US_STATES } from '../utils/usStates';
 import type { RiskProfile, UploadedDocument } from '../types';
 import { DocumentLinkError } from '../services/ingestion/documentLinks';
+import { NewAccountTypeFields } from '../components/renewals/NewAccountTypeFields';
+import { EMPTY_ACCOUNT_TYPE, readAccountType, type NewAccountTypeValue } from '../components/renewals/renewalForm';
+import { normalizeDateKey } from '../services/workflow/dates';
 
 type Mode = 'choice' | 'manual' | 'processing' | 'confirm' | 'error';
 type DraftDoc = Omit<UploadedDocument, 'accountId'>;
@@ -85,9 +88,13 @@ export function NewAccountPage() {
   const [namedInsuredInput, setNamedInsuredInput] = useState('');
   const [stateInput, setStateInput] = useState('');
   const [draftFiles, setDraftFiles] = useState<File[]>([]);
+  // New venture or renewal (and a renewal's date) — asked on both ways of creating an account.
+  const [accountType, setAccountType] = useState<NewAccountTypeValue>(EMPTY_ACCOUNT_TYPE);
+  const [typeTouched, setTypeTouched] = useState(false);
+  const setup = readAccountType(accountType);
 
   function finalizeAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
-    const id = createAccountFromExtraction(namedInsured, state, docs, profile, files);
+    const id = createAccountFromExtraction(namedInsured, state, docs, profile, files, undefined, setup ? { setup } : undefined);
     // Straight to the Risk Profile to review what was extracted.
     navigate(`/accounts/${id}/risk-profile`);
   }
@@ -109,6 +116,8 @@ export function NewAccountPage() {
     setDraftProfile(null);
     setDraftFiles([]);
     setFailures([]);
+    setAccountType(EMPTY_ACCOUNT_TYPE);
+    setTypeTouched(false);
     setMode('choice');
   }
 
@@ -230,6 +239,8 @@ export function NewAccountPage() {
 
   function handleContinue() {
     if (!draftProfile) return;
+    setTypeTouched(true);
+    if (!setup) return;
     const ni = draftProfile.business.namedInsured;
     const st = draftProfile.business.state;
     if (ni.isMissing || ni.isConflicting) return;
@@ -247,8 +258,9 @@ export function NewAccountPage() {
 
   function handleManualSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!namedInsuredInput.trim() || !stateInput) return;
-    const id = createAccount(namedInsuredInput.trim(), stateInput);
+    setTypeTouched(true);
+    if (!namedInsuredInput.trim() || !stateInput || !setup) return;
+    const id = createAccount(namedInsuredInput.trim(), stateInput, setup);
     navigate(`/accounts/${id}/upload`);
   }
 
@@ -321,9 +333,11 @@ export function NewAccountPage() {
                     ))}
                   </select>
                 </div>
+                <NewAccountTypeFields value={accountType} onChange={setAccountType} showErrors={typeTouched} />
                 <Button type="submit" disabled={!namedInsuredInput.trim() || !stateInput} className="mt-1">
                   Create Submission
                 </Button>
+
               </form>
 
               <button
@@ -411,6 +425,20 @@ export function NewAccountPage() {
               onResolveState={(value) => resolveIdentityField('state', value)}
               {...identitySuggestions(draftDocs, draftProfile)}
             />
+
+            <Card>
+              <CardBody className="pt-5">
+                <NewAccountTypeFields
+                  value={accountType}
+                  onChange={(v) => {
+                    // Choosing Renewal suggests the effective date read from the documents.
+                    const read = normalizeDateKey((draftProfile.business.effectiveDate?.value as string | null | undefined) ?? null);
+                    setAccountType(v.businessType === 'renewal' && accountType.businessType !== 'renewal' && !v.renewalDate && read ? { ...v, renewalDate: read } : v);
+                  }}
+                  showErrors={typeTouched}
+                />
+              </CardBody>
+            </Card>
 
             <div className="flex items-center justify-between">
               <button onClick={startOver} className="text-xs font-medium text-[var(--color-ink-500)] hover:text-[var(--color-ink-700)] cursor-pointer">

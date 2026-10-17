@@ -191,6 +191,8 @@ export interface MarketQuote {
   selectedOptionId?: string;
   declineReason?: string;
   notes: QuoteNote[];
+  /** The renewal this market was bound for (see Account.renewals). Absent = not tied to a renewal. */
+  renewalId?: string;
   createdAt: string;
   updatedAt: string;
 }
