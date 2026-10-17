@@ -114,7 +114,9 @@ export function TodaysPlatePage() {
         if (f.doneAt && isToday(f.doneAt)) doneRows.push({ ...base, id: f.id, title: `Follow up: ${f.subject}`, doneAt: f.doneAt, undo: () => reopenFollowUp(account.id, f.id) });
       }
       // Renewal reminders go to the assigned broker; someone only helping on the account doesn't get them.
-      const reminded = (a: ActionItem) => a.kind !== 'renewal' || receivesRenewalReminders(account, { role: agencyAccess?.role ?? null, userId: session.userId, ownerId: accountOwners[account.id] ?? null });
+      // Filtered by a broker, an admin sees that broker's renewals: the ones assigned to them (not ones they only help on).
+      const brokersRenewal = !byAgent || broker === ALL_BROKERS || broker === UNASSIGNED || account.assignedUserId === (broker === ASSIGNED_TO_ME ? session.userId : broker);
+      const reminded = (a: ActionItem) => a.kind !== 'renewal' || (brokersRenewal && receivesRenewalReminders(account, { role: agencyAccess?.role ?? null, userId: session.userId, ownerId: accountOwners[account.id] ?? null }));
       allNow.push(...derived.now.filter(reminded));
       allUpcoming.push(...derived.upcoming.filter(reminded));
       const w = summarizeWaiting(missingItems[account.id] ?? [], quotes[account.id] ?? []);
