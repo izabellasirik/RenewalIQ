@@ -174,6 +174,42 @@ export function quoteOptionFiles(option: Pick<QuoteOption, 'attachment' | 'attac
   return [...(option.attachment ? [option.attachment] : []), ...(option.attachments ?? [])];
 }
 
+export type PolicyBusinessType = 'new' | 'renewal';
+
+/**
+ * A policy written from a bound market. An account (one client) can hold several — e.g. Auto
+ * Liability and Cargo with different carriers. Operational details only: no commission figures are
+ * ever stored here (anyone who can open the account can read it). Amounts are whole cents.
+ */
+export interface PolicyRecord {
+  id: string;
+  /** The quote it was bound from (QuoteOption.id), when the market has recorded quotes. */
+  quoteOptionId?: string;
+  /** Often only known once the carrier issues the policy. */
+  policyNumber?: string;
+  /** The writing carrier (the market may be an MGA or wholesaler). */
+  carrier: string;
+  coverage?: import('./coverage').CoverageType;
+  businessType: PolicyBusinessType;
+  /** Local calendar dates, YYYY-MM-DD. */
+  boundDate: string;
+  effectiveDate?: string;
+  expirationDate?: string;
+  netPremiumCents: number;
+  taxesCents: number;
+  feesCents: number;
+  createdAt: string;
+  updatedAt: string;
+  createdByName?: string;
+  /**
+   * Set when the policy is removed. A removed policy stays in the account's data (hidden everywhere)
+   * so another copy of the account can't bring it back, and so later commission records always
+   * have the policy they refer to.
+   */
+  removedAt?: string;
+  removedByName?: string;
+}
+
 export interface MarketQuote {
   id: string;
   accountId: string;
@@ -193,6 +229,8 @@ export interface MarketQuote {
   /** The quote the broker chose (e.g. the one being bound). */
   selectedOptionId?: string;
   declineReason?: string;
+  /** Policies written from this market once bound (absent on markets saved before policies existed). */
+  policies?: PolicyRecord[];
   notes: QuoteNote[];
   /** The renewal this market was bound for (see Account.renewals). Absent = not tied to a renewal. */
   renewalId?: string;

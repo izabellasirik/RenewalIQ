@@ -27,6 +27,7 @@ import { TeamPage } from './pages/TeamPage';
 import { CarriersPage } from './pages/CarriersPage';
 import { MarketDirectoryPage } from './pages/MarketDirectoryPage';
 import { FounderAnalyticsPage } from './pages/FounderAnalyticsPage';
+import { PoliciesPage } from './pages/PoliciesPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -53,6 +54,8 @@ export const router = createBrowserRouter([
     children: [
       { path: '/', element: <DashboardPage /> },
       { path: '/today', element: <TodaysPlatePage /> },
+      // Every policy bound from Markets & Quotes; on unless VITE_FEATURE_POLICIES=false.
+      { path: '/policies', element: <PoliciesPage /> },
       // Old link to the accounts list, from when Today's Plate was the home page.
       { path: '/accounts', element: <Navigate to="/" replace /> },
       { path: '/market-finder', element: <MarketFinderPage /> },

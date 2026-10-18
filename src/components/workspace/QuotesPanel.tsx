@@ -18,6 +18,8 @@ import { MarketDetailsDialog } from './MarketDetailsDialog';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { AfterBindDialog } from '../renewals/AfterBindDialog';
 import { bindAsksAboutRenewal } from '../renewals/renewalForm';
+import { PoliciesSection } from './PoliciesSection';
+import { activePolicies, policiesFeatureEnabled } from '../../services/workflow/policies';
 
 
 export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; focusQuoteId?: string }) {
@@ -336,6 +338,7 @@ function QuoteCard({
                     <span className={cn(followUpDue && 'font-medium text-[var(--color-danger-600)]')}> · Follow up {formatShortDate(quote.followUpDate)}{followUpDue ? ' (due)' : ''}</span>
                   )}
                   {(quote.options?.length ?? 0) > 0 && ` · ${quote.options!.length} quote${quote.options!.length === 1 ? '' : 's'}`}
+                  {policiesFeatureEnabled() && activePolicies(quote).length > 0 && ` · ${activePolicies(quote).length} polic${activePolicies(quote).length === 1 ? 'y' : 'ies'}`}
                   {waitingOn > 0 && ` · ${waitingOn} requested item${waitingOn === 1 ? '' : 's'} outstanding`}
                   {quote.notes.length > 0 && ` · ${quote.notes.length} note${quote.notes.length === 1 ? '' : 's'}`}
                 </>
@@ -542,6 +545,8 @@ function QuoteCard({
         )}
 
         <QuoteOptionsList accountId={accountId} quote={quote} />
+
+        <PoliciesSection accountId={accountId} quote={quote} />
 
         {requestedItems.length > 0 && (
           <div className="mt-4">
