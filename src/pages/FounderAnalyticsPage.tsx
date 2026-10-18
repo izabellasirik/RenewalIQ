@@ -112,16 +112,16 @@ function FounderDashboard() {
             </option>
           ))}
         </select>
-        <select className={selectClass} value={orgId} onChange={(e) => setOrgId(e.target.value)} aria-label="Brokerage">
-          <option value="">All brokerages</option>
+        <select className={selectClass} value={orgId} onChange={(e) => setOrgId(e.target.value)} aria-label="Agency">
+          <option value="">All agencies</option>
           {(snapshot?.orgs ?? []).map((o) => (
             <option key={o.id} value={o.id}>
               {o.name}
             </option>
           ))}
         </select>
-        <select className={selectClass} value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Broker">
-          <option value="">All brokers</option>
+        <select className={selectClass} value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Agent">
+          <option value="">All agents</option>
           {(snapshot?.users ?? []).filter((u) => includeFounder || !u.isFounder).map((u) => (
             <option key={u.id} value={u.id}>
               {u.name}
@@ -174,11 +174,11 @@ function AdoptionCard({ view }: { view: FounderView }) {
   return (
     <Card data-testid="founder-adoption">
       <CardHeader className="pb-2">
-        <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Broker adoption</h3>
+        <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Agent adoption</h3>
         <p className="text-xs text-[var(--color-ink-500)]">Agency members who have done at least one real action ever, and the people who haven’t started yet. Your own account is never counted.</p>
       </CardHeader>
       <CardBody className="flex flex-col gap-3 pt-0">
-        {!a.complete && <p className="text-xs text-[var(--color-warning-600)]">Run migration 0047 to list members and invitations with no activity — until then only brokers with activity are known.</p>}
+        {!a.complete && <p className="text-xs text-[var(--color-warning-600)]">Run migration 0047 to list members and invitations with no activity — until then only agents with activity are known.</p>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Agency members" value={a.eligibleMembers} testId="adoption-members" />
           <Stat label="Activated" value={a.activatedMembers} hint="at least one real action" testId="adoption-activated" />
@@ -240,11 +240,11 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" data-testid="founder-kpis">
         <Stat label="Active brokerages" value={k.activeBrokerages} testId="kpi-brokerages" />
-        <Stat label="Active brokers" value={k.activeBrokers} testId="kpi-brokers" />
+        <Stat label="Active agents" value={k.activeBrokers} testId="kpi-brokers" />
         <Stat label="Weekly active accounts" value={k.weeklyActiveAccounts} hint={`last week: ${k.weeklyActiveAccountsLastWeek}`} testId="kpi-waa" />
         <Stat label="New real accounts" value={k.newRealAccounts} testId="kpi-new-accounts" />
-        <Stat label="Weekly active brokers" value={k.weeklyActiveBrokers} hint="a real action in the last 7 days" testId="kpi-weekly-brokers" />
-        <Stat label="Returning brokers" value={k.returningBrokers} hint="active this week and the week before" testId="kpi-returning" />
+        <Stat label="Weekly active agents" value={k.weeklyActiveBrokers} hint="a real action in the last 7 days" testId="kpi-weekly-brokers" />
+        <Stat label="Returning agents" value={k.returningBrokers} hint="active this week and the week before" testId="kpi-returning" />
         <Stat label="Market Finder accounts" value={k.marketFinderAccounts} hint={`${k.marketFinderSearches} account-free searches`} testId="kpi-market-finder" />
         <Stat label="Applications reviewed / downloaded" value={`${k.applicationsReviewed} / ${k.applicationsDownloaded}`} hint="accounts" testId="kpi-applications" />
         <Stat label="Markets added" value={k.marketsAdded} testId="kpi-markets" />
@@ -280,7 +280,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
             <p className="text-xs text-[var(--color-ink-500)]">This week = the last 7 days of the range; last week = the 7 days before.</p>
           </CardHeader>
           <CardBody className="grid grid-cols-2 gap-3 pt-1" data-testid="founder-retention">
-            <Stat label="Brokers active this week" value={r.brokersThisWeek} />
+            <Stat label="Agents active this week" value={r.brokersThisWeek} />
             <Stat label="…also active last week" value={r.brokersAlsoLastWeek} hint={`${r.returningPercent}% returning`} />
             <Stat label="Accounts worked on 2+ days" value={r.accountsMultipleDays} hint={`of ${r.accountsWorked}`} />
             <Stat label="Accounts worked in 2+ weeks" value={r.accountsMultipleWeeks} />
@@ -290,7 +290,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
 
       <Card>
         <CardHeader className="pb-2">
-          <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Brokers</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Agents</h3>
           <p className="text-xs text-[var(--color-ink-500)]">
             Only real work counts as activity — re-opening an account doesn’t, and neither do test/demo accounts. “This week” is the last 7 days of the range; returning = active this week
             and the 7 days before.
@@ -298,7 +298,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
         </CardHeader>
         <CardBody className="pt-0">
           {brokers.length === 0 ? (
-            <p className="py-4 text-sm text-[var(--color-ink-500)]">No broker activity in this range.</p>
+            <p className="py-4 text-sm text-[var(--color-ink-500)]">No agent activity in this range.</p>
           ) : (
             <>
               {/* Phones: one card per broker. */}
@@ -335,7 +335,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
                 <table className="min-w-full border-collapse" data-testid="founder-brokers">
                   <thead>
                     <tr>
-                      {['Broker', 'Brokerage', 'Real accounts', 'Active days', 'Days this week', 'Returning', 'First activity', 'Last activity', 'Main features used'].map((h) => (
+                      {['Agent', 'Agency', 'Real accounts', 'Active days', 'Days this week', 'Returning', 'First activity', 'Last activity', 'Main features used'].map((h) => (
                         <th key={h} className={th}>
                           {h}
                         </th>
@@ -388,7 +388,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
             <table className="min-w-full border-collapse" data-testid="founder-accounts">
               <thead>
                 <tr>
-                  {['Account', 'Brokerage', 'Broker', 'Furthest stage', 'Last active'].map((h) => (
+                  {['Account', 'Agency', 'Agent', 'Furthest stage', 'Last active'].map((h) => (
                     <th key={h} className={th}>
                       {h}
                     </th>
@@ -417,13 +417,13 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
         <Card>
           <CardHeader className="pb-2">
             <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Feature usage</h3>
-            <p className="text-xs text-[var(--color-ink-500)]">People, accounts and brokerages — not clicks. Repeat users used it on 2+ days.</p>
+            <p className="text-xs text-[var(--color-ink-500)]">People, accounts and agencies — not clicks. Repeat users used it on 2+ days.</p>
           </CardHeader>
           <CardBody className="overflow-x-auto pt-0">
             <table className="min-w-full border-collapse" data-testid="founder-features">
               <thead>
                 <tr>
-                  {['Feature', 'Unique brokers', 'Real accounts', 'Brokerages', 'Repeat users'].map((h) => (
+                  {['Feature', 'Unique agents', 'Real accounts', 'Agencies', 'Repeat users'].map((h) => (
                     <th key={h} className={th}>
                       {h}
                     </th>
@@ -448,7 +448,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
           <CardHeader className="pb-2">
             <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Time saved (estimates)</h3>
             <p className="text-xs text-[var(--color-ink-500)]">
-              Brokers' own estimates of the normal time (answer midpoints; “60+” counted as 75 min). Renewal IQ time only where it was measured in one sitting. Not exact.
+              Agents' own estimates of the normal time (answer midpoints; “60+” counted as 75 min). Renewal IQ time only where it was measured in one sitting. Not exact.
             </p>
           </CardHeader>
           <CardBody className="overflow-x-auto pt-0">

@@ -40,6 +40,11 @@ alter table public.submissions add column if not exists renewal_status boolean n
 -- status, so the regular status (0008) is untouched. Its own column, so an app that doesn't know the
 -- label (including the earlier version that writes renewal_status on every save) never changes it.
 alter table public.submissions add column if not exists renewal_label boolean;
+-- When it was last switched by hand: a hand choice holds until the next renewal's start-working date.
+alter table public.submissions add column if not exists renewal_label_set_on date;
+
+-- The date the account was bound, asked for when an agent sets its status to Bound by hand.
+alter table public.submissions add column if not exists bound_date date;
 
 create or replace function public.can_manage_renewals(p_agency_id uuid, p_assigned_user_id uuid, p_creator_id uuid)
 returns boolean

@@ -106,7 +106,7 @@ export function VehiclesTable({
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Year" value={draft.year} onChange={(e) => setDraft({ ...draft, year: e.target.value })} /></td>
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Plate" value={draft.plate} onChange={(e) => setDraft({ ...draft, plate: e.target.value })} /></td>
               <td className="py-2 pr-4"><input className={inputCls} placeholder="Value" value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></td>
-              <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">Entered by broker</td>
+              <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">Entered by agent</td>
               <td className="py-2">
                 <div className="flex items-center gap-1">
                   <button onClick={save} className="rounded-md bg-[var(--color-brand-800)] p-1 text-white cursor-pointer" aria-label="Save vehicle"><Check size={13} /></button>
@@ -124,7 +124,7 @@ export function VehiclesTable({
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.year} onChange={(e) => setDraft({ ...draft, year: e.target.value })} /></td>
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.plate} onChange={(e) => setDraft({ ...draft, plate: e.target.value })} /></td>
                 <td className="py-2 pr-4"><input className={inputCls} value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} /></td>
-                <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{v.source?.documentName ?? 'Entered by broker'}</td>
+                <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{v.source?.documentName ?? 'Entered by agent'}</td>
                 <td className="py-2">
                   <div className="flex items-center gap-1">
                     <button onClick={save} className="rounded-md bg-[var(--color-brand-800)] p-1 text-white cursor-pointer" aria-label="Save vehicle"><Check size={13} /></button>
@@ -151,7 +151,7 @@ export function VehiclesTable({
                 <td className="py-2.5 pr-4 font-medium text-[var(--color-ink-900)]">{v.value ? `$${v.value.toLocaleString('en-US')}` : '—'}</td>
                 <td className="py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
                   {v.isManual ? (
-                    <span className="inline-flex items-center gap-1"><User size={11} />Entered by broker</span>
+                    <span className="inline-flex items-center gap-1"><User size={11} />Entered by agent</span>
                   ) : (
                     v.source?.documentName ?? '—'
                   )}

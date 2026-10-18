@@ -104,7 +104,7 @@ export function SignupPage() {
         </Button>
         {!invite && (
           <p className="text-xs text-[var(--color-ink-500)]" data-testid="signup-agency-note">
-            Setting up Renewal IQ for your agency? Create your account, then set up your agency and invite your brokers. Joining an agency that already uses Renewal IQ? Use the invitation link your admin sent you.
+            Setting up Renewal IQ for your agency? Create your account, then set up your agency and invite your agents. Joining an agency that already uses Renewal IQ? Use the invitation link your admin sent you.
           </p>
         )}
       </div>

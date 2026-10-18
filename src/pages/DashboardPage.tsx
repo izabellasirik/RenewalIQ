@@ -233,7 +233,8 @@ export function DashboardPage() {
             )}
             <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as AccountsView['stage'])} className={filterClass} aria-label="Filter by status">
               <option value="all">All statuses</option>
-              <option value="renewal_label">Renewal label ({renewalLabelCount})</option>
+              <option value="renewal_label">Renewal ({renewalLabelCount})</option>
+              <option disabled>──────────</option>
               {ACCOUNT_STAGE_ORDER.map((s) => (
                 <option key={s} value={s}>
                   {ACCOUNT_STAGE_LABELS[s]} ({stageCounts[s] ?? 0})
@@ -241,8 +242,8 @@ export function DashboardPage() {
               ))}
             </select>
             {showBrokerFilter && (
-              <select value={brokerFilter} onChange={(e) => setBrokerFilter(e.target.value)} className={filterClass} aria-label={byAgent ? 'Filter by agent' : 'Filter by assigned broker'}>
-                <option value={ALL_BROKERS}>{byAgent ? 'All agents' : 'All brokers'}</option>
+              <select value={brokerFilter} onChange={(e) => setBrokerFilter(e.target.value)} className={filterClass} aria-label={byAgent ? 'Filter by agent' : 'Filter by assigned agent'}>
+                <option value={ALL_BROKERS}>All agents</option>
                 {byAgent
                   ? agencyMembers.map((m) => {
                       const shown = accounts.filter((a) => a.archived === showArchived);

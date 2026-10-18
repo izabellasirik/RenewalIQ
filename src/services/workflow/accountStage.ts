@@ -16,6 +16,16 @@ export function deriveAccountStage(items: MissingItem[], quotes: MarketQuote[]):
 }
 
 /** The status to show and filter on: the broker's manual choice, else the derived one. */
+/**
+ * When the account was bound, for a Bound status: the date the agent gave when setting Bound by hand,
+ * else (automatic Bound) the latest bound market's date. Null when not Bound or no date is known.
+ */
+export function accountBoundDate(account: Pick<Account, 'stage' | 'boundDate'>, stage: AccountStage, quotes: Pick<MarketQuote, 'status' | 'boundDate'>[]): string | null {
+  if (stage !== 'bound') return null;
+  if (account.stage === 'bound' && account.boundDate) return account.boundDate;
+  return quotes.filter((q) => q.status === 'bound' && q.boundDate).map((q) => q.boundDate!).sort().at(-1) ?? null;
+}
+
 export function effectiveAccountStage(account: Account, items: MissingItem[], quotes: MarketQuote[]): { stage: AccountStage; manual: boolean } {
   // (A status this version doesn't know — e.g. one saved by an earlier preview — counts as automatic.)
   if (account.stage && ACCOUNT_STAGE_ORDER.includes(account.stage)) return { stage: account.stage, manual: true };

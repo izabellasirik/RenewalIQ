@@ -78,7 +78,7 @@ import { trackEvent, markAccountDemo } from '../services/productAnalytics/trackE
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
-import { formatCents, policyTotalCents, type PolicyFields } from '../services/workflow/policies';
+import { activePolicies, formatCents, policyTotalCents, type PolicyFields } from '../services/workflow/policies';
 import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { isSupabaseConfigured } from '../services/supabase/client';
 import type { MyProfile } from '../services/supabase/profileRepo';
@@ -303,7 +303,8 @@ interface AccountsState {
   /** Set a checklist item's status directly (the broker's manual override of the request/receive flow). */
   setItemStatus: (accountId: string, itemId: string, status: MissingItemStatus) => void;
   /** Set the account's pipeline status by hand; null returns it to automatic. */
-  setAccountStage: (accountId: string, stage: AccountStage | null) => void;
+  /** `boundDate` (YYYY-MM-DD) goes with a status set to Bound by hand; leaving Bound clears it. */
+  setAccountStage: (accountId: string, stage: AccountStage | null, boundDate?: string) => void;
   /** The Renewal label: true / false to switch it on / off by hand, null to make it automatic again. */
   setRenewalLabel: (accountId: string, on: boolean | null) => void;
   deleteMissingItem: (accountId: string, itemId: string) => void;
@@ -316,7 +317,9 @@ interface AccountsState {
   updatePolicy: (accountId: string, quoteId: string, policyId: string, fields: PolicyFields) => void;
   removePolicy: (accountId: string, quoteId: string, policyId: string) => void;
   /** Proof for a policy or endorsement (binder, policy, endorsement page): kept like a quote file. */
-  attachPolicyFile: (accountId: string, quoteId: string, policyId: string, file: File) => void;
+  attachPolicyFile: (accountId: string, quoteId: string, policyId: string, file: File, description?: string) => void;
+  /** Changes what an attached document is described as. */
+  describePolicyAttachment: (accountId: string, quoteId: string, policyId: string, attachmentId: string, description: string) => void;
   removePolicyAttachment: (accountId: string, quoteId: string, policyId: string, attachmentId: string) => void;
   addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
   /** Edit a dated market note: the original date stays; who edited it and when are recorded. */
@@ -1337,7 +1340,7 @@ export const useAccountsStore = create<AccountsState>()(
               accountId,
               'document_deleted',
               opts?.activityMessage ??
-                `Deleted ${doc.name}. Data that came only from this file was removed; broker-entered values and data another document supports were kept.${flagged ? ` ${flagged} item${flagged === 1 ? '' : 's'} you edited or confirmed ${flagged === 1 ? 'was' : 'were'} kept for review.` : ''}`
+                `Deleted ${doc.name}. Data that came only from this file was removed; agent-entered values and data another document supports were kept.${flagged ? ` ${flagged} item${flagged === 1 ? '' : 's'} you edited or confirmed ${flagged === 1 ? 'was' : 'were'} kept for review.` : ''}`
             ),
           };
         });
@@ -1960,7 +1963,7 @@ export const useAccountsStore = create<AccountsState>()(
             s.activityLog,
             accountId,
             'broker_assigned',
-            `${broker ? `Assigned to ${broker.name}` : 'Removed the assigned broker'}${actorSuffix(s.currentUserEmail, broker?.email)}.`
+            `${broker ? `Assigned to ${broker.name}` : 'Removed the assigned agent'}${actorSuffix(s.currentUserEmail, broker?.email)}.`
           ),
         }));
         syncNow(accountId);
@@ -2291,30 +2294,37 @@ export const useAccountsStore = create<AccountsState>()(
           accounts: touchAccount(
             s.accounts.map((a) => {
               if (a.id !== accountId) return a;
-              const { renewalLabel: _old, ...rest } = a;
+              const { renewalLabel: _old, renewalLabelSetOn: _oldOn, ...rest } = a;
               void _old;
-              return on === null ? rest : { ...rest, renewalLabel: on };
+              void _oldOn;
+              return on === null ? rest : { ...rest, renewalLabel: on, renewalLabelSetOn: todayKey() };
             }),
             accountId
           ),
-          activityLog: appendEvent(s.activityLog, accountId, 'stage_changed', `${on === null ? 'Renewal label set back to automatic' : on ? 'Renewal label switched on' : 'Renewal label switched off'}${actorSuffix(s.currentUserEmail)}.`),
+          activityLog: appendEvent(s.activityLog, accountId, 'stage_changed', `${on === null ? 'Renewal set back to automatic' : on ? 'Renewal switched on' : 'Renewal switched off'}${actorSuffix(s.currentUserEmail)}.`),
         }));
         syncNow(accountId);
       },
 
-      setAccountStage: (accountId, stage) => {
+      setAccountStage: (accountId, stage, boundDate) => {
         const account = get().accounts.find((a) => a.id === accountId);
-        if (!account || (account.stage ?? null) === stage) return;
+        const nextBound = stage === 'bound' ? (boundDate ?? account?.boundDate) : undefined;
+        if (!account || ((account.stage ?? null) === stage && account.boundDate === nextBound)) return;
         set((s) => ({
           accounts: touchAccount(
-            s.accounts.map((a) => (a.id === accountId ? { ...a, stage: stage ?? undefined } : a)),
+            s.accounts.map((a) => {
+              if (a.id !== accountId) return a;
+              const { boundDate: _old, ...rest } = a;
+              void _old;
+              return { ...rest, stage: stage ?? undefined, ...(nextBound ? { boundDate: nextBound } : {}) };
+            }),
             accountId
           ),
           activityLog: appendEvent(
             s.activityLog,
             accountId,
             'stage_changed',
-            `${stage ? `Status set to ${ACCOUNT_STAGE_LABELS[stage]}` : 'Status set back to automatic'}${actorSuffix(s.currentUserEmail)}.`
+            `${stage ? `Status set to ${ACCOUNT_STAGE_LABELS[stage]}${nextBound ? ` (bound ${formatShortDate(nextBound)})` : ''}` : 'Status set back to automatic'}${actorSuffix(s.currentUserEmail)}.`
           ),
         }));
         syncNow(accountId);
@@ -2415,8 +2425,12 @@ export const useAccountsStore = create<AccountsState>()(
           if (patch.followUpDate === undefined && (!next.followUpDate || next.followUpDate < todayKey())) next.followUpDate = addBusinessDays(new Date(), 3);
         }
         if (patch.premium !== undefined && (patch.premium === null || Number.isNaN(patch.premium))) next.premium = undefined;
-        // Marked Bound: bound today unless a date is given (the broker can change it on the card).
-        if (statusChanged && next.status === 'bound' && patch.boundDate === undefined && !next.boundDate) next.boundDate = todayKey();
+        // Marked Bound without a date (back to Bound with its policies still there): the latest policy's
+        // bound date — never a date made up for the agent (they set it on the card).
+        if (statusChanged && next.status === 'bound' && patch.boundDate === undefined && !next.boundDate) {
+          const latest = activePolicies(next).map((p) => p.boundDate).filter(Boolean).sort().at(-1);
+          if (latest) next.boundDate = latest;
+        }
         if (patch.boundDate !== undefined && !patch.boundDate) delete next.boundDate;
         // "Endorsed" is a bound market with endorsements: it goes when the market is no longer bound.
         if (next.status !== 'bound' || patch.endorsed === false) delete next.endorsed;
@@ -2542,12 +2556,13 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
-      attachPolicyFile: (accountId, quoteId, policyId, file) => {
+      attachPolicyFile: (accountId, quoteId, policyId, file, description) => {
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         const policy = quote?.policies?.find((p) => p.id === policyId);
         if (!quote || !policy || policy.removedAt) return;
         const now = new Date().toISOString();
-        const attachment = { id: generateId('pfile'), name: file.name, sizeBytes: file.size, fileType: inferQuoteFileType(file.name) };
+        const about = description?.trim().slice(0, 200);
+        const attachment = { id: generateId('pfile'), name: file.name, sizeBytes: file.size, fileType: inferQuoteFileType(file.name), ...(about ? { description: about } : {}) };
         set((s) => ({
           quotes: {
             ...s.quotes,
@@ -2558,9 +2573,42 @@ export const useAccountsStore = create<AccountsState>()(
             })),
           },
           accounts: touchAccount(s.accounts, accountId),
-          activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Attached ${file.name} as proof for ${policy.kind === 'endorsement' ? 'the endorsement to ' : ''}policy ${policy.policyNumber ?? `with ${policy.carrier}`}${actorSuffix(s.currentUserEmail)}.`),
+          activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Attached ${file.name}${about ? ` (${about})` : ''} to ${policy.kind === 'endorsement' ? 'the endorsement to ' : ''}policy ${policy.policyNumber ?? `with ${policy.carrier}`}${actorSuffix(s.currentUserEmail)}.`),
         }));
         storePolicyFile(accountId, quoteId, policyId, attachment.id, file);
+        syncNow(accountId);
+      },
+
+      describePolicyAttachment: (accountId, quoteId, policyId, attachmentId, description) => {
+        const about = description.trim().slice(0, 200);
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const target = quote?.policies?.find((p) => p.id === policyId)?.attachments?.find((a) => a.id === attachmentId);
+        if (!quote || !target || (target.description ?? '') === about) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              policies: (q.policies ?? []).map((p) =>
+                p.id !== policyId
+                  ? p
+                  : {
+                      ...p,
+                      attachments: (p.attachments ?? []).map((a) => {
+                        if (a.id !== attachmentId) return a;
+                        const { description: _old, ...rest } = a;
+                        void _old;
+                        return about ? { ...rest, description: about } : rest;
+                      }),
+                      updatedAt: now,
+                    }
+              ),
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+        }));
         syncNow(accountId);
       },
 

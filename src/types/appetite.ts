@@ -24,7 +24,7 @@ export type SourceType = 'OFFICIAL' | 'UNDERWRITER' | 'BROKER' | 'SECONDARY' | '
 export const SOURCE_TYPE_LABELS: Record<SourceType, string> = {
   OFFICIAL: 'Official',
   UNDERWRITER: 'Underwriter',
-  BROKER: 'Broker',
+  BROKER: 'Agent',
   SECONDARY: 'Secondary',
   INTERNAL_MARKET_LIST: 'Internal Market List',
   UNKNOWN: 'Unknown',

@@ -86,7 +86,7 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
         {/* The logo goes home (Accounts). */}
         <NavLink to="/" aria-label="RenewalIQ — go to Accounts" className="rounded-md focus-visible:outline-2 focus-visible:outline-[var(--color-brand-500)]">
           <BrandLogo size={30} />
-          <p className="mt-0.5 text-[11px] text-[var(--color-ink-400)]">Broker Workspace</p>
+          <p className="mt-0.5 text-[11px] text-[var(--color-ink-400)]">Agent Workspace</p>
         </NavLink>
       </div>
 

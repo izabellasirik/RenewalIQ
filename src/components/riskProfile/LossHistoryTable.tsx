@@ -79,7 +79,7 @@ export function LossHistoryTable({
             <option value="closed">Closed</option>
           </select>
         </td>
-        <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{isNew ? 'Entered by broker' : l?.source?.documentName ?? 'Entered by broker'}</td>
+        <td className="py-2 pr-4 text-xs text-[var(--color-ink-400)]">{isNew ? 'Entered by agent' : l?.source?.documentName ?? 'Entered by agent'}</td>
         <td className="py-2">
           <div className="flex items-center gap-1">
             <button onClick={save} className="rounded-md bg-[var(--color-brand-800)] p-1 text-white cursor-pointer" aria-label="Save loss"><Check size={13} /></button>
@@ -140,7 +140,7 @@ export function LossHistoryTable({
                   </td>
                   <td className="py-2.5 pr-4 text-xs text-[var(--color-ink-400)]">
                     {entry.isManual ? (
-                      <span className="inline-flex items-center gap-1"><User size={11} />Entered by broker</span>
+                      <span className="inline-flex items-center gap-1"><User size={11} />Entered by agent</span>
                     ) : (
                       entry.source?.documentName ?? '—'
                     )}

@@ -96,10 +96,11 @@ describe('checking a policy', () => {
         'The fees can’t be negative.',
       ]);
   });
-  it('a missing policy number is allowed with a reminder; an effective date before binding is a warning', () => {
-    const r = checkPolicy(input({ policyNumber: '', effectiveDate: '2026-10-01' }));
-    expect(r.ok && r.warnings).toEqual(['No policy number yet — add it once the carrier issues the policy.', 'The effective date is before the bound date.']);
-    expect(r.ok && r.fields.policyNumber).toBeUndefined();
+  it('the policy number is required; an effective date before binding is a warning', () => {
+    const missing = checkPolicy(input({ policyNumber: '  ' }));
+    expect(!missing.ok && missing.errors).toEqual(['Enter the policy number.']);
+    const r = checkPolicy(input({ effectiveDate: '2026-10-01' }));
+    expect(r.ok && r.warnings).toEqual(['The effective date is before the bound date.']);
   });
   it('refuses the same policy number with the same carrier on another account (case, spaces and dashes ignored)', () => {
     const existing = [{ policy: { id: 'p1', carrier: 'Prairie Mutual (sample)', policyNumber: 'smp-al 1001' } as PolicyRecord, accountId: 'a1', insured: 'Lone Pine Freight LLC', quoteId: 'q1', marketName: 'M', marketBound: true, assignedUserId: null }];
@@ -135,10 +136,10 @@ describe('policies on bound markets (store)', () => {
   it('editing replaces the fields, keeps identity and creation, and logs what changed; an unchanged save does nothing', () => {
     const id = store().createAccount('Lone Pine Freight LLC', 'TX');
     const q = store().addQuote(id, { marketName: 'Prairie Mutual (sample)', status: 'bound' });
-    const p = store().addPolicy(id, q, fields({ policyNumber: '' }));
+    const p = store().addPolicy(id, q, fields({ policyNumber: 'SMP-TEMP-1' }));
     const before = store().quotes[id][0].policies![0];
     const logLength = store().activityLog[id].length;
-    store().updatePolicy(id, q, p, { ...fields({ policyNumber: '' }) });
+    store().updatePolicy(id, q, p, { ...fields({ policyNumber: 'SMP-TEMP-1' }) });
     expect(store().activityLog[id]).toHaveLength(logLength);
     store().updatePolicy(id, q, p, fields({ policyNumber: 'SMP-AL-1001', fees: '' }));
     const after = store().quotes[id][0].policies![0];

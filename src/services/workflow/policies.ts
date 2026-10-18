@@ -52,6 +52,15 @@ export function policyTotalCents(p: Pick<PolicyRecord, 'netPremiumCents' | 'taxe
   return p.netPremiumCents + p.taxesCents + p.feesCents;
 }
 
+/**
+ * What a bound / endorsed market adds up to: the totals of its policies plus its endorsements'
+ * premium changes (net + taxes + fees, removed ones left out). Null when nothing is recorded yet.
+ */
+export function marketTotalCents(quote: { policies?: PolicyRecord[] }): number | null {
+  const entries = (quote.policies ?? []).filter((p) => !p.removedAt);
+  return entries.length ? entries.reduce((sum, p) => sum + policyTotalCents(p), 0) : null;
+}
+
 /** A one-year term: 2026-11-01 → 2027-11-01 (29 Feb → 28 Feb in a non-leap year). */
 export function oneYearAfter(dateKey: string): string {
   const d = parseDateKey(dateKey);
@@ -140,7 +149,8 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
   const feesCents = money('the fees', input.fees);
 
   const policyNumber = input.policyNumber.trim();
-  if (policyNumber.length > 100) errors.push('The policy number is too long.');
+  if (!policyNumber) errors.push('Enter the policy number.');
+  else if (policyNumber.length > 100) errors.push('The policy number is too long.');
   const coverage = COVERAGES.includes(input.coverage as CoverageType) ? (input.coverage as CoverageType) : undefined;
   if (input.coverage && !coverage) errors.push('Choose a coverage from the list.');
 
@@ -152,8 +162,6 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
     const key = normalizePolicyNumber(policyNumber);
     const same = ctx.existing.find((r) => r.policy.id !== ctx.editingId && entryKind(r.policy) === 'policy' && normalizePolicyNumber(r.policy.policyNumber) === key && r.policy.carrier.trim().toLowerCase() === carrier.toLowerCase());
     if (same) errors.push(`Policy ${policyNumber} with ${carrier} is already recorded on ${same.insured}.`);
-  } else if (!policyNumber) {
-    warnings.push(kind === 'endorsement' ? 'No policy number — add the number of the policy this endorses.' : 'No policy number yet — add it once the carrier issues the policy.');
   }
   if (kind === 'policy' && boundDate && effectiveDate && effectiveDate < boundDate) warnings.push('The effective date is before the bound date.');
 

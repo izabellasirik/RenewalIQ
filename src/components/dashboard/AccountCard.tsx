@@ -9,7 +9,7 @@ import { useWorkflowStatus, deriveSubmissionStatusLabel } from '../layout/Workfl
 import { formatShortDate, todayKey } from '../../services/workflow/dates';
 import { cn } from '../../utils/cn';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
-import { effectiveAccountStage } from '../../services/workflow/accountStage';
+import { accountBoundDate, effectiveAccountStage } from '../../services/workflow/accountStage';
 import { nextOpenRenewal, renewalLabelOn, resolveRenewals } from '../../services/workflow/renewals';
 import { StageBadge } from '../workspace/StageBadge';
 import { RenewalBadge } from '../renewals/RenewalLabel';
@@ -43,6 +43,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   const needsAttention = actions.now.some((a) => a.overdue);
   const { stage, manual } = effectiveAccountStage(account, items, quotes);
   const renewalLabel = renewalLabelOn(account, effectiveDate, quotes, todayKey()).on;
+  const boundOn = accountBoundDate(account, stage, quotes);
   // The soonest open renewal (another policy's may come before the account's own); else the effective date.
   const shownDate = nextOpenRenewal(resolveRenewals(account, effectiveDate, quotes))?.renewalDate ?? effectiveDate;
   const newVenture = account.businessType === 'new_venture' && !account.renewals?.length;
@@ -169,8 +170,13 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <StageBadge stage={stage} className="px-3 py-1.5 text-sm" title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'} />
             {renewalLabel && <RenewalBadge className="py-1.5" />}
+            <StageBadge stage={stage} className="px-3 py-1.5 text-sm" title={manual ? 'Status set by an agent' : 'Automatic status — set it on the account to override'} />
+            {boundOn && (
+              <span className="text-xs font-medium text-[var(--color-ink-600)]" data-testid="card-bound-date">
+                {formatShortDate(boundOn)}
+              </span>
+            )}
             {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}
             {needsAttention && (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-danger-600)]" title="Something on this account is overdue">

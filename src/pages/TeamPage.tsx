@@ -538,7 +538,7 @@ function CreateAgencyCard({ onCreated }: { onCreated: () => Promise<void> | void
         <div>
           <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Create your agency’s workspace</h3>
           <p className="mt-1 text-sm text-[var(--color-ink-600)]">
-            You’ll be its admin: you invite your brokers, choose their roles and see the agency’s accounts. Accounts you already created stay yours — you can share any of them with the agency later.
+            You’ll be its admin: you invite your agents, choose their roles and see the agency’s accounts. Accounts you already created stay yours — you can share any of them with the agency later.
           </p>
         </div>
         <form onSubmit={submit} className="flex flex-col gap-3">
@@ -556,7 +556,7 @@ function CreateAgencyCard({ onCreated }: { onCreated: () => Promise<void> | void
           </div>
         </form>
         <p className="rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-xs text-[var(--color-ink-600)]">
-          Is your agency already on Renewal IQ? Don’t create a new one — ask its admin to invite you. Brokers join an agency only through an invitation.
+          Is your agency already on Renewal IQ? Don’t create a new one — ask its admin to invite you. Agents join an agency only through an invitation.
         </p>
       </CardBody>
     </Card>

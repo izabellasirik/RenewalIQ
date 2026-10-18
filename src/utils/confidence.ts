@@ -4,7 +4,7 @@ export const CONFIDENCE_LABELS: Record<Confidence, string> = {
   high: 'High confidence',
   medium: 'Medium confidence',
   low: 'Low confidence',
-  manual: 'Broker entered',
+  manual: 'Agent entered',
 };
 
 export const CONFIDENCE_ORDER: Record<Confidence, number> = {

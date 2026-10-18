@@ -134,7 +134,7 @@ function FeedbackQueue() {
 
 export function AdminFeedbackPage() {
   return (
-    <PageContainer title="Product Feedback" description="General feedback about RenewalIQ — bugs, ideas, and comments submitted from the Feedback button in the broker product.">
+    <PageContainer title="Product Feedback" description="General feedback about RenewalIQ — bugs, ideas, and comments submitted from the Feedback button in the agent product.">
       <AdminAuthGate>
         <FeedbackQueue />
       </AdminAuthGate>

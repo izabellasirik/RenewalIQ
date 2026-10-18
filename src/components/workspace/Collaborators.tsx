@@ -70,7 +70,7 @@ export function Collaborators({ account }: { account: Account }) {
       {original && <span className="text-xs text-[var(--color-ink-500)]">Originally assigned: {original}</span>}
       {open && (
         <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-[var(--color-ink-100)] bg-white p-3 [box-shadow:var(--shadow-popover)]" role="dialog" aria-label="Collaborators">
-          <p className="mb-2 text-xs text-[var(--color-ink-500)]">Team members helping on this account. They can see and work on it; the assigned broker stays the owner.</p>
+          <p className="mb-2 text-xs text-[var(--color-ink-500)]">Team members helping on this account. They can see and work on it; the assigned agent stays the owner.</p>
           {choices.length === 0 ? (
             <p className="text-sm text-[var(--color-ink-400)]">No other team members yet.</p>
           ) : (

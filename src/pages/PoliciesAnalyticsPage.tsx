@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { BarChart3, FileWarning, Search } from 'lucide-react';
+import { BarChart3, FileWarning, Paperclip, Search } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Badge, Card, CardBody, EmptyState } from '../components/ui';
+import { Badge, Card, CardBody, EmptyState, Tabs } from '../components/ui';
+import { IncomeExpensesPanel, ProfitLossPanel } from '../components/analytics/MoneyPanels';
 import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { formatRate } from '../components/workspace/PoliciesSection';
 import { useAccountsStore } from '../state/useAccountsStore';
@@ -23,7 +24,7 @@ import {
   type PolicyRow,
 } from '../services/workflow/policies';
 
-const th = 'border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
+const th = 'whitespace-nowrap border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
 const td = 'border-b border-[var(--color-ink-50)] px-3 py-2 align-top text-sm text-[var(--color-ink-800)]';
 const num = 'whitespace-nowrap text-right tabular-nums';
 const DATE_FIELDS = Object.keys(POLICY_DATE_LABELS) as PolicyDateField[];
@@ -40,6 +41,38 @@ const ALL_AGENTS = '';
  * which the database shows only to admins and to each agent for themselves. The filter lives in the URL.
  */
 export function PoliciesAnalyticsPage() {
+  const agencyAccess = useAccountsStore((s) => s.agencyAccess);
+  const isAdmin = agencyAccess?.role === 'admin';
+  const [params, setParams] = useSearchParams();
+  const view = isAdmin ? (['pl', 'policies', 'money'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : 'policies';
+  return (
+    <PageContainer
+      title="Analytics"
+      description={
+        isAdmin
+          ? 'The agency’s money: profit and loss, the policies and endorsements written, and the income and expenses you record.'
+          : 'The policies and endorsements of the clients assigned to you, and your commission on them.'
+      }
+    >
+      {isAdmin && (
+        <Tabs
+          items={[
+            { key: 'pl', label: 'Profit & loss' },
+            { key: 'policies', label: 'Policies & endorsements' },
+            { key: 'money', label: 'Income & expenses' },
+          ]}
+          active={view}
+          onChange={(key) => setParams(new URLSearchParams(key === 'pl' ? {} : { view: key }), { replace: true })}
+        />
+      )}
+      {view === 'pl' && <ProfitLossPanel />}
+      {view === 'money' && <IncomeExpensesPanel />}
+      {view === 'policies' && <PoliciesPanel />}
+    </PageContainer>
+  );
+}
+
+function PoliciesPanel() {
   const accounts = useAccountsStore((s) => s.accounts);
   const quotes = useAccountsStore((s) => s.quotes);
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
@@ -103,10 +136,7 @@ export function PoliciesAnalyticsPage() {
 
   const myRate = me ? rates.rates[me] : undefined;
   return (
-    <PageContainer
-      title="Analytics"
-      description={isAdmin ? 'Every policy and endorsement across the agency’s clients: premiums, taxes, fees and agent commission.' : 'The policies and endorsements of the clients assigned to you, and your commission on them.'}
-    >
+    <>
       {agencyAccess && !isAdmin && rates.status === 'ready' && (
         <p className="text-sm text-[var(--color-ink-600)]" data-testid="my-commission">
           Your agent commission: <strong className="text-[var(--color-ink-900)]">{myRate === undefined ? 'not set yet' : formatRate(myRate)}</strong> of the net amount (set by your agency admin).
@@ -114,11 +144,11 @@ export function PoliciesAnalyticsPage() {
       )}
       <Card>
         <CardBody className="pt-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[150px_160px_160px_140px_140px_minmax(0,1fr)]" data-testid="policy-filters">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1.35fr_1fr_1fr_1fr_1fr]" data-testid="policy-filters">
             <div>
               <label className={labelClass} htmlFor="pf-type">Show</label>
               <select id="pf-type" className={inputClass} value={kind} onChange={(e) => update({ type: e.target.value === 'all' ? '' : e.target.value })}>
-                <option value="all">Policies and endorsements</option>
+                <option value="all">All</option>
                 <option value="policy">Policies</option>
                 <option value="endorsement">Endorsements</option>
               </select>
@@ -144,7 +174,7 @@ export function PoliciesAnalyticsPage() {
               <label className={labelClass} htmlFor="pf-to">To</label>
               <input id="pf-to" type="date" className={inputClass} value={to} onChange={(e) => update({ to: e.target.value })} />
             </div>
-            <div>
+            <div className={isAdmin ? 'sm:col-span-2 lg:col-span-6 lg:order-last' : 'sm:col-span-2 lg:col-span-1'}>
               <label className={labelClass} htmlFor="pf-search">Search</label>
               <div className="relative">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-ink-400)]" aria-hidden />
@@ -164,7 +194,7 @@ export function PoliciesAnalyticsPage() {
         </CardBody>
       </Card>
 
-      <dl className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8" data-testid="policy-totals">
+      <dl className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="policy-totals">
         <Stat label="Policies" value={String(totals.policies)} id="policies" />
         <Stat label="Endorsements" value={String(totals.endorsements)} id="endorsements" />
         <Stat label="Net amount" value={formatCents(totals.net)} id="net" />
@@ -172,7 +202,7 @@ export function PoliciesAnalyticsPage() {
         <Stat label="Fees" value={formatCents(totals.fees)} id="fees" />
         <Stat label="Total" value={formatCents(totals.net + totals.taxes + totals.fees)} id="total" strong />
         {agencyAccess && <Stat label={isAdmin ? 'Agent commission' : 'Your commission'} value={formatCents(totals.commission)} id="commission" strong note={totals.commissionMissing ? `${totals.commissionMissing} without a rate or agent` : undefined} />}
-        <Stat label="Document missing" value={String(totals.proofMissing)} id="proof-missing" note={totals.proofMissing ? 'no proof uploaded yet' : undefined} />
+        <Stat label="Missing Documents" value={String(totals.proofMissing)} id="documents-missing" note={totals.proofMissing ? 'policies / endorsements without a document' : undefined} />
       </dl>
 
       <Card>
@@ -191,16 +221,13 @@ export function PoliciesAnalyticsPage() {
                 <thead>
                   <tr>
                     <th className={th}>Client / policy</th>
-                    <th className={th}>Type</th>
-                    <th className={th}>Carrier</th>
                     <th className={th}>Bound / endorsed</th>
-                    <th className={th}>Term</th>
                     <th className={`${th} ${num}`}>Net</th>
                     <th className={`${th} ${num}`}>Taxes</th>
                     <th className={`${th} ${num}`}>Fees</th>
                     <th className={`${th} ${num}`}>Total</th>
                     {agencyAccess && <th className={`${th} ${num}`}>Agent commission</th>}
-                    <th className={th}>Proof</th>
+                    <th className={th}>Documents</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -210,20 +237,28 @@ export function PoliciesAnalyticsPage() {
                     const endorsement = entryKind(r.policy) === 'endorsement';
                     return (
                       <tr key={r.policy.id} data-row={r.policy.id} data-kind={endorsement ? 'endorsement' : 'policy'}>
-                        <td className={td}>
+                        <td className={`${td} min-w-[220px]`}>
                           <Link to={`/accounts/${r.accountId}?tab=quotes&quote=${r.quoteId}`} className="block font-medium text-[var(--color-brand-800)] hover:underline">{r.insured}</Link>
-                          <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-ink-500)]">
-                            {r.policy.policyNumber ?? <Badge tone="warning">Number to come</Badge>}
+                          <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-ink-600)]">
+                            <span className="font-medium">{r.policy.policyNumber ?? 'Number to come'}</span>
+                            <span className={endorsement ? 'rounded-full bg-[var(--color-info-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-info-600)]' : 'rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-ink-600)]'}>
+                              {endorsement ? 'Endorsement' : r.policy.businessType === 'renewal' ? 'Renewal' : 'New business'}
+                            </span>
                             {!r.marketBound && <Badge tone="warning">{endorsement ? 'Market no longer Endorsed' : 'Market no longer Bound'}</Badge>}
                           </span>
+                          <span className="mt-0.5 block text-xs text-[var(--color-ink-500)]">
+                            {r.policy.carrier}
+                            {r.policy.carrier !== r.marketName ? ` via ${r.marketName}` : ''}
+                          </span>
                         </td>
-                        <td className={td}>{endorsement ? 'Endorsement' : r.policy.businessType === 'renewal' ? 'Renewal policy' : 'New policy'}</td>
-                        <td className={td}>
-                          <span className="block">{r.policy.carrier}</span>
-                          {r.policy.carrier !== r.marketName && <span className="block text-xs text-[var(--color-ink-500)]">via {r.marketName}</span>}
+                        <td className={`${td} whitespace-nowrap`}>
+                          {formatShortDate(r.policy.boundDate)}
+                          {(r.policy.effectiveDate || r.policy.expirationDate) && (
+                            <span className="block text-xs text-[var(--color-ink-500)]">
+                              Term {formatShortDate(r.policy.effectiveDate)} – {formatShortDate(r.policy.expirationDate)}
+                            </span>
+                          )}
                         </td>
-                        <td className={`${td} whitespace-nowrap`}>{formatShortDate(r.policy.boundDate)}</td>
-                        <td className={`${td} whitespace-nowrap`}>{r.policy.effectiveDate || r.policy.expirationDate ? `${formatShortDate(r.policy.effectiveDate)} – ${formatShortDate(r.policy.expirationDate)}` : '—'}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.netPremiumCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.taxesCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.feesCents)}</td>
@@ -240,9 +275,11 @@ export function PoliciesAnalyticsPage() {
                             )}
                           </td>
                         )}
-                        <td className={td} data-field="proof">
+                        <td className={`${td} whitespace-nowrap`} data-field="documents">
                           {(r.policy.attachments ?? []).length ? (
-                            <span className="text-xs text-[var(--color-ink-600)]">{r.policy.attachments!.length} document{r.policy.attachments!.length === 1 ? '' : 's'}</span>
+                            <span className="inline-flex items-center gap-1 text-xs text-[var(--color-ink-600)]" title={r.policy.attachments!.map((a) => (a.description ? `${a.name} — ${a.description}` : a.name)).join('\n')}>
+                              <Paperclip size={12} aria-hidden /> {r.policy.attachments!.length}
+                            </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-warning-600)]"><FileWarning size={12} aria-hidden /> Missing</span>
                           )}
@@ -257,12 +294,7 @@ export function PoliciesAnalyticsPage() {
         </CardBody>
       </Card>
 
-      {isAdmin && (
-        <p className="text-xs text-[var(--color-ink-500)]">
-          Coming next, for admins only: the agency’s expenses (rent, marketing…) beside this income, to see whether the agency is making or losing money.
-        </p>
-      )}
-    </PageContainer>
+    </>
   );
 }
 

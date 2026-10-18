@@ -44,10 +44,10 @@ function simplifiedStatus(summary: DocumentFieldSummary, profile: RiskProfile): 
   if (summary.fieldPath === 'drivers' || summary.fieldPath === 'vehicles' || summary.fieldPath === 'lossHistory') {
     const rows = summary.fieldPath === 'drivers' ? profile.drivers : summary.fieldPath === 'vehicles' ? profile.vehicles : profile.lossHistory;
     const row = summary.rowId ? rows.find((r) => r.id === summary.rowId) : undefined;
-    if (row?.isManual) return { label: 'Broker Edited', tone: 'brand' };
+    if (row?.isManual) return { label: 'Agent Edited', tone: 'brand' };
   } else if (summary.fieldPath !== 'coverageLine') {
     const current = scalarFieldValue(profile, summary.fieldPath);
-    if (current?.extractionMethod === 'manual_entry') return { label: 'Broker Edited', tone: 'brand' };
+    if (current?.extractionMethod === 'manual_entry') return { label: 'Agent Edited', tone: 'brand' };
   }
   if (summary.disposition === 'conflict') return { label: 'Conflict', tone: 'danger' };
   if (summary.disposition === 'applied' && storedValueProblem(summary, profile)) return { label: 'Needs Review', tone: 'warning' };

@@ -2,7 +2,7 @@ import { BarChart3 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Card, CardBody } from '../components/ui';
 
-const TOPICS = ['Renewals', 'Account activity', 'Broker workload', 'Carrier performance', 'Accounts that need attention'];
+const TOPICS = ['Renewals', 'Account activity', 'Agent workload', 'Carrier performance', 'Accounts that need attention'];
 
 /**
  * V1: Analytics is "coming soon". The full dashboard (AnalyticsPage + services/analytics) is kept

@@ -70,7 +70,7 @@ export function AnalyticsPage() {
           icon={<Target size={16} />}
           label="Extraction Accuracy (proxy)"
           value={analytics.extractionAccuracy !== null ? `${analytics.extractionAccuracy}%` : '—'}
-          caption={`${analytics.correctionsCount} broker correction${analytics.correctionsCount === 1 ? '' : 's'} — not a ground-truth benchmark`}
+          caption={`${analytics.correctionsCount} agent correction${analytics.correctionsCount === 1 ? '' : 's'} — not a ground-truth benchmark`}
         />
         <StatCard icon={<Compass size={16} />} label="Carrier Matches Run" value={analytics.totalMatchesRun.toLocaleString('en-US')} caption={`across ${accounts.length} submission${accounts.length === 1 ? '' : 's'}`} />
       </div>

@@ -82,7 +82,7 @@ function LinkRow({ link, onToggled, mine }: { link: IntakeLink; onToggled: () =>
             {!mine && link.ownerName && <span className="font-normal text-[var(--color-ink-500)]"> · {link.ownerName}’s link</span>}
           </p>
           <p className="truncate text-xs text-[var(--color-ink-500)]">
-            Shown to the client as: <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName || 'your insurance broker (no agency name set)'}</span>
+            Shown to the client as: <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName || 'your insurance agent (no agency name set)'}</span>
           </p>
           <p className="truncate text-xs text-[var(--color-ink-400)]">{url}</p>
         </div>
@@ -228,7 +228,7 @@ function LinksSection({ userId }: { userId: string }) {
               onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             />
           </label>
-          {!orgName.trim() && !orgNameTouched && <p className="mt-1 text-xs font-normal text-[var(--color-ink-400)]">Without an agency name, the form says “your insurance broker”.</p>}
+          {!orgName.trim() && !orgNameTouched && <p className="mt-1 text-xs font-normal text-[var(--color-ink-400)]">Without an agency name, the form says “your insurance agent”.</p>}
           {savedOrgName !== null && orgName.trim() && orgName.trim() !== savedOrgName ? (
             <p className="mt-1 text-xs font-normal text-[var(--color-ink-500)]">
               <button onClick={handleSaveOrgName} disabled={savingOrgName} className="font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60 cursor-pointer">
@@ -465,7 +465,7 @@ function SubmissionCard({
               {[submission.contactName, submission.contactEmail, submission.contactPhone].filter(Boolean).join(' · ') || <span className="italic text-[var(--color-ink-400)]">no contact details given</span>}
             </p>
             <p className="text-xs text-[var(--color-ink-500)]">
-              {brokerName && <>Broker: <span className="font-medium text-[var(--color-ink-700)]" data-testid="submission-broker">{brokerName}</span> · </>}
+              {brokerName && <>Agent: <span className="font-medium text-[var(--color-ink-700)]" data-testid="submission-broker">{brokerName}</span> · </>}
               {linkLabel ? <>Via link: <span className="font-medium text-[var(--color-ink-700)]">{linkLabel}</span></> : 'Via a submission link'}
               {submission.dotNumber && ` · DOT ${submission.dotNumber}`}
               {collapsed && documents && documents.length > 0 && ` · ${documents.length} document${documents.length === 1 ? '' : 's'}`}
@@ -594,7 +594,7 @@ function SubmissionCard({
                   </p>
                   <p className="text-xs text-[var(--color-ink-500)]">
                     {reason}
-                    {candidate.assignedName ? ` · Broker: ${candidate.assignedName}` : ''}
+                    {candidate.assignedName ? ` · Agent: ${candidate.assignedName}` : ''}
                     {!candidate.canOpen && ' · assigned to someone else — ask them or an admin'}
                   </p>
                 </div>
@@ -726,14 +726,14 @@ export function IntakeLinksPage() {
         <EmptyState
           icon={<Link2 size={26} strokeWidth={1.5} />}
           title="Cloud sign-in isn't configured"
-          description="Submission intake requires Supabase and a signed-in broker account, since a shared link has to point at your own workspace. See SUPABASE_SETUP.md."
+          description="Submission intake requires Supabase and a signed-in agent account, since a shared link has to point at your own workspace. See SUPABASE_SETUP.md."
         />
       )}
       {session.status === 'signed_out' && (
         <EmptyState
           icon={<Link2 size={26} strokeWidth={1.5} />}
           title="Sign in to use Submission Intake"
-          description="Intake links belong to your broker account so submissions land in your own workspace."
+          description="Intake links belong to your agent account so submissions land in your own workspace."
         />
       )}
       {session.status === 'signed_in' && session.userId && (

@@ -12,7 +12,7 @@ function isCurrencyPath(path?: string): boolean {
 
 const STATUS_META: Record<MappedFieldStatus, { label: string; tone: BadgeTone; Icon: typeof CircleCheck }> = {
   auto_filled: { label: 'Auto-filled', tone: 'success', Icon: CircleCheck },
-  manually_entered: { label: 'Entered by broker', tone: 'brand', Icon: Pencil },
+  manually_entered: { label: 'Entered by agent', tone: 'brand', Icon: Pencil },
   missing: { label: 'Missing', tone: 'neutral', Icon: CircleHelp },
   conflict: { label: 'Conflict', tone: 'danger', Icon: TriangleAlert },
   needs_review: { label: 'Needs Review', tone: 'warning', Icon: CircleAlert },

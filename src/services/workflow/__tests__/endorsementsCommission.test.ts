@@ -79,6 +79,13 @@ describe('Renewal label', () => {
     expect(renewalLabelOn({ businessType: 'new_venture' }, '2026-11-01', [], today).on).toBe(false);
     expect(renewalLabelOn({}, '2026-11-01', [], today).on).toBe(false);
   });
+  it('a hand choice holds until the next start-working date, then it’s automatic again', () => {
+    const acct = { businessType: 'renewal' as const, renewals: [main()] };
+    // Renewal Nov 20, 45-day lead: work started Oct 6.
+    expect(renewalLabelOn({ ...acct, renewalLabel: false, renewalLabelSetOn: '2026-10-10' }, '2026-11-20', [], today)).toEqual({ on: false, manual: true });
+    expect(renewalLabelOn({ ...acct, renewalLabel: false, renewalLabelSetOn: '2026-09-01' }, '2026-11-20', [], today)).toEqual({ on: true, manual: false });
+    expect(renewalLabelOn({ ...acct, renewalLabel: true, renewalLabelSetOn: '2026-09-01' }, '2027-01-20', [], today)).toEqual({ on: true, manual: true }); // next start (Dec 6) not here yet
+  });
   it('switched on or off by hand wins', () => {
     expect(renewalLabelOn({ renewalLabel: true }, null, [], today)).toEqual({ on: true, manual: true });
     expect(renewalLabelOn({ businessType: 'renewal', renewals: [main()], renewalLabel: false }, '2026-11-20', [], today)).toEqual({ on: false, manual: true });

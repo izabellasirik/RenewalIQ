@@ -87,22 +87,29 @@ export function isRenewalDue(r: ResolvedRenewal, today: string): boolean {
 }
 
 /**
- * The "Renewal" label beside the account's status. Automatic: on for a client that came in as a
- * renewal while its renewal is being worked — from the start-working date until a market is bound for
- * it (an overdue one stays on) — and off once bound: the renewal marked bound, or a market (for that
- * renewal, or not tied to one) bound on or after its start-working date, even if the broker hasn't
- * yet said which renewal it was. Last term's bound markets don't count. A broker's on / off choice wins.
+ * The "Renewal" switch in the account's status menu (shown as a label beside the status). Automatic:
+ * on for a client that came in as a renewal while its renewal is being worked — from the
+ * start-working date until a market is bound for it (an overdue one stays on) — and off once bound:
+ * the renewal marked bound, or a market (for that renewal, or not tied to one) bound on or after its
+ * start-working date, even if the agent hasn't yet said which renewal it was. Last term's bound
+ * markets don't count. An agent's on / off choice wins until the next renewal's start-working date
+ * comes round; from then on it's automatic again (so it turns on by itself for the next renewal).
  */
 export function renewalLabelOn(
-  account: Pick<Account, 'renewals' | 'businessType' | 'renewalLabel'>,
+  account: Pick<Account, 'renewals' | 'businessType' | 'renewalLabel' | 'renewalLabelSetOn'>,
   effectiveDate: string | null | undefined,
   quotes: Pick<MarketQuote, 'status' | 'boundDate' | 'renewalId'>[],
   today: string
 ): { on: boolean; manual: boolean } {
-  if (account.renewalLabel !== undefined) return { on: account.renewalLabel, manual: true };
+  const renewals = resolveRenewals(account, effectiveDate, quotes);
+  if (account.renewalLabel !== undefined) {
+    const setOn = account.renewalLabelSetOn;
+    const startedSince = !!setOn && renewals.some((r) => !!r.workStart && r.workStart > setOn && r.workStart <= today);
+    if (!startedSince) return { on: account.renewalLabel, manual: true };
+  }
   const boundSinceStart = (r: ResolvedRenewal) =>
     quotes.some((q) => q.status === 'bound' && (!q.renewalId || q.renewalId === r.id) && !!q.boundDate && !!r.workStart && q.boundDate >= r.workStart);
-  const on = account.businessType === 'renewal' && resolveRenewals(account, effectiveDate, quotes).some((r) => isRenewalDue(r, today) && !boundSinceStart(r));
+  const on = account.businessType === 'renewal' && renewals.some((r) => isRenewalDue(r, today) && !boundSinceStart(r));
   return { on, manual: false };
 }
 

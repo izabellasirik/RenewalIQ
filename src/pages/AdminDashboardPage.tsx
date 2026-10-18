@@ -101,7 +101,7 @@ function DashboardContent() {
         </div>
 
         {recent.length === 0 ? (
-          <EmptyState icon={<Inbox size={24} strokeWidth={1.5} />} title="No appetite update requests yet" description="Broker-submitted corrections from Market Finder / Carrier Appetite will show up here." />
+          <EmptyState icon={<Inbox size={24} strokeWidth={1.5} />} title="No appetite update requests yet" description="Agent-submitted corrections from Market Finder / Carrier Appetite will show up here." />
         ) : (
           <div className="overflow-hidden rounded-xl border border-[var(--color-ink-100)] bg-white">
             <div className="hidden grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr] gap-3 border-b border-[var(--color-ink-100)] bg-[var(--color-ink-50)] px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-ink-400)] sm:grid">
@@ -198,7 +198,7 @@ function FeedbackSummary() {
       </div>
 
       {recent.length === 0 ? (
-        <EmptyState icon={<MessageSquare size={24} strokeWidth={1.5} />} title="No feedback yet" description="General feedback submitted from the Feedback button in the broker product will show up here." />
+        <EmptyState icon={<MessageSquare size={24} strokeWidth={1.5} />} title="No feedback yet" description="General feedback submitted from the Feedback button in the agent product will show up here." />
       ) : (
         <div className="overflow-hidden rounded-xl border border-[var(--color-ink-100)] bg-white">
           <div className="divide-y divide-[var(--color-ink-100)]">
@@ -223,7 +223,7 @@ function FeedbackSummary() {
 
 export function AdminDashboardPage() {
   return (
-    <PageContainer title="Admin Dashboard" description="Where broker-submitted appetite update requests and general product feedback are reviewed.">
+    <PageContainer title="Admin Dashboard" description="Where agent-submitted appetite update requests and general product feedback are reviewed.">
       <AdminAuthGate>
         <div className="flex flex-col gap-10">
           <DashboardContent />

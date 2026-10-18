@@ -19,7 +19,7 @@ import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { AfterBindDialog } from '../renewals/AfterBindDialog';
 import { bindAsksAboutRenewal } from '../renewals/renewalForm';
 import { EntryForm, PoliciesSection } from './PoliciesSection';
-import { activeEndorsements, activePolicies, policiesFeatureEnabled } from '../../services/workflow/policies';
+import { activeEndorsements, activePolicies, formatCents, marketTotalCents, policiesFeatureEnabled } from '../../services/workflow/policies';
 
 
 export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; focusQuoteId?: string }) {
@@ -354,7 +354,11 @@ function QuoteCard({
                 </button>
               </h3>
               <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{marketStatusLabel(marketStatusChoice(quote))}</Badge>
-              {quote.premium && (quote.status === 'quoted' || quote.status === 'bound') && (
+              {quote.status === 'bound' && marketTotalCents(quote) !== null ? (
+                <span className="text-sm font-semibold text-[var(--color-success-600)]" title="Total of this market’s policies and endorsements (net, taxes and fees)" data-testid="market-total">
+                  {formatCents(marketTotalCents(quote)!)}
+                </span>
+              ) : quote.premium && (quote.status === 'quoted' || quote.status === 'bound') && (
                 <span className="text-sm font-semibold text-[var(--color-success-600)]">${quote.premium.toLocaleString('en-US')}</span>
               )}
             </div>

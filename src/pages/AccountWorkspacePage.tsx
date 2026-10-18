@@ -8,7 +8,6 @@ import { Badge, Button, Card, CardBody, EmptyState, Tabs } from '../components/u
 import { AccountInfoCard } from '../components/workspace/AccountInfoCard';
 import { RenewalsCard } from '../components/renewals/RenewalsCard';
 import { AccountStageSelect } from '../components/workspace/AccountStageSelect';
-import { RenewalLabelSelect } from '../components/renewals/RenewalLabel';
 import { ContactsCard } from '../components/workspace/ContactsCard';
 import { FollowUpsCard } from '../components/workspace/FollowUpsCard';
 import { ChecklistPanel } from '../components/workspace/ChecklistPanel';
@@ -98,7 +97,6 @@ export function AccountWorkspacePage() {
             {/* Status under the name; DOT #, state and effective date live on the Account card. */}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-[var(--color-ink-600)]">
               <AccountStageSelect accountId={accountId} />
-              <RenewalLabelSelect accountId={accountId} />
               <AssignedAgent account={account} />
               <Collaborators account={account} />
             </div>

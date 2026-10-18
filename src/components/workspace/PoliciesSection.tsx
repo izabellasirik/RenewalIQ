@@ -3,11 +3,10 @@ import { FileCheck2, FilePlus2, FileWarning, Paperclip, Pencil, Plus, Trash2, X 
 import type { MarketQuote, PolicyBusinessType, PolicyEntryKind, PolicyRecord } from '../../types';
 import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
-import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCommission';
-import { formatShortDate, todayKey } from '../../services/workflow/dates';
-import { activeEndorsements, activePolicies, centsInput, checkPolicy, formatCents, oneYearAfter, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
+import { formatShortDate } from '../../services/workflow/dates';
+import { activeEndorsements, activePolicies, centsInput, checkPolicy, formatCents, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
 import { policyNumberTaken } from '../../services/supabase/commissionRepo';
 import { inputClass, labelClass } from './formStyles';
 
@@ -19,8 +18,8 @@ const KIND = {
 /**
  * The policies written from one market, and its endorsements. Policies show on a bound market,
  * endorsements on an endorsed one — or wherever some were recorded before the market moved off that
- * status, flagged, so nothing silently disappears. Each one can carry proof (binder, policy,
- * endorsement page); until it does, it's marked "Document missing". The agent's commission shows only
+ * status, flagged, so nothing silently disappears. Each one carries its documents (binder, policy,
+ * endorsement page), each with a description; until it has one, it's marked "Missing Documents". The agent's commission shows only
  * to that agent and the agency's admins, worked out from the net amount (never stored here).
  */
 export function PoliciesSection({ accountId, quote }: { accountId: string; quote: MarketQuote }) {
@@ -68,7 +67,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission }: { ac
       ) : (
         <ul className="mt-2 flex flex-col gap-2">
           {entries.map((p) => (
-            <EntryItem key={p.id} accountId={accountId} quote={quote} entry={p} commission={commission} onEdit={() => setEditing(p)} onRemove={() => setRemoving(p)} />
+            <EntryItem key={p.id} quote={quote} entry={p} commission={commission} onEdit={() => setEditing(p)} onRemove={() => setRemoving(p)} />
           ))}
         </ul>
       )}
@@ -89,13 +88,10 @@ function EntryList({ accountId, quote, kind, entries, active, commission }: { ac
   );
 }
 
-function EntryItem({ accountId, quote, entry: p, commission, onEdit, onRemove }: { accountId: string; quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; onEdit: () => void; onRemove: () => void }) {
-  const attach = useAccountsStore((s) => s.attachPolicyFile);
-  const detach = useAccountsStore((s) => s.removePolicyAttachment);
+function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; onEdit: () => void; onRemove: () => void }) {
   const kind: PolicyEntryKind = p.kind === 'endorsement' ? 'endorsement' : 'policy';
   const k = KIND[kind];
   const files = p.attachments ?? [];
-  const inputId = `proof-${p.id}`;
   return (
     <li className="rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2.5" data-policy={p.id} data-kind={kind}>
       <div className="flex items-start justify-between gap-3">
@@ -106,8 +102,8 @@ function EntryItem({ accountId, quote, entry: p, commission, onEdit, onRemove }:
             {!p.policyNumber && <Badge tone="warning">Add number</Badge>}
             {kind === 'policy' && <Badge tone="neutral">{p.businessType === 'renewal' ? 'Renewal' : 'New business'}</Badge>}
             {files.length === 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-warning-100)] px-2 py-0.5 text-xs font-medium text-[var(--color-warning-600)]" data-testid="proof-missing">
-                <FileWarning size={12} aria-hidden /> Document missing
+              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-warning-100)] px-2 py-0.5 text-xs font-medium text-[var(--color-warning-600)]" data-testid="documents-missing">
+                <FileWarning size={12} aria-hidden /> Missing Documents
               </span>
             )}
           </p>
@@ -132,29 +128,17 @@ function EntryItem({ accountId, quote, entry: p, commission, onEdit, onRemove }:
       </dl>
       <CommissionLine commission={commission} netCents={p.netPremiumCents} />
       {p.notes && <p className="mt-1.5 whitespace-pre-line text-xs text-[var(--color-ink-600)]" data-field="notes">{p.notes}</p>}
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-field="proof">
+      <div className="mt-2 flex flex-col gap-1 text-xs" data-field="documents">
         {files.map((f) => (
-          <span key={f.id} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-ink-50)] px-2 py-1 text-[var(--color-ink-700)]">
-            <Paperclip size={12} aria-hidden /> {f.name}
-            <button type="button" className="cursor-pointer text-[var(--color-ink-400)] hover:text-[var(--color-danger-600)]" aria-label={`Remove ${f.name}`} onClick={() => detach(accountId, quote.id, p.id, f.id)}>
-              <X size={12} />
-            </button>
+          <span key={f.id} className="inline-flex items-center gap-1.5 text-[var(--color-ink-700)]" data-attachment={f.id}>
+            <Paperclip size={12} className="shrink-0 text-[var(--color-ink-400)]" aria-hidden />
+            <span className="font-medium">{f.name}</span>
+            {f.description && <span className="text-[var(--color-ink-500)]">— {f.description}</span>}
           </span>
         ))}
-        <label htmlFor={inputId} className="inline-flex cursor-pointer items-center gap-1 font-medium text-[var(--color-brand-700)] hover:underline">
-          <FilePlus2 size={12} aria-hidden /> {files.length ? 'Add document' : 'Upload proof document'}
-        </label>
-        <input
-          id={inputId}
-          type="file"
-          className="sr-only"
-          multiple
-          accept=".pdf,.png,.jpg,.jpeg,.heic,.webp,.doc,.docx,.xls,.xlsx,.eml,.msg"
-          onChange={(e) => {
-            for (const f of Array.from(e.target.files ?? [])) attach(accountId, quote.id, p.id, f);
-            e.target.value = '';
-          }}
-        />
+        <button type="button" onClick={onEdit} className="inline-flex w-fit cursor-pointer items-center gap-1 font-medium text-[var(--color-brand-700)] hover:underline">
+          <FilePlus2 size={12} aria-hidden /> Attach Document
+        </button>
       </div>
     </li>
   );
@@ -215,7 +199,6 @@ export function EntryForm({
   const attach = useAccountsStore((s) => s.attachPolicyFile);
   const accounts = useAccountsStore((s) => s.accounts);
   const allQuotes = useAccountsStore((s) => s.quotes);
-  const { effectiveDate } = useAccountWorkflow(accountId);
   const commission = useAgentCommission(accountId);
   // Bound for a tracked renewal: the policy is that renewal's term (the account's date may already be next year's).
   const { renewals } = useAccountRenewals(accountId);
@@ -253,9 +236,9 @@ export function EntryForm({
         carrier: policy?.carrier ?? quote.marketName,
         coverage: '',
         businessType: 'new',
-        boundDate: todayKey(),
-        effectiveDate: todayKey(),
-        expirationDate: policy?.expirationDate ?? '',
+        boundDate: '',
+        effectiveDate: '',
+        expirationDate: '',
         netPremium: '',
         taxes: '',
         fees: '',
@@ -264,7 +247,6 @@ export function EntryForm({
     // A new policy starts from the chosen quote and the account's effective date.
     const chosen = options.find((o) => o.id === quote.selectedOptionId) ?? options.at(-1);
     const premium = chosen?.premium ?? quote.premium;
-    const eff = boundFor?.renewalDate ?? effectiveDate ?? '';
     return {
       kind,
       notes: '',
@@ -273,15 +255,19 @@ export function EntryForm({
       carrier: quote.marketName,
       coverage: '',
       businessType: boundFor ? 'renewal' : 'new',
-      boundDate: todayKey(),
-      effectiveDate: eff,
-      expirationDate: eff ? oneYearAfter(eff) : '',
+      boundDate: '',
+      effectiveDate: '',
+      expirationDate: '',
       netPremium: premium ? centsInput(Math.round(premium * 100)) : '',
       taxes: '',
       fees: '',
     };
   });
-  const [files, setFiles] = useState<File[]>([]);
+  // New documents, each with a description; and the ones already attached (description edits, removals) — applied on save.
+  const [files, setFiles] = useState<{ key: string; file: File; description: string }[]>([]);
+  const [kept, setKept] = useState(() => (editing === 'new' ? [] : (editing.attachments ?? []).map((a) => ({ ...a, description: a.description ?? '' }))));
+  const describe = useAccountsStore((s) => s.describePolicyAttachment);
+  const detach = useAccountsStore((s) => s.removePolicyAttachment);
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id });
@@ -294,8 +280,6 @@ export function EntryForm({
   const set = <K extends keyof PolicyInput>(key: K, value: PolicyInput[K]) =>
     setF((cur) => {
       const next = { ...cur, [key]: value };
-      // Moving the effective date moves a one-year expiration with it (unless it was set to something else) — policies only.
-      if (kind === 'policy' && key === 'effectiveDate' && (!cur.expirationDate || cur.expirationDate === oneYearAfter(cur.effectiveDate))) next.expirationDate = value ? oneYearAfter(value as string) : '';
       // Picking a quote fills the net premium if it's still blank or still that of the previous quote.
       if (key === 'quoteOptionId') {
         const prev = options.find((o) => o.id === cur.quoteOptionId)?.premium;
@@ -323,11 +307,16 @@ export function EntryForm({
     }
     if (editing === 'new') {
       const id = addPolicy(accountId, quote.id, check.fields);
-      if (id) for (const file of files) attach(accountId, quote.id, id, file);
+      if (id) for (const nf of files) attach(accountId, quote.id, id, nf.file, nf.description);
       if (id) onSaved?.({ id, date: check.fields.boundDate });
     } else {
       updatePolicy(accountId, quote.id, editing.id, check.fields);
-      for (const file of files) attach(accountId, quote.id, editing.id, file);
+      for (const a of editing.attachments ?? []) {
+        const now = kept.find((x) => x.id === a.id);
+        if (!now) detach(accountId, quote.id, editing.id, a.id);
+        else if ((a.description ?? '') !== now.description.trim()) describe(accountId, quote.id, editing.id, a.id, now.description);
+      }
+      for (const nf of files) attach(accountId, quote.id, editing.id, nf.file, nf.description);
     }
     onClose();
   }
@@ -339,7 +328,6 @@ export function EntryForm({
       onClose={onClose}
       size="lg"
       title={title ?? (editing === 'new' ? `${k.add} — ${quote.marketName}` : `Edit ${k.one} ${editing.policyNumber ?? ''}`.trim())}
-      subtitle={kind === 'policy' ? 'Bound date, policy number, carrier, dates, and premium, taxes and fees. Add the proof document now or later.' : 'Endorsed date, the policy it changes, and the change in premium, taxes and fees (negative for a return premium). Add the proof document now or later.'}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
@@ -355,15 +343,21 @@ export function EntryForm({
         )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
-            <label className={labelClass} htmlFor="policy-bound">{k.date}</label>
+            <label className={labelClass} htmlFor="policy-bound">
+              {k.date} <Required />
+            </label>
             <input id="policy-bound" type="date" className={inputClass} value={f.boundDate} onChange={(e) => set('boundDate', e.target.value)} autoFocus />
           </div>
           <div>
-            <label className={labelClass} htmlFor="policy-number">Policy number</label>
-            <input id="policy-number" className={inputClass} value={f.policyNumber} onChange={(e) => set('policyNumber', e.target.value)} placeholder={kind === 'policy' ? 'Leave blank until issued' : 'The policy this endorses'} />
+            <label className={labelClass} htmlFor="policy-number">
+              Policy number <Required />
+            </label>
+            <input id="policy-number" className={inputClass} value={f.policyNumber} onChange={(e) => set('policyNumber', e.target.value)} required aria-required="true" />
           </div>
           <div>
-            <label className={labelClass} htmlFor="policy-carrier">Carrier (writing company)</label>
+            <label className={labelClass} htmlFor="policy-carrier">
+              Carrier (writing company) <Required />
+            </label>
             <input id="policy-carrier" className={inputClass} value={f.carrier} onChange={(e) => set('carrier', e.target.value)} list="market-name-options" />
           </div>
           {kind === 'policy' && (
@@ -407,7 +401,9 @@ export function EntryForm({
         <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">{kind === 'policy' ? 'Premium' : 'Premium change'}</legend>
           <div>
-            <label className={labelClass} htmlFor="policy-net">Net amount ($)</label>
+            <label className={labelClass} htmlFor="policy-net">
+              Net amount ($) <Required />
+            </label>
             <input id="policy-net" inputMode="decimal" className={inputClass} value={f.netPremium} onChange={(e) => set('netPremium', e.target.value)} placeholder={kind === 'policy' ? '18,750.00' : '1,250.00 or -1,250.00'} />
           </div>
           <div>
@@ -427,16 +423,55 @@ export function EntryForm({
           </div>
         </fieldset>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <label className={labelClass} htmlFor="policy-proof">Proof document (optional)</label>
-            <input id="policy-proof" type="file" multiple className="block w-full text-sm text-[var(--color-ink-600)] file:mr-2 file:rounded-md file:border-0 file:bg-[var(--color-ink-100)] file:px-3 file:py-1.5 file:text-sm" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
-            <p className="mt-1 text-xs text-[var(--color-ink-500)]">{kind === 'policy' ? 'Binder or policy.' : 'The endorsement.'} Without it, the {k.one} shows “Document missing”.</p>
-          </div>
-          <div>
-            <label className={labelClass} htmlFor="policy-notes">Notes</label>
-            <textarea id="policy-notes" rows={3} className={inputClass} value={f.notes ?? ''} onChange={(e) => set('notes', e.target.value)} />
-          </div>
+        <div>
+          <p className={labelClass}>Documents</p>
+          {(kept.length > 0 || files.length > 0) && (
+            <ul className="mb-2 flex flex-col gap-2" data-testid="form-documents">
+              {kept.map((a) => (
+                <li key={a.id} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto]">
+                  <span className="flex min-w-0 items-center gap-1.5 text-sm text-[var(--color-ink-700)]">
+                    <Paperclip size={13} className="shrink-0 text-[var(--color-ink-400)]" aria-hidden />
+                    <span className="truncate">{a.name}</span>
+                  </span>
+                  <input className={inputClass} value={a.description} placeholder="Description, e.g. Binder" aria-label={`Description for ${a.name}`} onChange={(e) => setKept((list) => list.map((x) => (x.id === a.id ? { ...x, description: e.target.value } : x)))} />
+                  <button type="button" className="cursor-pointer justify-self-start p-1 text-[var(--color-ink-400)] hover:text-[var(--color-danger-600)]" aria-label={`Remove ${a.name}`} onClick={() => setKept((list) => list.filter((x) => x.id !== a.id))}>
+                    <X size={15} />
+                  </button>
+                </li>
+              ))}
+              {files.map((nf) => (
+                <li key={nf.key} className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_auto]">
+                  <span className="flex min-w-0 items-center gap-1.5 text-sm text-[var(--color-ink-700)]">
+                    <Paperclip size={13} className="shrink-0 text-[var(--color-ink-400)]" aria-hidden />
+                    <span className="truncate">{nf.file.name}</span>
+                  </span>
+                  <input className={inputClass} value={nf.description} placeholder="Description, e.g. Binder" aria-label={`Description for ${nf.file.name}`} onChange={(e) => setFiles((list) => list.map((x) => (x.key === nf.key ? { ...x, description: e.target.value } : x)))} />
+                  <button type="button" className="cursor-pointer justify-self-start p-1 text-[var(--color-ink-400)] hover:text-[var(--color-danger-600)]" aria-label={`Remove ${nf.file.name}`} onClick={() => setFiles((list) => list.filter((x) => x.key !== nf.key))}>
+                    <X size={15} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <label htmlFor="policy-attach" className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-1.5 text-sm font-medium text-[var(--color-ink-800)] hover:bg-[var(--color-ink-50)]">
+            <FilePlus2 size={14} aria-hidden /> Attach Document
+          </label>
+          <input
+            id="policy-attach"
+            type="file"
+            multiple
+            className="sr-only"
+            accept=".pdf,.png,.jpg,.jpeg,.heic,.webp,.doc,.docx,.xls,.xlsx,.eml,.msg"
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []).map((file, i) => ({ key: `${Date.now()}-${i}-${file.name}`, file, description: '' }));
+              setFiles((list) => [...list, ...picked]);
+              e.target.value = '';
+            }}
+          />
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="policy-notes">Notes</label>
+          <textarea id="policy-notes" rows={3} className={inputClass} value={f.notes ?? ''} onChange={(e) => set('notes', e.target.value)} />
         </div>
         {check.warnings.length > 0 && (
           <ul className="text-xs text-[var(--color-ink-500)]">
@@ -445,5 +480,14 @@ export function EntryForm({
         )}
       </form>
     </Modal>
+  );
+}
+
+/** Marks a field the form won't save without. */
+function Required() {
+  return (
+    <span className="text-[var(--color-danger-600)]" aria-hidden>
+      *
+    </span>
   );
 }

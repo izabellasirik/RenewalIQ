@@ -241,7 +241,7 @@ export class FounderView {
     return e.orgId ?? (e.userId ? (this.users.get(e.userId)?.orgId ?? null) : null);
   }
   orgName(id: string | null): string {
-    return id ? (this.orgs.get(id)?.name ?? 'Unknown brokerage') : 'Independent (no agency)';
+    return id ? (this.orgs.get(id)?.name ?? 'Unknown agency') : 'Independent (no agency)';
   }
   userName(id: string | null): string {
     return id ? (this.users.get(id)?.name ?? 'Unknown user') : 'Unknown user';

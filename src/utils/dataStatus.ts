@@ -10,8 +10,8 @@ export type DataStatus = 'ai_extracted' | 'broker_confirmed' | 'broker_edited' |
 
 export const DATA_STATUS_LABELS: Record<DataStatus, string> = {
   ai_extracted: 'AI Extracted',
-  broker_confirmed: 'Broker Confirmed',
-  broker_edited: 'Broker Edited',
+  broker_confirmed: 'Agent Confirmed',
+  broker_edited: 'Agent Edited',
   needs_review: 'Needs Review',
   conflict: 'Conflict',
   not_documented: 'Not Documented',

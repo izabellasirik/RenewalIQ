@@ -195,7 +195,7 @@ export function RenewalsCard({ accountId }: { accountId: string }) {
         )}
         {!canManage && (
           <p className="mt-3 text-xs text-[var(--color-ink-400)]" data-testid="renewal-read-only">
-            The assigned broker or an admin sets up renewals.
+            The assigned agent or an admin sets up renewals.
           </p>
         )}
       </CardBody>

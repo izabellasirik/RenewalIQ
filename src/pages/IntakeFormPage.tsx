@@ -462,7 +462,7 @@ export function IntakeFormPage() {
         <div className="flex flex-col items-center gap-2 rounded-xl border border-[var(--color-warning-100)] bg-[var(--color-warning-50)] px-6 py-14 text-center">
           <TriangleAlert size={22} className="text-[var(--color-warning-600)]" />
           <p className="text-sm font-medium text-[var(--color-ink-800)]">Your answers were received, but not every file arrived.</p>
-          <p className="max-w-sm text-xs text-[var(--color-ink-600)]">Please send {legacyFailed.length === 1 ? 'this file' : 'these files'} to your broker another way:</p>
+          <p className="max-w-sm text-xs text-[var(--color-ink-600)]">Please send {legacyFailed.length === 1 ? 'this file' : 'these files'} to your agent another way:</p>
           <ul className="list-disc pl-4 text-left text-xs text-[var(--color-ink-700)]">
             {legacyFailed.map((f) => (
               <li key={f}>{f}</li>
@@ -485,8 +485,8 @@ export function IntakeFormPage() {
         <h1 className="text-lg font-semibold text-[var(--color-ink-900)]">New Submission</h1>
         <p className="mt-1 text-sm text-[var(--color-ink-500)]">
           You're submitting this directly to{' '}
-          {/* The agency name, never link.label — that's the broker's internal note. */}
-          {link?.organizationName ? <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName}</span> : 'your insurance broker'} for review.
+          {/* The agency name, never link.label — that's the agent's internal note. */}
+          {link?.organizationName ? <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName}</span> : 'your insurance agent'} for review.
         </p>
         <p className="mt-1 text-sm text-[var(--color-ink-500)]">
           Tell us a bit about the account and attach whatever documents you already have.

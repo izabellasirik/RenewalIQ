@@ -161,6 +161,8 @@ export interface QuoteAttachment {
   sizeBytes: number;
   fileType: import('./document').DocumentFileType;
   storagePath?: string;
+  /** What the file is, in the agent's words (e.g. "Binder", "Signed application"). */
+  description?: string;
 }
 
 /** One quote received from a market — a carrier often returns several (limits/deductible options). */

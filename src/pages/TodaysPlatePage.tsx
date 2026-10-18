@@ -187,8 +187,8 @@ export function TodaysPlatePage() {
     >
       <div className="flex flex-wrap items-center gap-2" data-testid="plate-filters">
         {byAgent && (
-          <select value={broker} onChange={(e) => updatePlate({ broker: e.target.value })} className={filterClass} aria-label="Filter by broker">
-            <option value={ALL_BROKERS}>All brokers</option>
+          <select value={broker} onChange={(e) => updatePlate({ broker: e.target.value })} className={filterClass} aria-label="Filter by agent">
+            <option value={ALL_BROKERS}>All agents</option>
             <option value={ASSIGNED_TO_ME}>Assigned to me</option>
             {agencyMembers.map((m) => (
               <option key={m.userId} value={m.userId}>
@@ -269,7 +269,7 @@ export function TodaysPlatePage() {
             {filtersActive ? (
               <>
                 <p className="text-sm font-medium text-[var(--color-ink-800)]" data-testid="plate-filtered-empty">Nothing to do for these filters today.</p>
-                <p className="max-w-md text-sm text-[var(--color-ink-500)]">{renewalsOnly ? 'No renewals are coming up for these accounts.' : 'Other brokers or task types may still have work today.'} Clear the filters to see everything.</p>
+                <p className="max-w-md text-sm text-[var(--color-ink-500)]">{renewalsOnly ? 'No renewals are coming up for these accounts.' : 'Other agents or task types may still have work today.'} Clear the filters to see everything.</p>
               </>
             ) : (
               <>

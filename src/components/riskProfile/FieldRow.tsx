@@ -27,7 +27,7 @@ function draftFor(valueType: FieldValueType, value: unknown): string {
 const EXTRACTION_METHOD_LABELS: Record<ExtractionMethod, string> = {
   ai_extraction: 'AI-extracted',
   deterministic_import: 'Imported from API',
-  manual_entry: 'Entered by broker',
+  manual_entry: 'Entered by agent',
   image_ocr: 'Read from a photo (OCR)',
   vision_extraction: 'Read from a photo (AI vision)',
   applicant_provided: 'Provided by applicant on intake form',

@@ -180,7 +180,7 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   const { currentUserId, assignAccountToAgent } = useAccountsStore.getState();
   if (submission.userId && currentUserId && submission.userId !== currentUserId) {
     const assigned = await assignAccountToAgent(accountId, submission.userId);
-    if (!assigned.ok) assignWarning = `The account was created but couldn't be assigned to the submission's broker: ${assigned.message}`;
+    if (!assigned.ok) assignWarning = `The account was created but couldn't be assigned to the submission's agent: ${assigned.message}`;
   }
 
   // Marked imported only once the documents are in the account's cloud storage (the originals stay in
@@ -229,7 +229,7 @@ export async function addIntakeSubmissionToAccount(submission: IntakeSubmission,
     store = useAccountsStore.getState();
   }
   const account = store.accounts.find((a) => a.id === accountId);
-  if (!account) return { ok: false, message: "You don't have access to that account — ask its broker or an admin, or create a new account." };
+  if (!account) return { ok: false, message: "You don't have access to that account — ask its agent or an admin, or create a new account." };
 
   const downloaded = await downloadSubmissionFiles(submission.id);
   if (!downloaded.ok) return { ok: false, message: downloaded.message };

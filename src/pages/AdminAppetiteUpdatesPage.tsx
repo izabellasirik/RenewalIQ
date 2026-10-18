@@ -90,7 +90,7 @@ function RequestCard({ request, onReviewed }: { request: AppetiteUpdateRequest; 
 
       {request.notes && (
         <div className="mt-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">Broker Notes</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-ink-400)]">Agent Notes</p>
           <p className="mt-0.5 text-sm text-[var(--color-ink-600)]">{request.notes}</p>
         </div>
       )}
@@ -146,7 +146,7 @@ function RequestCard({ request, onReviewed }: { request: AppetiteUpdateRequest; 
                       Verification status — never defaults to Verified. Choose Verified only if you've confirmed this against official carrier documentation.
                     </label>
                     <select value={approveStatus} onChange={(e) => setApproveStatus(e.target.value as typeof approveStatus)} className={inputClass}>
-                      <option value="NEEDS_CONFIRMATION">Needs Confirmation — broker/underwriter said so, not independently confirmed</option>
+                      <option value="NEEDS_CONFIRMATION">Needs Confirmation — agent/underwriter said so, not independently confirmed</option>
                       <option value="PARTIALLY_VERIFIED">Partially Verified — part of this is confirmed</option>
                       <option value="VERIFIED">Verified — confirmed against official carrier documentation</option>
                     </select>
@@ -234,7 +234,7 @@ export function AdminAppetiteUpdatesPage() {
   return (
     <PageContainer
       title="Appetite Update Requests"
-      description="Every broker-submitted appetite correction is stored here — from the 'Request Appetite Update' button on Market Finder and Carrier Appetite — and reviewed by an admin before it goes live."
+      description="Every agent-submitted appetite correction is stored here — from the 'Request Appetite Update' button on Market Finder and Carrier Appetite — and reviewed by an admin before it goes live."
     >
       <AdminAuthGate>
         <RequestQueue />

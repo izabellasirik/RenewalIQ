@@ -18,7 +18,7 @@ export function AdminShell() {
           <BrandLogo size={32} wordmark={false} />
           <div className="min-w-0">
             <p className="text-sm font-semibold leading-tight tracking-tight text-[var(--color-ink-900)]">RenewalIQ — Admin</p>
-            <p className="text-[11px] leading-tight text-[var(--color-ink-400)]">Internal tool — not part of the broker product</p>
+            <p className="text-[11px] leading-tight text-[var(--color-ink-400)]">Internal tool — not part of the agent product</p>
           </div>
           <nav className="ml-auto flex items-center gap-1">
             <NavLink to="/admin" end className={navLinkClass}>

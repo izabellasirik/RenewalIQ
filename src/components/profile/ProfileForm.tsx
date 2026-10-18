@@ -54,7 +54,7 @@ export function ProfileForm({ email, initial, submitLabel, onSaved }: { email: s
         <label className={labelClass} htmlFor="profile-title">
           Job title <span className="font-normal text-[var(--color-ink-400)]">(optional)</span>
         </label>
-        <input id="profile-title" autoComplete="organization-title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputClass} placeholder="e.g. Commercial Lines Broker" />
+        <input id="profile-title" autoComplete="organization-title" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputClass} placeholder="e.g. Commercial Lines Agent" />
       </div>
       {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
       <Button type="submit" disabled={!fullName.trim() || saving}>

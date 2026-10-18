@@ -100,11 +100,11 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
             {!agencyAccess && (
               <>
                 <div>
-                  <label className={labelClass}>Assigned broker</label>
+                  <label className={labelClass}>Assigned agent</label>
                   <input value={brokerName} onChange={(e) => setBrokerName(e.target.value)} className={inputClass} placeholder="Name" />
                 </div>
                 <div>
-                  <label className={labelClass}>Broker email</label>
+                  <label className={labelClass}>Agent email</label>
                   <input value={brokerEmail} onChange={(e) => setBrokerEmail(e.target.value)} className={inputClass} placeholder="Optional" />
                 </div>
               </>
@@ -134,7 +134,7 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
             </div>
             {/* min-w-0: a long email wraps inside the card instead of pushing past it. */}
             <div className="min-w-0">
-              <dt className="text-xs text-[var(--color-ink-500)]">{agencyAccess ? 'Assigned agent' : 'Assigned broker'}</dt>
+              <dt className="text-xs text-[var(--color-ink-500)]">Assigned agent</dt>
               <dd className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <AssignedAgent account={account} variant="plain" />
                 {canAssignSelf && (

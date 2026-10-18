@@ -96,7 +96,7 @@ export function applyOverrideToRecord(record: AppetiteRecord, override: Appetite
   const key = FIELD_KEY_TO_CRITERION[override.fieldKey];
 
   if (!key) {
-    const flagged = `[Broker-submitted update, approved ${override.approvedAt.slice(0, 10)}]: ${String(override.value)}`;
+    const flagged = `[Agent-submitted update, approved ${override.approvedAt.slice(0, 10)}]: ${String(override.value)}`;
     return { ...record, underwritingNotes: record.underwritingNotes ? `${record.underwritingNotes}\n${flagged}` : flagged };
   }
 
