@@ -244,10 +244,10 @@ describe('filtering by date', () => {
 });
 
 describe('switched on only where intended', () => {
-  it('off in production builds unless VITE_FEATURE_POLICIES=true; on in development unless false', () => {
-    expect(policiesFeatureEnabled({ DEV: false })).toBe(false);
-    expect(policiesFeatureEnabled({ DEV: false, VITE_FEATURE_POLICIES: 'yes' })).toBe(false);
+  it('on in every build unless switched off with VITE_FEATURE_POLICIES=false', () => {
+    expect(policiesFeatureEnabled({ DEV: false })).toBe(true);
     expect(policiesFeatureEnabled({ DEV: false, VITE_FEATURE_POLICIES: 'true' })).toBe(true);
+    expect(policiesFeatureEnabled({ DEV: false, VITE_FEATURE_POLICIES: ' FALSE ' })).toBe(false);
     expect(policiesFeatureEnabled({ DEV: true })).toBe(true);
     expect(policiesFeatureEnabled({ DEV: true, VITE_FEATURE_POLICIES: 'false' })).toBe(false);
   });

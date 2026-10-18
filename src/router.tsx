@@ -54,7 +54,7 @@ export const router = createBrowserRouter([
     children: [
       { path: '/', element: <DashboardPage /> },
       { path: '/today', element: <TodaysPlatePage /> },
-      // Every policy bound from Markets & Quotes; switched off unless VITE_FEATURE_POLICIES=true (Carrier 103 Phase 1).
+      // Every policy bound from Markets & Quotes; on unless VITE_FEATURE_POLICIES=false.
       { path: '/policies', element: <PoliciesPage /> },
       // Old link to the accounts list, from when Today's Plate was the home page.
       { path: '/accounts', element: <Navigate to="/" replace /> },

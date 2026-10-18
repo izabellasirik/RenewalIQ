@@ -8,12 +8,9 @@ import { normalizeDateKey, parseDateKey, toLocalDateKey } from './dates';
  * market itself. Operational details only — commission is a later phase and never stored here.
  */
 
-/** Off in production builds unless VITE_FEATURE_POLICIES=true; on in local development unless false. */
+/** On, unless switched off with VITE_FEATURE_POLICIES=false (a kill switch: the data stays, only the screens hide). */
 export function policiesFeatureEnabled(env: { DEV?: boolean; VITE_FEATURE_POLICIES?: string } = import.meta.env): boolean {
-  const flag = String(env.VITE_FEATURE_POLICIES ?? '').trim().toLowerCase();
-  if (flag === 'true') return true;
-  if (flag === 'false') return false;
-  return env.DEV === true;
+  return String(env.VITE_FEATURE_POLICIES ?? '').trim().toLowerCase() !== 'false';
 }
 
 /** "$1,234.56", "1234.5", "(12.00)" → cents; blank → null; anything else → NaN. Never floating-point dollars. */

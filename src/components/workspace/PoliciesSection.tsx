@@ -190,7 +190,7 @@ function PolicyForm({ accountId, quote, editing, onClose }: { accountId: string;
       onClose={onClose}
       size="lg"
       title={editing === 'new' ? `Add policy — ${quote.marketName}` : `Edit policy ${editing.policyNumber ?? ''}`.trim()}
-      subtitle="Policy details only — commission isn’t calculated here yet."
+      subtitle="Policy number, carrier, dates, and premium, taxes and fees."
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
