@@ -293,7 +293,7 @@ function QuoteCard({
   const waitingOn = requestedItems.filter((i) => i.status !== 'waived' && !forwardedAt(i, quote.id)).length;
 
   return (
-    <Card className={cn(highlighted && 'ring-2 ring-[var(--color-brand-500)]')}>
+    <Card id={`market-${quote.id}`} className={cn('scroll-mt-4', highlighted && 'ring-2 ring-[var(--color-brand-500)]')}>
       <MarketDetailsDialog accountId={accountId} quote={quote} requestedItems={requestedItems} open={detailsOpen} onClose={() => setDetailsOpen(false)} />
       <CardBody className="pt-4">
         {/* Clicking the card's header (anywhere but its own buttons and fields) collapses / expands it. */}

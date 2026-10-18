@@ -190,6 +190,13 @@ export interface CloudSubmissionBundle {
  * and written together with the submission, the existing owner-only RLS on `submissions` covers
  * it with no new policies, and it keeps this file's full-snapshot save a single upsert.
  */
+/**
+ * Whether the project has 0054's renewal_status column, as seen on the last load. Until it's known, the
+ * column is only sent when the broker picks "Renewal", so a project without 0054 never refuses an
+ * ordinary save.
+ */
+let projectHasRenewalStatus = false;
+
 const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions', 'account_notes', 'loss_runs', 'business_type', 'renewals', 'renewal_status'] as const;
 
 function isMissingWorkflowColumnError(error: { message: string; code?: string }): boolean {
@@ -263,6 +270,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
     const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes].find((r) => r.error);
     if (errored?.error) return fail(errored.error.message);
 
+    if ((subsRes.data ?? []).some((sub) => 'renewal_status' in sub)) projectHasRenewalStatus = true;
     const bundles: CloudSubmissionBundle[] = (subsRes.data ?? []).map((sub) => {
       const account: Account = {
         id: sub.id,
@@ -442,7 +450,7 @@ export async function saveSubmissionSnapshot(
     // 0054's columns are sent only for an account with renewal setup, so every other account keeps
     // saving normally on a project that hasn't applied 0054 yet (and an emptied list is still sent).
     const hasRenewalSetup = account.businessType !== undefined || account.renewals !== undefined;
-    const renewalStatus = { renewal_status: account.stage === 'renewal' };
+    const renewalStatus = projectHasRenewalStatus || account.stage === 'renewal' ? { renewal_status: account.stage === 'renewal' } : {};
     const renewalsRow = hasRenewalSetup ? { ...lossRunsRow, business_type: account.businessType ?? null, renewals: account.renewals ?? [], ...renewalStatus } : { ...lossRunsRow, ...renewalStatus };
     // A project that hasn't applied the newest migrations still saves everything it can (so the
     // Risk Profile never stops syncing), stepping down one migration at a time — 0009 (follow-ups),
