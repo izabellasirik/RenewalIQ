@@ -5,7 +5,7 @@
 //
 // Plain TypeScript (fetch only, no Deno APIs) so the app's unit tests can exercise it.
 
-export type Operation = 'structured_extraction' | 'transcription';
+export type Operation = 'structured_extraction' | 'transcription' | 'email_extraction';
 export type SourceKind = 'photo' | 'scanned_pdf_page';
 
 export interface ReadContext {
@@ -77,14 +77,15 @@ export async function sha256Hex(text: string): Promise<string> {
 export const PROMPT_VERSIONS: Record<Operation, string> = {
   structured_extraction: 'x2',
   transcription: 't1',
+  email_extraction: 'e1',
 };
 
 /**
  * The cache key: who may reuse it (the brokerage, or the broker without one), the operation and its
  * prompt version, and the image (the original file's hash + page, else the image's own hash).
  */
-export async function cacheKeyFor(scope: string, operation: Operation, ctx: ReadContext, imageBase64: string): Promise<string> {
-  const image = ctx.sourceHash ? `file:${ctx.sourceHash}:${ctx.page ?? 0}` : `img:${await sha256Hex(imageBase64)}`;
+export async function cacheKeyFor(scope: string, operation: Operation, ctx: ReadContext, content: string): Promise<string> {
+  const image = ctx.sourceHash ? `file:${ctx.sourceHash}:${ctx.page ?? 0}` : `img:${await sha256Hex(content)}`;
   return sha256Hex(`${scope}|${operation}|${PROMPT_VERSIONS[operation]}|${image}`);
 }
 

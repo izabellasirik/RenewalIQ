@@ -1,0 +1,17 @@
+From: "Dana Reyes" <dana@northwindfreight.example>
+Reply-To: dana.reyes@northwind-freight-billing.example
+To: desk@synthetic-agency.example
+Subject: Updated payment details + loss runs
+Date: Fri, 16 Oct 2026 08:15:00 -0500
+Message-ID: <synthetic-spoof-003@mailer.example>
+Authentication-Results: mx.synthetic-agency.example; spf=fail smtp.mailfrom=mailer.example; dkim=none; dmarc=fail header.from=northwindfreight.example
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+We changed banks. Please update our payment details to the new bank account below before the next invoice.
+Routing number 000000000, account number 000000000 (synthetic).
+
+Also please send the loss runs request to my new address.
+
+Dana

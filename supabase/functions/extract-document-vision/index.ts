@@ -16,12 +16,14 @@
 //   supabase functions deploy extract-document-vision
 //   supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 //   (optional) supabase secrets set ANTHROPIC_VISION_MODEL=claude-sonnet-5
+//   (optional) supabase secrets set ANTHROPIC_EMAIL_MODEL=...   (the Email Assistant; else the vision model)
 //
 // Every read is kept (ai_read_cache, migration 0046) and reused — the same page is paid for once —
 // and every request is logged with its token counts and cost (ai_usage_events; prices in pricing.ts).
 
 import { handleRead, type ModelCallResult } from './handler.ts';
 import { restStore, sanitizeContext, userIdFromJwt } from './store.ts';
+import { EMAIL_MAX_TOKENS, EMAIL_PROMPT, EMAIL_TOOL, emailModel, emailUserMessage, validateEmailRequest } from './email.ts';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -268,6 +270,36 @@ Call the transcribed_text tool with every line of printed text you can read, in 
 4. Skip signatures, handwriting that is only a scribble, and decorative background patterns.
 5. For each line give its bounding box as [x0, y0, x1, y1] in thousandths of the image width and height (0 = left/top edge, 1000 = right/bottom edge), tight around the line's text.`;
 
+// One Anthropic call that must answer with the given tool. Error bodies (which can carry account or
+// billing detail) are logged here only, never relayed to the browser.
+async function callAnthropic(apiKey: string, payload: Record<string, unknown>, fallbackModel: string): Promise<ModelCallResult> {
+  let anthropicRes: Response;
+  try {
+    anthropicRes = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error('extract-document-vision: network error calling Anthropic', err);
+    return { ok: false, status: 0 };
+  }
+  if (!anthropicRes.ok) {
+    const errText = await anthropicRes.text().catch(() => '');
+    console.error(`extract-document-vision: Anthropic API returned ${anthropicRes.status}`, errText.slice(0, 2000));
+    return { ok: false, status: anthropicRes.status };
+  }
+  const data = await anthropicRes.json();
+  const toolUse = Array.isArray(data?.content) ? data.content.find((block: { type?: string }) => block?.type === 'tool_use') : null;
+  if (!toolUse?.input) console.error('extract-document-vision: no tool_use block in Anthropic response');
+  // The model that actually answered and the token counts Anthropic reports — what it is billed on.
+  return { ok: true, status: anthropicRes.status, output: toolUse?.input, model: typeof data?.model === 'string' ? data.model : fallbackModel, usage: data?.usage ?? null };
+}
+
 function corsHeaders(): HeadersInit {
   return {
     'Access-Control-Allow-Origin': '*',
@@ -296,11 +328,46 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Vision extraction is not configured on this project yet.' }, 503);
   }
 
-  let body: { imageBase64?: string; mimeType?: string; fileName?: string; mode?: string; context?: unknown };
+  let body: { imageBase64?: string; mimeType?: string; fileName?: string; mode?: string; context?: unknown; emailText?: unknown };
   try {
     body = await req.json();
   } catch {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  // Without these (only outside Supabase), reads still work — just uncached and unlogged.
+  const store = supabaseUrl && serviceKey ? restStore(supabaseUrl, serviceKey) : null;
+
+  if (body.mode === 'email') {
+    // Signed-in agents only: a request with just the public anon key never reaches the paid API.
+    const userId = userIdFromJwt(req.headers.get('Authorization'));
+    if (!userId) return jsonResponse({ error: 'Sign in to use the Email Assistant’s AI reading.' }, 401);
+    const checked = validateEmailRequest(body);
+    if (!checked.ok) return jsonResponse({ error: checked.error }, 400);
+    const model = emailModel((n) => Deno.env.get(n), DEFAULT_MODEL);
+    const result = await handleRead(
+      {
+        operation: 'email_extraction',
+        content: checked.text,
+        fileName: null,
+        context: sanitizeContext(body.context),
+        userId,
+      },
+      {
+        store,
+        configuredModel: model,
+        callModel: () =>
+          callAnthropic(
+            apiKey,
+            { model, max_tokens: EMAIL_MAX_TOKENS, system: EMAIL_PROMPT, tools: [EMAIL_TOOL], tool_choice: { type: 'tool', name: EMAIL_TOOL.name }, messages: [{ role: 'user', content: emailUserMessage(checked.text) }] },
+            model
+          ),
+      }
+    );
+    // The model that answered goes back with the answer, so the app records which one read the email.
+    return result.status === 200 && 'fromCache' in result ? jsonResponse({ extraction: result.body, model: result.model, fromCache: result.fromCache }, 200) : jsonResponse(result.body, result.status);
   }
 
   const { imageBase64, mimeType, fileName } = body;
@@ -310,65 +377,38 @@ Deno.serve(async (req: Request) => {
   if (!mimeType || !ALLOWED_MIME_TYPES.has(mimeType)) return jsonResponse({ error: 'Unsupported image type' }, 400);
 
   const model = Deno.env.get('ANTHROPIC_VISION_MODEL') || DEFAULT_MODEL;
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  // Without these (only outside Supabase), reads still work — just uncached and unlogged.
-  const store = supabaseUrl && serviceKey ? restStore(supabaseUrl, serviceKey) : null;
 
-  const callModel = async (): Promise<ModelCallResult> => {
-    let anthropicRes: Response;
-    try {
-      anthropicRes = await fetch(ANTHROPIC_API_URL, {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': ANTHROPIC_VERSION,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: MAX_TOKENS,
-          system: transcribe ? TRANSCRIBE_PROMPT : SYSTEM_PROMPT,
-          tools: [transcribe ? TRANSCRIBE_TOOL : RESPONSE_TOOL],
-          tool_choice: { type: 'tool', name: transcribe ? TRANSCRIBE_TOOL.name : RESPONSE_TOOL.name },
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageBase64 } },
-                {
-                  type: 'text',
-                  text: transcribe
-                    ? 'Transcribe every line of printed text in this image, with its bounding box.'
-                    : `Extract everything you can read from this image${fileName ? ` (uploaded as "${fileName}" — do not use the filename to infer document type, only what's visibly on the image)` : ''}.`,
-                },
-              ],
-            },
-          ],
-        }),
-      });
-    } catch (err) {
-      console.error('extract-document-vision: network error calling Anthropic', err);
-      return { ok: false, status: 0 };
-    }
-    if (!anthropicRes.ok) {
-      // Anthropic error bodies can include account/billing detail — logged server-side only, never
-      // relayed to the browser.
-      const errText = await anthropicRes.text().catch(() => '');
-      console.error(`extract-document-vision: Anthropic API returned ${anthropicRes.status}`, errText.slice(0, 2000));
-      return { ok: false, status: anthropicRes.status };
-    }
-    const data = await anthropicRes.json();
-    const toolUse = Array.isArray(data?.content) ? data.content.find((block: { type?: string }) => block?.type === 'tool_use') : null;
-    if (!toolUse?.input) console.error('extract-document-vision: no tool_use block in Anthropic response');
-    // The token counts Anthropic reports for this call — what it is billed on.
-    return { ok: true, status: anthropicRes.status, output: toolUse?.input, model: typeof data?.model === 'string' ? data.model : model, usage: data?.usage ?? null };
-  };
+  const callModel = (): Promise<ModelCallResult> =>
+    callAnthropic(
+      apiKey,
+      {
+        model,
+        max_tokens: MAX_TOKENS,
+        system: transcribe ? TRANSCRIBE_PROMPT : SYSTEM_PROMPT,
+        tools: [transcribe ? TRANSCRIBE_TOOL : RESPONSE_TOOL],
+        tool_choice: { type: 'tool', name: transcribe ? TRANSCRIBE_TOOL.name : RESPONSE_TOOL.name },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageBase64 } },
+              {
+                type: 'text',
+                text: transcribe
+                  ? 'Transcribe every line of printed text in this image, with its bounding box.'
+                  : `Extract everything you can read from this image${fileName ? ` (uploaded as "${fileName}" — do not use the filename to infer document type, only what's visibly on the image)` : ''}.`,
+              },
+            ],
+          },
+        ],
+      },
+      model
+    );
 
   const result = await handleRead(
     {
       operation: transcribe ? 'transcription' : 'structured_extraction',
-      imageBase64,
+      content: imageBase64,
       fileName: typeof fileName === 'string' ? fileName : null,
       context: sanitizeContext(body.context),
       userId: userIdFromJwt(req.headers.get('Authorization')),

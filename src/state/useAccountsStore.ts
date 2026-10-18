@@ -78,6 +78,7 @@ import { trackEvent, markAccountDemo } from '../services/productAnalytics/trackE
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
+import { fileSha256 } from '../services/ingestion/aiReadContext';
 import { activePolicies, formatCents, policyTotalCents, type PolicyFields } from '../services/workflow/policies';
 import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { isSupabaseConfigured } from '../services/supabase/client';
@@ -261,6 +262,8 @@ interface AccountsState {
   addContact: (accountId: string, contact: Omit<Contact, 'id'>) => string;
   /** The broker opened an RQ draft in Gmail's compose window — recorded as opened, never as sent (RQ can't see what Gmail does). */
   recordEmailDraftOpened: (accountId: string, to: string, subject: string) => void;
+  /** The Email Assistant: an email was reviewed and the agent approved changes (what changed is logged by each action itself). */
+  recordEmailReviewed: (accountId: string, message: string) => void;
   updateContact: (accountId: string, contactId: string, patch: Partial<Omit<Contact, 'id'>>) => void;
   deleteContact: (accountId: string, contactId: string) => void;
   addMissingItems: (accountId: string, seeds: MissingItemSeed[]) => string[];
@@ -804,10 +807,19 @@ export const useAccountsStore = create<AccountsState>()(
         });
       }
 
+      /** The file's SHA-256 on the document (once), so the same file is recognised later. */
+      async function noteContentHash(accountId: string, documentId: string, file: Blob) {
+        if ((get().documents[accountId] ?? []).find((d) => d.id === documentId)?.contentSha256) return;
+        const hash = await fileSha256(file);
+        if (!hash) return;
+        set((st) => ({ documents: { ...st.documents, [accountId]: (st.documents[accountId] ?? []).map((d) => (d.id === documentId ? { ...d, contentSha256: hash } : d)) } }));
+      }
+
       async function syncDocumentToCloud(accountId: string, documentId: string, file: File) {
         const s = get();
         if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
         const userId = s.currentUserId;
+        await noteContentHash(accountId, documentId, file);
         const uploadResult = await cloudRepo.uploadDocumentFile(userId, accountId, documentId, file);
         if (!uploadResult.ok) recordSync(accountId, `Uploading ${file.name} failed: ${uploadResult.message}`);
         if (uploadResult.ok) {
@@ -1174,6 +1186,7 @@ export const useAccountsStore = create<AccountsState>()(
 
         // Keep the originals in this browser for in-app preview (fire-and-forget, never blocks extraction).
         newDocs.forEach((doc, i) => void saveLocalFile(doc.id, files[i], files[i].name));
+        newDocs.forEach((doc, i) => void noteContentHash(accountId, doc.id, files[i]));
         if (newDocs.length) trackEvent('document_uploaded', { accountId, metadata: { count: newDocs.length, source: opts?.fromClientRequest ? 'client_request' : 'broker' } });
 
         newDocs.forEach((doc, i) => {
@@ -1966,6 +1979,11 @@ export const useAccountsStore = create<AccountsState>()(
             `${broker ? `Assigned to ${broker.name}` : 'Removed the assigned agent'}${actorSuffix(s.currentUserEmail, broker?.email)}.`
           ),
         }));
+        syncNow(accountId);
+      },
+
+      recordEmailReviewed: (accountId, message) => {
+        set((s) => (s.accounts.some((a) => a.id === accountId) ? { activityLog: appendEvent(s.activityLog, accountId, 'email_reviewed', message) } : {}));
         syncNow(accountId);
       },
 

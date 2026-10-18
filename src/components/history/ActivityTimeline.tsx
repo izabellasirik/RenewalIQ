@@ -88,6 +88,7 @@ const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   request_cancelled: Ban,
   client_submitted: Inbox,
   email_draft_opened: ExternalLink,
+  email_reviewed: Mail,
   request_sent: Send,
   item_not_applicable: Ban,
   item_verified: ShieldCheck,

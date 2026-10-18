@@ -28,7 +28,7 @@ const OUTPUT = { documentType: 'driver_license', documentTypeConfidence: 'high',
 const ok = (): ModelCallResult => ({ ok: true, status: 200, output: OUTPUT, model: 'claude-sonnet-5', usage: { input_tokens: 1800, output_tokens: 400 } });
 const request = (page = 1) => ({
   operation: 'structured_extraction' as const,
-  imageBase64: 'aW1n',
+  content: 'aW1n',
   fileName: 'loss run.pdf',
   context: { documentId: 'doc_1', accountId: 'acct_1', page, sourceKind: 'scanned_pdf_page' as const, sourceHash: 'b'.repeat(64) },
   userId: '11111111-1111-1111-1111-111111111111',
@@ -154,5 +154,26 @@ describe('AI prices — one place', () => {
     expect(costUsd('claude-opus-5-5', { output_tokens: 1_000_000 })).toBe(25);
     expect(costUsd('claude-sonnet-5', null)).toBe(0);
     expect(priceFor('some-new-model').known).toBe(false);
+  });
+});
+
+describe('AI read: email mode (Email Assistant)', () => {
+  it('reports the model that actually answered, fresh and from the cache, and logs it as an email read', async () => {
+    const { store, usage } = memoryStore();
+    const callModel = vi.fn(async (): Promise<ModelCallResult> => ({ ok: true, status: 200, output: { intent: 'other', documents: [] }, model: 'served-model', usage: { input_tokens: 500, output_tokens: 100 } }));
+    const req = { operation: 'email_extraction' as const, content: 'Email text', fileName: null, context: { accountId: 'acct_1' }, userId: '11111111-1111-1111-1111-111111111111' };
+    const first = await handleRead(req, { store, callModel, configuredModel: 'configured-model' });
+    expect(first).toMatchObject({ status: 200, fromCache: false, model: 'served-model' });
+    const again = await handleRead(req, { store, callModel, configuredModel: 'configured-model' });
+    expect(again).toMatchObject({ status: 200, fromCache: true, model: 'served-model' });
+    expect(callModel).toHaveBeenCalledTimes(1);
+    expect(usage.map((u) => [u.operation, u.model, u.from_cache])).toEqual([
+      ['email_extraction', 'served-model', false],
+      ['email_extraction', 'served-model', true],
+    ]);
+  });
+
+  it('the same text read as an email and as an image are different cache entries', async () => {
+    expect(await cacheKeyFor('org', 'email_extraction', {}, 'x')).not.toBe(await cacheKeyFor('org', 'structured_extraction', {}, 'x'));
   });
 });

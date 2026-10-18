@@ -1,0 +1,24 @@
+From: Dana Reyes <Dana@NorthwindFreight.example>
+To: desk@synthetic-agency.example
+Subject: =?utf-8?Q?Loss_runs_=E2=80=94_Northwind?=
+Date: Thu, 15 Oct 2026 16:40:00 -0500
+Message-ID: <synthetic-client-002@northwindfreight.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mix"
+
+--mix
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+Attached are the loss runs you asked for. The IFTA will follow next week.
+
+Dana
+
+--mix
+Content-Type: application/pdf; name="loss_runs_2021-2026.pdf"
+Content-Disposition: attachment; filename="loss_runs_2021-2026.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJSBzeW50aGV0aWMgdGVzdCBmaWxlCg==
+--mix--

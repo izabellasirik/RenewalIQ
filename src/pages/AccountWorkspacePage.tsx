@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Building2, ClipboardList, Clock, FilePlus2, FileText } from 'lucide-react';
+import { Building2, ClipboardList, Clock, FilePlus2, FileText, Mail } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
 import { Badge, Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
@@ -31,6 +31,10 @@ import { QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { EMPTY_ACTIVITY_EVENTS } from '../utils/emptyArrays';
 import { AssignedAgent } from '../components/workspace/AssignedAgent';
 import { Collaborators } from '../components/workspace/Collaborators';
+import { EMAIL_ASSISTANT_ENABLED } from '../services/emailAssistant/flag';
+
+// Loaded on first open, so the account page doesn't carry the email reader.
+const EmailAssistantDrawer = lazy(() => import('../components/emailAssistant/EmailAssistantDrawer'));
 
 const TABS: WorkspaceTab[] = ['overview', 'checklist', 'quotes', 'notes', 'activity'];
 
@@ -73,6 +77,9 @@ export function AccountWorkspacePage() {
   const deleteDocument = useAccountsStore((s) => s.deleteDocument);
   const [showSystemEvents, setShowSystemEvents] = useState(false);
   const [addingDocs, setAddingDocs] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  // Kept mounted once opened, so closing the drawer doesn't lose a review in progress.
+  const [emailUsed, setEmailUsed] = useState(false);
 
   const waiting = useMemo(() => summarizeWaiting(items, quotes), [items, quotes]);
   const workflowEvents = useMemo(() => activity.filter((e) => WORKFLOW_EVENT_TYPES.has(e.type)), [activity]);
@@ -101,7 +108,21 @@ export function AccountWorkspacePage() {
               <Collaborators account={account} />
             </div>
           </div>
+          {EMAIL_ASSISTANT_ENABLED && !account.archived && (
+            <Button size="sm" variant="secondary" icon={<Mail size={14} />} onClick={() => {
+                setEmailUsed(true);
+                setEmailOpen(true);
+              }}
+            >
+              Email Assistant
+            </Button>
+          )}
         </div>
+        {emailUsed && (
+          <Suspense fallback={null}>
+            <EmailAssistantDrawer open={emailOpen} onClose={() => setEmailOpen(false)} accountId={accountId} />
+          </Suspense>
+        )}
 
       </div>
 

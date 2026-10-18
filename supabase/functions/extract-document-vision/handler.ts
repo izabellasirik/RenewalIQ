@@ -18,7 +18,8 @@ export interface ModelCallResult {
 
 export interface ReadRequest {
   operation: Operation;
-  imageBase64: string;
+  /** What is read — a base64 image, or an email's text — hashed into the cache key. */
+  content: string;
   fileName: string | null;
   context: ReadContext;
   userId: string | null;
@@ -34,7 +35,7 @@ export interface ReadDeps {
   now?: () => number;
 }
 
-export type ReadResponse = { status: 200; body: unknown; fromCache: boolean } | { status: number; body: { error: string } };
+export type ReadResponse = { status: 200; body: unknown; fromCache: boolean; model: string | null } | { status: number; body: { error: string } };
 
 export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<ReadResponse> {
   const { store } = deps;
@@ -66,7 +67,7 @@ export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<Read
   // 1. A stored read, or the right to make the call (one request per page at a time).
   let key: string | null = null;
   if (store && scope) {
-    key = await cacheKeyFor(scope, req.operation, req.context, req.imageBase64);
+    key = await cacheKeyFor(scope, req.operation, req.context, req.content);
     const deadline = now() + (deps.waitBudgetMs ?? 100_000);
     for (;;) {
       const claim = await store.claim(key, scope, req.operation);
@@ -76,7 +77,7 @@ export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<Read
       }
       if (claim.state === 'hit') {
         await store.logUsage(row({ model: claim.model, succeeded: true, from_cache: true }));
-        return { status: 200, body: claim.result, fromCache: true };
+        return { status: 200, body: claim.result, fromCache: true, model: claim.model };
       }
       if (claim.state === 'claimed') break;
       if (now() >= deadline) return { status: 503, body: { error: 'This page is already being read — try again in a moment.' } };
@@ -106,5 +107,5 @@ export async function handleRead(req: ReadRequest, deps: ReadDeps): Promise<Read
   // 3. Kept, so this page is never paid for again.
   if (key && store) await store.complete(key, output, model);
   await store?.logUsage(row({ model, ...tokens, cost_usd: cost, succeeded: true }));
-  return { status: 200, body: output, fromCache: false };
+  return { status: 200, body: output, fromCache: false, model };
 }

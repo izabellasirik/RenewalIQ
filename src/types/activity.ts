@@ -56,7 +56,9 @@ export type ActivityEventType =
   // The broker opened an RQ-drafted email in Gmail's compose window. Not "sent": RQ can't see that.
   | 'email_draft_opened'
   // Renewal tracking (0054): set up, changed, renewed (bound), not renewing, next year's prepared.
-  | 'renewal_updated';
+  | 'renewal_updated'
+  // The Email Assistant: an email reviewed for the account and the changes the agent approved.
+  | 'email_reviewed';
 
 export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<ActivityEventType>([
   'account_created',
@@ -96,6 +98,7 @@ export const WORKFLOW_EVENT_TYPES: ReadonlySet<ActivityEventType> = new Set<Acti
   'client_submitted',
   'email_draft_opened',
   'renewal_updated',
+  'email_reviewed',
 ]);
 
 /**

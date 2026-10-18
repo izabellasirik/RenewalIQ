@@ -357,6 +357,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
           // Needed to fetch the original file for preview — dropping it made every cloud-loaded document unpreviewable.
           storagePath: d.storage_path ?? undefined,
           ...(d.source_url ? { sourceUrl: d.source_url as string } : {}),
+          ...(typeof d.content_sha256 === 'string' && d.content_sha256 ? { contentSha256: d.content_sha256 } : {}),
           ...(Array.isArray(d.review_candidates) && d.review_candidates.length ? { reviewCandidates: d.review_candidates as ReviewCandidate[] } : {}),
           ...(typeof d.rejected_count === 'number' && d.rejected_count > 0 ? { rejectedCount: d.rejected_count } : {}),
           uploadedAt: d.uploaded_at,
@@ -612,7 +613,10 @@ export async function upsertDocumentMetadata(userId: string, accountId: string, 
     const withLink = doc.sourceUrl ? { ...row, source_url: doc.sourceUrl } : row;
     // 0034: what it read but held for review.
     const full = { ...withLink, review_candidates: doc.reviewCandidates ?? null, rejected_count: doc.rejectedCount ?? null };
-    let { error } = await supabase.from('documents').upsert(full);
+    // 0061: the file's fingerprint, for duplicate checks. Sent only when known; without 0061 it's left out.
+    const withHash: Record<string, unknown> = doc.contentSha256 ? { ...full, content_sha256: doc.contentSha256 } : full;
+    let { error } = await supabase.from('documents').upsert(withHash);
+    if (error && doc.contentSha256 && isMissingColumnError(error, ['content_sha256'])) ({ error } = await supabase.from('documents').upsert(full));
     // 0034 not applied yet: save without the review list (it stays on this device).
     if (error && isMissingColumnError(error, ['review_candidates', 'rejected_count'])) ({ error } = await supabase.from('documents').upsert(withLink));
     // 0015 not applied yet: save the document without its link.

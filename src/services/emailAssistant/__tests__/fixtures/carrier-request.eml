@@ -1,0 +1,33 @@
+From: "Morgan Hale" <mhale@granitemutual.example>
+To: "Broker Desk" <desk@synthetic-agency.example>
+Subject: Northwind Freight LLC - USDOT 3141592 - items needed to quote
+Date: Wed, 14 Oct 2026 09:02:00 -0500
+Message-ID: <synthetic-carrier-001@granitemutual.example>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1"
+Authentication-Results: mx.synthetic-agency.example; spf=pass smtp.mailfrom=granitemutual.example; dkim=pass header.d=granitemutual.example; dmarc=pass
+
+--b1
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi,
+
+We have reviewed the submission for Northwind Freight LLC (USDOT 3141592).=
+ Before we can quote we need the following:
+- 5 years currently valued loss runs
+- MVRs for Jordan Pike and Casey Lin
+- IFTA, last 4 quarters
+
+Please send these by Friday, October 23 so we can hold the Nov 1 effective d=
+ate.
+
+Thanks,
+Morgan Hale
+Underwriter, Granite Mutual (synthetic)
+
+--b1
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Hi,</p><p>We have reviewed the submission for Northwind Freight LLC (USDOT 3141592). Before we can quote we need the following:</p><ul><li>5 years currently valued loss runs</li><li>MVRs for Jordan Pike and Casey Lin</li><li>IFTA, last 4 quarters</li></ul><p>Please send these by Friday, October 23.</p></body></html>
+--b1--

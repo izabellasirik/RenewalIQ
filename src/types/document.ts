@@ -93,4 +93,6 @@ export interface UploadedDocument {
   sourceUrl?: string;
   /** What it evidently is (requirement kinds, people named, quarter) — used to check a client's upload against what was requested. */
   signals?: import('../services/requests/documentSignals').DocumentSignals;
+  /** SHA-256 (hex) of the file's bytes — spots the same file uploaded again (e.g. an email attachment already on the account). */
+  contentSha256?: string;
 }
