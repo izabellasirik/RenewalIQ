@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { BarChart3, FileWarning, Search } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -25,7 +25,7 @@ import {
 
 const th = 'border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
 const td = 'border-b border-[var(--color-ink-50)] px-3 py-2 align-top text-sm text-[var(--color-ink-800)]';
-const num = 'text-right tabular-nums';
+const num = 'whitespace-nowrap text-right tabular-nums';
 const DATE_FIELDS = Object.keys(POLICY_DATE_LABELS) as PolicyDateField[];
 const PRESETS = Object.keys(DATE_PRESET_LABELS) as DatePreset[];
 type KindFilter = 'all' | 'policy' | 'endorsement';
@@ -88,15 +88,18 @@ export function PoliciesAnalyticsPage() {
   }, [rows, rates.rates, agencyAccess]);
   const agentName = (id: string | null) => (id ? (members.find((m) => m.userId === id)?.name ?? 'Agent') : null);
 
-  const update = (patch: Record<string, string>) =>
-    setParams((p) => {
-      const n = new URLSearchParams(p);
-      for (const [k, v] of Object.entries(patch)) {
-        if (v) n.set(k, v);
-        else n.delete(k);
-      }
-      return n;
-    }, { replace: true });
+  // Two quick changes (From, then To) can land before the URL re-renders: build on the latest one.
+  const latest = useRef(params);
+  latest.current = params;
+  const update = (patch: Record<string, string>) => {
+    const n = new URLSearchParams(latest.current);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) n.set(k, v);
+      else n.delete(k);
+    }
+    latest.current = n;
+    setParams(n, { replace: true });
+  };
 
   const myRate = me ? rates.rates[me] : undefined;
   return (

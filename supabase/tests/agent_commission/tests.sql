@@ -16,12 +16,16 @@ exception when others then
   return true;
 end $$;
 
--- Fixture (as the SQL editor): a policy on Roman's account, a removed one, and an endorsement with another number.
+-- Fixture (as the SQL editor): a fictional account of Roman's in Adriatic Agency with a policy, a removed
+-- one, and an endorsement with another number.
+insert into submissions (id, user_id, organization_id, named_insured, assigned_user_id)
+select 'acct_ac_multi', p.user_id, p.agency_id, 'Sample Haulers (commission test)', p.user_id
+  from profiles p where p.user_id = '00000000-0000-0000-0000-00000000000a';
 update submissions set market_quotes = '[{"id":"q_ac1","marketName":"Prairie Mutual (sample)","status":"bound","notes":[],"policies":[
   {"id":"p1","carrier":"Prairie Mutual (sample)","policyNumber":"SMP-AL-1001","businessType":"new","boundDate":"2026-10-01","netPremiumCents":1000000,"taxesCents":0,"feesCents":0},
   {"id":"p2","carrier":"Prairie Mutual (sample)","policyNumber":"SMP-OLD-9","businessType":"new","boundDate":"2026-10-01","netPremiumCents":1,"taxesCents":0,"feesCents":0,"removedAt":"2026-10-02T00:00:00Z"},
   {"id":"e1","kind":"endorsement","carrier":"Prairie Mutual (sample)","policyNumber":"SMP-END-7","businessType":"new","boundDate":"2026-10-05","netPremiumCents":-5000,"taxesCents":0,"feesCents":0}]}]'::jsonb
- where id = 'acct_rn_multi';
+ where id = 'acct_ac_multi';
 
 grant usage on schema public to authenticated;
 set local role authenticated;
@@ -56,12 +60,13 @@ select pg_temp.check('A11 … it''s gone, and the history records the clearing',
 
 \echo '== policy numbers: one policy, agency-wide'
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000b');
-select pg_temp.check('D1 Agent B (can''t open Roman''s account) learns the number is taken on another client', public.policy_number_taken('Prairie Mutual (sample)', 'smp al 1001', 'acct_rn_agentb'));
-select pg_temp.check('D2 a different carrier: not taken', not public.policy_number_taken('Other Carrier (sample)', 'SMP-AL-1001', 'acct_rn_agentb'));
-select pg_temp.check('D3 a removed policy doesn''t count', not public.policy_number_taken('Prairie Mutual (sample)', 'SMP-OLD-9', 'acct_rn_agentb'));
-select pg_temp.check('D4 an endorsement''s number doesn''t count as a policy', not public.policy_number_taken('Prairie Mutual (sample)', 'SMP-END-7', 'acct_rn_agentb'));
-select pg_temp.check('D5 the same account is left out (editing its own policy)', not public.policy_number_taken('Prairie Mutual (sample)', 'SMP-AL-1001', 'acct_rn_multi'));
-select pg_temp.check('D6 a blank number is never taken', not public.policy_number_taken('Prairie Mutual (sample)', ' - ', 'acct_rn_agentb'));
+select pg_temp.check('D0 Agent B can''t open Roman''s account', not exists (select 1 from submissions where id = 'acct_ac_multi'));
+select pg_temp.check('D1 Agent B (can''t open Roman''s account) learns the number is taken on another client', public.policy_number_taken('Prairie Mutual (sample)', 'smp al 1001', 'acct_ac_other'));
+select pg_temp.check('D2 a different carrier: not taken', not public.policy_number_taken('Other Carrier (sample)', 'SMP-AL-1001', 'acct_ac_other'));
+select pg_temp.check('D3 a removed policy doesn''t count', not public.policy_number_taken('Prairie Mutual (sample)', 'SMP-OLD-9', 'acct_ac_other'));
+select pg_temp.check('D4 an endorsement''s number doesn''t count as a policy', not public.policy_number_taken('Prairie Mutual (sample)', 'SMP-END-7', 'acct_ac_other'));
+select pg_temp.check('D5 the same account is left out (editing its own policy)', not public.policy_number_taken('Prairie Mutual (sample)', 'SMP-AL-1001', 'acct_ac_multi'));
+select pg_temp.check('D6 a blank number is never taken', not public.policy_number_taken('Prairie Mutual (sample)', ' - ', 'acct_ac_other'));
 select pg_temp.as_user('00000000-0000-0000-0000-000000000012');
 select pg_temp.check('D7 another agency doesn''t see it', not public.policy_number_taken('Prairie Mutual (sample)', 'SMP-AL-1001', 'x'));
 

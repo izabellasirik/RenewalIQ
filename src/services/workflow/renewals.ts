@@ -89,16 +89,20 @@ export function isRenewalDue(r: ResolvedRenewal, today: string): boolean {
 /**
  * The "Renewal" label beside the account's status. Automatic: on for a client that came in as a
  * renewal while its renewal is being worked — from the start-working date until a market is bound for
- * it (an overdue one stays on) — and off once bound. A broker's on / off choice wins.
+ * it (an overdue one stays on) — and off once bound: the renewal marked bound, or a market (for that
+ * renewal, or not tied to one) bound on or after its start-working date, even if the broker hasn't
+ * yet said which renewal it was. Last term's bound markets don't count. A broker's on / off choice wins.
  */
 export function renewalLabelOn(
   account: Pick<Account, 'renewals' | 'businessType' | 'renewalLabel'>,
   effectiveDate: string | null | undefined,
-  quotes: Pick<MarketQuote, 'status'>[],
+  quotes: Pick<MarketQuote, 'status' | 'boundDate' | 'renewalId'>[],
   today: string
 ): { on: boolean; manual: boolean } {
   if (account.renewalLabel !== undefined) return { on: account.renewalLabel, manual: true };
-  const on = account.businessType === 'renewal' && resolveRenewals(account, effectiveDate, quotes).some((r) => isRenewalDue(r, today));
+  const boundSinceStart = (r: ResolvedRenewal) =>
+    quotes.some((q) => q.status === 'bound' && (!q.renewalId || q.renewalId === r.id) && !!q.boundDate && !!r.workStart && q.boundDate >= r.workStart);
+  const on = account.businessType === 'renewal' && resolveRenewals(account, effectiveDate, quotes).some((r) => isRenewalDue(r, today) && !boundSinceStart(r));
   return { on, manual: false };
 }
 

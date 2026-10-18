@@ -19,7 +19,7 @@ import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { AfterBindDialog } from '../renewals/AfterBindDialog';
 import { bindAsksAboutRenewal } from '../renewals/renewalForm';
 import { EntryForm, PoliciesSection } from './PoliciesSection';
-import { activePolicies, policiesFeatureEnabled } from '../../services/workflow/policies';
+import { activeEndorsements, activePolicies, policiesFeatureEnabled } from '../../services/workflow/policies';
 
 
 export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; focusQuoteId?: string }) {
@@ -216,10 +216,11 @@ function QuoteCard({
 }) {
   const storeUpdateQuote = useAccountsStore((s) => s.updateQuote);
   // Marking a market Bound (any of the ways) or Endorsed first asks for the policy / endorsement —
-  // date, amounts, optional proof — and only then sets the status (see EntryForm).
+  // date, amounts, optional proof — and only then sets the status (see EntryForm). A market going
+  // back to Bound / Endorsed that still has its policies / endorsements just gets the status back.
   const [entryFor, setEntryFor] = useState<PolicyEntryKind | null>(null);
   const updateQuote: typeof storeUpdateQuote = (accId, quoteId, patch) => {
-    if (patch.status === 'bound' && quote.status !== 'bound') {
+    if (patch.status === 'bound' && quote.status !== 'bound' && activePolicies(quote).length === 0) {
       const { status: _bound, ...rest } = patch;
       void _bound;
       if (Object.keys(rest).length) storeUpdateQuote(accId, quoteId, rest);
@@ -227,10 +228,14 @@ function QuoteCard({
       return;
     }
     storeUpdateQuote(accId, quoteId, patch);
+    if (patch.status === 'bound' && quote.status !== 'bound') onBound();
   };
   function chooseStatus(choice: MarketStatusChoice) {
     if (choice === 'endorsed') {
-      if (!(quote.status === 'bound' && quote.endorsed)) setEntryFor('endorsement');
+      if (quote.status === 'bound' && quote.endorsed) return;
+      if (activeEndorsements(quote).length === 0) return setEntryFor('endorsement');
+      storeUpdateQuote(accountId, quote.id, { status: 'bound', endorsed: true });
+      if (quote.status !== 'bound') onBound();
       return;
     }
     if (choice === 'bound' && quote.status === 'bound') {

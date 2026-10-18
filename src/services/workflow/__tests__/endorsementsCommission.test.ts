@@ -68,6 +68,13 @@ describe('Renewal label', () => {
     expect(renewalLabelOn({ businessType: 'renewal', renewals: [main()] }, '2026-10-01', [], today).on).toBe(true); // overdue, still not bound
     expect(renewalLabelOn({ businessType: 'renewal', renewals: [main({ status: 'bound', renewalDate: '2026-11-20' })] }, '2027-11-20', [{ status: 'bound' }], today).on).toBe(false);
   });
+  it('automatic: off as soon as a market is bound for it, before the broker says which renewal it was', () => {
+    const acct = { businessType: 'renewal' as const, renewals: [main()] };
+    expect(renewalLabelOn(acct, '2026-11-20', [{ status: 'bound', boundDate: '2026-10-17' }], today).on).toBe(false);
+    expect(renewalLabelOn(acct, '2026-11-20', [{ status: 'bound', boundDate: '2025-11-02' }], today).on).toBe(true); // last term's market
+    expect(renewalLabelOn(acct, '2026-11-20', [{ status: 'bound', boundDate: '2026-10-17', renewalId: 'another' }], today).on).toBe(true); // bound for another renewal
+    expect(renewalLabelOn(acct, '2026-11-20', [{ status: 'quoted', boundDate: '2026-10-17' }], today).on).toBe(true);
+  });
   it('automatic: off for a new venture or an account that doesn’t track renewals', () => {
     expect(renewalLabelOn({ businessType: 'new_venture' }, '2026-11-01', [], today).on).toBe(false);
     expect(renewalLabelOn({}, '2026-11-01', [], today).on).toBe(false);
