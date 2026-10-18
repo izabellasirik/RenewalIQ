@@ -12,11 +12,13 @@ import type { EarlierAttachment } from '../emailAssistant/attachments';
 
 export const MIGRATION_0061_MESSAGE = 'Saving email reviews needs database migration 0061_email_assistant.sql. The review still works; it just isn’t stored.';
 const NOT_CONFIGURED: RepoResult<never> = { ok: false, message: 'Cloud sign-in is not configured in this environment.' };
-const isMissing = (e: { code?: string; message?: string }) => e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST202' || /email_review/i.test(e.message ?? '') && /does not exist|could not find|schema cache/i.test(e.message ?? '');
-const fail = (e: { code?: string; message?: string } | unknown, fallback: string): RepoResult<never> => {
-  const err = e as { code?: string; message?: string };
-  if (err && isMissing(err)) return { ok: false, message: MIGRATION_0061_MESSAGE, missingMigration: true };
-  return { ok: false, message: err?.message ?? fallback };
+// Missing table or function: its error code, its message, or a bare 404 (some gateways send no body).
+const isMissing = (e: { code?: string; message?: string; status?: number }) =>
+  e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST202' || (/email_review/i.test(e.message ?? '') && /does not exist|could not find|schema cache/i.test(e.message ?? '')) || (e.status === 404 && !e.code);
+const fail = (e: { code?: string; message?: string } | unknown, fallback: string, status?: number): RepoResult<never> => {
+  const err = { ...(e as { code?: string; message?: string }), status };
+  if (isMissing(err)) return { ok: false, message: MIGRATION_0061_MESSAGE, missingMigration: true };
+  return { ok: false, message: err.message || fallback };
 };
 
 export type EmailReviewAction = 'approved' | 'applied' | 'failed' | 'imported' | 'dismissed' | 'draft_copied' | 'draft_opened';
@@ -85,7 +87,7 @@ export async function saveEmailReview(submissionId: string, review: EmailReview,
       })
       .select('id')
       .single();
-    if (res.error) return fail(res.error, 'Could not save the email review.');
+    if (res.error) return fail(res.error, 'Could not save the email review.', res.status);
     const id = (res.data as { id: string }).id;
     if (accountReview.attachments.length) {
       const att = await supabase.from('email_review_attachments').insert(
@@ -100,7 +102,7 @@ export async function saveEmailReview(submissionId: string, review: EmailReview,
           status: a.status,
         }))
       );
-      if (att.error) return fail(att.error, 'Could not save the attachments’ fingerprints.');
+      if (att.error) return fail(att.error, 'Could not save the attachments’ fingerprints.', att.status);
     }
     return { ok: true, data: id };
   } catch (err) {
@@ -115,7 +117,7 @@ export async function recordEmailReviewActions(reviewId: string, actions: EmailR
     const res = await supabase.from('email_review_actions').insert(
       actions.map((a) => ({ review_id: reviewId, submission_id: '', action: a.action, suggestion_kind: clip(a.suggestionKind, 40), detail: clip(a.detail, 500), document_ids: (a.documentIds ?? []).slice(0, 25) }))
     );
-    if (res.error) return fail(res.error, 'Could not record the approval.');
+    if (res.error) return fail(res.error, 'Could not record the approval.', res.status);
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err, 'Could not record the approval.');
@@ -126,7 +128,7 @@ export async function setEmailReviewStatus(reviewId: string, status: 'applied' |
   if (!supabase) return NOT_CONFIGURED;
   try {
     const res = await supabase.from('email_reviews').update({ status }).eq('id', reviewId);
-    if (res.error) return fail(res.error, 'Could not update the review.');
+    if (res.error) return fail(res.error, 'Could not update the review.', res.status);
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err, 'Could not update the review.');
@@ -138,7 +140,7 @@ export async function fetchEmailSeen(submissionId: string, fingerprint: string, 
   if (!supabase) return NOT_CONFIGURED;
   try {
     const res = await supabase.rpc('email_review_seen', { p_submission_id: submissionId, p_fingerprint: fingerprint, p_hashes: hashes.slice(0, 100) });
-    if (res.error) return fail(res.error, 'Could not check earlier emails.');
+    if (res.error) return fail(res.error, 'Could not check earlier emails.', res.status);
     const d = (res.data ?? {}) as { reviewed_at?: string | null; attachments?: { sha256: string; name: string; reviewed_at: string }[] };
     return { ok: true, data: { reviewedAt: d.reviewed_at ?? undefined, attachments: (d.attachments ?? []).map((a) => ({ sha256: a.sha256, name: a.name, reviewedAt: a.reviewed_at })) } };
   } catch (err) {
