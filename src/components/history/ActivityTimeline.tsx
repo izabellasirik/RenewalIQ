@@ -33,6 +33,7 @@ import {
   Inbox,
   ExternalLink,
   type LucideIcon,
+  CalendarSync,
 } from 'lucide-react';
 import type { ActivityEvent, ActivityEventType } from '../../types';
 import { formatDate } from '../../utils/dates';
@@ -90,10 +91,12 @@ const EVENT_ICON: Record<ActivityEventType, LucideIcon> = {
   request_sent: Send,
   item_not_applicable: Ban,
   item_verified: ShieldCheck,
+  renewal_updated: CalendarSync,
 };
 
 const EVENT_TONE: Partial<Record<ActivityEventType, string>> = {
   item_received: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
+  renewal_updated: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]',
   quote_received: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
   policy_bound: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]',
   carrier_declined: 'bg-[var(--color-danger-100)] text-[var(--color-danger-600)]',
