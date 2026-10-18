@@ -1,12 +1,25 @@
-import type { Account, CoverageType, MarketQuote, PolicyBusinessType, PolicyRecord } from '../../types';
+import type { Account, CoverageType, MarketQuote, PolicyBusinessType, PolicyEntryKind, PolicyRecord } from '../../types';
 import { COVERAGE_LABELS } from '../../types';
 import { normalizeDateKey, parseDateKey, toLocalDateKey } from './dates';
 
 /**
- * Policies written from bound markets (Carrier 103, Phase 1). They live on the market they were
- * bound with (MarketQuote.policies), so they sync, work offline and are visible exactly like the
- * market itself. Operational details only — commission is a later phase and never stored here.
+ * Policies written from bound markets, and endorsements recorded on endorsed ones. They live on the
+ * market (MarketQuote.policies), so they sync, work offline and are visible exactly like the market
+ * itself. No commission is stored here: the agent's commission is worked out on display from the
+ * agency's rates (see agentCommissionCents), which only the agent and the agency's admins can read.
  */
+
+export function entryKind(p: Pick<PolicyRecord, 'kind'>): PolicyEntryKind {
+  return p.kind === 'endorsement' ? 'endorsement' : 'policy';
+}
+
+/** Net amount × the agent's rate, to the cent (half away from zero, so a return premium mirrors its charge). */
+export function agentCommissionCents(netCents: number, rate: number): number {
+  const micro = Math.round(rate * 1e6);
+  const raw = Math.abs(netCents) * micro;
+  const cents = Math.floor(raw / 1e6) + (raw % 1e6 >= 5e5 ? 1 : 0);
+  return netCents < 0 ? -cents : cents;
+}
 
 /** On, unless switched off with VITE_FEATURE_POLICIES=false (a kill switch: the data stays, only the screens hide). */
 export function policiesFeatureEnabled(env: { DEV?: boolean; VITE_FEATURE_POLICIES?: string } = import.meta.env): boolean {
@@ -55,6 +68,8 @@ export function normalizePolicyNumber(value: string | undefined): string {
 
 /** What the policy form holds — strings, exactly as typed. */
 export interface PolicyInput {
+  kind?: PolicyEntryKind;
+  notes?: string;
   quoteOptionId: string;
   policyNumber: string;
   carrier: string;
@@ -93,13 +108,17 @@ function strictDate(value: string): string | null {
 export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { existing: [] }): PolicyCheck {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const kind: PolicyEntryKind = input.kind === 'endorsement' ? 'endorsement' : 'policy';
+  // An endorsement can lower the premium (a vehicle removed): its amounts may be negative.
+  const signedOk = kind === 'endorsement';
+  const dateLabel = kind === 'endorsement' ? 'endorsed date' : 'bound date';
   const carrier = input.carrier.trim();
   if (!carrier) errors.push('Enter the carrier.');
   if (carrier.length > 200) errors.push('The carrier name is too long.');
 
   const boundDate = input.boundDate.trim() ? strictDate(input.boundDate) : null;
-  if (!input.boundDate.trim()) errors.push('Enter the bound date.');
-  else if (!boundDate) errors.push('The bound date isn’t a valid date.');
+  if (!input.boundDate.trim()) errors.push(`Enter the ${dateLabel}.`);
+  else if (!boundDate) errors.push(`The ${dateLabel} isn’t a valid date.`);
   const effectiveDate = input.effectiveDate.trim() ? strictDate(input.effectiveDate) : null;
   if (input.effectiveDate.trim() && !effectiveDate) errors.push('The effective date isn’t a valid date.');
   const expirationDate = input.expirationDate.trim() ? strictDate(input.expirationDate) : null;
@@ -109,12 +128,12 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
   const net = parseMoneyCents(input.netPremium);
   if (net === null) errors.push('Enter the net premium.');
   else if (Number.isNaN(net)) errors.push('Enter the net premium as an amount, e.g. 12,500.00.');
-  else if (net < 0) errors.push('The net premium can’t be negative.');
+  else if (net < 0 && !signedOk) errors.push('The net premium can’t be negative.');
   const money = (label: string, v: string) => {
     const c = parseMoneyCents(v);
     if (c === null) return 0;
     if (Number.isNaN(c)) errors.push(`Enter ${label} as an amount, e.g. 250.00 (or leave it blank).`);
-    else if (c < 0) errors.push(`${label[0].toUpperCase()}${label.slice(1)} can’t be negative.`);
+    else if (c < 0 && !signedOk) errors.push(`${label[0].toUpperCase()}${label.slice(1)} can’t be negative.`);
     return Number.isNaN(c) ? 0 : c;
   };
   const taxesCents = money('the taxes', input.taxes);
@@ -125,20 +144,25 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
   const coverage = COVERAGES.includes(input.coverage as CoverageType) ? (input.coverage as CoverageType) : undefined;
   if (input.coverage && !coverage) errors.push('Choose a coverage from the list.');
 
-  if (policyNumber) {
+  const notes = (input.notes ?? '').trim();
+  if (notes.length > 2000) errors.push('The notes are too long.');
+
+  if (policyNumber && kind === 'policy') {
+    // The same policy can't be recorded twice: same number and carrier on another client (or this one).
     const key = normalizePolicyNumber(policyNumber);
-    const same = ctx.existing.find((r) => r.policy.id !== ctx.editingId && normalizePolicyNumber(r.policy.policyNumber) === key && r.policy.carrier.trim().toLowerCase() === carrier.toLowerCase());
+    const same = ctx.existing.find((r) => r.policy.id !== ctx.editingId && entryKind(r.policy) === 'policy' && normalizePolicyNumber(r.policy.policyNumber) === key && r.policy.carrier.trim().toLowerCase() === carrier.toLowerCase());
     if (same) errors.push(`Policy ${policyNumber} with ${carrier} is already recorded on ${same.insured}.`);
-  } else {
-    warnings.push('No policy number yet — add it once the carrier issues the policy.');
+  } else if (!policyNumber) {
+    warnings.push(kind === 'endorsement' ? 'No policy number — add the number of the policy this endorses.' : 'No policy number yet — add it once the carrier issues the policy.');
   }
-  if (boundDate && effectiveDate && effectiveDate < boundDate) warnings.push('The effective date is before the bound date.');
+  if (kind === 'policy' && boundDate && effectiveDate && effectiveDate < boundDate) warnings.push('The effective date is before the bound date.');
 
   if (errors.length) return { ok: false, errors, warnings };
   return {
     ok: true,
     warnings,
     fields: {
+      ...(kind === 'endorsement' ? { kind } : {}),
       ...(input.quoteOptionId ? { quoteOptionId: input.quoteOptionId } : {}),
       ...(policyNumber ? { policyNumber } : {}),
       carrier,
@@ -150,13 +174,18 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
       netPremiumCents: net as number,
       taxesCents,
       feesCents,
+      ...(notes ? { notes } : {}),
     },
   };
 }
 
-/** The policies still in force on a market (removed ones stay in the data, hidden). */
+/** The policies still in force on a market (removed ones stay in the data, hidden). Endorsements: see activeEndorsements. */
 export function activePolicies(q: Pick<MarketQuote, 'policies'>): PolicyRecord[] {
-  return (q.policies ?? []).filter((p) => !p.removedAt);
+  return (q.policies ?? []).filter((p) => !p.removedAt && entryKind(p) === 'policy');
+}
+
+export function activeEndorsements(q: Pick<MarketQuote, 'policies'>): PolicyRecord[] {
+  return (q.policies ?? []).filter((p) => !p.removedAt && entryKind(p) === 'endorsement');
 }
 
 /** Keeps only well-formed policies when a market is read back (bad entries are skipped, never invented). */
@@ -167,6 +196,7 @@ export function normalizePolicies(value: unknown): PolicyRecord[] | undefined {
     .filter((p): p is Partial<PolicyRecord> & { id: string; carrier: string; boundDate: string } => !!p && typeof p === 'object' && typeof (p as PolicyRecord).id === 'string' && typeof (p as PolicyRecord).carrier === 'string' && typeof (p as PolicyRecord).boundDate === 'string')
     .map((p) => ({
       ...p,
+      ...(p.kind === 'endorsement' ? { kind: 'endorsement' as const } : { kind: undefined }),
       businessType: p.businessType === 'renewal' ? 'renewal' : 'new',
       netPremiumCents: int(p.netPremiumCents),
       taxesCents: int(p.taxesCents),
@@ -185,21 +215,23 @@ export interface PolicyRow {
   marketName: string;
   /** False when the market was later moved off "Bound" — the policy is kept, and flagged. */
   marketBound: boolean;
+  /** The account's assigned agent (whose commission rate applies), if any. */
+  assignedUserId: string | null;
 }
 
-export function policyRows(accounts: Pick<Account, 'id' | 'namedInsured' | 'archived'>[], quotes: Record<string, MarketQuote[] | undefined>, { includeArchived = false } = {}): PolicyRow[] {
+export function policyRows(accounts: Pick<Account, 'id' | 'namedInsured' | 'archived' | 'assignedUserId'>[], quotes: Record<string, MarketQuote[] | undefined>, { includeArchived = false } = {}): PolicyRow[] {
   const rows: PolicyRow[] = [];
   for (const a of accounts) {
     if (a.archived && !includeArchived) continue;
     for (const q of quotes[a.id] ?? []) {
-      for (const policy of q.policies ?? []) if (!policy.removedAt) rows.push({ policy, accountId: a.id, insured: a.namedInsured, quoteId: q.id, marketName: q.marketName, marketBound: q.status === 'bound' });
+      for (const policy of q.policies ?? []) if (!policy.removedAt) rows.push({ policy, accountId: a.id, insured: a.namedInsured, quoteId: q.id, marketName: q.marketName, marketBound: q.status === 'bound' && (entryKind(policy) === 'policy' || !!q.endorsed), assignedUserId: a.assignedUserId ?? null });
     }
   }
   return rows;
 }
 
 export type PolicyDateField = 'boundDate' | 'effectiveDate' | 'expirationDate';
-export const POLICY_DATE_LABELS: Record<PolicyDateField, string> = { boundDate: 'Bound', effectiveDate: 'Effective', expirationDate: 'Expires' };
+export const POLICY_DATE_LABELS: Record<PolicyDateField, string> = { boundDate: 'Bound / endorsed', effectiveDate: 'Effective', expirationDate: 'Expires' };
 
 export interface PolicyFilter {
   dateField: PolicyDateField;
@@ -220,7 +252,7 @@ export function filterPolicies(rows: PolicyRow[], f: PolicyFilter): PolicyRow[] 
       if (f.from && d! < f.from) return false;
       if (f.to && d! > f.to) return false;
       if (!q) return true;
-      return [r.insured, r.policy.policyNumber, r.policy.carrier, r.marketName, r.policy.coverage ? COVERAGE_LABELS[r.policy.coverage] : ''].some((s) => (s ?? '').toLowerCase().includes(q));
+      return [r.insured, r.policy.policyNumber, r.policy.carrier, r.marketName, r.policy.coverage ? COVERAGE_LABELS[r.policy.coverage] : '', r.policy.notes].some((s) => (s ?? '').toLowerCase().includes(q));
     })
     .sort((a, b) => (b.policy[f.dateField] ?? '').localeCompare(a.policy[f.dateField] ?? '') || a.insured.localeCompare(b.insured));
 }

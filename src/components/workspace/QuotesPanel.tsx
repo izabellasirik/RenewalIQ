@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { BadgeDollarSign, Building2, ChevronDown, ChevronRight, FileQuestion, Pencil, Plus, Send, ShieldCheck, StickyNote, Trash2, XCircle } from 'lucide-react';
 import type { MarketQuote, MissingItem, MissingItemType, QuoteNote, QuoteStatus } from '../../types';
-import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, QUOTE_STATUS_ORDER } from '../../types';
+import { AWAITING_CARRIER_STATUSES, MARKET_STATUS_CHOICES, QUOTE_STATUS_LABELS, QUOTE_STATUS_ORDER, marketStatusChoice, marketStatusLabel, type MarketStatusChoice, type PolicyEntryKind } from '../../types';
 import { Badge, Button, Card, CardBody, EmptyState, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
@@ -18,7 +18,7 @@ import { MarketDetailsDialog } from './MarketDetailsDialog';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { AfterBindDialog } from '../renewals/AfterBindDialog';
 import { bindAsksAboutRenewal } from '../renewals/renewalForm';
-import { PoliciesSection } from './PoliciesSection';
+import { EntryForm, PoliciesSection } from './PoliciesSection';
 import { activePolicies, policiesFeatureEnabled } from '../../services/workflow/policies';
 
 
@@ -147,7 +147,8 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
             <div>
               <label className={labelClass}>Status</label>
               <select value={status} onChange={(e) => setStatus(e.target.value as QuoteStatus)} className={inputClass} aria-label="Market status">
-                {QUOTE_STATUS_ORDER.map((st) => (
+                {/* Bound is set on the market once added: marking it Bound asks for the policy (date, amounts, proof). */}
+                {QUOTE_STATUS_ORDER.filter((st) => st !== 'bound').map((st) => (
                   <option key={st} value={st}>
                     {QUOTE_STATUS_LABELS[st]}
                   </option>
@@ -214,11 +215,35 @@ function QuoteCard({
   renewalNote?: { text: string; canLink: boolean };
 }) {
   const storeUpdateQuote = useAccountsStore((s) => s.updateQuote);
+  // Marking a market Bound (any of the ways) or Endorsed first asks for the policy / endorsement —
+  // date, amounts, optional proof — and only then sets the status (see EntryForm).
+  const [entryFor, setEntryFor] = useState<PolicyEntryKind | null>(null);
   const updateQuote: typeof storeUpdateQuote = (accId, quoteId, patch) => {
-    const binding = patch.status === 'bound' && quote.status !== 'bound';
+    if (patch.status === 'bound' && quote.status !== 'bound') {
+      const { status: _bound, ...rest } = patch;
+      void _bound;
+      if (Object.keys(rest).length) storeUpdateQuote(accId, quoteId, rest);
+      setEntryFor('policy');
+      return;
+    }
     storeUpdateQuote(accId, quoteId, patch);
-    if (binding) onBound();
   };
+  function chooseStatus(choice: MarketStatusChoice) {
+    if (choice === 'endorsed') {
+      if (!(quote.status === 'bound' && quote.endorsed)) setEntryFor('endorsement');
+      return;
+    }
+    if (choice === 'bound' && quote.status === 'bound') {
+      if (quote.endorsed) storeUpdateQuote(accountId, quote.id, { endorsed: false });
+      return;
+    }
+    updateQuote(accountId, quote.id, { status: choice });
+  }
+  function entrySaved(kind: PolicyEntryKind, date: string) {
+    const wasBound = quote.status === 'bound';
+    storeUpdateQuote(accountId, quote.id, { status: 'bound', ...(wasBound ? {} : { boundDate: date }), ...(kind === 'endorsement' ? { endorsed: true } : {}) });
+    if (!wasBound) onBound();
+  }
   const deleteQuote = useAccountsStore((s) => s.deleteQuote);
   const addQuoteNote = useAccountsStore((s) => s.addQuoteNote);
   const recordCarrierRequest = useAccountsStore((s) => s.recordCarrierRequest);
@@ -323,7 +348,7 @@ function QuoteCard({
                   {quote.marketName}
                 </button>
               </h3>
-              <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{QUOTE_STATUS_LABELS[quote.status]}</Badge>
+              <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{marketStatusLabel(marketStatusChoice(quote))}</Badge>
               {quote.premium && (quote.status === 'quoted' || quote.status === 'bound') && (
                 <span className="text-sm font-semibold text-[var(--color-success-600)]">${quote.premium.toLocaleString('en-US')}</span>
               )}
@@ -357,14 +382,14 @@ function QuoteCard({
           </div>
           <div className="flex items-center gap-1">
             <select
-              value={quote.status}
-              onChange={(e) => updateQuote(accountId, quote.id, { status: e.target.value as QuoteStatus })}
+              value={marketStatusChoice(quote)}
+              onChange={(e) => chooseStatus(e.target.value as MarketStatusChoice)}
               className={smallInputClass}
               aria-label={`Status for ${quote.marketName}`}
             >
-              {QUOTE_STATUS_ORDER.map((s) => (
+              {MARKET_STATUS_CHOICES.map((s) => (
                 <option key={s} value={s}>
-                  {QUOTE_STATUS_LABELS[s]}
+                  {marketStatusLabel(s)}
                 </option>
               ))}
             </select>
@@ -627,6 +652,17 @@ function QuoteCard({
           )}
         </div>
           </>
+        )}
+        {entryFor && (
+          <EntryForm
+            accountId={accountId}
+            quote={quote}
+            kind={entryFor}
+            editing="new"
+            title={entryFor === 'policy' ? `Mark ${quote.marketName} Bound` : `Mark ${quote.marketName} Endorsed`}
+            onSaved={({ date }) => entrySaved(entryFor, date)}
+            onClose={() => setEntryFor(null)}
+          />
         )}
       </CardBody>
     </Card>

@@ -308,11 +308,14 @@ interface AccountsState {
   /** A received carrier-requested item was passed on to one carrier that asked for it. `quoteId` may be omitted when exactly one carrier is still waiting on it. */
   markItemSentToCarrier: (accountId: string, itemId: string, quoteId?: string) => void;
   addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
-  updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason' | 'boundDate'>>) => void;
+  updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason' | 'boundDate' | 'endorsed'>>) => void;
   /** A policy written from a bound market (commission is worked out on display, never stored here). Returns its id, or '' if the market is gone. */
   addPolicy: (accountId: string, quoteId: string, fields: PolicyFields) => string;
   updatePolicy: (accountId: string, quoteId: string, policyId: string, fields: PolicyFields) => void;
   removePolicy: (accountId: string, quoteId: string, policyId: string) => void;
+  /** Proof for a policy or endorsement (binder, policy, endorsement page): kept like a quote file. */
+  attachPolicyFile: (accountId: string, quoteId: string, policyId: string, file: File) => void;
+  removePolicyAttachment: (accountId: string, quoteId: string, policyId: string, attachmentId: string) => void;
   addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
   /** Edit a dated market note: the original date stays; who edited it and when are recorded. */
   updateQuoteNote: (accountId: string, quoteId: string, noteId: string, text: string) => void;
@@ -755,6 +758,25 @@ export const useAccountsStore = create<AccountsState>()(
                       ? { ...o, attachments: o.attachments.map((a) => (a.id === attachmentId ? { ...a, storagePath: res.data } : a)) }
                       : o
               ),
+            })),
+          },
+        }));
+        syncNow(accountId);
+      }
+
+      /** Keeps a policy's proof file: always in this browser, and in the cloud bucket for cloud accounts (path recorded on the attachment). */
+      async function storePolicyFile(accountId: string, quoteId: string, policyId: string, attachmentId: string, file: File) {
+        await saveLocalFile(attachmentId, file, file.name);
+        const s = get();
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return;
+        const res = await cloudRepo.uploadDocumentFile(s.currentUserId, accountId, attachmentId, file);
+        if (!res.ok) return recordSync(accountId, `Uploading ${file.name} failed: ${res.message}`);
+        set((st) => ({
+          quotes: {
+            ...st.quotes,
+            [accountId]: updateInList(st.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              policies: (q.policies ?? []).map((p) => (p.id !== policyId ? p : { ...p, attachments: (p.attachments ?? []).map((a) => (a.id === attachmentId ? { ...a, storagePath: res.data } : a)) })),
             })),
           },
         }));
@@ -2374,8 +2396,11 @@ export const useAccountsStore = create<AccountsState>()(
         }
         if (patch.premium !== undefined && (patch.premium === null || Number.isNaN(patch.premium))) next.premium = undefined;
         // Marked Bound: bound today unless a date is given (the broker can change it on the card).
-        if (statusChanged && next.status === 'bound' && patch.boundDate === undefined) next.boundDate = todayKey();
+        if (statusChanged && next.status === 'bound' && patch.boundDate === undefined && !next.boundDate) next.boundDate = todayKey();
         if (patch.boundDate !== undefined && !patch.boundDate) delete next.boundDate;
+        // "Endorsed" is a bound market with endorsements: it goes when the market is no longer bound.
+        if (next.status !== 'bound' || patch.endorsed === false) delete next.endorsed;
+        const endorsedChanged = !!next.endorsed !== !!before.endorsed;
 
         const events: [ActivityEventType, string][] = [];
         if (statusChanged) {
@@ -2401,6 +2426,9 @@ export const useAccountsStore = create<AccountsState>()(
           if (patch.submittedAt !== undefined && patch.submittedAt !== before.submittedAt && next.submittedAt) events.push(['submission_sent', `Recorded submission to ${name} as sent ${formatShortDate(next.submittedAt)}.`]);
           if (patch.marketName !== undefined && patch.marketName !== before.marketName) events.push(['quote_status_changed', `Renamed market ${before.marketName} to ${name}.`]);
           if (patch.boundDate !== undefined && next.boundDate !== before.boundDate) events.push(['quote_status_changed', next.boundDate ? `${name}: bound date set to ${formatShortDate(next.boundDate)}.` : `${name}: bound date cleared.`]);
+        }
+        if (endorsedChanged) {
+          events.push(['quote_status_changed', next.endorsed ? `${name}: Bound → Endorsed.` : `${name}: Endorsed → ${QUOTE_STATUS_LABELS[next.status]}.`]);
         }
         if (next.followUpDate !== before.followUpDate && next.status !== 'declined' && next.status !== 'bound') {
           events.push(['follow_up_scheduled', next.followUpDate ? `Carrier follow-up with ${name} set for ${formatShortDate(next.followUpDate)}.` : `Cleared the follow-up date for ${name}.`]);
@@ -2441,7 +2469,7 @@ export const useAccountsStore = create<AccountsState>()(
             s.activityLog,
             accountId,
             'policy_bound',
-            `Policy ${policy.policyNumber ?? '(number to come)'} recorded with ${policy.carrier}${quote.marketName !== policy.carrier ? ` via ${quote.marketName}` : ''}: bound ${formatShortDate(policy.boundDate)}, total ${formatCents(policyTotalCents(policy))}${actorSuffix(s.currentUserEmail)}.`
+            `${policy.kind === 'endorsement' ? 'Endorsement to policy' : 'Policy'} ${policy.policyNumber ?? '(number to come)'} recorded with ${policy.carrier}${quote.marketName !== policy.carrier ? ` via ${quote.marketName}` : ''}: ${policy.kind === 'endorsement' ? 'endorsed' : 'bound'} ${formatShortDate(policy.boundDate)}, total ${formatCents(policyTotalCents(policy))}${actorSuffix(s.currentUserEmail)}.`
           ),
         }));
         syncNow(accountId);
@@ -2453,7 +2481,7 @@ export const useAccountsStore = create<AccountsState>()(
         const before = quote?.policies?.find((p) => p.id === policyId);
         if (!quote || !before || before.removedAt) return;
         // Every field the form sets is replaced; the record's identity and history stay.
-        const next: PolicyRecord = { id: before.id, createdAt: before.createdAt, createdByName: before.createdByName, ...fields, updatedAt: new Date().toISOString() };
+        const next: PolicyRecord = { id: before.id, createdAt: before.createdAt, createdByName: before.createdByName, ...fields, ...(before.attachments ? { attachments: before.attachments } : {}), updatedAt: new Date().toISOString() };
         const strip = (p: PolicyRecord) => JSON.stringify(Object.entries({ ...p, updatedAt: '' }).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)));
         if (strip(next) === strip(before)) return;
         const changes: string[] = [];
@@ -2491,6 +2519,50 @@ export const useAccountsStore = create<AccountsState>()(
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Removed policy ${policy.policyNumber ?? `with ${policy.carrier}`} (bound ${formatShortDate(policy.boundDate)})${actorSuffix(s.currentUserEmail)}.`),
         }));
+        syncNow(accountId);
+      },
+
+      attachPolicyFile: (accountId, quoteId, policyId, file) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const policy = quote?.policies?.find((p) => p.id === policyId);
+        if (!quote || !policy || policy.removedAt) return;
+        const now = new Date().toISOString();
+        const attachment = { id: generateId('pfile'), name: file.name, sizeBytes: file.size, fileType: inferQuoteFileType(file.name) };
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              policies: (q.policies ?? []).map((p) => (p.id === policyId ? { ...p, attachments: [...(p.attachments ?? []), attachment], updatedAt: now } : p)),
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Attached ${file.name} as proof for ${policy.kind === 'endorsement' ? 'the endorsement to ' : ''}policy ${policy.policyNumber ?? `with ${policy.carrier}`}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        storePolicyFile(accountId, quoteId, policyId, attachment.id, file);
+        syncNow(accountId);
+      },
+
+      removePolicyAttachment: (accountId, quoteId, policyId, attachmentId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const policy = quote?.policies?.find((p) => p.id === policyId);
+        const target = policy?.attachments?.find((a) => a.id === attachmentId);
+        if (!quote || !policy || !target) return;
+        const now = new Date().toISOString();
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({
+              ...q,
+              policies: (q.policies ?? []).map((p) => (p.id === policyId ? { ...p, attachments: (p.attachments ?? []).filter((a) => a.id !== attachmentId), updatedAt: now } : p)),
+              updatedAt: now,
+            })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Removed ${target.name} from policy ${policy.policyNumber ?? `with ${policy.carrier}`}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        removeQuoteFile(target);
         syncNow(accountId);
       },
 

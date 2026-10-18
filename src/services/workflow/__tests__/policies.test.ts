@@ -102,7 +102,7 @@ describe('checking a policy', () => {
     expect(r.ok && r.fields.policyNumber).toBeUndefined();
   });
   it('refuses the same policy number with the same carrier on another account (case, spaces and dashes ignored)', () => {
-    const existing = [{ policy: { id: 'p1', carrier: 'Prairie Mutual (sample)', policyNumber: 'smp-al 1001' } as PolicyRecord, accountId: 'a1', insured: 'Lone Pine Freight LLC', quoteId: 'q1', marketName: 'M', marketBound: true }];
+    const existing = [{ policy: { id: 'p1', carrier: 'Prairie Mutual (sample)', policyNumber: 'smp-al 1001' } as PolicyRecord, accountId: 'a1', insured: 'Lone Pine Freight LLC', quoteId: 'q1', marketName: 'M', marketBound: true, assignedUserId: null }];
     const r = checkPolicy(input(), { existing });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors).toEqual(['Policy SMP-AL-1001 with Prairie Mutual (sample) is already recorded on Lone Pine Freight LLC.']);
@@ -209,6 +209,7 @@ describe('filtering by date', () => {
     quoteId: 'q',
     marketName: 'M',
     marketBound: true,
+    assignedUserId: null,
   });
   const rows = [row('1', 'Alpha', '2026-09-30', '2026-10-01', '2027-10-01'), row('2', 'Bravo', '2026-10-01', '2026-10-15', '2027-10-15'), row('3', 'Charlie', '2026-10-31'), row('4', 'Delta', '2026-11-01', '2026-11-01', '2027-11-01')];
 

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { MarketQuote, MissingItem } from '../../types';
-import { MISSING_ITEM_STATUS_LABELS, QUOTE_STATUS_LABELS } from '../../types';
+import { MISSING_ITEM_STATUS_LABELS, marketStatusChoice, marketStatusLabel } from '../../types';
 import { Badge, Button, Modal } from '../ui';
 import { MarketDetailDrawer } from '../appetite/MarketDetailDrawer';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -40,7 +40,7 @@ export function MarketDetailsDialog({
   const notes = [...quote.notes].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
   const facts: [string, string | null | undefined][] = [
-    ['Status', QUOTE_STATUS_LABELS[quote.status]],
+    ['Status', marketStatusLabel(marketStatusChoice(quote))],
     ['Sent', quote.submittedAt ? formatShortDate(quote.submittedAt) : 'Not submitted yet'],
     ['Follow up', quote.followUpDate ? formatShortDate(quote.followUpDate) : null],
     ['Premium', quote.premium ? `$${quote.premium.toLocaleString('en-US')}` : null],

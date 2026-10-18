@@ -21,6 +21,9 @@ import {
   type TeamMember,
   type TeamRole,
 } from '../services/supabase/teamRepo';
+import { setAgentCommissionRate } from '../services/supabase/commissionRepo';
+import { useAgentCommissionRates } from '../hooks/useAgentCommission';
+import { formatRate } from '../components/workspace/PoliciesSection';
 
 const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
 
@@ -29,6 +32,8 @@ const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
  * accounts each has) and invitations. Invite someone by work email + role; they get a link to join
  * this agency with that role (emailed when the app's email is set up). An admin can change a
  * member's role or remove them — their accounts are handed to someone else first, never orphaned.
+ * The admin also sets each member's agent commission % (net amount × % on the policies and
+ * endorsements of the accounts assigned to them); an agent sees only their own.
  * Everything here is enforced by the database, not this page.
  */
 export function TeamPage() {
@@ -82,6 +87,7 @@ export function TeamPage() {
   if (!access || access.role !== 'admin') {
     return (
       <PageContainer title="Team">
+        {access && currentUserId && <MyCommission userId={currentUserId} />}
         <EmptyState icon={<Users size={26} strokeWidth={1.5} />} title="Only agency admins can see the team" description="Ask your agency admin if you need someone added." />
       </PageContainer>
     );
@@ -132,6 +138,7 @@ export function TeamPage() {
                       <option value="admin">Admin</option>
                     </select>
                   )}
+                  <CommissionRateInput member={m} />
                   <p className="w-32 text-right text-sm text-[var(--color-ink-600)]">
                     <span className="font-semibold text-[var(--color-ink-900)]">{assignedCount.get(m.userId) ?? 0}</span> account{(assignedCount.get(m.userId) ?? 0) === 1 ? '' : 's'}
                   </p>
@@ -202,6 +209,69 @@ export function TeamPage() {
         />
       )}
     </PageContainer>
+  );
+}
+
+/** "Agent commission %" for one member — admins only (the database refuses anyone else). Saved on Enter or leaving the box; blank clears it. */
+function CommissionRateInput({ member }: { member: TeamMember }) {
+  const rates = useAgentCommissionRates();
+  const saved = rates.rates[member.userId];
+  const shown = saved === undefined ? '' : String(Math.round(saved * 1e6) / 1e4);
+  const [value, setValue] = useState<string | null>(null);
+  const [state, setState] = useState<{ busy?: boolean; error?: string; ok?: boolean }>({});
+  const who = member.name ?? member.email ?? 'team member';
+  if (rates.status === 'unavailable') return <p className="w-40 text-xs text-[var(--color-ink-400)]" title={rates.message}>Commission %: not available</p>;
+
+  async function save() {
+    if (value === null || value.trim() === shown) return setValue(null);
+    const raw = value.trim().replace('%', '');
+    const pct = raw === '' ? null : Number(raw);
+    if (pct !== null && (!Number.isFinite(pct) || pct < 0 || pct > 100)) return setState({ error: 'Enter 0–100' });
+    setState({ busy: true });
+    const res = await setAgentCommissionRate(member.userId, pct === null ? null : Math.round(pct * 1e4) / 1e6);
+    if (!res.ok) return setState({ error: res.message });
+    await rates.reload();
+    setValue(null);
+    setState({ ok: true });
+  }
+
+  return (
+    <label className="flex w-40 flex-col text-xs text-[var(--color-ink-500)]">
+      Agent commission %
+      <span className="mt-0.5 flex items-center gap-1">
+        <input
+          inputMode="decimal"
+          value={value ?? shown}
+          placeholder="Not set"
+          disabled={state.busy}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setState({});
+          }}
+          onBlur={save}
+          onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+          className="w-20 rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-sm text-[var(--color-ink-900)] disabled:opacity-60"
+          aria-label={`Agent commission % for ${who}`}
+        />
+        {state.ok && <Check size={14} className="text-[var(--color-success-600)]" aria-label="Saved" />}
+      </span>
+      {state.error && <span className="mt-0.5 text-[var(--color-danger-600)]">{state.error}</span>}
+    </label>
+  );
+}
+
+/** An agent's own commission %, read-only (set by the agency's admin). */
+function MyCommission({ userId }: { userId: string }) {
+  const rates = useAgentCommissionRates();
+  if (rates.status !== 'ready') return null;
+  const rate = rates.rates[userId];
+  return (
+    <Card>
+      <CardBody className="pt-4 text-sm text-[var(--color-ink-700)]" data-testid="my-commission">
+        Your agent commission: <strong className="text-[var(--color-ink-900)]">{rate === undefined ? 'not set yet' : formatRate(rate)}</strong>
+        <span className="text-[var(--color-ink-500)]"> of the net amount on the policies and endorsements of accounts assigned to you. Set by your agency admin.</span>
+      </CardBody>
+    </Card>
   );
 }
 

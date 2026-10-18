@@ -13,7 +13,6 @@ import { RiskProfilePage } from './pages/RiskProfilePage';
 import { LimitsCoveragePage } from './pages/LimitsCoveragePage';
 import { SubmissionAssistantPage } from './pages/SubmissionAssistantPage';
 import { CarrierAppetitePage } from './pages/CarrierAppetitePage';
-import { AnalyticsComingSoonPage } from './pages/AnalyticsComingSoonPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminAppetiteUpdatesPage } from './pages/AdminAppetiteUpdatesPage';
 import { AdminFeedbackPage } from './pages/AdminFeedbackPage';
@@ -27,7 +26,7 @@ import { TeamPage } from './pages/TeamPage';
 import { CarriersPage } from './pages/CarriersPage';
 import { MarketDirectoryPage } from './pages/MarketDirectoryPage';
 import { FounderAnalyticsPage } from './pages/FounderAnalyticsPage';
-import { PoliciesPage } from './pages/PoliciesPage';
+import { PoliciesAnalyticsPage } from './pages/PoliciesAnalyticsPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -55,12 +54,12 @@ export const router = createBrowserRouter([
       { path: '/', element: <DashboardPage /> },
       { path: '/today', element: <TodaysPlatePage /> },
       // Every policy bound from Markets & Quotes; on unless VITE_FEATURE_POLICIES=false.
-      { path: '/policies', element: <PoliciesPage /> },
+      { path: '/policies', element: <Navigate to="/analytics" replace /> },
       // Old link to the accounts list, from when Today's Plate was the home page.
       { path: '/accounts', element: <Navigate to="/" replace /> },
       { path: '/market-finder', element: <MarketFinderPage /> },
-      // V1: the dashboard (AnalyticsPage) is kept but not shown — Coming Soon instead.
-      { path: '/analytics', element: <AnalyticsComingSoonPage /> },
+      // Analytics: policies, endorsements and agent commission. (The earlier dashboard, AnalyticsPage, is kept but not shown.)
+      { path: '/analytics', element: <PoliciesAnalyticsPage /> },
       // Founder only — the page asks the database (is_founder) and the data RPC refuses everyone else.
       { path: '/founder-analytics', element: <FounderAnalyticsPage /> },
       { path: '/intake-links', element: <IntakeLinksPage /> },

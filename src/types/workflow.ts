@@ -131,6 +131,16 @@ export const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
 
 export const QUOTE_STATUS_ORDER: QuoteStatus[] = ['preparing', 'submitted', 'waiting_on_carrier', 'additional_info_requested', 'quoted', 'declined', 'bound'];
 
+/** What the status menus offer and show: the stored statuses plus "Endorsed" (status bound + endorsed). */
+export type MarketStatusChoice = QuoteStatus | 'endorsed';
+export const MARKET_STATUS_CHOICES: MarketStatusChoice[] = [...QUOTE_STATUS_ORDER, 'endorsed'];
+export function marketStatusChoice(q: Pick<MarketQuote, 'status' | 'endorsed'>): MarketStatusChoice {
+  return q.status === 'bound' && q.endorsed ? 'endorsed' : q.status;
+}
+export function marketStatusLabel(choice: MarketStatusChoice): string {
+  return choice === 'endorsed' ? 'Endorsed' : QUOTE_STATUS_LABELS[choice];
+}
+
 /** Statuses where the ball is in the carrier's court and a follow-up date is meaningful. */
 export const AWAITING_CARRIER_STATUSES: QuoteStatus[] = ['submitted', 'waiting_on_carrier', 'additional_info_requested'];
 
@@ -176,13 +186,20 @@ export function quoteOptionFiles(option: Pick<QuoteOption, 'attachment' | 'attac
 
 export type PolicyBusinessType = 'new' | 'renewal';
 
+/** A policy written from a bound market, or an endorsement to one (on an endorsed market). */
+export type PolicyEntryKind = 'policy' | 'endorsement';
+
 /**
- * A policy written from a bound market. An account (one client) can hold several — e.g. Auto
- * Liability and Cargo with different carriers. Operational details only: no commission figures are
- * ever stored here (anyone who can open the account can read it). Amounts are whole cents.
+ * A policy written from a bound market, or an endorsement recorded on an endorsed market. An
+ * account (one client) can hold several — e.g. Auto Liability and Cargo with different carriers.
+ * No commission figures are ever stored here (anyone who can open the account can read it): the
+ * agent's commission is worked out on display from the agency's rates. Amounts are whole cents;
+ * an endorsement's can be negative (a return premium).
  */
 export interface PolicyRecord {
   id: string;
+  /** Absent on records from before endorsements existed: a policy. */
+  kind?: PolicyEntryKind;
   /** The quote it was bound from (QuoteOption.id), when the market has recorded quotes. */
   quoteOptionId?: string;
   /** Often only known once the carrier issues the policy. */
@@ -191,13 +208,16 @@ export interface PolicyRecord {
   carrier: string;
   coverage?: import('./coverage').CoverageType;
   businessType: PolicyBusinessType;
-  /** Local calendar dates, YYYY-MM-DD. */
+  /** Local calendar dates, YYYY-MM-DD. For an endorsement, `boundDate` is the date it was endorsed. */
   boundDate: string;
   effectiveDate?: string;
   expirationDate?: string;
   netPremiumCents: number;
   taxesCents: number;
   feesCents: number;
+  notes?: string;
+  /** Proof (binder, policy, endorsement): optional when recorded, flagged as missing until added. */
+  attachments?: QuoteAttachment[];
   createdAt: string;
   updatedAt: string;
   createdByName?: string;
@@ -229,8 +249,13 @@ export interface MarketQuote {
   /** The quote the broker chose (e.g. the one being bound). */
   selectedOptionId?: string;
   declineReason?: string;
-  /** Policies written from this market once bound (absent on markets saved before policies existed). */
+  /** Policies written from this market once bound, and endorsements once endorsed (absent on markets saved before policies existed). */
   policies?: PolicyRecord[];
+  /**
+   * "Endorsed": a bound market with endorsements. Stored as status "bound" plus this flag, so it counts
+   * as bound everywhere (and an app that doesn't know "Endorsed" simply shows Bound).
+   */
+  endorsed?: boolean;
   notes: QuoteNote[];
   /** The renewal this market was bound for (see Account.renewals). Absent = not tied to a renewal. */
   renewalId?: string;

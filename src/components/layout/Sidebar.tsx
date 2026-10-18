@@ -1,6 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart, FileCheck2 } from 'lucide-react';
-import { policiesFeatureEnabled } from '../../services/workflow/policies';
+import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { isSupabaseConfigured } from '../../services/supabase/client';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -124,22 +123,6 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
           Today's Plate
         </NavLink>
 
-        {policiesFeatureEnabled() && (
-          <NavLink
-            to="/policies"
-            className={({ isActive }) =>
-              cn(
-                navItemClass,
-                isActive
-                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-              )
-            }
-          >
-            <FileCheck2 size={17} />
-            Policies
-          </NavLink>
-        )}
 
         <NavLink
           to="/market-finder"
