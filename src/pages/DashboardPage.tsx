@@ -1,16 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Building2, Search, Archive, ArrowLeft, CalendarClock } from 'lucide-react';
+import { Plus, Sparkles, Building2, Search, Archive, ArrowLeft } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, EmptyState } from '../components/ui';
 import { AccountCard } from '../components/dashboard/AccountCard';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
 import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
-import { cn } from '../utils/cn';
 import { effectiveAccountStage } from '../services/workflow/accountStage';
 import { normalizeDateKey, todayKey } from '../services/workflow/dates';
-import { isRenewalDue, resolveRenewals } from '../services/workflow/renewals';
+import { BOUND_FILTERS, RENEWAL_FILTERS, boundRange, latestBoundIn, renewalFilterDate, type BoundFilter, type RenewalFilter } from '../services/workflow/accountFilters';
 import { ACCOUNT_STAGE_LABELS, ACCOUNT_STAGE_ORDER, type AccountStage } from '../types';
 import { ALL_BROKERS, UNASSIGNED, matchesBroker } from '../services/workflow/brokerFilter';
 import { useRememberedView } from '../hooks/useRememberedView';
@@ -20,12 +19,27 @@ import { aBoolean, aString, defined, oneOf } from '../services/preferences/viewP
 interface AccountsView {
   stage: AccountStage | 'all';
   broker: string;
-  /** "Upcoming renewals" (the key is kept from the earlier "Renewal within 45 days", so a saved choice still applies). */
-  renewalSoon: boolean;
+  /** Renewals: being worked now ("due"), or with a renewal date in the next 30 / 60 / 90 days — see accountFilters.ts. */
+  renewals: RenewalFilter;
+  /** "Bound in": markets bound in the last 7 days, this or last month, or between two dates. */
+  bound: BoundFilter;
+  boundFrom: string;
+  boundTo: string;
 }
-const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stage: 'all', broker: ALL_BROKERS, renewalSoon: false };
+const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stage: 'all', broker: ALL_BROKERS, renewals: 'any', bound: 'any', boundFrom: '', boundTo: '' };
+const aDate = (v: unknown): string | undefined => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
 const sanitizeAccountsView = (saved: Record<string, unknown>): Partial<AccountsView> =>
-  defined<AccountsView>({ stage: oneOf(['all', ...ACCOUNT_STAGE_ORDER] as const)(saved.stage), broker: aString(saved.broker), renewalSoon: aBoolean(saved.renewalSoon) });
+  defined<AccountsView>({
+    stage: oneOf(['all', ...ACCOUNT_STAGE_ORDER] as const)(saved.stage),
+    broker: aString(saved.broker),
+    // The earlier on/off "Renewal within 45 days" / "Upcoming renewals" choice still applies.
+    renewals: oneOf(RENEWAL_FILTERS)(saved.renewals) ?? (aBoolean(saved.renewalSoon) ? 'due' : undefined),
+    bound: oneOf(BOUND_FILTERS)(saved.bound),
+    boundFrom: aDate(saved.boundFrom),
+    boundTo: aDate(saved.boundTo),
+  });
+const RENEWAL_FILTER_LABELS: Record<RenewalFilter, string> = { any: 'All renewal dates', due: 'Upcoming renewals (work started)', '30': 'Renewal in the next 30 days', '60': 'Renewal in the next 60 days', '90': 'Renewal in the next 90 days' };
+const BOUND_FILTER_LABELS: Record<BoundFilter, string> = { any: 'Bound: any time', last_7_days: 'Bound in the last 7 days', this_month: 'Bound this month', last_month: 'Bound last month', custom: 'Bound between dates…' };
 const filterClass =
   'cursor-pointer rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
 
@@ -57,7 +71,8 @@ export function DashboardPage() {
   // by agent; an agent only ever has their own accounts, so there's nothing to filter.
   const byAgent = agencyAccess?.role === 'admin';
   const showBrokerFilter = !agencyAccess || byAgent;
-  const renewalSoon = view.renewalSoon;
+  const renewalFilter = view.renewals;
+  const boundFilter = view.bound;
   const [showArchived, setShowArchived] = useState(false);
   const [historyAccountId, setHistoryAccountId] = useState<string | null>(null);
 
@@ -83,20 +98,30 @@ export function DashboardPage() {
       : ALL_BROKERS;
   const setBrokerFilter = (broker: string) => updateView({ broker });
 
-  // Each account's soonest renewal that work has started on and that isn't bound (see renewals.ts) —
-  // the same renewals Today's Plate reminds about. Absent when there's none.
-  const dueRenewal = useMemo(() => {
+  // Each account's renewal date under each renewal choice (see accountFilters.ts), for the filter, its counts and the sort.
+  const renewalDates = useMemo(() => {
     const today = todayKey();
-    const map: Record<string, string> = {};
+    const map: Record<RenewalFilter, Record<string, string>> = { any: {}, due: {}, '30': {}, '60': {}, '90': {} };
     for (const a of accounts) {
       const eff = normalizeDateKey((riskProfiles[a.id]?.business?.effectiveDate?.value as string | null | undefined) ?? null);
-      const due = resolveRenewals(a, eff, quotes[a.id] ?? []).find((r) => isRenewalDue(r, today));
-      if (due?.renewalDate) map[a.id] = due.renewalDate;
+      for (const f of RENEWAL_FILTERS) {
+        const d = renewalFilterDate(a, eff, quotes[a.id] ?? [], f, today);
+        if (d) map[f][a.id] = d;
+      }
     }
     return map;
   }, [accounts, riskProfiles, quotes]);
-  const renewsSoon = (id: string) => dueRenewal[id] !== undefined;
-  const renewalSoonCount = accounts.filter((a) => a.archived === showArchived && renewsSoon(a.id)).length;
+  const renewalCount = (f: RenewalFilter) => accounts.filter((a) => a.archived === showArchived && renewalDates[f][a.id] !== undefined).length;
+  const range = useMemo(() => boundRange(boundFilter, todayKey(), { from: view.boundFrom || undefined, to: view.boundTo || undefined }), [boundFilter, view.boundFrom, view.boundTo]);
+  const boundOn = useMemo(() => {
+    const map: Record<string, string> = {};
+    if (!range) return map;
+    for (const a of accounts) {
+      const d = latestBoundIn(quotes[a.id] ?? [], range);
+      if (d) map[a.id] = d;
+    }
+    return map;
+  }, [accounts, quotes, range]);
 
   const visible = useMemo(() => {
     return accounts
@@ -105,17 +130,24 @@ export function DashboardPage() {
       .filter((a) => stageFilter === 'all' || stageOf[a.id] === stageFilter)
       // An agent's accounts: assigned to them, or ones they collaborate on (see matchesBroker).
       .filter((a) => matchesBroker(a, brokerFilter, { byAgent }))
-      .filter((a) => !renewalSoon || dueRenewal[a.id] !== undefined)
-      // Renewal filter on: soonest renewal first. Otherwise most recently updated first.
-      .sort((a, b) => (renewalSoon ? dueRenewal[a.id].localeCompare(dueRenewal[b.id]) : a.updatedAt < b.updatedAt ? 1 : -1));
-  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalSoon, dueRenewal, byAgent]);
+      .filter((a) => renewalFilter === 'any' || renewalDates[renewalFilter][a.id] !== undefined)
+      .filter((a) => !range || boundOn[a.id] !== undefined)
+      // Renewal filter on: soonest renewal first; "Bound in": most recently bound first. Otherwise most recently updated first.
+      .sort((a, b) =>
+        renewalFilter !== 'any'
+          ? renewalDates[renewalFilter][a.id].localeCompare(renewalDates[renewalFilter][b.id])
+          : range
+            ? boundOn[b.id].localeCompare(boundOn[a.id])
+            : a.updatedAt < b.updatedAt ? 1 : -1
+      );
+  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalFilter, renewalDates, range, boundOn, byAgent]);
 
   const stageCounts = useMemo(() => {
     const counts: Partial<Record<AccountStage, number>> = {};
     for (const a of accounts) if (a.archived === showArchived) counts[stageOf[a.id]] = (counts[stageOf[a.id]] ?? 0) + 1;
     return counts;
   }, [accounts, showArchived, stageOf]);
-  const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS || renewalSoon;
+  const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS || renewalFilter !== 'any' || boundFilter !== 'any';
 
   const historyAccount = historyAccountId ? accounts.find((a) => a.id === historyAccountId) : null;
 
@@ -219,21 +251,28 @@ export function DashboardPage() {
                 <option value={UNASSIGNED}>Unassigned</option>
               </select>
             )}
-            <button
-              type="button"
-              onClick={() => updateView({ renewalSoon: !renewalSoon })}
-              aria-pressed={renewalSoon}
-              title="Renewals whose start-working date has come and that aren’t bound yet, soonest first"
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm cursor-pointer',
-                renewalSoon
-                  ? 'border-[var(--color-brand-500)] bg-[var(--color-brand-50)] font-medium text-[var(--color-brand-800)]'
-                  : 'border-[var(--color-ink-200)] bg-white text-[var(--color-ink-700)] hover:bg-[var(--color-ink-50)]'
-              )}
-            >
-              <CalendarClock size={14} />
-              Upcoming renewals ({renewalSoonCount})
-            </button>
+            <select value={renewalFilter} onChange={(e) => updateView({ renewals: e.target.value as RenewalFilter })} className={filterClass} aria-label="Filter by renewal" title="Upcoming renewals: from the start-working date until bound (overdue ones stay). Or: renewal date in the next 30, 60 or 90 days.">
+              {RENEWAL_FILTERS.map((f) => (
+                <option key={f} value={f}>
+                  {RENEWAL_FILTER_LABELS[f]}
+                  {f === 'any' ? '' : ` (${renewalCount(f)})`}
+                </option>
+              ))}
+            </select>
+            <select value={boundFilter} onChange={(e) => updateView({ bound: e.target.value as BoundFilter })} className={filterClass} aria-label="Filter by bound date">
+              {BOUND_FILTERS.map((f) => (
+                <option key={f} value={f}>
+                  {BOUND_FILTER_LABELS[f]}
+                </option>
+              ))}
+            </select>
+            {boundFilter === 'custom' && (
+              <span className="inline-flex items-center gap-1.5 text-sm text-[var(--color-ink-600)]">
+                <input type="date" value={view.boundFrom} onChange={(e) => updateView({ boundFrom: e.target.value })} className={filterClass} aria-label="Bound from" />
+                to
+                <input type="date" value={view.boundTo} onChange={(e) => updateView({ boundTo: e.target.value })} className={filterClass} aria-label="Bound to" />
+              </span>
+            )}
             {filtersActive && (
               <button
                 onClick={resetView}
@@ -248,7 +287,7 @@ export function DashboardPage() {
             <EmptyState
               icon={<Search size={24} strokeWidth={1.5} />}
               title={showArchived ? 'No archived accounts' : 'No matching accounts'}
-              description={showArchived ? undefined : renewalSoon ? 'No renewals to work on right now. A renewal shows here from its start-working date (45 days before, unless changed) until it’s bound.' : 'Try a different search term or clear the filters.'}
+              description={showArchived ? undefined : renewalFilter === 'due' ? 'No renewals to work on right now. A renewal shows here from its start-working date (45 days before, unless changed) until it’s bound.' : range ? 'No markets were bound in these dates. A market’s bound date is set when it’s marked Bound (and can be changed on the market).' : 'Try a different search term or clear the filters.'}
             />
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

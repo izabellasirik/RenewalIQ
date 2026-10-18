@@ -306,7 +306,7 @@ interface AccountsState {
   /** A received carrier-requested item was passed on to one carrier that asked for it. `quoteId` may be omitted when exactly one carrier is still waiting on it. */
   markItemSentToCarrier: (accountId: string, itemId: string, quoteId?: string) => void;
   addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
-  updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason'>>) => void;
+  updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason' | 'boundDate'>>) => void;
   addQuoteNote: (accountId: string, quoteId: string, text: string) => void;
   /** Edit a dated market note: the original date stays; who edited it and when are recorded. */
   updateQuoteNote: (accountId: string, quoteId: string, noteId: string, text: string) => void;
@@ -2367,6 +2367,9 @@ export const useAccountsStore = create<AccountsState>()(
           if (patch.followUpDate === undefined && (!next.followUpDate || next.followUpDate < todayKey())) next.followUpDate = addBusinessDays(new Date(), 3);
         }
         if (patch.premium !== undefined && (patch.premium === null || Number.isNaN(patch.premium))) next.premium = undefined;
+        // Marked Bound: bound today unless a date is given (the broker can change it on the card).
+        if (statusChanged && next.status === 'bound' && patch.boundDate === undefined) next.boundDate = todayKey();
+        if (patch.boundDate !== undefined && !patch.boundDate) delete next.boundDate;
 
         const events: [ActivityEventType, string][] = [];
         if (statusChanged) {
@@ -2391,6 +2394,7 @@ export const useAccountsStore = create<AccountsState>()(
           if (patch.declineReason !== undefined && patch.declineReason !== before.declineReason && next.declineReason) events.push(['carrier_declined', `${name} decline reason: ${next.declineReason}`]);
           if (patch.submittedAt !== undefined && patch.submittedAt !== before.submittedAt && next.submittedAt) events.push(['submission_sent', `Recorded submission to ${name} as sent ${formatShortDate(next.submittedAt)}.`]);
           if (patch.marketName !== undefined && patch.marketName !== before.marketName) events.push(['quote_status_changed', `Renamed market ${before.marketName} to ${name}.`]);
+          if (patch.boundDate !== undefined && next.boundDate !== before.boundDate) events.push(['quote_status_changed', next.boundDate ? `${name}: bound date set to ${formatShortDate(next.boundDate)}.` : `${name}: bound date cleared.`]);
         }
         if (next.followUpDate !== before.followUpDate && next.status !== 'declined' && next.status !== 'bound') {
           events.push(['follow_up_scheduled', next.followUpDate ? `Carrier follow-up with ${name} set for ${formatShortDate(next.followUpDate)}.` : `Cleared the follow-up date for ${name}.`]);

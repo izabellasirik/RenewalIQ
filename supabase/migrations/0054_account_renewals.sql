@@ -31,6 +31,11 @@ alter table public.submissions add column if not exists renewals jsonb not null 
 alter table public.submissions drop constraint if exists submissions_renewals_array;
 alter table public.submissions add constraint submissions_renewals_array check (jsonb_typeof(renewals) = 'array');
 
+-- The "Renewal" client status a broker can pick by hand. Kept in its own column rather than as a new
+-- value of `stage` (0008), so an app that doesn't know that status never reads it: it simply shows the
+-- automatic status. A status picked in such an app (stage set) takes precedence when read back.
+alter table public.submissions add column if not exists renewal_status boolean not null default false;
+
 create or replace function public.can_manage_renewals(p_agency_id uuid, p_assigned_user_id uuid, p_creator_id uuid)
 returns boolean
 language sql

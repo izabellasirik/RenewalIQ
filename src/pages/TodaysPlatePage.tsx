@@ -21,11 +21,19 @@ interface PlateView {
   broker: string;
   /** Outside an agency: only accounts assigned to me (as before). */
   mineOnly: boolean;
-  show: 'all' | 'renewals';
+  /** All tasks, one kind of task, what's coming up in the next 7 days, or what's waiting on others. */
+  show: PlateShow;
 }
+type PlateShow = 'all' | ActionKind | 'next_7_days' | 'waiting';
+const PLATE_SHOW: PlateShow[] = ['all', 'ready_to_send', 'action_required', 'carrier_follow_up', 'follow_up', 'client_follow_up', 'renewal', 'next_7_days', 'waiting'];
 const PLATE_VIEW_DEFAULTS: PlateView = { broker: ALL_BROKERS, mineOnly: false, show: 'all' };
 const sanitizePlateView = (saved: Record<string, unknown>): Partial<PlateView> =>
-  defined<PlateView>({ broker: aString(saved.broker), mineOnly: aBoolean(saved.mineOnly), show: oneOf(['all', 'renewals'] as const)(saved.show) });
+  defined<PlateView>({
+    broker: aString(saved.broker),
+    mineOnly: aBoolean(saved.mineOnly),
+    // "Renewals only" was saved as 'renewals' before the other choices existed.
+    show: saved.show === 'renewals' ? 'renewal' : oneOf(PLATE_SHOW)(saved.show),
+  });
 const filterClass =
   'cursor-pointer rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
 
@@ -68,8 +76,9 @@ export function TodaysPlatePage() {
   const broker =
     byAgent && (plate.broker === ALL_BROKERS || plate.broker === UNASSIGNED || plate.broker === ASSIGNED_TO_ME || agencyMembers.some((m) => m.userId === plate.broker)) ? plate.broker : ALL_BROKERS;
   const mineOnly = !agencyAccess && signedIn && plate.mineOnly;
-  const renewalsOnly = plate.show === 'renewals';
-  const filtersActive = broker !== ALL_BROKERS || mineOnly || renewalsOnly;
+  const show = plate.show;
+  const renewalsOnly = show === 'renewal';
+  const filtersActive = broker !== ALL_BROKERS || mineOnly || show !== 'all';
 
   const today = todayKey();
   // Outdated MVRs / loss runs show up here too, even for accounts not opened today.
@@ -124,9 +133,15 @@ export function TodaysPlatePage() {
     }
     waitingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
     doneRows.sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
-    const kept = (a: ActionItem) => !renewalsOnly || a.kind === 'renewal';
-    return { now: sortActions(allNow.filter(kept)), upcoming: sortActions(allUpcoming.filter(kept)), waiting: renewalsOnly ? [] : waitingRows, doneToday: doneRows };
-  }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, byAgent, broker, renewalsOnly, session.userId, session.email, today, undoActionDone, reopenFollowUp, agencyAccess?.role, accountOwners]);
+    // "Show": one kind of task (today's and the next 7 days'), only the next 7 days, or only what's waiting.
+    const kept = (a: ActionItem) => show === 'all' || show === 'next_7_days' || a.kind === show;
+    return {
+      now: show === 'next_7_days' || show === 'waiting' ? [] : sortActions(allNow.filter(kept)),
+      upcoming: show === 'waiting' ? [] : sortActions(allUpcoming.filter(kept)),
+      waiting: show === 'all' || show === 'waiting' ? waitingRows : [],
+      doneToday: doneRows,
+    };
+  }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, byAgent, broker, show, session.userId, session.email, today, undoActionDone, reopenFollowUp, agencyAccess?.role, accountOwners]);
 
   const overdue = now.filter((a) => a.overdue).length;
   const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -192,7 +207,13 @@ export function TodaysPlatePage() {
         )}
         <select value={plate.show} onChange={(e) => updatePlate({ show: e.target.value as PlateView['show'] })} className={filterClass} aria-label="Show">
           <option value="all">All tasks</option>
-          <option value="renewals">Renewals only</option>
+          {SECTION_ORDER.map(({ kind, title }) => (
+            <option key={kind} value={kind}>
+              {kind === 'renewal' ? 'Renewals only' : `${title} only`}
+            </option>
+          ))}
+          <option value="next_7_days">Coming up · next 7 days</option>
+          <option value="waiting">Waiting</option>
         </select>
         {filtersActive && (
           <button onClick={resetPlate} className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
@@ -241,7 +262,7 @@ export function TodaysPlatePage() {
             ))}
           </ul>
         )
-      ) : now.length === 0 ? (
+      ) : now.length === 0 && show !== 'next_7_days' && show !== 'waiting' ? (
         <Card>
           <CardBody className="flex flex-col items-center gap-2 py-10 text-center">
             <CheckCircle2 size={26} className="text-[var(--color-success-500)]" />
@@ -277,6 +298,14 @@ export function TodaysPlatePage() {
             </section>
           );
         })
+      )}
+
+      {view === 'active' && (show === 'next_7_days' || show === 'waiting') && upcoming.length === 0 && waiting.length === 0 && (
+        <Card>
+          <CardBody className="py-10 text-center text-sm text-[var(--color-ink-500)]" data-testid="plate-filtered-empty">
+            {show === 'waiting' ? 'Nothing is waiting on a client or carrier for these accounts.' : 'Nothing is scheduled for the next 7 days for these accounts.'}
+          </CardBody>
+        </Card>
       )}
 
       {view === 'active' && upcoming.length > 0 && (

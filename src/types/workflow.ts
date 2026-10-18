@@ -25,10 +25,11 @@ export interface AssignedBroker {
  * Where the account stands in the pipeline. Set by the broker by hand, or — when never set —
  * derived from the checklist and quotes (see deriveAccountStage in services/workflow/accountStage.ts).
  */
-export type AccountStage = 'new' | 'collecting_info' | 'ready_to_submit' | 'submitted' | 'quoted' | 'bound' | 'on_hold' | 'lost';
+export type AccountStage = 'new' | 'renewal' | 'collecting_info' | 'ready_to_submit' | 'submitted' | 'quoted' | 'bound' | 'on_hold' | 'lost';
 
 export const ACCOUNT_STAGE_LABELS: Record<AccountStage, string> = {
   new: 'New',
+  renewal: 'Renewal',
   collecting_info: 'Collecting info',
   ready_to_submit: 'Ready to submit',
   submitted: 'Out to market',
@@ -38,7 +39,7 @@ export const ACCOUNT_STAGE_LABELS: Record<AccountStage, string> = {
   lost: 'Lost / not renewing',
 };
 
-export const ACCOUNT_STAGE_ORDER: AccountStage[] = ['new', 'collecting_info', 'ready_to_submit', 'submitted', 'quoted', 'bound', 'on_hold', 'lost'];
+export const ACCOUNT_STAGE_ORDER: AccountStage[] = ['new', 'renewal', 'collecting_info', 'ready_to_submit', 'submitted', 'quoted', 'bound', 'on_hold', 'lost'];
 
 /**
  * A follow-up the broker schedules by hand ("call Sara about the renewal on Oct 3") — for
@@ -183,6 +184,8 @@ export interface MarketQuote {
   submittedAt?: string;
   status: QuoteStatus;
   followUpDate?: string;
+  /** The date this market was bound, YYYY-MM-DD: set to today when it's marked Bound, editable after. Kept when it moves off Bound (history), ignored then. */
+  boundDate?: string;
   /** The headline premium: the selected quote's, else the most recent one's (or a premium recorded before multiple quotes existed). */
   premium?: number;
   /** Every quote this market returned, oldest first. */

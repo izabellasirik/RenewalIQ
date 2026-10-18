@@ -328,6 +328,7 @@ function QuoteCard({
             </div>
             <p className="mt-1 text-xs text-[var(--color-ink-500)]">
               {quote.submittedAt ? `Submitted ${formatShortDate(quote.submittedAt)}` : 'Not submitted yet'}
+              {quote.status === 'bound' && quote.boundDate ? ` · Bound ${formatShortDate(quote.boundDate)}` : ''}
               {quote.status === 'declined' && quote.declineReason ? ` · Declined: ${quote.declineReason}` : ''}
               {collapsed && (
                 <>
@@ -426,6 +427,12 @@ function QuoteCard({
             Sent
             <DateInput value={quote.submittedAt} onCommit={(v) => updateQuote(accountId, quote.id, { submittedAt: v })} className={smallInputClass} aria-label={`Date sent to ${quote.marketName}`} />
           </label>
+          {quote.status === 'bound' && (
+            <label className="inline-flex items-center gap-1.5">
+              Bound
+              <DateInput value={quote.boundDate} onCommit={(v) => updateQuote(accountId, quote.id, { boundDate: v ?? '' })} className={smallInputClass} aria-label={`Bound date for ${quote.marketName}`} />
+            </label>
+          )}
           {!closed && (
             <label className={cn('inline-flex items-center gap-1.5', followUpDue && 'font-medium text-[var(--color-danger-600)]')}>
               Follow up

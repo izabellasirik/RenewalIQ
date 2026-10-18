@@ -4,43 +4,37 @@ import { Button, Card, CardBody } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
-import { formatShortDate } from '../../services/workflow/dates';
 import { US_STATES } from '../../utils/usStates';
 import { AssignedAgent } from './AssignedAgent';
-import { useRenewalDatesLocked } from '../../hooks/useAccountRenewals';
 import { inputClass, labelClass } from './formStyles';
 
 /**
- * Account basics. DOT # and effective date are the Risk Profile's own fields (edited through the
- * same updateField action), not copies — so the Submission Assistant, appetite matching, and this
- * card can never disagree.
+ * Account basics. DOT # is the Risk Profile's own field (edited through the same updateField
+ * action), not a copy — so the Submission Assistant, appetite matching, and this card can never
+ * disagree. The renewal / effective date lives on the Renewals card (and the Risk Profile).
  */
 export function AccountInfoCard({ accountId }: { accountId: string }) {
-  const { account, profile, dotNumber, effectiveDate } = useAccountWorkflow(accountId);
+  const { account, profile, dotNumber } = useAccountWorkflow(accountId);
   const updateAccountInfo = useAccountsStore((s) => s.updateAccountInfo);
   const updateField = useAccountsStore((s) => s.updateField);
   const setAssignedBroker = useAccountsStore((s) => s.setAssignedBroker);
   const session = useBrokerSession();
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
-  const dateLocked = useRenewalDatesLocked(accountId);
 
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
   const [state, setState] = useState('');
   const [dot, setDot] = useState('');
-  const [eff, setEff] = useState('');
   const [brokerName, setBrokerName] = useState('');
   const [brokerEmail, setBrokerEmail] = useState('');
 
   if (!account || !profile) return null;
-  const rawEffective = (profile.business?.effectiveDate?.value as string | null | undefined) ?? null;
 
   function startEdit() {
     if (!account) return;
     setName(account.namedInsured);
     setState(account.state);
     setDot(dotNumber ?? '');
-    setEff(effectiveDate ?? '');
     setBrokerName(account.assignedBroker?.name ?? '');
     setBrokerEmail(account.assignedBroker?.email ?? '');
     setEditing(true);
@@ -50,7 +44,6 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
     if (!account) return;
     updateAccountInfo(accountId, { namedInsured: name, state });
     if (dot.trim() !== (dotNumber ?? '')) updateField(accountId, 'transportation', 'dotNumber', dot.trim() || null);
-    if (!dateLocked && eff !== (effectiveDate ?? '')) updateField(accountId, 'business', 'effectiveDate', eff || null);
     // In an agency the assignment is the database's (admin → Agent dropdown), not this free-text label.
     if (agencyAccess) {
       setEditing(false);
@@ -104,12 +97,6 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
                 ))}
               </select>
             </div>
-            <div>
-              <label className={labelClass}>Renewal / effective date</label>
-              <input type="date" value={eff} onChange={(e) => setEff(e.target.value)} className={inputClass} disabled={dateLocked} />
-              {dateLocked && <p className="mt-1 text-xs text-[var(--color-ink-500)]">The renewal date is set by the assigned broker or an admin.</p>}
-            </div>
-            <div />
             {!agencyAccess && (
               <>
                 <div>
@@ -144,12 +131,6 @@ export function AccountInfoCard({ accountId }: { accountId: string }) {
             <div>
               <dt className="text-xs text-[var(--color-ink-500)]">State</dt>
               <dd className="font-semibold text-[var(--color-ink-900)]">{account.state || '—'}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-[var(--color-ink-500)]">Renewal / effective</dt>
-              <dd className={rawEffective ? 'font-medium text-[var(--color-ink-900)]' : 'italic text-[var(--color-ink-400)]'}>
-                {effectiveDate ? formatShortDate(effectiveDate) : rawEffective || 'Not set'}
-              </dd>
             </div>
             {/* min-w-0: a long email wraps inside the card instead of pushing past it. */}
             <div className="min-w-0">
