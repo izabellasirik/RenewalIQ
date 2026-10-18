@@ -10,6 +10,23 @@ import { useBrokerSession } from '../hooks/useBrokerSession';
 import { getAccountContacts } from '../services/workflow/contacts';
 import { normalizeDateKey, toLocalDateKey, todayKey } from '../services/workflow/dates';
 import { deriveAccountActions, deriveDoneActions, sortActions, summarizeWaiting, type ActionItem, type ActionKind } from '../services/workflow/nextActions';
+import { ALL_BROKERS, ASSIGNED_TO_ME, UNASSIGNED, matchesBroker } from '../services/workflow/brokerFilter';
+import { useRememberedView } from '../hooks/useRememberedView';
+import { aBoolean, aString, defined, oneOf } from '../services/preferences/viewPreferences';
+
+/** Today's Plate filters remembered between visits (per user, on this device). */
+interface PlateView {
+  /** Agency admins: whose accounts. */
+  broker: string;
+  /** Outside an agency: only accounts assigned to me (as before). */
+  mineOnly: boolean;
+  show: 'all' | 'renewals';
+}
+const PLATE_VIEW_DEFAULTS: PlateView = { broker: ALL_BROKERS, mineOnly: false, show: 'all' };
+const sanitizePlateView = (saved: Record<string, unknown>): Partial<PlateView> =>
+  defined<PlateView>({ broker: aString(saved.broker), mineOnly: aBoolean(saved.mineOnly), show: oneOf(['all', 'renewals'] as const)(saved.show) });
+const filterClass =
+  'cursor-pointer rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
 
 const SECTION_ORDER: { kind: ActionKind; title: string; hint: string }[] = [
   { kind: 'ready_to_send', title: 'Ready to send', hint: 'Received from the client — a carrier is waiting for it.' },
@@ -35,12 +52,22 @@ export function TodaysPlatePage() {
   const documentRequests = useAccountsStore((s) => s.documentRequests);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
   const session = useBrokerSession();
-  const [mineOnly, setMineOnly] = useState(false);
+  const [plate, updatePlate, resetPlate] = useRememberedView('todays-plate', PLATE_VIEW_DEFAULTS, sanitizePlateView);
   const [view, setView] = useState<'active' | 'done'>('active');
   const undoActionDone = useAccountsStore((s) => s.undoActionDone);
   const reopenFollowUp = useAccountsStore((s) => s.reopenFollowUp);
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
-  // An agent only ever has their own accounts (RLS), so the toggle only means something outside an agency or for an admin.
+  const agencyMembers = useAccountsStore((s) => s.agencyMembers);
+  // An agent only ever has their own accounts (RLS), so filtering by broker only means something for an
+  // admin (a broker list) or outside an agency (the earlier "only mine" checkbox).
+  const byAgent = agencyAccess?.role === 'admin';
+  const signedIn = session.status === 'signed_in';
+  // A remembered broker who left the agency shows everyone instead.
+  const broker =
+    byAgent && (plate.broker === ALL_BROKERS || plate.broker === UNASSIGNED || plate.broker === ASSIGNED_TO_ME || agencyMembers.some((m) => m.userId === plate.broker)) ? plate.broker : ALL_BROKERS;
+  const mineOnly = !agencyAccess && signedIn && plate.mineOnly;
+  const renewalsOnly = plate.show === 'renewals';
+  const filtersActive = broker !== ALL_BROKERS || mineOnly || renewalsOnly;
 
   const today = todayKey();
   // Outdated MVRs / loss runs show up here too, even for accounts not opened today.
@@ -61,13 +88,10 @@ export function TodaysPlatePage() {
     const waitingRows: { accountId: string; accountName: string; onClient: number; onCarriers: string[] }[] = [];
     for (const account of accounts) {
       if (account.archived) continue;
-      if (mineOnly && session.status === 'signed_in') {
-        if (agencyAccess) {
-          if (account.assignedUserId !== session.userId) continue;
-        } else {
-          const b = account.assignedBroker;
-          if (!b || (b.userId !== session.userId && b.email !== session.email)) continue;
-        }
+      if (byAgent && !matchesBroker(account, broker, { byAgent, myUserId: session.userId })) continue;
+      if (mineOnly) {
+        const b = account.assignedBroker;
+        if (!b || (b.userId !== session.userId && b.email !== session.email)) continue;
       }
       const profile = riskProfiles[account.id];
       const input = {
@@ -87,15 +111,19 @@ export function TodaysPlatePage() {
       for (const f of input.followUps) {
         if (f.doneAt && isToday(f.doneAt)) doneRows.push({ ...base, id: f.id, title: `Follow up: ${f.subject}`, doneAt: f.doneAt, undo: () => reopenFollowUp(account.id, f.id) });
       }
-      allNow.push(...derived.now);
-      allUpcoming.push(...derived.upcoming);
+      // Filtered by a broker, an admin sees that broker's renewals: the ones assigned to them (not ones they only help on).
+      const brokersRenewal = !byAgent || broker === ALL_BROKERS || broker === UNASSIGNED || account.assignedUserId === (broker === ASSIGNED_TO_ME ? session.userId : broker);
+      const shown = (a: ActionItem) => a.kind !== 'renewal' || brokersRenewal;
+      allNow.push(...derived.now.filter(shown));
+      allUpcoming.push(...derived.upcoming.filter(shown));
       const w = summarizeWaiting(missingItems[account.id] ?? [], quotes[account.id] ?? []);
       if (w.onClient > 0 || w.onCarriers.length > 0) waitingRows.push({ accountId: account.id, accountName: account.namedInsured, onClient: w.onClient, onCarriers: w.onCarriers });
     }
     waitingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
     doneRows.sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
-    return { now: sortActions(allNow), upcoming: sortActions(allUpcoming), waiting: waitingRows, doneToday: doneRows };
-  }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, session.status, session.userId, session.email, today, agencyAccess, undoActionDone, reopenFollowUp]);
+    const kept = (a: ActionItem) => !renewalsOnly || a.kind === 'renewal';
+    return { now: sortActions(allNow.filter(kept)), upcoming: sortActions(allUpcoming.filter(kept)), waiting: renewalsOnly ? [] : waitingRows, doneToday: doneRows };
+  }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, byAgent, broker, renewalsOnly, session.userId, session.email, today, undoActionDone, reopenFollowUp]);
 
   const overdue = now.filter((a) => a.overdue).length;
   const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -139,12 +167,36 @@ export function TodaysPlatePage() {
         </Button>
       }
     >
-      {session.status === 'signed_in' && agencyAccess?.role !== 'agent' && (
-        <label className="flex items-center gap-1.5 self-start text-sm text-[var(--color-ink-600)]">
-          <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
-          Only accounts assigned to me
-        </label>
-      )}
+      <div className="flex flex-wrap items-center gap-2" data-testid="plate-filters">
+        {byAgent && (
+          <select value={broker} onChange={(e) => updatePlate({ broker: e.target.value })} className={filterClass} aria-label="Filter by broker">
+            <option value={ALL_BROKERS}>All brokers</option>
+            <option value={ASSIGNED_TO_ME}>Assigned to me</option>
+            {agencyMembers.map((m) => (
+              <option key={m.userId} value={m.userId}>
+                {m.name}
+                {m.userId === session.userId ? ' (you)' : ''}
+              </option>
+            ))}
+            <option value={UNASSIGNED}>Unassigned</option>
+          </select>
+        )}
+        {signedIn && !agencyAccess && (
+          <label className="flex items-center gap-1.5 text-sm text-[var(--color-ink-600)]">
+            <input type="checkbox" checked={mineOnly} onChange={(e) => updatePlate({ mineOnly: e.target.checked })} />
+            Only accounts assigned to me
+          </label>
+        )}
+        <select value={plate.show} onChange={(e) => updatePlate({ show: e.target.value as PlateView['show'] })} className={filterClass} aria-label="Show">
+          <option value="all">All tasks</option>
+          <option value="renewals">Renewals only</option>
+        </select>
+        {filtersActive && (
+          <button onClick={resetPlate} className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
+            Clear filters
+          </button>
+        )}
+      </div>
 
       <Tabs
         items={[
@@ -190,8 +242,17 @@ export function TodaysPlatePage() {
         <Card>
           <CardBody className="flex flex-col items-center gap-2 py-10 text-center">
             <CheckCircle2 size={26} className="text-[var(--color-success-500)]" />
-            <p className="text-sm font-medium text-[var(--color-ink-800)]">You're clear for today.</p>
-            <p className="max-w-md text-sm text-[var(--color-ink-500)]">No follow-ups are due and nothing is waiting to be sent. Anything scheduled for later shows under “Coming up”.</p>
+            {filtersActive ? (
+              <>
+                <p className="text-sm font-medium text-[var(--color-ink-800)]" data-testid="plate-filtered-empty">Nothing to do for these filters today.</p>
+                <p className="max-w-md text-sm text-[var(--color-ink-500)]">{renewalsOnly ? 'No renewals are coming up for these accounts.' : 'Other brokers or task types may still have work today.'} Clear the filters to see everything.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-[var(--color-ink-800)]">You're clear for today.</p>
+                <p className="max-w-md text-sm text-[var(--color-ink-500)]">No follow-ups are due and nothing is waiting to be sent. Anything scheduled for later shows under “Coming up”.</p>
+              </>
+            )}
           </CardBody>
         </Card>
       ) : (

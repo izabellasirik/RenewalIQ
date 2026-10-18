@@ -12,9 +12,19 @@ import { effectiveAccountStage } from '../services/workflow/accountStage';
 import { daysBetween, normalizeDateKey, todayKey } from '../services/workflow/dates';
 import { RENEWAL_WINDOW_DAYS } from '../services/workflow/nextActions';
 import { ACCOUNT_STAGE_LABELS, ACCOUNT_STAGE_ORDER, type AccountStage } from '../types';
+import { ALL_BROKERS, UNASSIGNED, matchesBroker } from '../services/workflow/brokerFilter';
+import { useRememberedView } from '../hooks/useRememberedView';
+import { aBoolean, aString, defined, oneOf } from '../services/preferences/viewPreferences';
 
-const ALL_BROKERS = '__all__';
-const UNASSIGNED = '__unassigned__';
+/** The Accounts filters remembered between visits (per user, on this device). Search and the archived view aren't remembered. */
+interface AccountsView {
+  stage: AccountStage | 'all';
+  broker: string;
+  renewalSoon: boolean;
+}
+const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stage: 'all', broker: ALL_BROKERS, renewalSoon: false };
+const sanitizeAccountsView = (saved: Record<string, unknown>): Partial<AccountsView> =>
+  defined<AccountsView>({ stage: oneOf(['all', ...ACCOUNT_STAGE_ORDER] as const)(saved.stage), broker: aString(saved.broker), renewalSoon: aBoolean(saved.renewalSoon) });
 const filterClass =
   'cursor-pointer rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
 
@@ -37,15 +47,16 @@ export function DashboardPage() {
   const quotes = useAccountsStore((s) => s.quotes);
   const riskProfiles = useAccountsStore((s) => s.riskProfiles);
   const [search, setSearch] = useState('');
-  const [stageFilter, setStageFilter] = useState<AccountStage | 'all'>('all');
-  const [brokerFilter, setBrokerFilter] = useState<string>(ALL_BROKERS);
+  const [view, updateView, resetView] = useRememberedView('accounts', ACCOUNTS_VIEW_DEFAULTS, sanitizeAccountsView);
+  const stageFilter = view.stage;
+  const setStageFilter = (stage: AccountStage | 'all') => updateView({ stage });
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const agencyMembers = useAccountsStore((s) => s.agencyMembers);
   // In an agency, "who has this account" is the database assignment (a user id), so an admin filters
   // by agent; an agent only ever has their own accounts, so there's nothing to filter.
   const byAgent = agencyAccess?.role === 'admin';
   const showBrokerFilter = !agencyAccess || byAgent;
-  const [renewalSoon, setRenewalSoon] = useState(false);
+  const renewalSoon = view.renewalSoon;
   const [showArchived, setShowArchived] = useState(false);
   const [historyAccountId, setHistoryAccountId] = useState<string | null>(null);
 
@@ -63,6 +74,13 @@ export function DashboardPage() {
     for (const a of accounts) if (a.assignedBroker?.name) names.set(a.assignedBroker.name.trim().toLowerCase(), a.assignedBroker.name.trim());
     return [...names.entries()].sort((x, y) => x[1].localeCompare(y[1]));
   }, [accounts]);
+
+  // A remembered broker who isn't on the list any more (left the agency, renamed) shows everyone instead.
+  const brokerFilter =
+    view.broker === ALL_BROKERS || view.broker === UNASSIGNED || (byAgent ? agencyMembers.some((m) => m.userId === view.broker) : brokerOptions.some(([key]) => key === view.broker))
+      ? view.broker
+      : ALL_BROKERS;
+  const setBrokerFilter = (broker: string) => updateView({ broker });
 
   // Days until each account's renewal/effective date (Risk Profile → Requested Effective Date); absent when unknown.
   const daysToRenewal = useMemo(() => {
@@ -82,18 +100,8 @@ export function DashboardPage() {
       .filter((a) => a.archived === showArchived)
       .filter((a) => a.namedInsured.toLowerCase().includes(search.toLowerCase()))
       .filter((a) => stageFilter === 'all' || stageOf[a.id] === stageFilter)
-      .filter((a) =>
-        brokerFilter === ALL_BROKERS
-          ? true
-          : byAgent
-            ? brokerFilter === UNASSIGNED
-              ? !a.assignedUserId
-              : // An agent's accounts: assigned to them, or ones they collaborate on.
-                a.assignedUserId === brokerFilter || (a.collaboratorIds ?? []).includes(brokerFilter)
-            : brokerFilter === UNASSIGNED
-              ? !a.assignedBroker?.name
-              : a.assignedBroker?.name?.trim().toLowerCase() === brokerFilter
-      )
+      // An agent's accounts: assigned to them, or ones they collaborate on (see matchesBroker).
+      .filter((a) => matchesBroker(a, brokerFilter, { byAgent }))
       .filter((a) => !renewalSoon || (daysToRenewal[a.id] !== undefined && daysToRenewal[a.id] >= 0 && daysToRenewal[a.id] <= RENEWAL_WINDOW_DAYS))
       // Renewal filter on: soonest renewal first. Otherwise most recently updated first.
       .sort((a, b) => (renewalSoon ? daysToRenewal[a.id] - daysToRenewal[b.id] : a.updatedAt < b.updatedAt ? 1 : -1));
@@ -210,7 +218,7 @@ export function DashboardPage() {
             )}
             <button
               type="button"
-              onClick={() => setRenewalSoon((v) => !v)}
+              onClick={() => updateView({ renewalSoon: !renewalSoon })}
               aria-pressed={renewalSoon}
               className={cn(
                 'inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm cursor-pointer',
@@ -224,11 +232,7 @@ export function DashboardPage() {
             </button>
             {filtersActive && (
               <button
-                onClick={() => {
-                  setStageFilter('all');
-                  setBrokerFilter(ALL_BROKERS);
-                  setRenewalSoon(false);
-                }}
+                onClick={resetView}
                 className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"
               >
                 Clear filters
