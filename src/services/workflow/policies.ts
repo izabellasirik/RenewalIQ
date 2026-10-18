@@ -5,21 +5,41 @@ import { normalizeDateKey, parseDateKey, toLocalDateKey } from './dates';
 /**
  * Policies written from bound markets, and endorsements recorded on endorsed ones. They live on the
  * market (MarketQuote.policies), so they sync, work offline and are visible exactly like the market
- * itself. No commission is stored here: the agent's commission is worked out on display from the
- * agency's rates (see agentCommissionCents), which only the agent and the agency's admins can read.
+ * itself. No commission is stored here: it's worked out on display (see agentCommissionCents) from the
+ * policy's carrier commission % (0060, 10% unless an admin sets it) and the agent's % (0058), which only
+ * the agent and the agency's admins can read.
  */
 
 export function entryKind(p: Pick<PolicyRecord, 'kind'>): PolicyEntryKind {
   return p.kind === 'endorsement' ? 'endorsement' : 'policy';
 }
 
-/** Net amount × the agent's rate, to the cent (half away from zero, so a return premium mirrors its charge). */
-export function agentCommissionCents(netCents: number, rate: number): number {
+/** The carrier commission when an admin hasn't set a policy's own: 10% of the net premium. */
+export const DEFAULT_CARRIER_RATE = 0.1;
+
+/** cents × rate, to the cent (half away from zero, so a return premium mirrors its charge). */
+function applyRate(cents: number, rate: number): number {
   const micro = Math.round(rate * 1e6);
-  const raw = Math.abs(netCents) * micro;
-  const cents = Math.floor(raw / 1e6) + (raw % 1e6 >= 5e5 ? 1 : 0);
-  return netCents < 0 ? -cents : cents;
+  const raw = Math.abs(cents) * micro;
+  const out = Math.floor(raw / 1e6) + (raw % 1e6 >= 5e5 ? 1 : 0);
+  return cents < 0 ? -out : out;
 }
+
+/** What the carrier pays the agency: the net premium × the policy's carrier commission %. */
+export function carrierCommissionCents(netCents: number, carrierRate: number = DEFAULT_CARRIER_RATE): number {
+  return applyRate(netCents, carrierRate);
+}
+
+/**
+ * The agent's share: their % of the carrier commission, rounded at each step.
+ * $10,000 net × 10% carrier commission = $1,000; an agent on 30% gets $300.
+ */
+export function agentCommissionCents(netCents: number, agentRate: number, carrierRate: number = DEFAULT_CARRIER_RATE): number {
+  return applyRate(carrierCommissionCents(netCents, carrierRate), agentRate);
+}
+
+/** Key of a policy's carrier commission % (0060): account and policy. */
+export const carrierRateKey = (accountId: string, policyId: string) => `${accountId}:${policyId}`;
 
 /** On, unless switched off with VITE_FEATURE_POLICIES=false (a kill switch: the data stays, only the screens hide). */
 export function policiesFeatureEnabled(env: { DEV?: boolean; VITE_FEATURE_POLICIES?: string } = import.meta.env): boolean {

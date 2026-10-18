@@ -42,6 +42,33 @@ export async function setAgentCommissionRate(userId: string, rate: number | null
   }
 }
 
+export const MIGRATION_0060_MESSAGE = 'Carrier commission % per policy needs database migration 0060_policy_carrier_rates.sql.';
+const isMissing0060 = (e: { code?: string; message?: string }) => e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST202' || /policy_carrier_rate/i.test(e.message ?? '');
+
+/** "accountId:policyId" → the policy's carrier commission % (a fraction), where an admin has set one. */
+export async function fetchPolicyCarrierRates(): Promise<RepoResult<Record<string, number>>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res = await supabase.from('policy_carrier_rates').select('submission_id, policy_id, rate');
+    if (res.error) return isMissing0060(res.error) ? { ok: false, message: MIGRATION_0060_MESSAGE, missingMigration: true } : { ok: false, message: res.error.message };
+    return { ok: true, data: Object.fromEntries(((res.data ?? []) as { submission_id: string; policy_id: string; rate: number | string }[]).map((r) => [`${r.submission_id}:${r.policy_id}`, Number(r.rate)])) };
+  } catch (err) {
+    return { ok: false, message: (err as Error)?.message ?? 'Could not load carrier commissions.' };
+  }
+}
+
+/** Sets a policy's carrier commission % (0–1), or clears it (null) back to the 10% default. Admins only. */
+export async function setPolicyCarrierRate(accountId: string, policyId: string, rate: number | null): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res = await supabase.rpc('set_policy_carrier_rate', { p_submission_id: accountId, p_policy_id: policyId, p_rate: rate });
+    if (res.error) return isMissing0060(res.error) ? { ok: false, message: MIGRATION_0060_MESSAGE, missingMigration: true } : { ok: false, message: res.error.message };
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, message: (err as Error)?.message ?? 'Could not save the carrier commission.' };
+  }
+}
+
 /**
  * Whether this policy number with this carrier is already recorded on another client of the agency —
  * including clients the signed-in broker can't open. Only yes / no. Null when it can't be checked

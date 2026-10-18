@@ -1,5 +1,5 @@
 import { normalizeDateKey } from '../workflow/dates';
-import { agentCommissionCents, parseMoneyCents, type PolicyRow } from '../workflow/policies';
+import { DEFAULT_CARRIER_RATE, agentCommissionCents, carrierRateKey, parseMoneyCents, type PolicyRow } from '../workflow/policies';
 
 /**
  * The agency's income and expenses (0059) and its profit and loss. Admin-only records the owner keeps
@@ -102,14 +102,17 @@ export interface ProfitLoss {
   months: MonthLine[];
 }
 
-/** Commission on one policy / endorsement row, or null when it has no agent or the agent no rate. */
-export function rowCommissionCents(row: Pick<PolicyRow, 'assignedUserId' | 'policy'>, rates: Record<string, number>): number | null {
+/**
+ * The agent's commission on one policy / endorsement row — their % of the policy's carrier commission
+ * (10% of net unless an admin set the policy's own) — or null when it has no agent or the agent no rate.
+ */
+export function rowCommissionCents(row: Pick<PolicyRow, 'assignedUserId' | 'policy' | 'accountId'>, rates: Record<string, number>, carrierRates: Record<string, number> = {}): number | null {
   if (!row.assignedUserId) return null;
   const rate = rates[row.assignedUserId];
-  return rate === undefined ? null : agentCommissionCents(row.policy.netPremiumCents, rate);
+  return rate === undefined ? null : agentCommissionCents(row.policy.netPremiumCents, rate, carrierRates[carrierRateKey(row.accountId, row.policy.id)] ?? DEFAULT_CARRIER_RATE);
 }
 
-export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: Record<string, number>, from: string, to: string): ProfitLoss {
+export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: Record<string, number>, from: string, to: string, carrierRates: Record<string, number> = {}): ProfitLoss {
   const months = new Map<string, MonthLine>();
   const month = (key: string) => {
     const m = key.slice(0, 7);
@@ -141,7 +144,7 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     const d = r.policy.boundDate;
     if (!d || !inRange(d, from, to)) continue;
     premiumNetCents += r.policy.netPremiumCents;
-    const c = rowCommissionCents(r, rates);
+    const c = rowCommissionCents(r, rates, carrierRates);
     if (c === null) {
       commissionMissing++;
       continue;

@@ -42,13 +42,14 @@ describe('profitAndLoss', () => {
     row({ id: 'p2', boundDate: '2026-10-20', netPremiumCents: 500_000 }, null), // no agent
     row({ id: 'p3', boundDate: '2026-10-21', netPremiumCents: 500_000 }, 'agent-without-rate'),
   ];
-  const pl = profitAndLoss(entries, rows, { 'agent-a': 0.1 }, '2026-10-01', '2026-11-30');
+  // Agent on 30%; p1's carrier commission set to 15%, the rest at the 10% default.
+  const pl = profitAndLoss(entries, rows, { 'agent-a': 0.3 }, '2026-10-01', '2026-11-30', { 'a:p1': 0.15 });
 
   it('profit = income − expenses − agent commission, in the period only', () => {
     expect(pl.incomeCents).toBe(1_050_000);
     expect(pl.expenseCents).toBe(500_000);
-    expect(pl.commissionCents).toBe(80_000);
-    expect(pl.profitCents).toBe(470_000);
+    expect(pl.commissionCents).toBe(39_000); // 10,000 × 15% × 30% = 450; −2,000 × 10% × 30% = −60
+    expect(pl.profitCents).toBe(511_000);
     expect(pl.commissionMissing).toBe(2);
     expect(pl.premiumNetCents).toBe(1_800_000);
   });
@@ -58,8 +59,8 @@ describe('profitAndLoss', () => {
   });
   it('by month', () => {
     expect(pl.months).toEqual([
-      { month: '2026-10', incomeCents: 1_000_000, expenseCents: 250_000, commissionCents: 100_000, profitCents: 650_000 },
-      { month: '2026-11', incomeCents: 50_000, expenseCents: 250_000, commissionCents: -20_000, profitCents: -180_000 },
+      { month: '2026-10', incomeCents: 1_000_000, expenseCents: 250_000, commissionCents: 45_000, profitCents: 705_000 },
+      { month: '2026-11', incomeCents: 50_000, expenseCents: 250_000, commissionCents: -6_000, profitCents: -194_000 },
     ]);
     expect(monthLabel('2026-10')).toBe('Oct 2026');
   });
@@ -70,7 +71,7 @@ describe('profitAndLoss', () => {
     expect(moneyEntriesCsv([entries[0], entry({ date: '2026-10-02', description: 'Rent, "October"', amountCents: 250_000 })])).toBe(
       'Date,Type,Category,Description,Amount,Notes\n2026-10-02,Expense,Rent,"Rent, ""October""",-2500.00,\n2026-10-05,Income,Carrier commission,,10000.00,\n'
     );
-    expect(profitLossCsv(pl).split('\n')[1]).toBe('Oct 2026,10000.00,2500.00,1000.00,6500.00');
-    expect(profitLossCsv(pl).split('\n')[3]).toBe('Total,10500.00,5000.00,800.00,4700.00');
+    expect(profitLossCsv(pl).split('\n')[1]).toBe('Oct 2026,10000.00,2500.00,450.00,7050.00');
+    expect(profitLossCsv(pl).split('\n')[3]).toBe('Total,10500.00,5000.00,390.00,5110.00');
   });
 });

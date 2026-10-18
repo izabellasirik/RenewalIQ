@@ -45,7 +45,7 @@ export type CommissionView =
   | { kind: 'no_agent' }
   | { kind: 'no_rate'; agentName: string }
   | { kind: 'unavailable'; message: string }
-  | { kind: 'amount'; agentName: string; rate: number; cents: (netCents: number) => number };
+  | { kind: 'amount'; agentName: string; rate: number; cents: (netCents: number, carrierRate?: number) => number };
 
 /**
  * The agent is the account's assigned broker. Only that agent and the agency's admins see the
@@ -67,5 +67,5 @@ export function useAgentCommission(accountId: string): CommissionView {
   const agentName = members.find((m) => m.userId === agentId)?.name ?? 'the assigned agent';
   const rate = rates.rates[agentId];
   if (rate === undefined) return rates.status === 'ready' ? { kind: 'no_rate', agentName } : { kind: 'hidden' };
-  return { kind: 'amount', agentName, rate, cents: (net) => agentCommissionCents(net, rate) };
+  return { kind: 'amount', agentName, rate, cents: (net, carrierRate) => agentCommissionCents(net, rate, carrierRate) };
 }

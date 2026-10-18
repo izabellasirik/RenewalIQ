@@ -8,11 +8,14 @@ import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { formatRate } from '../components/workspace/PoliciesSection';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useAgentCommissionRates } from '../hooks/useAgentCommission';
+import { useCarrierRates } from '../hooks/useCarrierRates';
+import { setPolicyCarrierRate } from '../services/supabase/commissionRepo';
 import { formatShortDate } from '../services/workflow/dates';
 import {
   DATE_PRESET_LABELS,
   POLICY_DATE_LABELS,
   agentCommissionCents,
+  carrierCommissionCents,
   entryKind,
   filterPolicies,
   formatCents,
@@ -98,19 +101,21 @@ function PoliciesPanel() {
     [all, dateField, from, to, search, kind, agent]
   );
   const preset = PRESETS.find((p) => p !== 'all' && presetRange(p).from === from && presetRange(p).to === to) ?? (from || to ? 'custom' : 'all');
+  const carrier = useCarrierRates();
   const commissionOf = (r: PolicyRow): number | null => {
     if (!agencyAccess || !r.assignedUserId) return null;
     const rate = rates.rates[r.assignedUserId];
-    return rate === undefined ? null : agentCommissionCents(r.policy.netPremiumCents, rate);
+    return rate === undefined ? null : agentCommissionCents(r.policy.netPremiumCents, rate, carrier.rateOf(r.accountId, r.policy.id));
   };
   const totals = useMemo(() => {
-    const t = { policies: 0, endorsements: 0, net: 0, taxes: 0, fees: 0, commission: 0, commissionMissing: 0, proofMissing: 0 };
+    const t = { policies: 0, endorsements: 0, net: 0, taxes: 0, fees: 0, carrier: 0, commission: 0, commissionMissing: 0, proofMissing: 0 };
     for (const r of rows) {
       if (entryKind(r.policy) === 'endorsement') t.endorsements++;
       else t.policies++;
       t.net += r.policy.netPremiumCents;
       t.taxes += r.policy.taxesCents;
       t.fees += r.policy.feesCents;
+      t.carrier += carrierCommissionCents(r.policy.netPremiumCents, carrier.rateOf(r.accountId, r.policy.id));
       const c = commissionOf(r);
       if (c === null) t.commissionMissing++;
       else t.commission += c;
@@ -118,7 +123,7 @@ function PoliciesPanel() {
     }
     return t;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, rates.rates, agencyAccess]);
+  }, [rows, rates.rates, carrier.rates, agencyAccess]);
   const agentName = (id: string | null) => (id ? (members.find((m) => m.userId === id)?.name ?? 'Agent') : null);
 
   // Two quick changes (From, then To) can land before the URL re-renders: build on the latest one.
@@ -139,7 +144,7 @@ function PoliciesPanel() {
     <>
       {agencyAccess && !isAdmin && rates.status === 'ready' && (
         <p className="text-sm text-[var(--color-ink-600)]" data-testid="my-commission">
-          Your agent commission: <strong className="text-[var(--color-ink-900)]">{myRate === undefined ? 'not set yet' : formatRate(myRate)}</strong> of the net amount (set by your agency admin).
+          Your agent commission: <strong className="text-[var(--color-ink-900)]">{myRate === undefined ? 'not set yet' : formatRate(myRate)}</strong> of the carrier commission (10% of the net premium unless your admin sets a policy’s own), set by your agency admin.
         </p>
       )}
       <Card>
@@ -201,6 +206,7 @@ function PoliciesPanel() {
         <Stat label="Taxes" value={formatCents(totals.taxes)} id="taxes" />
         <Stat label="Fees" value={formatCents(totals.fees)} id="fees" />
         <Stat label="Total" value={formatCents(totals.net + totals.taxes + totals.fees)} id="total" strong />
+        {isAdmin && <Stat label="Carrier commission" value={formatCents(totals.carrier)} id="carrier" strong note="Net × each policy’s carrier % (10% unless set)" />}
         {agencyAccess && <Stat label={isAdmin ? 'Agent commission' : 'Your commission'} value={formatCents(totals.commission)} id="commission" strong note={totals.commissionMissing ? `${totals.commissionMissing} without a rate or agent` : undefined} />}
         <Stat label="Missing Documents" value={String(totals.proofMissing)} id="documents-missing" note={totals.proofMissing ? 'policies / endorsements without a document' : undefined} />
       </dl>
@@ -221,12 +227,13 @@ function PoliciesPanel() {
                 <thead>
                   <tr>
                     <th className={th}>Client / policy</th>
-                    <th className={th}>Bound / endorsed</th>
+                    <th className={th}>Effective</th>
                     <th className={`${th} ${num}`}>Net</th>
                     <th className={`${th} ${num}`}>Taxes</th>
                     <th className={`${th} ${num}`}>Fees</th>
                     <th className={`${th} ${num}`}>Total</th>
-                    {agencyAccess && <th className={`${th} ${num}`}>Agent commission</th>}
+                    {isAdmin && <th className={`${th} ${num} !whitespace-normal`}>Carrier commission</th>}
+                    {agencyAccess && <th className={`${th} ${num} !whitespace-normal`}>Agent commission</th>}
                     <th className={th}>Documents</th>
                   </tr>
                 </thead>
@@ -251,18 +258,16 @@ function PoliciesPanel() {
                             {r.policy.carrier !== r.marketName ? ` via ${r.marketName}` : ''}
                           </span>
                         </td>
-                        <td className={`${td} whitespace-nowrap`}>
-                          {formatShortDate(r.policy.boundDate)}
-                          {(r.policy.effectiveDate || r.policy.expirationDate) && (
-                            <span className="block text-xs text-[var(--color-ink-500)]">
-                              Term {formatShortDate(r.policy.effectiveDate)} – {formatShortDate(r.policy.expirationDate)}
-                            </span>
-                          )}
-                        </td>
+                        <td className={`${td} whitespace-nowrap`} data-field="effective">{r.policy.effectiveDate ? formatShortDate(r.policy.effectiveDate) : '—'}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.netPremiumCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.taxesCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.feesCents)}</td>
                         <td className={`${td} ${num} font-semibold`}>{formatCents(policyTotalCents(r.policy))}</td>
+                        {isAdmin && (
+                          <td className={`${td} ${num}`} data-field="carrier">
+                            <CarrierRateCell accountId={r.accountId} policyId={r.policy.id} netCents={r.policy.netPremiumCents} />
+                          </td>
+                        )}
                         {agencyAccess && (
                           <td className={`${td} ${num}`} data-field="commission">
                             {c === null ? (
@@ -306,6 +311,50 @@ function Stat({ label, value, id, strong, note }: { label: string; value: string
         {value}
       </dd>
       {note && <p className="mt-0.5 text-[11px] text-[var(--color-ink-400)]">{note}</p>}
+    </div>
+  );
+}
+
+/**
+ * The carrier commission % of one policy / endorsement, editable by admins (10% until set). Saves on
+ * Enter or leaving the field; blank goes back to 10%. Shows the amount it gives on the net.
+ */
+function CarrierRateCell({ accountId, policyId, netCents }: { accountId: string; policyId: string; netCents: number }) {
+  const carrier = useCarrierRates();
+  const rate = carrier.rateOf(accountId, policyId);
+  const shown = String(Math.round(rate * 1e6) / 1e4);
+  const [value, setValue] = useState<string | null>(null);
+  const [state, setState] = useState<{ busy?: boolean; error?: string }>({});
+  async function save() {
+    if (value === null || value.trim() === shown) return setValue(null);
+    const raw = value.trim().replace('%', '');
+    const pct = raw === '' ? null : Number(raw);
+    if (pct !== null && (!Number.isFinite(pct) || pct < 0 || pct > 100)) return setState({ error: 'Enter 0–100' });
+    setState({ busy: true });
+    const res = await setPolicyCarrierRate(accountId, policyId, pct === null ? null : Math.round(pct * 1e4) / 1e6);
+    if (!res.ok) return setState({ error: res.message });
+    await carrier.reload();
+    setValue(null);
+    setState({});
+  }
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span className="inline-flex items-center gap-1">
+        <input
+          inputMode="decimal"
+          value={value ?? shown}
+          disabled={state.busy}
+          onChange={(e) => (setValue(e.target.value), setState({}))}
+          onBlur={() => void save()}
+          onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+          aria-label={`Carrier commission % for policy ${policyId}`}
+          className="w-14 rounded-md border border-[var(--color-ink-200)] bg-white px-1.5 py-0.5 text-right text-sm tabular-nums disabled:opacity-60"
+        />
+        <span className="text-xs text-[var(--color-ink-500)]">%</span>
+      </span>
+      <span className="text-xs font-semibold tabular-nums text-[var(--color-ink-800)]">{formatCents(carrierCommissionCents(netCents, rate))}</span>
+      {!carrier.isSet(accountId, policyId) && <span className="text-[10px] text-[var(--color-ink-400)]">default</span>}
+      {state.error && <span className="max-w-[160px] text-[10px] text-[var(--color-danger-600)]">{state.error}</span>}
     </div>
   );
 }

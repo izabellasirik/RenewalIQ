@@ -5,8 +5,9 @@ import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCommission';
+import { useCarrierRates } from '../../hooks/useCarrierRates';
 import { formatShortDate } from '../../services/workflow/dates';
-import { activeEndorsements, activePolicies, centsInput, checkPolicy, formatCents, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
+import { DEFAULT_CARRIER_RATE, activeEndorsements, activePolicies, centsInput, checkPolicy, formatCents, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
 import { policyNumberTaken } from '../../services/supabase/commissionRepo';
 import { inputClass, labelClass } from './formStyles';
 
@@ -67,7 +68,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission }: { ac
       ) : (
         <ul className="mt-2 flex flex-col gap-2">
           {entries.map((p) => (
-            <EntryItem key={p.id} quote={quote} entry={p} commission={commission} onEdit={() => setEditing(p)} onRemove={() => setRemoving(p)} />
+            <EntryItem key={p.id} accountId={accountId} quote={quote} entry={p} commission={commission} onEdit={() => setEditing(p)} onRemove={() => setRemoving(p)} />
           ))}
         </ul>
       )}
@@ -88,10 +89,11 @@ function EntryList({ accountId, quote, kind, entries, active, commission }: { ac
   );
 }
 
-function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; onEdit: () => void; onRemove: () => void }) {
+function EntryItem({ accountId, quote, entry: p, commission, onEdit, onRemove }: { accountId: string; quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; onEdit: () => void; onRemove: () => void }) {
   const kind: PolicyEntryKind = p.kind === 'endorsement' ? 'endorsement' : 'policy';
   const k = KIND[kind];
   const files = p.attachments ?? [];
+  const carrierRates = useCarrierRates();
   return (
     <li className="rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2.5" data-policy={p.id} data-kind={kind}>
       <div className="flex items-start justify-between gap-3">
@@ -126,7 +128,7 @@ function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: M
         <Amount label="Fees" cents={p.feesCents} />
         <Amount label="Total" cents={policyTotalCents(p)} strong />
       </dl>
-      <CommissionLine commission={commission} netCents={p.netPremiumCents} />
+      <CommissionLine commission={commission} netCents={p.netPremiumCents} carrierRate={carrierRates.rateOf(accountId, p.id)} />
       {p.notes && <p className="mt-1.5 whitespace-pre-line text-xs text-[var(--color-ink-600)]" data-field="notes">{p.notes}</p>}
       <div className="mt-2 flex flex-col gap-1 text-xs" data-field="documents">
         {files.map((f) => (
@@ -144,8 +146,8 @@ function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: M
   );
 }
 
-/** "Agent commission (Roman Smith, 10%): $1,875.00" — only for the agent and the agency's admins. */
-export function CommissionLine({ commission, netCents }: { commission: CommissionView; netCents: number }) {
+/** "Agent commission (Roman Smith, 30% of the 10% carrier commission): $300.00" — only for the agent and the agency's admins. */
+export function CommissionLine({ commission, netCents, carrierRate = DEFAULT_CARRIER_RATE }: { commission: CommissionView; netCents: number; carrierRate?: number }) {
   if (commission.kind === 'hidden') return null;
   const base = 'mt-1.5 text-xs';
   if (commission.kind === 'no_agent') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: No agent assigned</p>;
@@ -153,7 +155,7 @@ export function CommissionLine({ commission, netCents }: { commission: Commissio
   if (commission.kind === 'unavailable') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: {commission.message}</p>;
   return (
     <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
-      Agent commission ({commission.agentName}, {formatRate(commission.rate)}): <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(commission.cents(netCents))}</strong>
+      Agent commission ({commission.agentName}, {formatRate(commission.rate)} of the {formatRate(carrierRate)} carrier commission): <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(commission.cents(netCents, carrierRate))}</strong>
     </p>
   );
 }
@@ -200,6 +202,7 @@ export function EntryForm({
   const accounts = useAccountsStore((s) => s.accounts);
   const allQuotes = useAccountsStore((s) => s.quotes);
   const commission = useAgentCommission(accountId);
+  const carrierRates = useCarrierRates();
   // Bound for a tracked renewal: the policy is that renewal's term (the account's date may already be next year's).
   const { renewals } = useAccountRenewals(accountId);
   const boundFor = quote.renewalId ? renewals.find((r) => r.id === quote.renewalId) : undefined;
@@ -419,7 +422,7 @@ export function EntryForm({
             <p className="px-0.5 py-2 text-sm font-semibold text-[var(--color-ink-900)] tabular-nums" data-testid="policy-total">{formatCents(total)}</p>
           </div>
           <div className="sm:col-span-4" data-testid="form-commission">
-            <CommissionLine commission={commission} netCents={live(f.netPremium)} />
+            <CommissionLine commission={commission} netCents={live(f.netPremium)} carrierRate={editing === 'new' ? DEFAULT_CARRIER_RATE : carrierRates.rateOf(accountId, editing.id)} />
           </div>
         </fieldset>
 

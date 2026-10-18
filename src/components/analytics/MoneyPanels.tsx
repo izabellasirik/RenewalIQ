@@ -6,6 +6,7 @@ import { inputClass, labelClass } from '../workspace/formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAgentCommissionRates } from '../../hooks/useAgentCommission';
 import { useMoneyEntries } from '../../hooks/useMoneyEntries';
+import { useCarrierRates } from '../../hooks/useCarrierRates';
 import { formatShortDate, toLocalDateKey } from '../../services/workflow/dates';
 import { centsInput, formatCents, policyRows } from '../../services/workflow/policies';
 import {
@@ -155,7 +156,8 @@ export function ProfitLossPanel() {
   const quotes = useAccountsStore((s) => s.quotes);
   const rates = useAgentCommissionRates();
   const rows = useMemo(() => policyRows(accounts, quotes), [accounts, quotes]);
-  const pl = useMemo(() => profitAndLoss(money.entries, rows, rates.rates, period.from, period.to), [money.entries, rows, rates.rates, period.from, period.to]);
+  const carrier = useCarrierRates();
+  const pl = useMemo(() => profitAndLoss(money.entries, rows, rates.rates, period.from, period.to, carrier.rates), [money.entries, rows, rates.rates, period.from, period.to, carrier.rates]);
   const [, setParams] = useSearchParams();
 
   return (
