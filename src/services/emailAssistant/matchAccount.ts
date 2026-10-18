@@ -168,7 +168,7 @@ export function matchAccount(email: ParsedEmail, extraction: EmailExtraction, in
   return { status: 'none', candidates, reason: candidates.length ? 'Nothing identifies one account (only markets or a different USDOT). Choose the account, or dismiss.' : 'No account you can see matches this email. Choose one, or dismiss.' };
 }
 
-/** A market name in the text, or the sender's domain naming it ("progressive" in claims@progressive.com). */
+/** A market name in the text, or the sender's domain naming it ("granitemutual" in claims@granitemutual.example). */
 function marketMentioned(marketName: string, normText: string, senderDomain: string): boolean {
   const m = normalizeName(marketName);
   if (m.length < 4) return false;

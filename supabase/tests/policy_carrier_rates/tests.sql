@@ -1,6 +1,6 @@
 -- 0060 carrier commission % per policy: who can set and read it, and its history. Run against a disposable
--- copy of a database with 0060 applied (agencies and users as in the agency RLS tests: Adriatic Agency —
--- Denis admin, Roman and Agent B agents; Other Co — QA1 admin). Fictional data. One transaction, rolled
+-- copy of a database with 0060 applied (test users as in the agency RLS tests: one agency with an admin (…0d) and two
+-- agents (…0a, …0b); another agency with its admin (…12)). Fictional data. One transaction, rolled
 -- back. Prints one PASS/FAIL line per check.
 \set ON_ERROR_STOP 1
 \pset tuples_only on

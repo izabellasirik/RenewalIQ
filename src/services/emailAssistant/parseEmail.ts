@@ -368,7 +368,7 @@ export function stripQuotedHistory(text: string): string {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (HISTORY_MARKERS.some((re) => re.test(line))) break;
-    // "On Tue, Oct 14, 2026 at 9:02 AM Pat Lee <pat@x.com>" + "wrote:" on the next line
+    // "On Tue, Oct 14, 2026 at 9:02 AM Pat Lee <pat@x.example>" + "wrote:" on the next line
     if (/^on .{3,200}$/i.test(line) && /^.{0,120}wrote:\s*$/i.test((lines[i + 1] ?? '').trim()) && /\d/.test(line)) break;
     if (/^from:\s*\S/i.test(line) && lines.slice(i + 1, i + 5).some((l) => /^(sent|date|to|subject):\s*/i.test(l.trim())) && kept.some((k) => k.trim())) break;
     if (/^>/.test(line)) continue;
