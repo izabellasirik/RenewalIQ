@@ -304,6 +304,8 @@ interface AccountsState {
   setItemStatus: (accountId: string, itemId: string, status: MissingItemStatus) => void;
   /** Set the account's pipeline status by hand; null returns it to automatic. */
   setAccountStage: (accountId: string, stage: AccountStage | null) => void;
+  /** The Renewal label: true / false to switch it on / off by hand, null to make it automatic again. */
+  setRenewalLabel: (accountId: string, on: boolean | null) => void;
   deleteMissingItem: (accountId: string, itemId: string) => void;
   /** A received carrier-requested item was passed on to one carrier that asked for it. `quoteId` may be omitted when exactly one carrier is still waiting on it. */
   markItemSentToCarrier: (accountId: string, itemId: string, quoteId?: string) => void;
@@ -2280,6 +2282,24 @@ export const useAccountsStore = create<AccountsState>()(
         }));
         syncNow(accountId);
         if (status === 'waived') settleOpenRequests(accountId, [itemId], 'waived');
+      },
+
+      setRenewalLabel: (accountId, on) => {
+        const account = get().accounts.find((a) => a.id === accountId);
+        if (!account || (account.renewalLabel ?? null) === on) return;
+        set((s) => ({
+          accounts: touchAccount(
+            s.accounts.map((a) => {
+              if (a.id !== accountId) return a;
+              const { renewalLabel: _old, ...rest } = a;
+              void _old;
+              return on === null ? rest : { ...rest, renewalLabel: on };
+            }),
+            accountId
+          ),
+          activityLog: appendEvent(s.activityLog, accountId, 'stage_changed', `${on === null ? 'Renewal label set back to automatic' : on ? 'Renewal label switched on' : 'Renewal label switched off'}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
       },
 
       setAccountStage: (accountId, stage) => {

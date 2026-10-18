@@ -9,6 +9,7 @@ import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
 import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
 import { effectiveAccountStage } from '../services/workflow/accountStage';
 import { normalizeDateKey, todayKey } from '../services/workflow/dates';
+import { renewalLabelOn } from '../services/workflow/renewals';
 import { BOUND_FILTERS, RENEWAL_FILTERS, boundRange, latestBoundIn, renewalFilterDate, type BoundFilter, type RenewalFilter } from '../services/workflow/accountFilters';
 import { ACCOUNT_STAGE_LABELS, ACCOUNT_STAGE_ORDER, type AccountStage } from '../types';
 import { ALL_BROKERS, UNASSIGNED, matchesBroker } from '../services/workflow/brokerFilter';
@@ -17,7 +18,8 @@ import { aBoolean, aString, defined, oneOf } from '../services/preferences/viewP
 
 /** The Accounts filters remembered between visits (per user, on this device). Search and the archived view aren't remembered. */
 interface AccountsView {
-  stage: AccountStage | 'all';
+  /** A status, or 'renewal_label': accounts showing the Renewal label (whatever their status). */
+  stage: AccountStage | 'all' | 'renewal_label';
   broker: string;
   /** Renewals: being worked now ("due"), or with a renewal date in the next 30 / 60 / 90 days — see accountFilters.ts. */
   renewals: RenewalFilter;
@@ -30,7 +32,7 @@ const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stage: 'all', broker: ALL_BROKERS
 const aDate = (v: unknown): string | undefined => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
 const sanitizeAccountsView = (saved: Record<string, unknown>): Partial<AccountsView> =>
   defined<AccountsView>({
-    stage: oneOf(['all', ...ACCOUNT_STAGE_ORDER] as const)(saved.stage),
+    stage: oneOf(['all', 'renewal_label', ...ACCOUNT_STAGE_ORDER] as const)(saved.stage),
     broker: aString(saved.broker),
     // The earlier on/off "Renewal within 45 days" / "Upcoming renewals" choice still applies.
     renewals: oneOf(RENEWAL_FILTERS)(saved.renewals) ?? (aBoolean(saved.renewalSoon) ? 'due' : undefined),
@@ -64,7 +66,7 @@ export function DashboardPage() {
   const [search, setSearch] = useState('');
   const [view, updateView, resetView] = useRememberedView('accounts', ACCOUNTS_VIEW_DEFAULTS, sanitizeAccountsView);
   const stageFilter = view.stage;
-  const setStageFilter = (stage: AccountStage | 'all') => updateView({ stage });
+  const setStageFilter = (stage: AccountsView['stage']) => updateView({ stage });
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const agencyMembers = useAccountsStore((s) => s.agencyMembers);
   // In an agency, "who has this account" is the database assignment (a user id), so an admin filters
@@ -77,6 +79,14 @@ export function DashboardPage() {
   const [historyAccountId, setHistoryAccountId] = useState<string | null>(null);
 
   const archivedCount = useMemo(() => accounts.filter((a) => a.archived).length, [accounts]);
+
+  // Accounts showing the Renewal label (automatic or switched on by hand) — see renewalLabelOn.
+  const renewalLabelOf = useMemo(() => {
+    const today = todayKey();
+    const map: Record<string, boolean> = {};
+    for (const a of accounts) map[a.id] = renewalLabelOn(a, normalizeDateKey((riskProfiles[a.id]?.business?.effectiveDate?.value as string | null | undefined) ?? null), quotes[a.id] ?? [], today).on;
+    return map;
+  }, [accounts, riskProfiles, quotes]);
 
   const stageOf = useMemo(() => {
     const map: Record<string, AccountStage> = {};
@@ -127,7 +137,7 @@ export function DashboardPage() {
     return accounts
       .filter((a) => a.archived === showArchived)
       .filter((a) => a.namedInsured.toLowerCase().includes(search.toLowerCase()))
-      .filter((a) => stageFilter === 'all' || stageOf[a.id] === stageFilter)
+      .filter((a) => stageFilter === 'all' || (stageFilter === 'renewal_label' ? renewalLabelOf[a.id] : stageOf[a.id] === stageFilter))
       // An agent's accounts: assigned to them, or ones they collaborate on (see matchesBroker).
       .filter((a) => matchesBroker(a, brokerFilter, { byAgent }))
       .filter((a) => renewalFilter === 'any' || renewalDates[renewalFilter][a.id] !== undefined)
@@ -140,8 +150,9 @@ export function DashboardPage() {
             ? boundOn[b.id].localeCompare(boundOn[a.id])
             : a.updatedAt < b.updatedAt ? 1 : -1
       );
-  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalFilter, renewalDates, range, boundOn, byAgent]);
+  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalLabelOf, renewalFilter, renewalDates, range, boundOn, byAgent]);
 
+  const renewalLabelCount = accounts.filter((a) => a.archived === showArchived && renewalLabelOf[a.id]).length;
   const stageCounts = useMemo(() => {
     const counts: Partial<Record<AccountStage, number>> = {};
     for (const a of accounts) if (a.archived === showArchived) counts[stageOf[a.id]] = (counts[stageOf[a.id]] ?? 0) + 1;
@@ -220,8 +231,9 @@ export function DashboardPage() {
                 />
               </div>
             )}
-            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as AccountStage | 'all')} className={filterClass} aria-label="Filter by status">
+            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as AccountsView['stage'])} className={filterClass} aria-label="Filter by status">
               <option value="all">All statuses</option>
+              <option value="renewal_label">Renewal label ({renewalLabelCount})</option>
               {ACCOUNT_STAGE_ORDER.map((s) => (
                 <option key={s} value={s}>
                   {ACCOUNT_STAGE_LABELS[s]} ({stageCounts[s] ?? 0})

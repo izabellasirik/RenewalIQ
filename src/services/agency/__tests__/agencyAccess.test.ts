@@ -49,6 +49,7 @@ vi.mock('../../supabase/submissionsRepo', async () => {
         .map(([id, p]) => ({ userId: id, role: p.role, name: p.name, email: `${p.name.toLowerCase()}@agency.com` }));
       return { ok: true, data: { access: { agencyId: me.agencyId, agencyName: 'Agency', role: me.role }, members } };
     },
+    fetchSubmissionUpdatedAt: async () => null,
     submissionsRevoked: async (ids: string[]) => Object.fromEntries(ids.filter((id) => cloud.rows.some((r) => r.id === id)).map((id) => [id, true])),
     assignSubmission: async (id: string, userId: string | null) => {
       const r = cloud.rows.find((x) => x.id === id);

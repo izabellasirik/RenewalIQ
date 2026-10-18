@@ -20,6 +20,11 @@ export interface Account {
   assignedBroker?: AssignedBroker;
   /** Broker-set pipeline status. Absent = automatic (derived from checklist and quotes). */
   stage?: AccountStage;
+  /**
+   * The "Renewal" label beside the status: absent = automatic (on for a renewal client from its
+   * start-working date until bound — see renewalLabelOn), true / false = switched on / off by hand.
+   */
+  renewalLabel?: boolean;
   /** Agency this account belongs to (cloud accounts, 0011). Set by the database, read-only here. */
   agencyId?: string;
   /** Supabase Auth user id of the agent the account belongs to — what grants access (RLS). Set by the database; only an agency admin can change it (assignAccountToAgent). */

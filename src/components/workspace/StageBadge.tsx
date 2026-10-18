@@ -5,7 +5,6 @@ import { cn } from '../../utils/cn';
 /** One color per status — used everywhere a client status is shown (Accounts list, Workspace, filters). */
 const STAGE_STYLE: Record<AccountStage, { chip: string; dot: string }> = {
   new: { chip: 'bg-[var(--color-ink-100)] text-[var(--color-ink-600)]', dot: 'bg-[var(--color-ink-300)]' }, // light gray
-  renewal: { chip: 'bg-[#efe7fb] text-[#6a3fb5]', dot: 'bg-[#8b5cd6]' }, // violet
   collecting_info: { chip: 'bg-[var(--color-warning-100)] text-[var(--color-warning-600)]', dot: 'bg-[var(--color-warning-500)]' }, // amber
   ready_to_submit: { chip: 'bg-[var(--color-accent-100)] text-[var(--color-accent-600)]', dot: 'bg-[var(--color-accent-500)]' }, // teal
   submitted: { chip: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]', dot: 'bg-[var(--color-info-500)]' }, // blue

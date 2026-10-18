@@ -86,6 +86,22 @@ export function isRenewalDue(r: ResolvedRenewal, today: string): boolean {
   return phase === 'working' || phase === 'overdue';
 }
 
+/**
+ * The "Renewal" label beside the account's status. Automatic: on for a client that came in as a
+ * renewal while its renewal is being worked — from the start-working date until a market is bound for
+ * it (an overdue one stays on) — and off once bound. A broker's on / off choice wins.
+ */
+export function renewalLabelOn(
+  account: Pick<Account, 'renewals' | 'businessType' | 'renewalLabel'>,
+  effectiveDate: string | null | undefined,
+  quotes: Pick<MarketQuote, 'status'>[],
+  today: string
+): { on: boolean; manual: boolean } {
+  if (account.renewalLabel !== undefined) return { on: account.renewalLabel, manual: true };
+  const on = account.businessType === 'renewal' && resolveRenewals(account, effectiveDate, quotes).some((r) => isRenewalDue(r, today));
+  return { on, manual: false };
+}
+
 /** The task id on Today's Plate. The main renewal keeps the original id, so a reminder marked done before tracking stays done. */
 export function renewalTaskId(accountId: string, r: Pick<ResolvedRenewal, 'id' | 'main'>): string {
   return r.main ? `renewal-${accountId}` : `renewal-${accountId}-${r.id}`;

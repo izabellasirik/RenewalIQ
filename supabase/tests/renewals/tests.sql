@@ -47,7 +47,7 @@ end $$;
 select pg_temp.check('C3 renewals is never null', true);
 insert into submissions (id, user_id, named_insured) values ('acct_sqlt_2', '00000000-0000-0000-0000-00000000000a', 'Defaults (sample)');
 select pg_temp.check('C4 a new row without the columns: renewals [] and business_type null', (select renewals = '[]'::jsonb and business_type is null from submissions where id = 'acct_sqlt_2'));
-select pg_temp.check('C5 the Renewal status column starts false', (select renewal_status = false from submissions where id = 'acct_sqlt_2'));
+select pg_temp.check('C5 the Renewal label starts automatic (null)', (select renewal_status is null from submissions where id = 'acct_sqlt_2'));
 update submissions set renewal_status = true where id = 'acct_sqlt_1';
 
 \echo '== the app before 0054 (it never sends these columns) keeps them'
@@ -56,7 +56,7 @@ insert into submissions (id, user_id, named_insured, state, status, archived, ma
 values ('acct_sqlt_1', '00000000-0000-0000-0000-00000000000a', 'SQL Test Freight (renamed)', 'TX', 'new', false, '[]', '[]')
 on conflict (id) do update set named_insured = excluded.named_insured, state = excluded.state, market_quotes = excluded.market_quotes, account_notes = excluded.account_notes;
 select pg_temp.check('O1 an older-app save keeps business_type and renewals', (select business_type = 'renewal' and renewals->0->>'id' = 'r1' and named_insured = 'SQL Test Freight (renamed)' from submissions where id = 'acct_sqlt_1'));
-select pg_temp.check('O2 an older-app save keeps the Renewal status', (select renewal_status from submissions where id = 'acct_sqlt_1'));
+select pg_temp.check('O2 an older-app save keeps the Renewal label', (select renewal_status from submissions where id = 'acct_sqlt_1'));
 
 grant all on all tables in schema public to authenticated;
 set local role authenticated;

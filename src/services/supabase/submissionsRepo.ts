@@ -1,7 +1,7 @@
 import { supabase } from './client';
 import { driverFromRow, driverToRow, lossFromRow, lossToRow, vehicleFromRow, vehicleToRow, withoutDetails } from './recordRows';
 import type { Account, AccountBusinessType, AccountNote, AccountRenewal, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, LossRun, ReviewCandidate, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
-import { emptyField } from '../../types';
+import { ACCOUNT_STAGE_ORDER, emptyField } from '../../types';
 import { createEmptyRiskProfile } from '../extraction/emptyRiskProfile';
 import { isRenewalRecord } from '../workflow/renewals';
 
@@ -287,7 +287,8 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         ...(sub.assigned_broker && typeof sub.assigned_broker === 'object' ? { assignedBroker: sub.assigned_broker as AssignedBroker } : {}),
         // "Renewal" is kept in its own column (0054), so an app that doesn't know it never reads an unknown status;
         // a status that app sets afterwards wins.
-        ...(sub.stage ? { stage: sub.stage as AccountStage } : sub.renewal_status === true ? { stage: 'renewal' as AccountStage } : {}),
+        ...(sub.stage && ACCOUNT_STAGE_ORDER.includes(sub.stage as AccountStage) ? { stage: sub.stage as AccountStage } : {}),
+        ...(typeof sub.renewal_status === 'boolean' ? { renewalLabel: sub.renewal_status } : {}),
         ...(sub.done_actions && typeof sub.done_actions === 'object' && Object.keys(sub.done_actions).length > 0 ? { doneActions: sub.done_actions as Record<string, string> } : {}),
         ...(Array.isArray(sub.account_notes) && sub.account_notes.length > 0 ? { notes: (sub.account_notes as AccountNote[]).filter((n) => n && typeof n.id === 'string' && typeof n.text === 'string') } : {}),
         ...(Array.isArray(sub.loss_runs) && sub.loss_runs.length > 0 ? { lossRuns: (sub.loss_runs as LossRun[]).filter((r) => r && typeof r.id === 'string' && typeof r.carrier === 'string') } : {}),
@@ -442,7 +443,7 @@ export async function saveSubmissionSnapshot(
       assigned_broker: account.assignedBroker ?? null,
       ...(workflow ? { missing_items: workflow.missingItems, market_quotes: workflow.quotes } : {}),
     };
-    const stageRow = { ...workflowRow, stage: account.stage === 'renewal' ? null : (account.stage ?? null) };
+    const stageRow = { ...workflowRow, stage: account.stage ?? null };
     const submissionRow = { ...stageRow, ...(workflow?.followUps ? { follow_ups: workflow.followUps } : {}) };
     const doneRow = { ...submissionRow, done_actions: account.doneActions ?? {} };
     const notesRow = { ...doneRow, account_notes: account.notes ?? [] };
@@ -450,14 +451,15 @@ export async function saveSubmissionSnapshot(
     // 0054's columns are sent only for an account with renewal setup, so every other account keeps
     // saving normally on a project that hasn't applied 0054 yet (and an emptied list is still sent).
     const hasRenewalSetup = account.businessType !== undefined || account.renewals !== undefined;
-    const renewalStatus = projectHasRenewalStatus || account.stage === 'renewal' ? { renewal_status: account.stage === 'renewal' } : {};
+    // The Renewal label's override (null = automatic): sent once the project is known to have the column, or when switched by hand.
+    const renewalStatus = projectHasRenewalStatus || account.renewalLabel !== undefined ? { renewal_status: account.renewalLabel ?? null } : {};
     const renewalsRow = hasRenewalSetup ? { ...lossRunsRow, business_type: account.businessType ?? null, renewals: account.renewals ?? [], ...renewalStatus } : { ...lossRunsRow, ...renewalStatus };
     // A project that hasn't applied the newest migrations still saves everything it can (so the
     // Risk Profile never stops syncing), stepping down one migration at a time — 0009 (follow-ups),
     // 0008 (stage), then 0007 (workflow) — and reports the gap honestly instead of claiming "Saved".
     const attempts: { row: Record<string, unknown>; missing: string }[] = [
       { row: renewalsRow, missing: '' },
-      { row: lossRunsRow, missing: hasRenewalSetup || account.stage === 'renewal' ? 'Renewal setup was not saved to your account — the database needs migration 0054_account_renewals.sql.' : '' },
+      { row: lossRunsRow, missing: hasRenewalSetup || account.renewalLabel !== undefined ? 'Renewal setup was not saved to your account — the database needs migration 0054_account_renewals.sql.' : '' },
       { row: notesRow, missing: 'Loss-run reports were not saved to your account — the database needs migration 0025_loss_runs.sql.' },
       { row: doneRow, missing: 'Notes were not saved to your account — the database needs migration 0020_account_notes.sql.' },
       { row: submissionRow, missing: 'Tasks marked done were not saved to your account — the database needs migration 0016_account_done_actions.sql.' },

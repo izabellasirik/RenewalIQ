@@ -1,5 +1,5 @@
 import type { Account, AccountStage, MarketQuote, MissingItem } from '../../types';
-import { AWAITING_CARRIER_STATUSES } from '../../types';
+import { ACCOUNT_STAGE_ORDER, AWAITING_CARRIER_STATUSES } from '../../types';
 
 /**
  * The account's pipeline status as the system sees it, from checklist and quote state. Used
@@ -17,6 +17,7 @@ export function deriveAccountStage(items: MissingItem[], quotes: MarketQuote[]):
 
 /** The status to show and filter on: the broker's manual choice, else the derived one. */
 export function effectiveAccountStage(account: Account, items: MissingItem[], quotes: MarketQuote[]): { stage: AccountStage; manual: boolean } {
-  if (account.stage) return { stage: account.stage, manual: true };
+  // (A status this version doesn't know — e.g. one saved by an earlier preview — counts as automatic.)
+  if (account.stage && ACCOUNT_STAGE_ORDER.includes(account.stage)) return { stage: account.stage, manual: true };
   return { stage: deriveAccountStage(items, quotes), manual: false };
 }

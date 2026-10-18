@@ -10,8 +10,9 @@ import { formatShortDate, todayKey } from '../../services/workflow/dates';
 import { cn } from '../../utils/cn';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { effectiveAccountStage } from '../../services/workflow/accountStage';
-import { nextOpenRenewal, resolveRenewals } from '../../services/workflow/renewals';
+import { nextOpenRenewal, renewalLabelOn, resolveRenewals } from '../../services/workflow/renewals';
 import { StageBadge } from '../workspace/StageBadge';
+import { RenewalBadge } from '../renewals/RenewalLabel';
 import { agentLabel } from '../../services/agency/agentLabel';
 
 export function AccountCard({ account, index, onOpenHistory }: { account: Account; index: number; onOpenHistory: () => void }) {
@@ -41,6 +42,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   // Only something genuinely overdue earns the red flag — otherwise the card stays calm.
   const needsAttention = actions.now.some((a) => a.overdue);
   const { stage, manual } = effectiveAccountStage(account, items, quotes);
+  const renewalLabel = renewalLabelOn(account, effectiveDate, quotes, todayKey()).on;
   // The soonest open renewal (another policy's may come before the account's own); else the effective date.
   const shownDate = nextOpenRenewal(resolveRenewals(account, effectiveDate, quotes))?.renewalDate ?? effectiveDate;
   const newVenture = account.businessType === 'new_venture' && !account.renewals?.length;
@@ -168,6 +170,7 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
 
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <StageBadge stage={stage} className="px-3 py-1.5 text-sm" title={manual ? 'Status set by broker' : 'Automatic status — set it on the account to override'} />
+            {renewalLabel && <RenewalBadge className="py-1.5" />}
             {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}
             {needsAttention && (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-danger-600)]" title="Something on this account is overdue">
