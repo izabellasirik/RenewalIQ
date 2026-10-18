@@ -31,10 +31,15 @@ alter table public.submissions add column if not exists renewals jsonb not null 
 alter table public.submissions drop constraint if exists submissions_renewals_array;
 alter table public.submissions add constraint submissions_renewals_array check (jsonb_typeof(renewals) = 'array');
 
+-- The "Renewal" client status of an earlier app version, which a broker could pick by hand. Kept as it
+-- was so that version keeps saving normally; this version doesn't use it.
+alter table public.submissions add column if not exists renewal_status boolean not null default false;
+
 -- The "Renewal" label shown beside the account's status: null = automatic (the app shows it from the
 -- renewal's start-working date until bound), true / false = switched on / off by hand. A label, not a
--- status, so the regular status (0008) is untouched and an app that doesn't know it ignores it.
-alter table public.submissions add column if not exists renewal_status boolean;
+-- status, so the regular status (0008) is untouched. Its own column, so an app that doesn't know the
+-- label (including the earlier version that writes renewal_status on every save) never changes it.
+alter table public.submissions add column if not exists renewal_label boolean;
 
 create or replace function public.can_manage_renewals(p_agency_id uuid, p_assigned_user_id uuid, p_creator_id uuid)
 returns boolean

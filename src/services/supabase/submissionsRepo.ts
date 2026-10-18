@@ -191,13 +191,13 @@ export interface CloudSubmissionBundle {
  * it with no new policies, and it keeps this file's full-snapshot save a single upsert.
  */
 /**
- * Whether the project has 0054's renewal_status column, as seen on the last load. Until it's known, the
- * column is only sent when the broker picks "Renewal", so a project without 0054 never refuses an
- * ordinary save.
+ * Whether the project has 0054's renewal_label column, as seen on the last load. Until it's known, the
+ * column is only sent when the broker switches the label by hand, so a project without 0054 never
+ * refuses an ordinary save.
  */
-let projectHasRenewalStatus = false;
+let projectHasRenewalLabel = false;
 
-const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions', 'account_notes', 'loss_runs', 'business_type', 'renewals', 'renewal_status'] as const;
+const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions', 'account_notes', 'loss_runs', 'business_type', 'renewals', 'renewal_label'] as const;
 
 function isMissingWorkflowColumnError(error: { message: string; code?: string }): boolean {
   return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
@@ -270,7 +270,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
     const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes].find((r) => r.error);
     if (errored?.error) return fail(errored.error.message);
 
-    if ((subsRes.data ?? []).some((sub) => 'renewal_status' in sub)) projectHasRenewalStatus = true;
+    if ((subsRes.data ?? []).some((sub) => 'renewal_label' in sub)) projectHasRenewalLabel = true;
     const bundles: CloudSubmissionBundle[] = (subsRes.data ?? []).map((sub) => {
       const account: Account = {
         id: sub.id,
@@ -288,7 +288,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         // "Renewal" is kept in its own column (0054), so an app that doesn't know it never reads an unknown status;
         // a status that app sets afterwards wins.
         ...(sub.stage && ACCOUNT_STAGE_ORDER.includes(sub.stage as AccountStage) ? { stage: sub.stage as AccountStage } : {}),
-        ...(typeof sub.renewal_status === 'boolean' ? { renewalLabel: sub.renewal_status } : {}),
+        ...(typeof sub.renewal_label === 'boolean' ? { renewalLabel: sub.renewal_label } : {}),
         ...(sub.done_actions && typeof sub.done_actions === 'object' && Object.keys(sub.done_actions).length > 0 ? { doneActions: sub.done_actions as Record<string, string> } : {}),
         ...(Array.isArray(sub.account_notes) && sub.account_notes.length > 0 ? { notes: (sub.account_notes as AccountNote[]).filter((n) => n && typeof n.id === 'string' && typeof n.text === 'string') } : {}),
         ...(Array.isArray(sub.loss_runs) && sub.loss_runs.length > 0 ? { lossRuns: (sub.loss_runs as LossRun[]).filter((r) => r && typeof r.id === 'string' && typeof r.carrier === 'string') } : {}),
@@ -452,8 +452,8 @@ export async function saveSubmissionSnapshot(
     // saving normally on a project that hasn't applied 0054 yet (and an emptied list is still sent).
     const hasRenewalSetup = account.businessType !== undefined || account.renewals !== undefined;
     // The Renewal label's override (null = automatic): sent once the project is known to have the column, or when switched by hand.
-    const renewalStatus = projectHasRenewalStatus || account.renewalLabel !== undefined ? { renewal_status: account.renewalLabel ?? null } : {};
-    const renewalsRow = hasRenewalSetup ? { ...lossRunsRow, business_type: account.businessType ?? null, renewals: account.renewals ?? [], ...renewalStatus } : { ...lossRunsRow, ...renewalStatus };
+    const renewalLabel = projectHasRenewalLabel || account.renewalLabel !== undefined ? { renewal_label: account.renewalLabel ?? null } : {};
+    const renewalsRow = hasRenewalSetup ? { ...lossRunsRow, business_type: account.businessType ?? null, renewals: account.renewals ?? [], ...renewalLabel } : { ...lossRunsRow, ...renewalLabel };
     // A project that hasn't applied the newest migrations still saves everything it can (so the
     // Risk Profile never stops syncing), stepping down one migration at a time — 0009 (follow-ups),
     // 0008 (stage), then 0007 (workflow) — and reports the gap honestly instead of claiming "Saved".
