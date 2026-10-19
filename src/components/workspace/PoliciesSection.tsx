@@ -334,7 +334,7 @@ export function EntryForm({
   const detach = useAccountsStore((s) => s.removePolicyAttachment);
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id, accountPolicyIds: accountPolicies.map((x) => x.policy.id), requirePolicyLink: kind === 'endorsement' && editing === 'new' });
+  const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id, accountPolicyIds: accountPolicies.map((x) => x.policy.id), requirePolicyLink: kind === 'endorsement' && (editing === 'new' || !!editing.forPolicyId) });
   const live = (v: string) => {
     const c = parseMoneyCents(v);
     return c === null || Number.isNaN(c) ? 0 : c;
