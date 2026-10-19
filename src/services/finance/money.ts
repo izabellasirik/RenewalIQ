@@ -1,13 +1,14 @@
 import { normalizeDateKey } from '../workflow/dates';
-import { DEFAULT_CARRIER_RATE, agentCommissionCents, carrierRateKey, parseMoneyCents, type PolicyRow } from '../workflow/policies';
+import { DEFAULT_CARRIER_RATE, agentCommissionCents, carrierCommissionCents, carrierKey, parseMoneyCents, type PolicyRow } from '../workflow/policies';
 
 /**
  * The agency's income and expenses (0059) and its profit and loss. Admin-only records the owner keeps
  * so they can see whether the agency makes or loses money — records only, nothing here moves money.
  *
- * Profit = income recorded − expenses recorded − agent commission. Agent commission isn't recorded by
- * hand: it's worked out from the policies and endorsements bound / endorsed in the period (net × the
- * agent's %), so it must not also be entered as an expense.
+ * Profit = income − expenses − agent commission. Two amounts aren't recorded by hand — they're worked
+ * out from the policies and endorsements bound / endorsed in the period, so they must not also be
+ * entered here: the carrier commission (net × that carrier's %, 10% until an admin sets it) is income,
+ * and the agent commission (the agent's % of 10% of net) is a cost.
  */
 
 export type MoneyKind = 'income' | 'expense';
@@ -25,7 +26,12 @@ export interface MoneyEntry {
   updatedAt: string;
 }
 
-export const INCOME_CATEGORIES = ['Carrier commission', 'Agency fees', 'Contingency / bonus', 'Other income'] as const;
+/** Recorded income. Carrier commission on policies isn't one: it's added from the policies themselves. */
+export const INCOME_CATEGORIES = ['Agency fees', 'Contingency / bonus', 'Other income'] as const;
+/** The income line worked out from the policies and endorsements (never recorded by hand). */
+export const CARRIER_COMMISSION_CATEGORY = 'Carrier commission (policies & endorsements)';
+/** Income recorded by hand as carrier commission (the category the form offered before it was added automatically). */
+export const isRecordedCarrierCommission = (e: Pick<MoneyEntry, 'kind' | 'category'>) => e.kind === 'income' && /^\s*carrier\s+commission/i.test(e.category);
 export const EXPENSE_CATEGORIES = [
   'Rent',
   'Payroll',
@@ -82,6 +88,11 @@ export interface CategoryTotal {
 export interface MonthLine {
   /** YYYY-MM */
   month: string;
+  /** From the policies and endorsements (net × the carrier's %). */
+  carrierCents: number;
+  /** Recorded income. */
+  otherIncomeCents: number;
+  /** carrierCents + otherIncomeCents */
   incomeCents: number;
   expenseCents: number;
   commissionCents: number;
@@ -89,7 +100,14 @@ export interface MonthLine {
 }
 
 export interface ProfitLoss {
+  /** Carrier commission + recorded income. */
   incomeCents: number;
+  carrierCents: number;
+  otherIncomeCents: number;
+  /** Policies / endorsements in the period whose carrier has no % set yet (10% used). */
+  carrierDefaultCount: number;
+  /** Income entries in the period recorded by hand as carrier commission — possibly counted twice now. */
+  recordedCarrierEntries: number;
   expenseCents: number;
   commissionCents: number;
   profitCents: number;
@@ -102,14 +120,16 @@ export interface ProfitLoss {
   months: MonthLine[];
 }
 
-/**
- * The agent's commission on one policy / endorsement row — their % of the policy's carrier commission
- * (10% of net unless an admin set the policy's own) — or null when it has no agent or the agent no rate.
- */
-export function rowCommissionCents(row: Pick<PolicyRow, 'assignedUserId' | 'policy' | 'accountId'>, rates: Record<string, number>, carrierRates: Record<string, number> = {}): number | null {
+/** The agent's commission on one policy / endorsement row — their % of 10% of net — or null when it has no agent or the agent no rate. */
+export function rowCommissionCents(row: Pick<PolicyRow, 'assignedUserId' | 'policy'>, rates: Record<string, number>): number | null {
   if (!row.assignedUserId) return null;
   const rate = rates[row.assignedUserId];
-  return rate === undefined ? null : agentCommissionCents(row.policy.netPremiumCents, rate, carrierRates[carrierRateKey(row.accountId, row.policy.id)] ?? DEFAULT_CARRIER_RATE);
+  return rate === undefined ? null : agentCommissionCents(row.policy.netPremiumCents, rate);
+}
+
+/** What the carrier pays the agency on one row: net × the carrier's % (keyed by carrierKey; 10% until set). */
+export function rowCarrierCents(row: Pick<PolicyRow, 'policy'>, carrierRates: Record<string, number>): number {
+  return carrierCommissionCents(row.policy.netPremiumCents, carrierRates[carrierKey(row.policy.carrier)] ?? DEFAULT_CARRIER_RATE);
 }
 
 export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: Record<string, number>, from: string, to: string, carrierRates: Record<string, number> = {}): ProfitLoss {
@@ -117,12 +137,13 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
   const month = (key: string) => {
     const m = key.slice(0, 7);
     let line = months.get(m);
-    if (!line) months.set(m, (line = { month: m, incomeCents: 0, expenseCents: 0, commissionCents: 0, profitCents: 0 }));
+    if (!line) months.set(m, (line = { month: m, carrierCents: 0, otherIncomeCents: 0, incomeCents: 0, expenseCents: 0, commissionCents: 0, profitCents: 0 }));
     return line;
   };
   const byCat = { income: new Map<string, CategoryTotal>(), expense: new Map<string, CategoryTotal>() };
-  let incomeCents = 0;
+  let otherIncomeCents = 0;
   let expenseCents = 0;
+  let recordedCarrierEntries = 0;
   for (const e of entries) {
     if (!inRange(e.date, from, to)) continue;
     const t = byCat[e.kind].get(e.category) ?? { category: e.category, cents: 0, count: 0 };
@@ -130,13 +151,17 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     t.count++;
     byCat[e.kind].set(e.category, t);
     if (e.kind === 'income') {
-      incomeCents += e.amountCents;
-      month(e.date).incomeCents += e.amountCents;
+      if (isRecordedCarrierCommission(e)) recordedCarrierEntries++;
+      otherIncomeCents += e.amountCents;
+      month(e.date).otherIncomeCents += e.amountCents;
     } else {
       expenseCents += e.amountCents;
       month(e.date).expenseCents += e.amountCents;
     }
   }
+  let carrierCents = 0;
+  let carrierCount = 0;
+  let carrierDefaultCount = 0;
   let commissionCents = 0;
   let commissionMissing = 0;
   let premiumNetCents = 0;
@@ -144,7 +169,12 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     const d = r.policy.boundDate;
     if (!d || !inRange(d, from, to)) continue;
     premiumNetCents += r.policy.netPremiumCents;
-    const c = rowCommissionCents(r, rates, carrierRates);
+    const carrier = rowCarrierCents(r, carrierRates);
+    carrierCents += carrier;
+    carrierCount++;
+    if (!(carrierKey(r.policy.carrier) in carrierRates)) carrierDefaultCount++;
+    month(d).carrierCents += carrier;
+    const c = rowCommissionCents(r, rates);
     if (c === null) {
       commissionMissing++;
       continue;
@@ -152,10 +182,21 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     commissionCents += c;
     month(d).commissionCents += c;
   }
+  if (carrierCount) byCat.income.set(CARRIER_COMMISSION_CATEGORY, { category: CARRIER_COMMISSION_CATEGORY, cents: carrierCents, count: carrierCount });
   const list = (m: Map<string, CategoryTotal>) => [...m.values()].sort((a, b) => b.cents - a.cents || a.category.localeCompare(b.category));
-  const monthLines = [...months.values()].map((l) => ({ ...l, profitCents: l.incomeCents - l.expenseCents - l.commissionCents })).sort((a, b) => a.month.localeCompare(b.month));
+  const monthLines = [...months.values()]
+    .map((l) => {
+      const incomeCents = l.carrierCents + l.otherIncomeCents;
+      return { ...l, incomeCents, profitCents: incomeCents - l.expenseCents - l.commissionCents };
+    })
+    .sort((a, b) => a.month.localeCompare(b.month));
+  const incomeCents = carrierCents + otherIncomeCents;
   return {
     incomeCents,
+    carrierCents,
+    otherIncomeCents,
+    carrierDefaultCount,
+    recordedCarrierEntries,
     expenseCents,
     commissionCents,
     profitCents: incomeCents - expenseCents - commissionCents,
@@ -172,24 +213,3 @@ export function monthLabel(month: string): string {
   const [y, m] = month.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
-
-const csvCell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-const plainCents = (c: number) => (c / 100).toFixed(2);
-
-/** The entries as a CSV file (amounts as plain numbers; expenses negative so a spreadsheet can sum them). */
-export function moneyEntriesCsv(entries: MoneyEntry[]): string {
-  const lines = [['Date', 'Type', 'Category', 'Description', 'Amount', 'Notes']];
-  for (const e of [...entries].sort((a, b) => a.date.localeCompare(b.date))) {
-    lines.push([e.date, e.kind === 'income' ? 'Income' : 'Expense', e.category, e.description, plainCents(e.kind === 'income' ? e.amountCents : -e.amountCents), e.notes]);
-  }
-  return lines.map((l) => l.map(csvCell).join(',')).join('\n') + '\n';
-}
-
-/** The profit-and-loss report (by month, then the totals) as a CSV file. */
-export function profitLossCsv(pl: ProfitLoss): string {
-  const lines = [['Month', 'Income', 'Expenses', 'Agent commission', 'Profit']];
-  for (const m of pl.months) lines.push([monthLabel(m.month), plainCents(m.incomeCents), plainCents(m.expenseCents), plainCents(m.commissionCents), plainCents(m.profitCents)]);
-  lines.push(['Total', plainCents(pl.incomeCents), plainCents(pl.expenseCents), plainCents(pl.commissionCents), plainCents(pl.profitCents)]);
-  return lines.map((l) => l.map(csvCell).join(',')).join('\n') + '\n';
-}
-

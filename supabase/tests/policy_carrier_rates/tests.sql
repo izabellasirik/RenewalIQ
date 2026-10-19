@@ -36,7 +36,8 @@ select pg_temp.check('C8 the admin can''t write the table directly', pg_temp.ref
 
 \echo '== agents'
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
-select pg_temp.check('G1 the assigned agent reads the rate on their account (for their commission)', (select count(*) = 1 from policy_carrier_rates where submission_id = 'acct_cr_1'));
+-- 0060 let the assigned agent read the rate; 0063 makes these rates admins-only (the agent's commission no longer uses them).
+select pg_temp.check('G1 the assigned agent reads the rate on their account (0060) / doesn''t once 0063 is applied', (select count(*) = case when to_regclass('public.carrier_commission_rates') is null then 1 else 0 end from policy_carrier_rates where submission_id = 'acct_cr_1'));
 select pg_temp.check('G2 an agent can''t set it', pg_temp.refused($$select public.set_policy_carrier_rate('acct_cr_1', 'pol_1', 0.5)$$));
 select pg_temp.check('G3 an agent can''t write the table', pg_temp.refused($$update policy_carrier_rates set rate = 0.5$$));
 select pg_temp.check('G4 an agent can''t read the history', (select count(*) = 0 from policy_carrier_rate_history));

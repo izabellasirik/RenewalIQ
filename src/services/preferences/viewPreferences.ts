@@ -68,6 +68,8 @@ export const oneOf =
   (v: unknown): V | undefined =>
     typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as V) : undefined;
 export const aString = (v: unknown): string | undefined => (typeof v === 'string' && v.length > 0 && v.length <= 200 ? v : undefined);
+/** A YYYY-MM-DD date. */
+export const aDateKey = (v: unknown): string | undefined => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
 export const aBoolean = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
 
 /** Drops undefined entries, so they don't override defaults. */

@@ -5,17 +5,20 @@ import { normalizeDateKey, parseDateKey, toLocalDateKey } from './dates';
 /**
  * Policies written from bound markets, and endorsements recorded on endorsed ones. They live on the
  * market (MarketQuote.policies), so they sync, work offline and are visible exactly like the market
- * itself. No commission is stored here: it's worked out on display (see agentCommissionCents) from the
- * policy's carrier commission % (0060, 10% unless an admin sets it) and the agent's % (0058), which only
- * the agent and the agency's admins can read.
+ * itself. No commission is stored here: it's worked out on display. The agent's commission is always
+ * their % (0058) of 10% of the net premium (agentCommissionCents) — the same formula whatever the
+ * carrier pays. What the carrier pays the agency is the carrier's own commission % (0063, set by an
+ * admin per carrier, 10% until set), which is the agency's income (carrierCommissionCents).
  */
 
 export function entryKind(p: Pick<PolicyRecord, 'kind'>): PolicyEntryKind {
   return p.kind === 'endorsement' ? 'endorsement' : 'policy';
 }
 
-/** The carrier commission when an admin hasn't set a policy's own: 10% of the net premium. */
+/** The carrier commission until an admin sets the carrier's own: 10% of the net premium. */
 export const DEFAULT_CARRIER_RATE = 0.1;
+/** The agent's commission is always worked out on 10% of the net premium, whatever the carrier pays the agency. */
+export const AGENT_COMMISSION_BASE = 0.1;
 
 /** cents × rate, to the cent (half away from zero, so a return premium mirrors its charge). */
 function applyRate(cents: number, rate: number): number {
@@ -25,21 +28,21 @@ function applyRate(cents: number, rate: number): number {
   return cents < 0 ? -out : out;
 }
 
-/** What the carrier pays the agency: the net premium × the policy's carrier commission %. */
+/** What the carrier pays the agency (its income): the net premium × that carrier's commission %. */
 export function carrierCommissionCents(netCents: number, carrierRate: number = DEFAULT_CARRIER_RATE): number {
   return applyRate(netCents, carrierRate);
 }
 
 /**
- * The agent's share: their % of the carrier commission, rounded at each step.
- * $10,000 net × 10% carrier commission = $1,000; an agent on 30% gets $300.
+ * The agent's share: their % of 10% of the net premium, rounded at each step — the same whatever
+ * commission the carrier pays the agency. $10,000 net → $1,000; an agent on 25% gets $250.
  */
-export function agentCommissionCents(netCents: number, agentRate: number, carrierRate: number = DEFAULT_CARRIER_RATE): number {
-  return applyRate(carrierCommissionCents(netCents, carrierRate), agentRate);
+export function agentCommissionCents(netCents: number, agentRate: number): number {
+  return applyRate(applyRate(netCents, AGENT_COMMISSION_BASE), agentRate);
 }
 
-/** Key of a policy's carrier commission % (0060): account and policy. */
-export const carrierRateKey = (accountId: string, policyId: string) => `${accountId}:${policyId}`;
+/** One carrier, however it's typed: "Granite  Mutual " and "granite mutual" share a commission %. Same as carrier_key() in 0063. */
+export const carrierKey = (carrier: string) => carrier.trim().replace(/\s+/g, ' ').toLowerCase();
 
 /** On, unless switched off with VITE_FEATURE_POLICIES=false (a kill switch: the data stays, only the screens hide). */
 export function policiesFeatureEnabled(env: { DEV?: boolean; VITE_FEATURE_POLICIES?: string } = import.meta.env): boolean {
@@ -99,6 +102,7 @@ export function normalizePolicyNumber(value: string | undefined): string {
 export interface PolicyInput {
   kind?: PolicyEntryKind;
   notes?: string;
+  description?: string;
   quoteOptionId: string;
   policyNumber: string;
   carrier: string;
@@ -176,6 +180,8 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
 
   const notes = (input.notes ?? '').trim();
   if (notes.length > 2000) errors.push('The notes are too long.');
+  const description = (input.description ?? '').trim();
+  if (description.length > 300) errors.push('The description is too long (300 characters at most).');
 
   if (policyNumber && kind === 'policy') {
     // The same policy can't be recorded twice: same number and carrier on another client (or this one).
@@ -202,6 +208,7 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
       netPremiumCents: net as number,
       taxesCents,
       feesCents,
+      ...(description ? { description } : {}),
       ...(notes ? { notes } : {}),
     },
   };
@@ -280,7 +287,7 @@ export function filterPolicies(rows: PolicyRow[], f: PolicyFilter): PolicyRow[] 
       if (f.from && d! < f.from) return false;
       if (f.to && d! > f.to) return false;
       if (!q) return true;
-      return [r.insured, r.policy.policyNumber, r.policy.carrier, r.marketName, r.policy.coverage ? COVERAGE_LABELS[r.policy.coverage] : '', r.policy.notes].some((s) => (s ?? '').toLowerCase().includes(q));
+      return [r.insured, r.policy.policyNumber, r.policy.carrier, r.marketName, r.policy.coverage ? COVERAGE_LABELS[r.policy.coverage] : '', r.policy.description, r.policy.notes].some((s) => (s ?? '').toLowerCase().includes(q));
     })
     .sort((a, b) => (b.policy[f.dateField] ?? '').localeCompare(a.policy[f.dateField] ?? '') || a.insured.localeCompare(b.insured));
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeEndorsements, activePolicies, agentCommissionCents, carrierCommissionCents, checkPolicy, policyRows, type PolicyInput } from '../policies';
+import { activeEndorsements, activePolicies, agentCommissionCents, carrierCommissionCents, carrierKey, checkPolicy, policyRows, type PolicyInput } from '../policies';
 import { renewalLabelOn } from '../renewals';
 import { marketStatusChoice, marketStatusLabel, type AccountRenewal, type MarketQuote, type PolicyRecord } from '../../../types';
 
@@ -10,19 +10,28 @@ const input = (patch: Partial<PolicyInput> = {}): PolicyInput => ({
 });
 const rec = (patch: Partial<PolicyRecord>): PolicyRecord => ({ id: 'p', carrier: 'Sample Mutual', businessType: 'new', boundDate: '2026-10-01', netPremiumCents: 0, taxesCents: 0, feesCents: 0, createdAt: '', updatedAt: '', ...patch });
 
-describe('agent commission = the agent’s % of the carrier commission (10% of net unless set)', () => {
-  it('$10,000 net → $1,000 carrier commission → an agent on 30% gets $300', () => {
+describe('agent commission = the agent’s % of 10% of net, whatever the carrier pays', () => {
+  it('$10,000 net → an agent on 25% gets $250; a carrier at 15% pays the agency $1,500', () => {
+    expect(agentCommissionCents(1_000_000, 0.25)).toBe(25_000);
     expect(carrierCommissionCents(1_000_000)).toBe(100_000);
-    expect(agentCommissionCents(1_000_000, 0.3)).toBe(30_000);
-    expect(agentCommissionCents(1_000_000, 0.3, 0.15)).toBe(45_000); // a policy with its own 15%
-    expect(agentCommissionCents(1_000_000, 0.3, 0)).toBe(0);
+    expect(carrierCommissionCents(1_000_000, 0.15)).toBe(150_000);
+    expect(carrierCommissionCents(1_000_000, 0)).toBe(0);
+  });
+  it('one carrier however it is typed', () => {
+    expect(carrierKey('  Granite   Mutual ')).toBe('granite mutual');
+    expect(carrierKey('GRANITE MUTUAL')).toBe(carrierKey('granite mutual'));
+  });
+  it('a description is kept (trimmed, 300 characters at most)', () => {
+    const ok = checkPolicy(input({ description: '  Added 2023 Freightliner  ' }));
+    expect(ok.ok && ok.fields.description).toBe('Added 2023 Freightliner');
+    expect(checkPolicy(input({ description: 'x'.repeat(301) })).ok).toBe(false);
   });
   it('rounds half away from zero at each step, so a return premium mirrors its charge', () => {
     expect(carrierCommissionCents(123_455)).toBe(12_346); // 12,345.5 → 12,346
     expect(agentCommissionCents(123_455, 0.125)).toBe(1543); // 12,346 × 12.5% = 1,543.25 → 1,543
     expect(agentCommissionCents(-123_455, 0.125)).toBe(-1543);
-    expect(agentCommissionCents(-500_000, 0.3)).toBe(-15_000);
-    expect(agentCommissionCents(0, 0.3)).toBe(0);
+    expect(agentCommissionCents(-500_000, 0.25)).toBe(-12_500);
+    expect(agentCommissionCents(0, 0.25)).toBe(0);
   });
 });
 

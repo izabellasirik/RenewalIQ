@@ -21,18 +21,33 @@ interface PlateView {
   broker: string;
   /** Outside an agency: only accounts assigned to me (as before). */
   mineOnly: boolean;
-  /** All tasks, one kind of task, what's coming up in the next 7 days, or what's waiting on others. */
+  /** All tasks, today's, one kind of task, every follow-up, the next 7 days, or what's waiting on others. */
   show: PlateShow;
 }
-type PlateShow = 'all' | ActionKind | 'next_7_days' | 'waiting';
-const PLATE_SHOW: PlateShow[] = ['all', 'ready_to_send', 'action_required', 'carrier_follow_up', 'follow_up', 'client_follow_up', 'renewal', 'next_7_days', 'waiting'];
+type PlateShow = 'all' | 'due_today' | 'renewal' | 'action_required' | 'ready_to_send' | 'follow_ups' | 'next_7_days' | 'waiting';
+const PLATE_SHOW: PlateShow[] = ['all', 'due_today', 'renewal', 'action_required', 'ready_to_send', 'follow_ups', 'next_7_days', 'waiting'];
+/** The "Show" menu, in this order. */
+const SHOW_LABELS: Record<PlateShow, string> = {
+  all: 'All tasks',
+  due_today: 'Due today',
+  renewal: 'Renewals',
+  action_required: 'Action required',
+  ready_to_send: 'Ready to send',
+  follow_ups: 'Follow-ups',
+  next_7_days: 'Upcoming · next 7 days',
+  waiting: 'Waiting for response',
+};
+/** "Follow-ups" is every kind: carrier follow-ups, client follow-ups and the follow-ups scheduled on accounts. */
+const FOLLOW_UP_KINDS: ActionKind[] = ['carrier_follow_up', 'client_follow_up', 'follow_up'];
+const showsKind = (show: PlateShow, kind: ActionKind) =>
+  show === 'all' || show === 'due_today' || show === 'next_7_days' || (show === 'follow_ups' ? FOLLOW_UP_KINDS.includes(kind) : show === kind);
 const PLATE_VIEW_DEFAULTS: PlateView = { broker: ALL_BROKERS, mineOnly: false, show: 'all' };
 const sanitizePlateView = (saved: Record<string, unknown>): Partial<PlateView> =>
   defined<PlateView>({
     broker: aString(saved.broker),
     mineOnly: aBoolean(saved.mineOnly),
-    // "Renewals only" was saved as 'renewals' before the other choices existed.
-    show: saved.show === 'renewals' ? 'renewal' : oneOf(PLATE_SHOW)(saved.show),
+    // Saved by earlier versions: 'renewals' (Renewals only) and the three separate follow-up kinds.
+    show: saved.show === 'renewals' ? 'renewal' : FOLLOW_UP_KINDS.includes(saved.show as ActionKind) ? 'follow_ups' : oneOf(PLATE_SHOW)(saved.show),
   });
 const filterClass =
   'cursor-pointer rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
@@ -133,11 +148,11 @@ export function TodaysPlatePage() {
     }
     waitingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
     doneRows.sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
-    // "Show": one kind of task (today's and the next 7 days'), only the next 7 days, or only what's waiting.
-    const kept = (a: ActionItem) => show === 'all' || show === 'next_7_days' || a.kind === show;
+    // "Show": today's tasks, one kind (today's and the next 7 days'), every follow-up, only the next 7 days, or only what's waiting.
+    const kept = (a: ActionItem) => showsKind(show, a.kind);
     return {
       now: show === 'next_7_days' || show === 'waiting' ? [] : sortActions(allNow.filter(kept)),
-      upcoming: show === 'waiting' ? [] : sortActions(allUpcoming.filter(kept)),
+      upcoming: show === 'waiting' || show === 'due_today' ? [] : sortActions(allUpcoming.filter(kept)),
       waiting: show === 'all' || show === 'waiting' ? waitingRows : [],
       doneToday: doneRows,
     };
@@ -206,14 +221,11 @@ export function TodaysPlatePage() {
           </label>
         )}
         <select value={plate.show} onChange={(e) => updatePlate({ show: e.target.value as PlateView['show'] })} className={filterClass} aria-label="Show">
-          <option value="all">All tasks</option>
-          {SECTION_ORDER.map(({ kind, title }) => (
-            <option key={kind} value={kind}>
-              {kind === 'renewal' ? 'Renewals only' : `${title} only`}
+          {PLATE_SHOW.map((v) => (
+            <option key={v} value={v}>
+              {SHOW_LABELS[v]}
             </option>
           ))}
-          <option value="next_7_days">Coming up · next 7 days</option>
-          <option value="waiting">Waiting</option>
         </select>
         {filtersActive && (
           <button onClick={resetPlate} className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
