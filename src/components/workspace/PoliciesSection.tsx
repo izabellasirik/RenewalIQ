@@ -100,7 +100,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           policyLabel={cancelling.entry.policyNumber ?? cancelling.entry.carrier}
           onClose={() => setCancelling(null)}
           onSent={() => {
-            setSent(`Cancellation of ${cancelling.entry.policyNumber ?? 'the policy'} requested — an admin approves it with the carrier’s actual refund.`);
+            setSent(`Cancellation of ${cancelling.entry.policyNumber ?? (cancelling.entry.kind === 'endorsement' ? 'the endorsement' : 'the policy')} requested — an admin approves it with the carrier’s actual refund.`);
             onRecordsChanged();
           }}
         />
@@ -124,7 +124,8 @@ function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRe
   const kind: PolicyEntryKind = p.kind === 'endorsement' ? 'endorsement' : 'policy';
   const k = KIND[kind];
   const files = p.attachments ?? [];
-  const canRequestCancellation = kind === 'policy' && !!record && record.status !== 'void';
+  // A policy, or an endorsement that added premium (its refund is paid back with the monthly endorsement payouts).
+  const canRequestCancellation = (kind === 'policy' || p.netPremiumCents > 0) && !!record && record.status !== 'void';
   const forPolicy = kind === 'endorsement' && p.forPolicyId ? (quote.policies ?? []).find((x) => x.id === p.forPolicyId) : undefined;
   return (
     <li className="rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2.5" data-policy={p.id} data-kind={kind}>

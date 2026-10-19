@@ -9,7 +9,7 @@ import { CarrierRateDialog } from './CarrierRateDialog';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useLedger } from '../../hooks/useLedger';
 import { reloadCarrierRates, useCarrierRates } from '../../hooks/useCarrierRates';
-import { retireCarrierCommissionRate } from '../../services/supabase/commissionRepo';
+import { fetchAgentCommissionRates, retireCarrierCommissionRate } from '../../services/supabase/commissionRepo';
 import * as repo from '../../services/supabase/ledgerRepo';
 import {
   FLAG_LABELS,
@@ -44,7 +44,7 @@ type Section = 'review' | 'records' | 'cancellations' | 'rates' | 'schedule';
  * need attention, Missing Proof, Pending Verification), every record with its corrections and
  * cancellations, cancellation requests, carrier rates by date, and the payout schedule. Every action is
  * one of the database's functions — it checks who may do it, keeps the history and writes the audit.
- * Payouts themselves come next (0065); here each record shows its expected payout date only.
+ * Payouts themselves are on the Payouts tab (0065); here each record shows its expected payout date.
  */
 export function CommissionsPanel() {
   const ledger = useLedger();
@@ -161,6 +161,7 @@ function RecordSummary({ t, schedule, extra }: { t: LedgerTransaction; schedule:
 type Dialog =
   | { kind: 'reason'; title: string; label: string; confirm: string; onConfirm: (reason: string) => Promise<boolean>; description?: string }
   | { kind: 'confirm-historical'; t: LedgerTransaction }
+  | { kind: 'resolve-agent'; t: LedgerTransaction }
   | { kind: 'link'; t: LedgerTransaction }
   | { kind: 'correct'; t: LedgerTransaction }
   | { kind: 'receipt'; t: LedgerTransaction }
@@ -186,7 +187,7 @@ function ReviewSection({ queue, all, historicalWaiting, schedule, run }: { queue
       items.push({ key: 'ack', label: 'Keep as recorded…', onSelect: () => reason('Keep the record as it is', 'Note', 'Keep as recorded', (r) => run(() => repo.acknowledgeCommissionChanges(t.id, r), 'Kept as recorded; the account’s current details are accepted.')) });
     }
     if (flags.includes('removed')) items.push({ key: 'ack-removed', label: 'Keep (it was removed on purpose)…', onSelect: () => reason('Keep this record', 'Note', 'Keep', (r) => run(() => repo.acknowledgeCommissionChanges(t.id, r), 'Kept.')) });
-    if (flags.includes('no_agent') || flags.includes('no_agent_rate')) items.push({ key: 'current-agent', label: 'Record again with the current agent and split…', onSelect: () => reason('Record again with the current agent', 'Why', 'Record again', (r) => run(() => repo.rerecordCommission(t.id, r, true), 'Recorded again with the account’s current agent and split.'), 'Only for a record that had no agent or no split when it was recorded.') });
+    if (flags.includes('no_agent') || flags.includes('no_agent_rate')) items.push({ key: 'resolve-agent', label: t.agentUserId ? 'Add the agent’s split…' : 'Add the agent and split…', onSelect: () => setDialog({ kind: 'resolve-agent', t }) });
     items.push({ key: 'void', label: 'Void…', tone: 'danger', onSelect: () => reason('Void this commission', 'Why (it stays in the history)', 'Void', (r) => run(() => repo.voidCommission(t.id, r), 'Voided. The record is kept with the reason.')) });
     return items;
   };
@@ -270,17 +271,18 @@ function Dialogs({ dialog, all, run, onClose, onDone }: { dialog: Dialog | null;
   if (!dialog) return null;
   if (dialog.kind === 'reason') return <ReasonDialog {...dialog} onClose={onClose} />;
   if (dialog.kind === 'confirm-historical') return <ConfirmHistoricalDialog t={dialog.t} run={run} onClose={onClose} />;
+  if (dialog.kind === 'resolve-agent') return <ResolveAgentDialog t={dialog.t} run={run} onClose={onClose} />;
   if (dialog.kind === 'link') return <LinkDialog t={dialog.t} all={all} run={run} onClose={onClose} />;
   if (dialog.kind === 'correct') return <CorrectDialog t={dialog.t} all={all} run={run} onClose={onClose} />;
   if (dialog.kind === 'receipt') return <ReceiptDialog t={dialog.t} run={run} onClose={onClose} />;
   return <SettleDialog ids={dialog.ids} all={all} run={run} onClose={onClose} onDone={onDone} />;
 }
 
-function DialogError({ text }: { text: string }) {
+export function DialogError({ text }: { text: string }) {
   return text ? <p className="rounded-lg border border-[var(--color-danger-600)]/25 bg-[var(--color-danger-100)] px-3 py-2 text-sm text-[var(--color-danger-600)]" role="alert">{text}</p> : null;
 }
 
-function ReasonDialog({ title, label, confirm, description, onConfirm, onClose }: { title: string; label: string; confirm: string; description?: string; onConfirm: (reason: string) => Promise<boolean>; onClose: () => void }) {
+export function ReasonDialog({ title, label, confirm, description, onConfirm, onClose }: { title: string; label: string; confirm: string; description?: string; onConfirm: (reason: string) => Promise<boolean>; onClose: () => void }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -384,6 +386,77 @@ function ConfirmHistoricalDialog({ t, run, onClose }: { t: LedgerTransaction; ru
         </div>
         <p className="text-xs text-[var(--color-ink-600)]" data-testid="hist-preview">
           Agent commission: <strong>{agentRate === null ? '—' : formatCents(agentCommissionCents(t.netCents, agentRate))}</strong> (net × 10% × split) · Carrier commission: <strong>{carrierRate === null ? '—' : formatCents(carrierCommissionCents(t.netCents, carrierRate))}</strong>
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * A record saved without an agent or without the agent's split: fill in only what's missing, on the record
+ * itself (the policy isn't recorded again). An agent already recorded stays; the reason goes in the audit.
+ */
+function ResolveAgentDialog({ t, run, onClose }: { t: LedgerTransaction; run: Run; onClose: () => void }) {
+  const members = useAccountsStore((s) => s.agencyMembers);
+  const [agent, setAgent] = useState(t.agentUserId ?? '');
+  const [split, setSplit] = useState('');
+  const [why, setWhy] = useState('');
+  const [rates, setRates] = useState<Record<string, number>>({});
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const agentRate = pctToRate(split);
+  useEffect(() => {
+    void fetchAgentCommissionRates().then((res) => res.ok && setRates(res.data));
+  }, []);
+  useEffect(() => {
+    if (agent && rates[agent] !== undefined && !split) setSplit(rateToPct(rates[agent]));
+  }, [agent, rates]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setError(''), [agent, split, why]);
+  async function save() {
+    if (!agent) return setError('Choose the agent who wrote it.');
+    if (agentRate === null) return setError('Enter the agent’s split (0–100%).');
+    if (!why.trim()) return setError('Say how the agent and split were decided.');
+    setBusy(true);
+    const ok = await run(() => repo.resolveCommissionAgent(t.id, agent, agentRate, why.trim()), `Agent and split added to ${policyLabel(t)} — it can be verified now.`);
+    setBusy(false);
+    if (ok) onClose();
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`${t.agentUserId ? 'Add the agent’s split' : 'Add the agent and split'} — ${policyLabel(t)}`}
+      subtitle="Fills in only what's missing on this record. The policy and its amounts stay as recorded, and the change is kept in the audit."
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button disabled={busy} onClick={() => void save()}>Save</Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3" data-testid="resolve-agent-form">
+        <DialogError text={error} />
+        <p className="text-sm text-[var(--color-ink-700)]">{t.clientName} · {t.kind === 'endorsement' ? 'endorsed' : 'bound'} {formatShortDate(t.eventDate)} · net {formatCents(t.netCents)}</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className={labelClass} htmlFor="resolve-agent">Agent</label>
+            <select id="resolve-agent" className={inputClass} value={agent} onChange={(e) => setAgent(e.target.value)} disabled={!!t.agentUserId}>
+              <option value="">— Choose</option>
+              {members.map((m) => <option key={m.userId} value={m.userId}>{m.name}</option>)}
+            </select>
+            {t.agentUserId && <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">The agent recorded on it stays.</p>}
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="resolve-split">Agent split (%)</label>
+            <input id="resolve-split" inputMode="decimal" className={inputClass} value={split} onChange={(e) => setSplit(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="resolve-why">Reason (kept in the audit)</label>
+          <input id="resolve-why" className={inputClass} value={why} onChange={(e) => setWhy(e.target.value)} maxLength={1000} placeholder="e.g. Agent confirmed from the binder email" />
+        </div>
+        <p className="text-xs text-[var(--color-ink-600)]" data-testid="resolve-preview">
+          Agent commission: <strong>{agentRate === null ? '—' : formatCents(agentCommissionCents(t.netCents, agentRate))}</strong> (net × 10% × split)
         </p>
       </div>
     </Modal>
@@ -967,7 +1040,7 @@ function ScheduleSection({ schedule, historicalWaiting, run }: { schedule: Payou
       <Card>
         <CardBody className="pt-4" data-testid="schedule-form">
           <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Payout schedule</h3>
-          <p className="text-xs text-[var(--color-ink-500)]">Agent commission is payable from the bound date — never waiting for the carrier’s payment — once verified. Weekly for policies, monthly for endorsements. Payouts themselves come in the next step; for now each record shows its expected payout date.</p>
+          <p className="text-xs text-[var(--color-ink-500)]">Agent commission is payable from the bound date — never waiting for the carrier’s payment — once verified. Weekly for policies, monthly for endorsements; each payout is approved and marked paid on the Payouts tab.</p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className={labelClass} htmlFor="sch-week-start">Policy week starts</label>

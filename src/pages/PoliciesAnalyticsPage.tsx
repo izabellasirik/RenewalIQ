@@ -11,6 +11,8 @@ import { useAgentCommissionRates } from '../hooks/useAgentCommission';
 import { useCarrierRates } from '../hooks/useCarrierRates';
 import { useLedger, useMyCommissions } from '../hooks/useLedger';
 import { CommissionsPanel } from '../components/finance/CommissionsPanel';
+import { PayoutsPanel } from '../components/finance/PayoutsPanel';
+import { MyPayoutsCard } from '../components/finance/MyPayoutsCard';
 import { CommissionStatusBadge } from '../components/finance/CommissionStatusBadge';
 import { CarrierRateDialog } from '../components/finance/CarrierRateDialog';
 import { currentRecordsByPolicy, ledgerStatus as ledgerStatusFn, payoutWords, type LedgerStatus } from '../services/finance/ledger';
@@ -55,7 +57,7 @@ export function PoliciesAnalyticsPage() {
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const isAdmin = agencyAccess?.role === 'admin';
   const [params, setParams] = useSearchParams();
-  const view = isAdmin ? (['pl', 'policies', 'commissions', 'money'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : 'policies';
+  const view = isAdmin ? (['pl', 'policies', 'commissions', 'payouts', 'money'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : 'policies';
   return (
     <PageContainer
       title="Analytics"
@@ -71,6 +73,7 @@ export function PoliciesAnalyticsPage() {
             { key: 'pl', label: 'Profit & loss' },
             { key: 'policies', label: 'Policies & endorsements' },
             { key: 'commissions', label: 'Commissions' },
+            { key: 'payouts', label: 'Payouts' },
             { key: 'money', label: 'Income & expenses' },
           ]}
           active={view}
@@ -80,6 +83,7 @@ export function PoliciesAnalyticsPage() {
       {view === 'pl' && <ProfitLossPanel />}
       {view === 'money' && <IncomeExpensesPanel />}
       {view === 'commissions' && <CommissionsPanel />}
+      {view === 'payouts' && <PayoutsPanel />}
       {view === 'policies' && <PoliciesPanel />}
     </PageContainer>
   );
@@ -400,6 +404,7 @@ function PoliciesPanel() {
           {rateFor && <CarrierRateDialog carrier={rateFor.policy.carrier} effectiveFrom={rateFor.policy.boundDate} onClose={() => setRateFor(null)} />}
         </CardBody>
       </Card>
+      {!isAdmin && agencyAccess && <MyPayoutsCard />}
       {!isAdmin && mine.commissions.some((c) => c.kind === 'cancellation' || c.kind === 'correction') && (
         <Card>
           <CardBody className="pt-4" data-testid="my-adjustments">

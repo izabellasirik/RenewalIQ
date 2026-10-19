@@ -12,7 +12,8 @@ import { toCancellation, toReceipt, toSchedule, toTransaction, type CarrierRecei
 export const MIGRATION_0064_MESSAGE = 'Commission records need database migration 0064_commission_ledger.sql.';
 const NOT_CONFIGURED: RepoResult<never> = { ok: false, message: 'Cloud sign-in is not configured in this environment.' };
 const isMissing = (e: { code?: string; message?: string }) =>
-  e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST202' || /commission_transactions|commission_cancellations|my_commissions|account_commission_statuses|finance_settings|Could not find the function public\.(verify|confirm|link|acknowledge|void|rerecord|correct|settle|record_carrier|set_finance|request_commission|withdraw|mark_cancellation|reject|approve|finance_)/i.test(e.message ?? '');
+  e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST202' ||
+  /(relation|table)\b[^\n]*\b(commission_transactions|commission_cancellations|commission_carrier_receipts|finance_settings|finance_historical_entries)|Could not find the function public\.(my_commissions|account_commission_statuses|my_commission_cancellations|verify|confirm|resolve_commission|link|acknowledge|void_commission|void_carrier|rerecord|correct|settle|record_carrier|set_finance|request_commission|withdraw|mark_cancellation|reject|approve_commission|finance_)/i.test(e.message ?? '');
 function fail(e: unknown, fallback: string): RepoResult<never> {
   const err = (e ?? {}) as { code?: string; message?: string };
   if (isMissing(err)) return { ok: false, message: MIGRATION_0064_MESSAGE, missingMigration: true };
@@ -191,6 +192,8 @@ async function call<T = void>(fn: string, args: Record<string, unknown>, fallbac
 export const verifyCommission = (id: string, reason?: string) => call('verify_commission', { p_id: id, p_reason: reason?.trim() || null }, 'Could not verify the commission.');
 export const confirmHistoricalCommission = (id: string, agentUserId: string, agentRate: number, carrierRate: number, evidence: string) =>
   call('confirm_historical_commission', { p_id: id, p_agent_user_id: agentUserId, p_agent_rate: agentRate, p_carrier_rate: carrierRate, p_evidence: evidence }, 'Could not confirm the rates.');
+export const resolveCommissionAgent = (id: string, agentUserId: string, agentRate: number, reason: string) =>
+  call('resolve_commission_agent', { p_id: id, p_agent_user_id: agentUserId, p_agent_rate: agentRate, p_reason: reason }, 'Could not save the agent and split.');
 export const linkCommissionEndorsement = (id: string, policyTransactionId: string) => call('link_commission_endorsement', { p_id: id, p_policy_transaction_id: policyTransactionId }, 'Could not link the endorsement.');
 export const acknowledgeCommissionChanges = (id: string, note: string) => call('acknowledge_commission_changes', { p_id: id, p_note: note }, 'Could not save.');
 export const voidCommission = (id: string, reason: string) => call('void_commission', { p_id: id, p_reason: reason }, 'Could not void the commission.');

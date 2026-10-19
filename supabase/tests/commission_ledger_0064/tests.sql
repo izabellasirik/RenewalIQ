@@ -326,6 +326,72 @@ select pg_temp.check('O3 anonymous: nothing', pg_temp.refused($$select 1 from pu
   and pg_temp.refused($$select public.verify_commission('00000000-0000-0000-0000-000000000000'::uuid)$$));
 reset role;
 
+\echo '== a missing agent or split, filled in by an admin (the record and the policy stay)'
+select set_config('request.jwt.claim.sub', '', true);
+insert into public.submissions (id, user_id, organization_id, named_insured) values ('acct_led_4', '00000000-0000-0000-0000-00000000000a', pg_temp.agency(), 'Ledger Test Four (sample)');
+update public.submissions set assigned_user_id = null where id = 'acct_led_4';
+select pg_temp.save('acct_led_4', jsonb_build_array(pg_temp.entry('m1', 'policy', 400000, '2026-09-07', 'Sample Mutual')));
+select set_config('test.m1', (pg_temp.t('m1')).id::text, true);
+delete from public.agent_commission_rates where user_id = '00000000-0000-0000-0000-000000000010';
+insert into public.submissions (id, user_id, organization_id, named_insured) values ('acct_led_4b', '00000000-0000-0000-0000-00000000000a', pg_temp.agency(), 'Ledger Test Four B (sample)');
+update public.submissions set assigned_user_id = '00000000-0000-0000-0000-000000000010' where id = 'acct_led_4b';
+select pg_temp.save('acct_led_4b', jsonb_build_array(pg_temp.entry('m2', 'policy', 200000, '2026-09-08', 'Sample Mutual')));
+select set_config('test.m2', (pg_temp.t('m2')).id::text, true);
+select pg_temp.check('M1 recorded without an agent, and one with an agent but no split: both flagged', 'no_agent' = any ((pg_temp.t('m1')).review_flags)
+  and (select agent_user_id = '00000000-0000-0000-0000-000000000010' and agent_rate is null and agent_cents is null and 'no_agent_rate' = any (review_flags) from pg_temp.t('m2')));
+select pg_temp.check('M1b … no one can fill them in directly, not even the database owner', pg_temp.refused($$update public.commission_transactions set agent_user_id = '00000000-0000-0000-0000-00000000000a', agent_rate = 0.25 where id = current_setting('test.m1')::uuid$$));
+set local role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check('M2 an agent can''t resolve it', pg_temp.refused($$select public.resolve_commission_agent(current_setting('test.m1')::uuid, '00000000-0000-0000-0000-00000000000a', 0.25, 'x')$$));
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select pg_temp.check('M3 the reason is required', pg_temp.refused($$select public.resolve_commission_agent(current_setting('test.m1')::uuid, '00000000-0000-0000-0000-00000000000a', 0.25, '')$$));
+select pg_temp.check('M3b … and an agent of the agency', pg_temp.refused($$select public.resolve_commission_agent(current_setting('test.m1')::uuid, '00000000-0000-0000-0000-000000000012', 0.25, 'x')$$));
+select pg_temp.check('M4 the admin fills in the agent and split: same record, $4,000 × 10% × 25% = $100, flags cleared',
+  not pg_temp.refused($$select public.resolve_commission_agent(current_setting('test.m1')::uuid, '00000000-0000-0000-0000-00000000000a', 0.25, 'Agent confirmed from the binder email (sample)')$$)
+  and (select id = current_setting('test.m1')::uuid and agent_user_id = '00000000-0000-0000-0000-00000000000a' and agent_rate = 0.25 and agent_cents = 10000
+         and not (review_flags && array['no_agent', 'no_agent_rate']) and verification_status = 'unverified' and net_cents = 400000 from pg_temp.t('m1'))
+  and (select count(*) = 1 from public.commission_transactions where policy_id = 'm1'));
+select pg_temp.check('M5 once filled in, the agent and split stay', pg_temp.refused($$select public.resolve_commission_agent(current_setting('test.m1')::uuid, '00000000-0000-0000-0000-00000000000b', 0.4, 'x')$$));
+select pg_temp.check('M6 a recorded agent can''t be swapped while adding the split', pg_temp.refused($$select public.resolve_commission_agent(current_setting('test.m2')::uuid, '00000000-0000-0000-0000-00000000000a', 0.35, 'x')$$));
+select pg_temp.check('M6b … the split is added for the recorded agent: $2,000 × 10% × 35% = $70', not pg_temp.refused($$select public.resolve_commission_agent(current_setting('test.m2')::uuid, '00000000-0000-0000-0000-000000000010', 0.35, 'Split agreed for this agent (sample)')$$)
+  and (select agent_user_id = '00000000-0000-0000-0000-000000000010' and agent_rate = 0.35 and agent_cents = 7000 from pg_temp.t('m2')));
+select pg_temp.check('M7 then it can be verified (no proof: with a reason)', not pg_temp.refused($$select public.verify_commission(current_setting('test.m1')::uuid, 'Binder by email (sample)')$$));
+select pg_temp.check('M7b … and a verified record can''t be resolved', pg_temp.refused($$select public.resolve_commission_agent(current_setting('test.m1')::uuid, '00000000-0000-0000-0000-00000000000a', 0.25, 'x')$$));
+reset role;
+select pg_temp.check('M8 the audit has the before and after, with the reason', (select count(*) = 1 and bool_and(reason like 'Agent confirmed%' and detail -> 'before' ->> 'agent' is null and detail -> 'after' ->> 'agentCents' = '10000')
+  from public.finance_audit_log where action = 'agent_resolved' and entity_id = current_setting('test.m1')));
+
+\echo '== endorsement cancellations (monthly, with the endorsement''s agent and split)'
+select set_config('request.jwt.claim.sub', '', true);
+insert into public.submissions (id, user_id, organization_id, named_insured, assigned_user_id, market_quotes) values
+  ('acct_led_5', '00000000-0000-0000-0000-00000000000a', pg_temp.agency(), 'Ledger Test Five (sample)', '00000000-0000-0000-0000-00000000000a',
+   pg_temp.market(jsonb_build_array(pg_temp.entry('q1', 'policy', 1000000, '2026-09-14', 'Sample Mutual', '{"attachments": [{"id": "fq1", "name": "binder.pdf"}]}'),
+     pg_temp.entry('qe1', 'endorsement', 300000, '2026-09-20', 'Sample Mutual', '{"forPolicyId": "q1", "attachments": [{"id": "fq2", "name": "end.pdf"}]}'),
+     pg_temp.entry('qe2', 'endorsement', 200000, '2026-09-22', 'Sample Mutual', '{"forPolicyId": "q1", "attachments": [{"id": "fq3", "name": "end2.pdf"}]}'))));
+select set_config('test.q1', (pg_temp.t('q1')).id::text, true), set_config('test.qe1', (pg_temp.t('qe1')).id::text, true), set_config('test.qe2', (pg_temp.t('qe2')).id::text, true);
+set local role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select public.verify_commission(current_setting('test.q1')::uuid), public.verify_commission(current_setting('test.qe1')::uuid), public.verify_commission(current_setting('test.qe2')::uuid);
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check('Q1 the account''s agent requests a cancellation of an endorsement', not pg_temp.refused($$select public.request_commission_cancellation(current_setting('test.qe1')::uuid, 'full', '2026-10-01', 'Vehicle removed (sample)')$$));
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select pg_temp.check('Q2 more than the endorsement''s $3,000 is refused', pg_temp.refused($$select public.approve_commission_cancellation((select id from public.commission_cancellations where transaction_id = current_setting('test.qe1')::uuid), 300001, 0, null, 'x')$$));
+select pg_temp.check('Q3 approved with the actual amounts', not pg_temp.refused($$select public.approve_commission_cancellation((select id from public.commission_cancellations where transaction_id = current_setting('test.qe1')::uuid), 300000, 36000, null, 'Carrier email (sample)')$$));
+reset role;
+select pg_temp.check('Q3b … a monthly negative record linked to the endorsement, with its agent and split', (select x.kind = 'cancellation' and x.stream = 'monthly' and x.original_transaction_id = e.id
+     and x.agent_user_id = e.agent_user_id and x.agent_rate = e.agent_rate and x.agent_cents = -public.finance_agent_cents(300000, e.agent_rate) and x.net_cents = -300000
+   from public.commission_transactions x, pg_temp.t('qe1') e where x.original_transaction_id = e.id and x.kind = 'cancellation'));
+select pg_temp.check('Q4 the policy still has its own $10,000 and the other endorsement''s $2,000 left', public.finance_remaining_net(current_setting('test.q1')::uuid) = 1200000);
+select pg_temp.check('Q5 a policy cancellation stays weekly', (select stream = 'weekly' from public.commission_transactions where kind = 'cancellation' and original_transaction_id = (pg_temp.t('p1')).id limit 1));
+set local role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
+select public.request_commission_cancellation(current_setting('test.q1')::uuid, 'full', '2026-10-05', 'Client closed (sample)');
+select public.approve_commission_cancellation((select id from public.commission_cancellations where transaction_id = current_setting('test.q1')::uuid and status = 'requested'), 1200000, 144000, null, 'Carrier notice by email (sample)');
+select pg_temp.check('Q6 after the whole policy is cancelled, its endorsement can''t be refunded again (nothing left on the policy)',
+  not pg_temp.refused($$select public.request_commission_cancellation(current_setting('test.qe2')::uuid, 'full', '2026-10-06', 'x')$$)
+  and pg_temp.refused($$select public.approve_commission_cancellation((select id from public.commission_cancellations where transaction_id = current_setting('test.qe2')::uuid and status = 'requested'), 1, 0, null, 'x')$$));
+reset role;
+
 \echo '== saving an account never fails because of records'
 -- (New accounts are stamped with the signed-in user's agency; none is signed in here.)
 select set_config('request.jwt.claim.sub', '', true);
