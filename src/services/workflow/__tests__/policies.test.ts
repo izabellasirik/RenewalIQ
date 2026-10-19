@@ -230,8 +230,8 @@ describe('filtering by date', () => {
     const today = new Date(2026, 9, 17);
     expect(presetRange('this_month', today)).toEqual({ from: '2026-10-01', to: '2026-10-31' });
     expect(presetRange('last_month', today)).toEqual({ from: '2026-09-01', to: '2026-09-30' });
-    expect(presetRange('this_year', today)).toEqual({ from: '2026-01-01', to: '2026-12-31' });
-    expect(presetRange('next_60_days', today)).toEqual({ from: '2026-10-17', to: '2026-12-16' });
+    expect(presetRange('last_7_days', today)).toEqual({ from: '2026-10-11', to: '2026-10-17' });
+    expect(presetRange('last_7_days', new Date(2026, 2, 3))).toEqual({ from: '2026-02-25', to: '2026-03-03' });
     expect(presetRange('all', today)).toEqual({ from: '', to: '' });
   });
   it('archived accounts are left out unless asked for', () => {
@@ -242,6 +242,25 @@ describe('filtering by date', () => {
     useAccountsStore.setState((s) => ({ accounts: s.accounts.map((a) => ({ ...a, archived: true })) }));
     expect(policyRows(store().accounts, store().quotes)).toHaveLength(0);
     expect(policyRows(store().accounts, store().quotes, { includeArchived: true })).toHaveLength(1);
+  });
+  it('a description is written, changed or cleared from Analytics without touching the rest of the policy', () => {
+    useAccountsStore.setState({ accounts: [] });
+    const id = store().createAccount('Described Co', 'TX');
+    const q = store().addQuote(id, { marketName: 'M', status: 'bound' });
+    const p = store().addPolicy(id, q, fields());
+    const get = () => store().quotes[id].find((x) => x.id === q)!.policies!.find((x) => x.id === p)!;
+    const before = get();
+    store().setPolicyDescription(id, q, p, '  Added two trucks  ');
+    expect(get().description).toBe('Added two trucks');
+    const { description, updatedAt, ...rest } = get();
+    expect(description).toBeTruthy();
+    expect(updatedAt).toBeTruthy();
+    const { updatedAt: _u, description: _d, ...restBefore } = before;
+    expect(rest).toEqual(restBefore);
+    store().setPolicyDescription(id, q, p, 'x'.repeat(400));
+    expect(get().description).toHaveLength(300);
+    store().setPolicyDescription(id, q, p, '');
+    expect('description' in get()).toBe(false);
   });
 });
 

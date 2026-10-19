@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { BarChart3, FileWarning, Paperclip, Search } from 'lucide-react';
+import { BarChart3, FileWarning, Paperclip, Pencil, Search } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Badge, Card, CardBody, EmptyState, Tabs } from '../components/ui';
+import { Badge, Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { IncomeExpensesPanel, ProfitLossPanel } from '../components/analytics/MoneyPanels';
 import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { formatRate } from '../components/workspace/PoliciesSection';
@@ -10,12 +10,8 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { useAgentCommissionRates } from '../hooks/useAgentCommission';
 import { useCarrierRates } from '../hooks/useCarrierRates';
 import { useLedger, useMyCommissions } from '../hooks/useLedger';
-import { CommissionsPanel } from '../components/finance/CommissionsPanel';
-import { PayoutsPanel } from '../components/finance/PayoutsPanel';
-import { MyPayoutsCard } from '../components/finance/MyPayoutsCard';
-import { CommissionStatusBadge } from '../components/finance/CommissionStatusBadge';
 import { CarrierRateDialog } from '../components/finance/CarrierRateDialog';
-import { currentRecordsByPolicy, ledgerStatus as ledgerStatusFn, payoutWords, type LedgerStatus } from '../services/finance/ledger';
+import { currentRecordsByPolicy } from '../services/finance/ledger';
 import { useRememberedView } from '../hooks/useRememberedView';
 import { aDateKey, aString, defined, oneOf } from '../services/preferences/viewPreferences';
 import { policiesReport } from '../services/reports/analyticsReports';
@@ -57,7 +53,7 @@ export function PoliciesAnalyticsPage() {
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const isAdmin = agencyAccess?.role === 'admin';
   const [params, setParams] = useSearchParams();
-  const view = isAdmin ? (['pl', 'policies', 'commissions', 'payouts', 'money'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : 'policies';
+  const view = isAdmin ? (['pl', 'policies', 'money'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : 'policies';
   return (
     <PageContainer
       title="Analytics"
@@ -72,8 +68,6 @@ export function PoliciesAnalyticsPage() {
           items={[
             { key: 'pl', label: 'Profit & loss' },
             { key: 'policies', label: 'Policies & endorsements' },
-            { key: 'commissions', label: 'Commissions' },
-            { key: 'payouts', label: 'Payouts' },
             { key: 'money', label: 'Income & expenses' },
           ]}
           active={view}
@@ -82,8 +76,6 @@ export function PoliciesAnalyticsPage() {
       )}
       {view === 'pl' && <ProfitLossPanel />}
       {view === 'money' && <IncomeExpensesPanel />}
-      {view === 'commissions' && <CommissionsPanel />}
-      {view === 'payouts' && <PayoutsPanel />}
       {view === 'policies' && <PoliciesPanel />}
     </PageContainer>
   );
@@ -152,19 +144,18 @@ function PoliciesPanel() {
   const ledger = useLedger();
   const mine = useMyCommissions(!!agencyAccess && !isAdmin);
   const records = useMemo(() => {
-    const out = new Map<string, { status: LedgerStatus; agentCents: number | null; carrierCents?: number; carrierRate?: number; payDate?: string | null }>();
-    if (isAdmin && ledger.data) for (const [k, t] of currentRecordsByPolicy(ledger.data.transactions)) out.set(k, { status: ledgerStatusFn(t), agentCents: t.agentCents, carrierCents: t.carrierCents, carrierRate: t.carrierRate });
-    if (!isAdmin) for (const c of mine.commissions) if (c.policyId) out.set(`${c.submissionId}|${c.policyId}`, { status: c.status, agentCents: c.agentCents, payDate: c.expectedPayDate });
+    const out = new Map<string, { agentCents: number | null; carrierCents?: number; carrierRate?: number }>();
+    if (isAdmin && ledger.data) for (const [k, t] of currentRecordsByPolicy(ledger.data.transactions)) out.set(k, { agentCents: t.agentCents, carrierCents: t.carrierCents, carrierRate: t.carrierRate });
+    if (!isAdmin) for (const c of mine.commissions) if (c.policyId) out.set(`${c.submissionId}|${c.policyId}`, { agentCents: c.agentCents });
     return out;
   }, [isAdmin, ledger.data, mine.commissions]);
-  const recordsOn = isAdmin ? ledger.status === 'ready' : mine.status === 'ready';
   const recordOf = (r: PolicyRow) => records.get(`${r.accountId}|${r.policy.id}`);
   const commissionOf = (r: PolicyRow): number | null => {
     if (!agencyAccess) return null;
-    const rec = recordOf(r);
-    if (rec) return rec.agentCents;
-    // With commission records, a policy without one (historical, not recorded yet) has no commission to show.
-    if (recordsOn) return null;
+    // The recorded amount when there is one; otherwise (not recorded yet, e.g. an earlier policy) it's
+    // worked out the same way: net × 10% × the assigned agent's split.
+    const recorded = recordOf(r)?.agentCents;
+    if (recorded !== undefined && recorded !== null) return recorded;
     if (!r.assignedUserId) return null;
     const rate = rates.rates[r.assignedUserId];
     return rate === undefined ? null : agentCommissionCents(r.policy.netPremiumCents, rate);
@@ -172,6 +163,7 @@ function PoliciesPanel() {
   const carrierRateOf = (r: PolicyRow) => recordOf(r)?.carrierRate ?? carrier.rateOn(r.policy.carrier, r.policy.boundDate);
   const carrierCentsOf = (r: PolicyRow) => recordOf(r)?.carrierCents ?? carrierCommissionCents(r.policy.netPremiumCents, carrier.rateOn(r.policy.carrier, r.policy.boundDate));
   const [rateFor, setRateFor] = useState<PolicyRow | null>(null);
+  const setDescription = useAccountsStore((s) => s.setPolicyDescription);
   const totals = useMemo(() => {
     const t = { policies: 0, endorsements: 0, net: 0, taxes: 0, fees: 0, carrier: 0, commission: 0, commissionMissing: 0, proofMissing: 0 };
     for (const r of rows) {
@@ -292,14 +284,14 @@ function PoliciesPanel() {
                 <thead>
                   <tr>
                     <th className={th}>Client / policy</th>
-                    <th className={th}>Effective</th>
+                    <th className={th}>Bound date</th>
                     <th className={`${th} ${num}`}>Net</th>
                     <th className={`${th} ${num}`}>Taxes</th>
                     <th className={`${th} ${num}`}>Fees</th>
                     <th className={`${th} ${num}`}>Total</th>
                     {isAdmin && <th className={`${th} ${num} !whitespace-normal`}>Carrier commission</th>}
                     {agencyAccess && <th className={`${th} ${num} !whitespace-normal`}>Agent commission</th>}
-                    {agencyAccess && recordsOn && <th className={th}>Commission status</th>}
+                    <th className={th}>Description</th>
                     <th className={th}>Documents</th>
                   </tr>
                   <tr data-testid="policy-totals" className="tabular-nums">
@@ -318,10 +310,10 @@ function PoliciesPanel() {
                     {agencyAccess && (
                       <td className={`${totalCell} ${num}`} data-total="commission">
                         {formatCents(totals.commission)}
-                        {totals.commissionMissing > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">{totals.commissionMissing} {recordsOn ? 'not recorded yet or without an agent' : 'without a rate or agent'}</span>}
+                        {totals.commissionMissing > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">{totals.commissionMissing} without an agent or split</span>}
                       </td>
                     )}
-                    {agencyAccess && recordsOn && <td className={totalCell} />}
+                    <td className={totalCell} />
                     <td className={totalCell} data-total="documents-missing">
                       {totals.proofMissing ? <span className="text-xs font-medium text-[var(--color-warning-600)]">{totals.proofMissing} missing</span> : <span className="text-xs font-normal text-[var(--color-ink-500)]">None missing</span>}
                     </td>
@@ -342,39 +334,34 @@ function PoliciesPanel() {
                             </span>
                             {!r.marketBound && <Badge tone="warning">{endorsement ? 'Market no longer Endorsed' : 'Market no longer Bound'}</Badge>}
                           </span>
-                          {r.policy.description && <span className="mt-0.5 block text-xs text-[var(--color-ink-700)]" data-field="description">{r.policy.description}</span>}
                           <span className="mt-0.5 block text-xs text-[var(--color-ink-500)]">
                             {r.policy.carrier}
                             {r.policy.carrier !== r.marketName ? ` via ${r.marketName}` : ''}
                           </span>
                         </td>
-                        <td className={`${td} whitespace-nowrap`} data-field="effective">{r.policy.effectiveDate ? formatShortDate(r.policy.effectiveDate) : '—'}</td>
+                        <td className={`${td} whitespace-nowrap`} data-field="bound">{r.policy.boundDate ? formatShortDate(r.policy.boundDate) : '—'}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.netPremiumCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.taxesCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.feesCents)}</td>
                         <td className={`${td} ${num} font-semibold`}>{formatCents(policyTotalCents(r.policy))}</td>
                         {isAdmin && (
                           <td className={`${td} ${num}`} data-field="carrier">
-                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} recorded={!!recordOf(r)} isSet={carrier.isSet(r.policy.carrier, r.policy.boundDate)} canEdit={carrier.status === 'ready'} onChange={() => setRateFor(r)} />
+                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} canEdit={carrier.status === 'ready'} onChange={() => setRateFor(r)} />
                           </td>
                         )}
                         {agencyAccess && (
                           <td className={`${td} ${num}`} data-field="commission">
-                            {c === null ? <span className="text-xs text-[var(--color-ink-400)]">{recordsOn && !recordOf(r) ? 'Not recorded yet' : r.assignedUserId ? 'No rate set' : 'No agent assigned'}</span> : <span className="font-semibold">{formatCents(c)}</span>}
+                            {c === null ? <span className="text-xs text-[var(--color-ink-400)]">{r.assignedUserId ? 'No split set' : 'No agent assigned'}</span> : <span className="font-semibold">{formatCents(c)}</span>}
                           </td>
                         )}
-                        {agencyAccess && recordsOn && (
-                          <td className={`${td} whitespace-nowrap`} data-field="commission-status">
-                            {recordOf(r) ? (
-                              <>
-                                <CommissionStatusBadge status={recordOf(r)!.status} />
-                                {recordOf(r)!.payDate && <span className="mt-1 block text-[11px] text-[var(--color-ink-500)] first-letter:uppercase">{payoutWords(recordOf(r)!.payDate, recordOf(r)!.status === 'verified')}</span>}
-                              </>
-                            ) : (
-                              <span className="text-xs text-[var(--color-ink-400)]">Not recorded yet</span>
-                            )}
-                          </td>
-                        )}
+                        <td className={`${td} min-w-[200px]`} data-field="description">
+                          <DescriptionCell
+                            text={r.policy.description ?? ''}
+                            canEdit={isAdmin && !r.policy.removedAt}
+                            label={`${r.insured} ${r.policy.policyNumber ?? r.policy.carrier}`}
+                            onSave={(text) => setDescription(r.accountId, r.quoteId, r.policy.id, text)}
+                          />
+                        </td>
                         <td className={`${td} whitespace-nowrap`} data-field="documents">
                           {(r.policy.attachments ?? []).length ? (
                             <span className="inline-flex items-center gap-1 text-xs text-[var(--color-ink-600)]" title={r.policy.attachments!.map((a) => (a.description ? `${a.name} — ${a.description}` : a.name)).join('\n')}>
@@ -404,7 +391,6 @@ function PoliciesPanel() {
           {rateFor && <CarrierRateDialog carrier={rateFor.policy.carrier} effectiveFrom={rateFor.policy.boundDate} onClose={() => setRateFor(null)} />}
         </CardBody>
       </Card>
-      {!isAdmin && agencyAccess && <MyPayoutsCard />}
       {!isAdmin && mine.commissions.some((c) => c.kind === 'cancellation' || c.kind === 'correction') && (
         <Card>
           <CardBody className="pt-4" data-testid="my-adjustments">
@@ -433,17 +419,60 @@ function PoliciesPanel() {
 }
 
 /** A row's carrier commission: the % (as recorded, or in force on its bound date) and the amount; admins can set a new rate from here. */
-function CarrierCell({ row, rate, cents, recorded, isSet, canEdit, onChange }: { row: PolicyRow; rate: number; cents: number; recorded: boolean; isSet: boolean; canEdit: boolean; onChange: () => void }) {
+function CarrierCell({ row, rate, cents, canEdit, onChange }: { row: PolicyRow; rate: number; cents: number; canEdit: boolean; onChange: () => void }) {
   return (
     <div className="flex flex-col items-end gap-0.5">
       <span className="text-sm tabular-nums text-[var(--color-ink-700)]" data-field="carrier-rate">{formatRate(rate)}</span>
       <span className="text-xs font-semibold tabular-nums text-[var(--color-ink-800)]">{formatCents(cents)}</span>
-      <span className="text-[10px] text-[var(--color-ink-400)]">{recorded ? 'as recorded' : isSet ? 'carrier rate' : 'default'}</span>
       {canEdit && (
         <button type="button" onClick={onChange} className="cursor-pointer text-[11px] font-medium text-[var(--color-brand-700)] hover:underline" aria-label={`Set carrier commission % for ${row.policy.carrier}`}>
           Set rate
         </button>
       )}
+    </div>
+  );
+}
+
+/** A row's description: shown to everyone; an admin can write or change it here (300 characters at most). */
+function DescriptionCell({ text, canEdit, label, onSave }: { text: string; canEdit: boolean; label: string; onSave: (text: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  if (draft === null) {
+    return (
+      <div className="flex items-start gap-1.5">
+        <span className={`text-xs ${text ? 'text-[var(--color-ink-700)]' : 'text-[var(--color-ink-400)]'}`} data-field="description-text">{text || '—'}</span>
+        {canEdit && (
+          <button type="button" onClick={() => setDraft(text)} className="shrink-0 cursor-pointer text-[var(--color-brand-700)] hover:text-[var(--color-brand-800)]" aria-label={`${text ? 'Edit' : 'Add'} description for ${label}`}>
+            <Pencil size={12} aria-hidden />
+          </button>
+        )}
+      </div>
+    );
+  }
+  const save = () => {
+    onSave(draft);
+    setDraft(null);
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <textarea
+        className={`${inputClass} min-h-[60px] text-xs`}
+        value={draft}
+        maxLength={300}
+        autoFocus
+        aria-label={`Description for ${label}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setDraft(null);
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            save();
+          }
+        }}
+      />
+      <div className="flex gap-1.5">
+        <Button size="sm" onClick={save}>Save</Button>
+        <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
+      </div>
     </div>
   );
 }

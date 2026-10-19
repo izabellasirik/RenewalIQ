@@ -316,8 +316,9 @@ export function policyTotals(rows: PolicyRow[]): { count: number; netPremiumCent
   return t;
 }
 
-export type DatePreset = 'this_month' | 'last_month' | 'this_year' | 'next_60_days' | 'all';
-export const DATE_PRESET_LABELS: Record<DatePreset, string> = { this_month: 'This month', last_month: 'Last month', this_year: 'This year', next_60_days: 'Next 60 days', all: 'All dates' };
+export type DatePreset = 'all' | 'last_7_days' | 'this_month' | 'last_month';
+/** The Period menu, in this order. */
+export const DATE_PRESET_LABELS: Record<DatePreset, string> = { all: 'All dates', last_7_days: 'Last 7 days', this_month: 'This month', last_month: 'Last month' };
 
 export function presetRange(preset: DatePreset, today: Date = new Date()): { from: string; to: string } {
   const y = today.getFullYear();
@@ -328,10 +329,8 @@ export function presetRange(preset: DatePreset, today: Date = new Date()): { fro
       return { from: key(new Date(y, m, 1)), to: key(new Date(y, m + 1, 0)) };
     case 'last_month':
       return { from: key(new Date(y, m - 1, 1)), to: key(new Date(y, m, 0)) };
-    case 'this_year':
-      return { from: key(new Date(y, 0, 1)), to: key(new Date(y, 11, 31)) };
-    case 'next_60_days':
-      return { from: key(today), to: key(new Date(y, m, today.getDate() + 60)) };
+    case 'last_7_days':
+      return { from: key(new Date(y, m, today.getDate() - 6)), to: key(today) };
     default:
       return { from: '', to: '' };
   }

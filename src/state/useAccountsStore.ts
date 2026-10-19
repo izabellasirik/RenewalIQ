@@ -79,7 +79,7 @@ import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
 import { fileSha256 } from '../services/ingestion/aiReadContext';
-import { activePolicies, formatCents, policyTotalCents, type PolicyFields } from '../services/workflow/policies';
+import { activePolicies, entryKind, formatCents, policyTotalCents, type PolicyFields } from '../services/workflow/policies';
 import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { isSupabaseConfigured } from '../services/supabase/client';
 import type { MyProfile } from '../services/supabase/profileRepo';
@@ -318,6 +318,8 @@ interface AccountsState {
   /** A policy written from a bound market (commission is worked out on display, never stored here). Returns its id, or '' if the market is gone. */
   addPolicy: (accountId: string, quoteId: string, fields: PolicyFields) => string;
   updatePolicy: (accountId: string, quoteId: string, policyId: string, fields: PolicyFields) => void;
+  /** Changes only a policy's or endorsement's description (Analytics); everything else on it stays. */
+  setPolicyDescription: (accountId: string, quoteId: string, policyId: string, description: string) => void;
   removePolicy: (accountId: string, quoteId: string, policyId: string) => void;
   /** Proof for a policy or endorsement (binder, policy, endorsement page): kept like a quote file. */
   attachPolicyFile: (accountId: string, quoteId: string, policyId: string, file: File, description?: string) => void;
@@ -2549,6 +2551,25 @@ export const useAccountsStore = create<AccountsState>()(
           },
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `Edited policy ${next.policyNumber ?? before.policyNumber ?? 'with ' + next.carrier}${changes.length ? `: ${changes.join(', ')}` : ''}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      setPolicyDescription: (accountId, quoteId, policyId, description) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const before = quote?.policies?.find((p) => p.id === policyId);
+        if (!quote || !before || before.removedAt) return;
+        const text = description.trim().slice(0, 300);
+        if (text === (before.description ?? '')) return;
+        const next: PolicyRecord = { ...before, description: text || undefined, updatedAt: new Date().toISOString() };
+        if (!text) delete next.description;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, policies: (q.policies ?? []).map((p) => (p.id === policyId ? next : p)), updatedAt: next.updatedAt })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'policy_bound', `${text ? 'Described' : 'Cleared the description of'} ${entryKind(before) === 'endorsement' ? 'endorsement' : 'policy'} ${before.policyNumber ?? 'with ' + before.carrier}${text ? `: “${text}”` : ''}${actorSuffix(s.currentUserEmail)}.`),
         }));
         syncNow(accountId);
       },

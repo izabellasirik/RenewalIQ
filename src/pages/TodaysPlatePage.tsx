@@ -21,33 +21,29 @@ interface PlateView {
   broker: string;
   /** Outside an agency: only accounts assigned to me (as before). */
   mineOnly: boolean;
-  /** All tasks, today's, one kind of task, every follow-up, the next 7 days, or what's waiting on others. */
+  /** All tasks, today's, renewals, what's coming up in the next 7 days, or everything other than renewals. */
   show: PlateShow;
 }
-type PlateShow = 'all' | 'due_today' | 'renewal' | 'action_required' | 'ready_to_send' | 'follow_ups' | 'next_7_days' | 'waiting';
-const PLATE_SHOW: PlateShow[] = ['all', 'due_today', 'renewal', 'action_required', 'ready_to_send', 'follow_ups', 'next_7_days', 'waiting'];
+type PlateShow = 'all' | 'due_today' | 'renewal' | 'coming_up' | 'other';
+const PLATE_SHOW: PlateShow[] = ['all', 'due_today', 'renewal', 'coming_up', 'other'];
 /** The "Show" menu, in this order. */
 const SHOW_LABELS: Record<PlateShow, string> = {
   all: 'All tasks',
   due_today: 'Due today',
   renewal: 'Renewals',
-  action_required: 'Action required',
-  ready_to_send: 'Ready to send',
-  follow_ups: 'Follow-ups',
-  next_7_days: 'Upcoming · next 7 days',
-  waiting: 'Waiting for response',
+  coming_up: 'Coming up',
+  other: 'Other',
 };
-/** "Follow-ups" is every kind: carrier follow-ups, client follow-ups and the follow-ups scheduled on accounts. */
-const FOLLOW_UP_KINDS: ActionKind[] = ['carrier_follow_up', 'client_follow_up', 'follow_up'];
-const showsKind = (show: PlateShow, kind: ActionKind) =>
-  show === 'all' || show === 'due_today' || show === 'next_7_days' || (show === 'follow_ups' ? FOLLOW_UP_KINDS.includes(kind) : show === kind);
+/** Earlier versions' choices: one kind of task, the follow-ups and what's waiting are now under "Other". */
+const OLD_OTHER = ['action_required', 'ready_to_send', 'follow_ups', 'waiting', 'carrier_follow_up', 'client_follow_up', 'follow_up'];
+const showsKind = (show: PlateShow, kind: ActionKind) => (show === 'renewal' ? kind === 'renewal' : show === 'other' ? kind !== 'renewal' : true);
 const PLATE_VIEW_DEFAULTS: PlateView = { broker: ALL_BROKERS, mineOnly: false, show: 'all' };
 const sanitizePlateView = (saved: Record<string, unknown>): Partial<PlateView> =>
   defined<PlateView>({
     broker: aString(saved.broker),
     mineOnly: aBoolean(saved.mineOnly),
-    // Saved by earlier versions: 'renewals' (Renewals only) and the three separate follow-up kinds.
-    show: saved.show === 'renewals' ? 'renewal' : FOLLOW_UP_KINDS.includes(saved.show as ActionKind) ? 'follow_ups' : oneOf(PLATE_SHOW)(saved.show),
+    // Saved by earlier versions: 'renewals', the next 7 days, and the separate kinds of task.
+    show: saved.show === 'renewals' ? 'renewal' : saved.show === 'next_7_days' ? 'coming_up' : OLD_OTHER.includes(saved.show as string) ? 'other' : oneOf(PLATE_SHOW)(saved.show),
   });
 const filterClass =
   'cursor-pointer rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
@@ -148,12 +144,13 @@ export function TodaysPlatePage() {
     }
     waitingRows.sort((a, b) => a.accountName.localeCompare(b.accountName));
     doneRows.sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
-    // "Show": today's tasks, one kind (today's and the next 7 days'), every follow-up, only the next 7 days, or only what's waiting.
+    // "Show": everything; only today's; renewals (today's and the next 7 days'); only the next 7 days; or
+    // everything but renewals (today's, the next 7 days' and what's waiting on others).
     const kept = (a: ActionItem) => showsKind(show, a.kind);
     return {
-      now: show === 'next_7_days' || show === 'waiting' ? [] : sortActions(allNow.filter(kept)),
-      upcoming: show === 'waiting' || show === 'due_today' ? [] : sortActions(allUpcoming.filter(kept)),
-      waiting: show === 'all' || show === 'waiting' ? waitingRows : [],
+      now: show === 'coming_up' ? [] : sortActions(allNow.filter(kept)),
+      upcoming: show === 'due_today' ? [] : sortActions(allUpcoming.filter(kept)),
+      waiting: show === 'all' || show === 'other' ? waitingRows : [],
       doneToday: doneRows,
     };
   }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, byAgent, broker, show, session.userId, session.email, today, undoActionDone, reopenFollowUp, agencyAccess?.role, accountOwners]);
@@ -274,7 +271,7 @@ export function TodaysPlatePage() {
             ))}
           </ul>
         )
-      ) : now.length === 0 && show !== 'next_7_days' && show !== 'waiting' ? (
+      ) : now.length === 0 && show !== 'coming_up' ? (
         <Card>
           <CardBody className="flex flex-col items-center gap-2 py-10 text-center">
             <CheckCircle2 size={26} className="text-[var(--color-success-500)]" />
@@ -312,10 +309,10 @@ export function TodaysPlatePage() {
         })
       )}
 
-      {view === 'active' && (show === 'next_7_days' || show === 'waiting') && upcoming.length === 0 && waiting.length === 0 && (
+      {view === 'active' && show === 'coming_up' && upcoming.length === 0 && (
         <Card>
           <CardBody className="py-10 text-center text-sm text-[var(--color-ink-500)]" data-testid="plate-filtered-empty">
-            {show === 'waiting' ? 'Nothing is waiting on a client or carrier for these accounts.' : 'Nothing is scheduled for the next 7 days for these accounts.'}
+            Nothing is scheduled for the next 7 days for these accounts.
           </CardBody>
         </Card>
       )}
