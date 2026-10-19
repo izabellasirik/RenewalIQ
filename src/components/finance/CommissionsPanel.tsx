@@ -144,7 +144,7 @@ function RecordSummary({ t, schedule, extra }: { t: LedgerTransaction; schedule:
         Agent: <strong>{agentName(t)}</strong>
         {t.agentRate !== null ? ` at ${formatRate(t.agentRate)}` : ''} → <strong className="tabular-nums">{t.agentCents === null ? '—' : formatCents(t.agentCents)}</strong>
         {' · '}Carrier {t.carrierRateSource === 'actual' ? 'actual' : formatRate(t.carrierRate)} → <strong className="tabular-nums">{formatCents(t.carrierCents)}</strong>
-        {t.carrierRateSource === 'default' ? ' (10% default)' : t.carrierRateSource === 'historical' ? ' (not confirmed)' : ''}
+        {t.reviewFlags.includes('no_carrier_rate') ? ' (not set)' : t.carrierRateSource === 'default' ? ' (10% default)' : t.carrierRateSource === 'historical' ? ' (not confirmed)' : ''}
         {status !== 'void' && status !== 'settled_outside' && <> · {t.stream === 'weekly' ? 'weekly' : 'monthly'} {payoutWords(payoutDate(schedule, t.stream, t.payableFrom), status === 'verified')}</>}
       </p>
       {t.reviewFlags.length > 0 && <p className="text-[11px] text-[var(--color-warning-600)]" data-field="flags">{t.reviewFlags.map((f) => FLAG_LABELS[f] ?? f).join(' · ')}</p>}
@@ -385,7 +385,7 @@ function ConfirmHistoricalDialog({ t, run, onClose }: { t: LedgerTransaction; ru
           <input id="hist-evidence" className={inputClass} value={evidence} onChange={(e) => setEvidence(e.target.value)} maxLength={1000} placeholder="e.g. 2025 agreement, schedule A; agent split per offer letter" />
         </div>
         <p className="text-xs text-[var(--color-ink-600)]" data-testid="hist-preview">
-          Agent commission: <strong>{agentRate === null ? '—' : formatCents(agentCommissionCents(t.netCents, agentRate))}</strong> (net × 10% × split) · Carrier commission: <strong>{carrierRate === null ? '—' : formatCents(carrierCommissionCents(t.netCents, carrierRate))}</strong>
+          Agent commission: <strong>{agentRate === null ? '—' : formatCents(agentCommissionCents(t.netCents, carrierRate, agentRate) ?? 0)}</strong> (split of the carrier commission) · Carrier commission: <strong>{carrierRate === null ? '—' : formatCents(carrierCommissionCents(t.netCents, carrierRate) ?? 0)}</strong>
         </p>
       </div>
     </Modal>
@@ -456,7 +456,7 @@ function ResolveAgentDialog({ t, run, onClose }: { t: LedgerTransaction; run: Ru
           <input id="resolve-why" className={inputClass} value={why} onChange={(e) => setWhy(e.target.value)} maxLength={1000} placeholder="e.g. Agent confirmed from the binder email" />
         </div>
         <p className="text-xs text-[var(--color-ink-600)]" data-testid="resolve-preview">
-          Agent commission: <strong>{agentRate === null ? '—' : formatCents(agentCommissionCents(t.netCents, agentRate))}</strong> (net × 10% × split)
+          Agent commission: <strong>{agentRate === null || t.reviewFlags.includes('no_carrier_rate') ? '—' : formatCents(agentCommissionCents(t.netCents, t.carrierRate, agentRate) ?? 0)}</strong> (split of the carrier commission)
         </p>
       </div>
     </Modal>
@@ -543,7 +543,7 @@ function CorrectDialog({ t, all, run, onClose }: { t: LedgerTransaction; all: Le
         </div>
         {valid && delta !== 0 && (
           <p className="text-xs text-[var(--color-ink-600)]" data-testid="correct-preview">
-            Correction: net {formatCents(delta)} · agent {t.agentRate === null ? '—' : formatCents(agentCommissionCents(cents as number, t.agentRate) - agentCommissionCents(corrected, t.agentRate))} · carrier {formatCents(carrierCommissionCents(cents as number, t.carrierRate) - carrierCommissionCents(corrected, t.carrierRate))}
+            Correction: net {formatCents(delta)} · agent {t.agentRate === null ? '—' : formatCents((agentCommissionCents(cents as number, t.carrierRate, t.agentRate) ?? 0) - (agentCommissionCents(corrected, t.carrierRate, t.agentRate) ?? 0))} · carrier {formatCents((carrierCommissionCents(cents as number, t.carrierRate) ?? 0) - (carrierCommissionCents(corrected, t.carrierRate) ?? 0))}
           </p>
         )}
       </div>
@@ -907,8 +907,8 @@ function ApproveDialog({ c, t, all, run, onClose }: { c: LedgerCancellation; t: 
             <label className={labelClass} htmlFor="approve-carrier">Carrier commission returned ($)</label>
             <input id="approve-carrier" inputMode="decimal" className={inputClass} value={carrier} onChange={(e) => setCarrier(e.target.value)} />
             {rValid && (
-              <button type="button" className="mt-1 cursor-pointer text-xs font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => setCarrier(String((carrierCommissionCents(r as number, t.carrierRate) / 100).toFixed(2)))}>
-                Use {formatCents(carrierCommissionCents(r as number, t.carrierRate))} (the original {formatRate(t.carrierRate)}) — only if the carrier’s statement says so
+              <button type="button" className="mt-1 cursor-pointer text-xs font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => setCarrier(String(((carrierCommissionCents(r as number, t.carrierRate) ?? 0) / 100).toFixed(2)))}>
+                Use {formatCents(carrierCommissionCents(r as number, t.carrierRate) ?? 0)} (the original {formatRate(t.carrierRate)}) — only if the carrier’s statement says so
               </button>
             )}
           </div>
@@ -925,7 +925,7 @@ function ApproveDialog({ c, t, all, run, onClose }: { c: LedgerCancellation; t: 
         )}
         {rValid && t.agentRate !== null && (
           <p className="rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-sm text-[var(--color-ink-800)]" data-testid="approve-preview">
-            Agent adjustment: <strong>{formatCents(agentCommissionCents(-(r as number), t.agentRate))}</strong> ({agentName(t)}: −{formatCents(r as number)} × 10% × {formatRate(t.agentRate)}), carried against future payouts if needed · Agency: −{kValid ? formatCents(k as number) : '—'} carrier commission
+            Agent adjustment: <strong>{formatCents(agentCommissionCents(-(r as number), t.carrierRate, t.agentRate) ?? 0)}</strong> ({agentName(t)}: −{formatCents(r as number)} × {formatRate(t.carrierRate)} × {formatRate(t.agentRate)}), carried against future payouts if needed · Agency: −{kValid ? formatCents(k as number) : '—'} carrier commission
           </p>
         )}
       </div>
@@ -953,13 +953,13 @@ function CarrierRatesSection() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Carrier commission rates</h3>
-            <p className="text-xs text-[var(--color-ink-500)]">What each carrier pays the agency, from a date (10% where none is set). Confidential: only admins see them. Commissions already recorded keep their rate.</p>
+            <p className="text-xs text-[var(--color-ink-500)]">What each carrier pays the agency, from a date (no commission until one is set). Confidential: only admins see them. Commissions already recorded keep their rate.</p>
           </div>
           <Button size="sm" onClick={() => setAdding({})} disabled={carrier.status !== 'ready'}>Add a rate</Button>
         </div>
         {carrier.status === 'unavailable' && <p className="mt-3 text-sm text-[var(--color-warning-600)]" data-testid="rates-unavailable">{carrier.message ?? 'Carrier rates aren’t available.'}</p>}
         {message && <p className="mt-3 text-sm text-[var(--color-danger-600)]" role="alert">{message}</p>}
-        {carrier.status === 'ready' && groups.length === 0 && <p className="mt-3 text-sm text-[var(--color-ink-500)]">No carrier rates yet: every carrier uses 10%.</p>}
+        {carrier.status === 'ready' && groups.length === 0 && <p className="mt-3 text-sm text-[var(--color-ink-500)]">No carrier rates yet: no commission is worked out until one is set.</p>}
         <div className="mt-3 flex flex-col gap-3" data-testid="carrier-rates">
           {groups.map((rows) => {
             const now = rows.filter((r) => !r.retiredAt && r.effectiveFrom <= today).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
@@ -967,7 +967,7 @@ function CarrierRatesSection() {
               <div key={rows[0].carrierKey} className="rounded-lg border border-[var(--color-ink-100)] px-3 py-2" data-carrier={rows[0].carrierKey}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-medium text-[var(--color-ink-900)]">
-                    {rows[0].carrierName} <span className="font-normal text-[var(--color-ink-500)]">— today {now ? formatRate(now.rate) : '10% (default)'}</span>
+                    {rows[0].carrierName} <span className="font-normal text-[var(--color-ink-500)]">— today {now ? formatRate(now.rate) : 'not set'}</span>
                   </p>
                   <Button size="sm" variant="secondary" onClick={() => setAdding({ carrier: rows[0].carrierName })}>New rate from a date</Button>
                 </div>
@@ -1000,7 +1000,7 @@ function CarrierRatesSection() {
             title="Retire this rate"
             label="Why (kept in the history)"
             confirm="Retire"
-            description="Use this for a rate entered by mistake. Policies then use the rate before it (or 10%). Commissions already recorded keep their rate."
+            description="Use this for a rate entered by mistake. Policies then use the rate before it (or none). Commissions already recorded keep their rate."
             onClose={() => setRetiring(null)}
             onConfirm={async (why) => {
               const res = await retireCarrierCommissionRate(retiring, why);

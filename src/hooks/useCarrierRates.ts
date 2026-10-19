@@ -2,13 +2,13 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { isSupabaseConfigured } from '../services/supabase/client';
 import { fetchCarrierRateRows, type CarrierRateRow } from '../services/supabase/commissionRepo';
-import { DEFAULT_CARRIER_RATE, carrierKey } from '../services/workflow/policies';
+import { carrierKey } from '../services/workflow/policies';
 import { toLocalDateKey } from '../services/workflow/dates';
 
 /**
  * Each carrier's commission % by date (0063) — what it pays the agency on the policies and endorsements
  * bound from that date. Only the agency's admins can read them (carrier agreements are confidential); a
- * carrier without a rate on a date uses 10%. Loaded once per sign-in and shared by every screen; reload()
+ * carrier without a rate on a date has none (not set: no commission yet). Loaded once per sign-in and shared by every screen; reload()
  * after a change.
  */
 type State = { status: 'idle' | 'loading' | 'ready' | 'unavailable'; userId: string | null; rows: CarrierRateRow[]; message?: string };
@@ -38,7 +38,7 @@ export function carrierRateRowOn(rows: CarrierRateRow[], carrier: string, dateKe
   return best;
 }
 
-export function useCarrierRates(): State & { reload: () => Promise<void>; rateOn: (carrier: string, dateKey?: string) => number; isSet: (carrier: string, dateKey?: string) => boolean } {
+export function useCarrierRates(): State & { reload: () => Promise<void>; rateOn: (carrier: string, dateKey?: string) => number | null; isSet: (carrier: string, dateKey?: string) => boolean } {
   const userId = useAccountsStore((s) => s.currentUserId);
   const isAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   const snapshot = useSyncExternalStore(
@@ -55,7 +55,7 @@ export function useCarrierRates(): State & { reload: () => Promise<void>; rateOn
   return {
     ...snapshot,
     reload: () => reloadCarrierRates(userId),
-    rateOn: (carrier, dateKey) => carrierRateRowOn(snapshot.rows, carrier, dateKey || today)?.rate ?? DEFAULT_CARRIER_RATE,
+    rateOn: (carrier, dateKey) => carrierRateRowOn(snapshot.rows, carrier, dateKey || today)?.rate ?? null,
     isSet: (carrier, dateKey) => !!carrierRateRowOn(snapshot.rows, carrier, dateKey || today),
   };
 }

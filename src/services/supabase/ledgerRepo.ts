@@ -70,11 +70,13 @@ export interface MyCommission {
   netCents: number;
   agentRate: number | null;
   agentCents: number | null;
+  /** The carrier % the commission was worked out on (0067); null while not set, or before 0067. */
+  carrierRate: number | null;
   status: import('../finance/ledger').LedgerStatus;
   originalTransactionId: string | null;
 }
 
-/** The signed-in agent's own commissions (no carrier figures). */
+/** The signed-in agent's own commissions, with the carrier % each was worked out on (never the carrier commission). */
 export async function fetchMyCommissions(): Promise<RepoResult<MyCommission[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
@@ -96,6 +98,7 @@ export async function fetchMyCommissions(): Promise<RepoResult<MyCommission[]>> 
         netCents: Number(r.net_cents ?? 0),
         agentRate: r.agent_rate === null || r.agent_rate === undefined ? null : Number(r.agent_rate),
         agentCents: r.agent_cents === null || r.agent_cents === undefined ? null : Number(r.agent_cents),
+        carrierRate: r.carrier_rate === null || r.carrier_rate === undefined ? null : Number(r.carrier_rate),
         status: r.status as MyCommission['status'],
         originalTransactionId: (r.original_transaction_id as string) ?? null,
       })),

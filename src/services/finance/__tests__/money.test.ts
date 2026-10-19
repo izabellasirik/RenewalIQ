@@ -53,36 +53,36 @@ describe('profitAndLoss', () => {
   const rows = [
     row({ id: 'p1', boundDate: '2026-10-03', netPremiumCents: 1_000_000 }), // Sample Mutual at 15%
     row({ id: 'e1', kind: 'endorsement', boundDate: '2026-11-10', netPremiumCents: -200_000 }),
-    row({ id: 'p2', boundDate: '2026-10-20', netPremiumCents: 500_000, carrier: 'Other Specialty' }, null), // no agent; carrier at the 10% default
+    row({ id: 'p2', boundDate: '2026-10-20', netPremiumCents: 500_000, carrier: 'Other Specialty' }, null), // no agent; no carrier % set
     row({ id: 'p3', boundDate: '2026-10-21', netPremiumCents: 500_000 }, 'agent-without-rate'),
   ];
-  // Agent on 25% (always of 10% of net); Sample Mutual pays the agency 15%, Other Specialty is at the 10% default.
+  // Agent on 25% of the carrier commission; Sample Mutual pays the agency 15%, Other Specialty has no % set.
   const sample = (c: string) => carrierKey(c) === 'sample mutual';
-  const carrier = { rateOn: (c: string) => (sample(c) ? 0.15 : 0.1), isSet: (c: string) => sample(c) };
+  const carrier = { rateOn: (c: string) => (sample(c) ? 0.15 : null), isSet: (c: string) => sample(c) };
   const pl = profitAndLoss(entries, rows, { 'agent-a': 0.25 }, '2026-10-01', '2026-11-30', { carrier });
 
-  it('the carrier % doesn’t change the agent commission: 25% of 10% of net', () => {
-    expect(pl.commissionCents).toBe(20_000); // 10,000 × 10% × 25% = 250; −2,000 × 10% × 25% = −50
-    expect(pl.commissionMissing).toBe(2);
+  it('the agent commission is the agent’s split of the carrier commission', () => {
+    expect(pl.commissionCents).toBe(30_000); // 10,000 × 15% × 25% = 375; −2,000 × 15% × 25% = −75
+    expect(pl.commissionMissing).toBe(2); // no agent (and no carrier %); an agent without a split
   });
-  it('carrier commission on the policies is income: net × each carrier’s %', () => {
-    // 10,000 × 15% = 1,500; −2,000 × 15% = −300; 5,000 × 10% = 500; 5,000 × 15% = 750
-    expect(pl.carrierCents).toBe(245_000);
-    expect(pl.carrierDefaultCount).toBe(1);
+  it('carrier commission on the policies is income: net × each carrier’s %; none without a %', () => {
+    // 10,000 × 15% = 1,500; −2,000 × 15% = −300; Other Specialty not set; 5,000 × 15% = 750
+    expect(pl.carrierCents).toBe(195_000);
+    expect(pl.carrierNotSetCount).toBe(1);
     expect(pl.otherIncomeCents).toBe(1_050_000);
-    expect(pl.incomeCents).toBe(1_295_000);
+    expect(pl.incomeCents).toBe(1_245_000);
     expect(pl.expenseCents).toBe(500_000);
-    expect(pl.profitCents).toBe(775_000);
+    expect(pl.profitCents).toBe(715_000);
     expect(pl.premiumNetCents).toBe(1_800_000);
   });
   it('by category, largest first (carrier commission as its own line)', () => {
-    expect(pl.income.map((c) => [c.category, c.cents])).toEqual([['Contingency / bonus', 1_000_000], [CARRIER_COMMISSION_CATEGORY, 245_000], ['Agency fees', 50_000]]);
+    expect(pl.income.map((c) => [c.category, c.cents])).toEqual([['Contingency / bonus', 1_000_000], [CARRIER_COMMISSION_CATEGORY, 195_000], ['Agency fees', 50_000]]);
     expect(pl.expenses).toEqual([{ category: 'Rent', cents: 500_000, count: 2 }]);
   });
   it('by month', () => {
     expect(pl.months).toEqual([
-      { month: '2026-10', carrierCents: 275_000, otherIncomeCents: 1_000_000, incomeCents: 1_275_000, expenseCents: 250_000, commissionCents: 25_000, profitCents: 1_000_000 },
-      { month: '2026-11', carrierCents: -30_000, otherIncomeCents: 50_000, incomeCents: 20_000, expenseCents: 250_000, commissionCents: -5_000, profitCents: -225_000 },
+      { month: '2026-10', carrierCents: 225_000, otherIncomeCents: 1_000_000, incomeCents: 1_225_000, expenseCents: 250_000, commissionCents: 37_500, profitCents: 937_500 },
+      { month: '2026-11', carrierCents: -30_000, otherIncomeCents: 50_000, incomeCents: 20_000, expenseCents: 250_000, commissionCents: -7_500, profitCents: -222_500 },
     ]);
     expect(monthLabel('2026-10')).toBe('Oct 2026');
   });
@@ -94,8 +94,8 @@ describe('profitAndLoss', () => {
     expect(reportCsv(r)).toBe('Date,Type,Category,Description,Amount,Notes\n2026-10-02,Expense,Rent,"Rent, ""October""",-2500.00,\n2026-10-05,Income,Contingency / bonus,,10000.00,\nNet,,,,7500.00,\n');
     const csv = reportCsv(profitLossReport(pl, '2026-10-01', '2026-11-30')).split('\n');
     expect(csv[0]).toBe('Month,Carrier commission,Other income,Total income,Expenses,Agent commission,Profit / loss');
-    expect(csv[1]).toBe('Oct 2026,2750.00,10000.00,12750.00,2500.00,250.00,10000.00');
-    expect(csv[3]).toBe('Total,2450.00,10500.00,12950.00,5000.00,200.00,7750.00');
+    expect(csv[1]).toBe('Oct 2026,2250.00,10000.00,12250.00,2500.00,375.00,9375.00');
+    expect(csv[3]).toBe('Total,1950.00,10500.00,12450.00,5000.00,300.00,7150.00');
   });
 });
 
@@ -116,13 +116,13 @@ describe('profitAndLoss from commission records (0064)', () => {
   const carrier = { rateOn: () => 0.15, isSet: () => true };
   const pl = profitAndLoss([], rows, { 'agent-a': 0.5 }, '2026-10-01', '2026-11-30', { carrier, ledger });
   it('uses the frozen amounts, corrections and cancellations included, in the month they are dated', () => {
-    // records: 1,200 + 120 − 480 carrier; 250 + 25 − 100 agent. p9 has no record yet: estimated at today's 15% / 50%.
+    // records: 1,200 + 120 − 480 carrier; 250 + 25 − 100 agent. p9 has no record yet: estimated at today's 15% / 50% (2,000 × 15% × 50% = 150).
     expect(pl.fromRecords).toBe(true);
     expect(pl.carrierCents).toBe(120_000 + 12_000 - 48_000 + 30_000);
-    expect(pl.commissionCents).toBe(25_000 + 2_500 - 10_000 + 10_000);
+    expect(pl.commissionCents).toBe(25_000 + 2_500 - 10_000 + 15_000);
     expect(pl.adjustmentCount).toBe(2);
     expect(pl.estimatedCount).toBe(1);
-    expect(pl.months.map((m) => [m.month, m.carrierCents, m.commissionCents])).toEqual([['2026-10', 162_000, 37_500], ['2026-11', -48_000, -10_000]]);
+    expect(pl.months.map((m) => [m.month, m.carrierCents, m.commissionCents])).toEqual([['2026-10', 162_000, 42_500], ['2026-11', -48_000, -10_000]]);
   });
   it('void and replaced records are left out', () => {
     expect(pl.premiumNetCents).toBe(1_000_000 + 100_000 - 400_000 + 200_000);

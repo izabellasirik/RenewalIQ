@@ -114,6 +114,7 @@ export const FLAG_LABELS: Record<string, string> = {
   no_agent: 'No agent on the account when recorded',
   no_agent_rate: 'Agent had no split when recorded',
   default_carrier_rate: 'Carrier at the 10% default',
+  no_carrier_rate: 'Carrier % not set',
   unlinked_endorsement: 'Endorsement not linked to its policy',
   changed_since_recorded: 'Changed on the account since recorded',
   removed: 'Removed from the account',
@@ -125,7 +126,7 @@ export const FLAG_LABELS: Record<string, string> = {
 };
 
 /** Same list as finance_blocking_flags(): verification waits until these are dealt with. */
-export const BLOCKING_FLAGS = ['no_agent', 'no_agent_rate', 'unlinked_endorsement', 'changed_since_recorded', 'removed', 'account_deleted', 'invalid_amount', 'invalid_date', 'invalid_carrier'];
+export const BLOCKING_FLAGS = ['no_agent', 'no_agent_rate', 'unlinked_endorsement', 'changed_since_recorded', 'removed', 'account_deleted', 'invalid_amount', 'invalid_date', 'invalid_carrier', 'no_carrier_rate'];
 
 /** Same rules as finance_status(). */
 export function ledgerStatus(t: Pick<LedgerTransaction, 'verificationStatus' | 'settlement' | 'origin' | 'rateConfirmedAt' | 'proofStatus'>): LedgerStatus {

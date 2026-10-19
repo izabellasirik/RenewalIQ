@@ -10,12 +10,16 @@ const input = (patch: Partial<PolicyInput> = {}): PolicyInput => ({
 });
 const rec = (patch: Partial<PolicyRecord>): PolicyRecord => ({ id: 'p', carrier: 'Sample Mutual', businessType: 'new', boundDate: '2026-10-01', netPremiumCents: 0, taxesCents: 0, feesCents: 0, createdAt: '', updatedAt: '', ...patch });
 
-describe('agent commission = the agent’s % of 10% of net, whatever the carrier pays', () => {
-  it('$10,000 net → an agent on 25% gets $250; a carrier at 15% pays the agency $1,500', () => {
-    expect(agentCommissionCents(1_000_000, 0.25)).toBe(25_000);
-    expect(carrierCommissionCents(1_000_000)).toBe(100_000);
-    expect(carrierCommissionCents(1_000_000, 0.15)).toBe(150_000);
+describe('agent commission = the agent’s split of the carrier commission', () => {
+  it('$10,000 net, carrier 12% → $1,200 to the agency; an agent on 25% gets $300 of it', () => {
+    expect(carrierCommissionCents(1_000_000, 0.12)).toBe(120_000);
+    expect(agentCommissionCents(1_000_000, 0.12, 0.25)).toBe(30_000);
+    expect(agentCommissionCents(1_000_000, 0.15, 0.4)).toBe(60_000);
     expect(carrierCommissionCents(1_000_000, 0)).toBe(0);
+  });
+  it('no carrier % set: no commission at all (not 10%)', () => {
+    expect(carrierCommissionCents(1_000_000, null)).toBeNull();
+    expect(agentCommissionCents(1_000_000, null, 0.25)).toBeNull();
   });
   it('one carrier however it is typed', () => {
     expect(carrierKey('  Granite   Mutual ')).toBe('granite mutual');
@@ -27,11 +31,11 @@ describe('agent commission = the agent’s % of 10% of net, whatever the carrier
     expect(checkPolicy(input({ description: 'x'.repeat(301) })).ok).toBe(false);
   });
   it('rounds half away from zero at each step, so a return premium mirrors its charge', () => {
-    expect(carrierCommissionCents(123_455)).toBe(12_346); // 12,345.5 → 12,346
-    expect(agentCommissionCents(123_455, 0.125)).toBe(1543); // 12,346 × 12.5% = 1,543.25 → 1,543
-    expect(agentCommissionCents(-123_455, 0.125)).toBe(-1543);
-    expect(agentCommissionCents(-500_000, 0.25)).toBe(-12_500);
-    expect(agentCommissionCents(0, 0.25)).toBe(0);
+    expect(carrierCommissionCents(123_455, 0.1)).toBe(12_346); // 12,345.5 → 12,346
+    expect(agentCommissionCents(123_455, 0.1, 0.125)).toBe(1543); // 12,346 × 12.5% = 1,543.25 → 1,543
+    expect(agentCommissionCents(-123_455, 0.1, 0.125)).toBe(-1543);
+    expect(agentCommissionCents(-500_000, 0.12, 0.25)).toBe(-15_000);
+    expect(agentCommissionCents(0, 0.12, 0.25)).toBe(0);
   });
 });
 

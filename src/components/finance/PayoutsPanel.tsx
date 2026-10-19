@@ -12,7 +12,6 @@ import { KIND_LABELS, describeSchedule, type LedgerStream } from '../../services
 import {
   RUN_STATE_LABELS,
   agentBalances,
-  baseCents,
   readyLines,
   runPeriodLabel,
   runState,
@@ -236,7 +235,7 @@ function RunDetail({ d, run }: { d: RunDetails; run: Run }) {
   const reason = (title: string, label: string, confirm: string, onConfirm: (x: string) => Promise<boolean>, description?: string) => setDialog({ kind: 'reason', title, label, confirm, onConfirm, description });
   const report = (): Report => ({
     title: `Payouts — ${runPeriodLabel(r)}`,
-    subtitle: [`Payday ${r.payDate}`, 'Agent commission = net × 10% × the agent’s split, as recorded'],
+    subtitle: [`Payday ${r.payDate}`, 'Agent commission = the agent’s split of the carrier commission, as recorded'],
     columns: [{ header: 'Agent' }, { header: 'Status' }, { header: 'Record' }, { header: 'Account' }, { header: 'Date', kind: 'date' }, { header: 'Net', kind: 'money' }, { header: 'Split' }, { header: 'Agent commission', kind: 'money' }],
     rows: d.lines.flatMap((l) => [
       ...l.items.map((i) => [l.agentName, l.status, recordLabel(i), i.clientName, i.eventDate, i.netCents, i.agentRate === null ? '' : formatRate(i.agentRate), i.agentCents]),
@@ -335,7 +334,6 @@ function LineCard({ line: l, d, setDialog, reason, run }: { line: PayoutLine; d:
               <th className={th}>Account</th>
               <th className={th}>Date</th>
               <th className={`${th} ${num}`}>Net premium</th>
-              <th className={`${th} ${num}`}>10% base</th>
               <th className={`${th} ${num}`}>Split</th>
               <th className={`${th} ${num}`}>Agent commission</th>
               <th className={th} />
@@ -352,7 +350,6 @@ function LineCard({ line: l, d, setDialog, reason, run }: { line: PayoutLine; d:
                 <td className={td}><Link to={`/accounts/${i.submissionId}?tab=quotes`} className="text-[var(--color-brand-800)] hover:underline">{i.clientName}</Link></td>
                 <td className={`${td} whitespace-nowrap`}>{formatShortDate(i.eventDate)}{i.kind === 'cancellation' || i.kind === 'correction' ? <span className="block text-[11px] text-[var(--color-ink-500)]">approved {formatShortDate(i.payableFrom)}</span> : null}</td>
                 <td className={`${td} ${num}`}>{money(i.netCents)}</td>
-                <td className={`${td} ${num}`}>{money(baseCents(i.netCents))}</td>
                 <td className={`${td} ${num}`}>{i.agentRate === null ? '—' : formatRate(i.agentRate)}</td>
                 <td className={`${td} ${num} font-medium`}>{money(i.agentCents)}</td>
                 <td className={`${td} text-right`}>
@@ -366,7 +363,7 @@ function LineCard({ line: l, d, setDialog, reason, run }: { line: PayoutLine; d:
             ))}
             {l.adjustments.map((a) => (
               <tr key={a.id} data-adjustment={a.id}>
-                <td className={td} colSpan={6}>Adjustment — {a.reason}</td>
+                <td className={td} colSpan={5}>Adjustment — {a.reason}</td>
                 <td className={`${td} ${num} font-medium`}>{money(a.amountCents)}</td>
                 <td className={`${td} text-right`}>
                   {draft && canAct && (
@@ -415,7 +412,7 @@ function LineCard({ line: l, d, setDialog, reason, run }: { line: PayoutLine; d:
 function SumRow({ label, cents, strong }: { label: string; cents: number; strong?: boolean }) {
   return (
     <tr className={strong ? 'bg-[var(--color-ink-50)]' : undefined}>
-      <td className={`${td} ${strong ? 'font-semibold' : 'text-[var(--color-ink-600)]'}`} colSpan={6}>{label}</td>
+      <td className={`${td} ${strong ? 'font-semibold' : 'text-[var(--color-ink-600)]'}`} colSpan={5}>{label}</td>
       <td className={`${td} ${num} ${strong ? 'font-semibold' : ''}`}>{money(cents)}</td>
       <td className={td} />
     </tr>

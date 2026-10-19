@@ -169,7 +169,7 @@ function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRe
         <Amount label="Fees" cents={p.feesCents} />
         <Amount label="Total" cents={policyTotalCents(p)} strong />
       </dl>
-      <CommissionLine commission={commission} netCents={p.netPremiumCents} record={record} />
+      <CommissionLine commission={commission} netCents={p.netPremiumCents} carrier={p.carrier} dateKey={p.boundDate} record={record} />
       {record && record.flags.length > 0 && (
         <p className="mt-0.5 text-[11px] text-[var(--color-warning-600)]" data-field="commission-flags">{record.flags.map((f) => FLAG_LABELS[f] ?? f).join(' · ')}</p>
       )}
@@ -191,10 +191,11 @@ function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRe
 }
 
 /**
- * "Agent commission: $300.00" (net × 10% × the agent's split) — only for the agent and the agency's admins.
- * Once recorded (0064), the frozen amount and its expected payout; before, worked out from the current split.
+ * "Agent commission: $300.00" (the agent's split of the carrier commission: net × carrier % × split) — only
+ * for the agent and the agency's admins. Once recorded (0064), the frozen amount and its expected payout;
+ * before, worked out from the carrier's % and the current split.
  */
-export function CommissionLine({ commission, netCents, record }: { commission: CommissionView; netCents: number; record?: AccountCommissionStatus }) {
+export function CommissionLine({ commission, netCents, carrier, dateKey, record }: { commission: CommissionView; netCents: number; carrier: string; dateKey: string; record?: AccountCommissionStatus }) {
   if (commission.kind === 'hidden' && !record) return null;
   const base = 'mt-1.5 text-xs';
   if (record && record.agentCents !== null) {
@@ -210,9 +211,17 @@ export function CommissionLine({ commission, netCents, record }: { commission: C
   if (commission.kind === 'no_agent') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: No agent assigned</p>;
   if (commission.kind === 'no_rate') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: no commission % set for {commission.agentName} (an admin sets it on the Team page)</p>;
   if (commission.kind === 'unavailable') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: {commission.message}</p>;
+  const cents = commission.cents(netCents, carrier, dateKey);
+  if (cents === null) {
+    return (
+      <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">
+        Agent commission: {commission.preview ? 'carrier % not set yet (an admin sets it in Analytics)' : 'your split of the carrier commission, shown once it’s recorded'}
+      </p>
+    );
+  }
   return (
     <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
-      Agent commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(commission.cents(netCents))}</strong>
+      Agent commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(cents)}</strong>
     </p>
   );
 }
@@ -521,7 +530,7 @@ export function EntryForm({
             <p className="px-0.5 py-2 text-sm font-semibold text-[var(--color-ink-900)] tabular-nums" data-testid="policy-total">{formatCents(total)}</p>
           </div>
           <div className="sm:col-span-4" data-testid="form-commission">
-            <CommissionLine commission={commission} netCents={live(f.netPremium)} />
+            <CommissionLine commission={commission} netCents={live(f.netPremium)} carrier={f.carrier} dateKey={f.boundDate} />
           </div>
         </fieldset>
 

@@ -269,7 +269,7 @@ function MyCommission({ userId }: { userId: string }) {
     <Card>
       <CardBody className="pt-4 text-sm text-[var(--color-ink-700)]" data-testid="my-commission">
         Your agent commission: <strong className="text-[var(--color-ink-900)]">{rate === undefined ? 'not set yet' : formatRate(rate)}</strong>
-        <span className="text-[var(--color-ink-500)]"> of 10% of the net premium on the policies and endorsements of accounts assigned to you. Set by your agency admin.</span>
+        <span className="text-[var(--color-ink-500)]"> of the carrier commission (net × the carrier’s %) on the policies and endorsements of accounts assigned to you. Set by your agency admin.</span>
       </CardBody>
     </Card>
   );

@@ -3,6 +3,7 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { isSupabaseConfigured } from '../services/supabase/client';
 import { fetchAgentCommissionRates } from '../services/supabase/commissionRepo';
 import { agentCommissionCents } from '../services/workflow/policies';
+import { useCarrierRates } from './useCarrierRates';
 
 /**
  * The agency's agent commission rates, as the database lets this user see them (an admin: everyone's;
@@ -45,7 +46,9 @@ export type CommissionView =
   | { kind: 'no_agent' }
   | { kind: 'no_rate'; agentName: string }
   | { kind: 'unavailable'; message: string }
-  | { kind: 'amount'; agentName: string; rate: number; cents: (netCents: number) => number };
+  /** cents: the agent's split of the carrier commission on that carrier and date; null while the carrier has no %
+   * set, or for an agent (who can't see the agency's carrier rates until the commission is recorded). */
+  | { kind: 'amount'; agentName: string; rate: number; preview: boolean; cents: (netCents: number, carrier: string, dateKey: string) => number | null };
 
 /**
  * The agent is the account's assigned broker. Only that agent and the agency's admins see the
@@ -58,6 +61,7 @@ export function useAgentCommission(accountId: string): CommissionView {
   const members = useAccountsStore((s) => s.agencyMembers);
   const me = useAccountsStore((s) => s.currentUserId);
   const rates = useAgentCommissionRates();
+  const carrierRates = useCarrierRates();
   if (!account || !agencyAccess || !me) return { kind: 'hidden' };
   const isAdmin = agencyAccess.role === 'admin';
   const agentId = account.assignedUserId ?? null;
@@ -67,5 +71,5 @@ export function useAgentCommission(accountId: string): CommissionView {
   const agentName = members.find((m) => m.userId === agentId)?.name ?? 'the assigned agent';
   const rate = rates.rates[agentId];
   if (rate === undefined) return rates.status === 'ready' ? { kind: 'no_rate', agentName } : { kind: 'hidden' };
-  return { kind: 'amount', agentName, rate, cents: (net) => agentCommissionCents(net, rate) };
+  return { kind: 'amount', agentName, rate, preview: isAdmin, cents: (net, carrier, dateKey) => (isAdmin ? agentCommissionCents(net, carrierRates.rateOn(carrier, dateKey), rate) : null) };
 }

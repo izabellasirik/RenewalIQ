@@ -35,7 +35,7 @@ begin
     proof_status, verification_status, verified_at, review_flags, settlement, settled_at, settled_reason, rate_confirmed_at)
   values (pg_temp.agency(), 'acct_pay_' || code, 'Payout Test ' || code || ' (sample)', case when kind in ('policy', 'endorsement') then code end, kind, st,
     coalesce(extra ->> 'origin', 'recorded'), (extra ->> 'original')::uuid, 'PN-' || code, 'Sample Mutual', 'sample mutual', ev, payable, net,
-    agent::uuid, 'Agent ' || right(agent, 2), rate, public.finance_agent_cents(net, rate), 0.12, 'carrier_rate', public.finance_apply_rate(net, 0.12),
+    agent::uuid, 'Agent ' || right(agent, 2), rate, public.finance_apply_rate(public.finance_apply_rate(net, 0.1), rate), 0.12, 'carrier_rate', public.finance_apply_rate(net, 0.12),
     'has_proof', case when verified then 'verified' else 'unverified' end, case when verified then now() end,
     coalesce((select array_agg(x) from jsonb_array_elements_text(extra -> 'flags') x), '{}'),
     coalesce(extra ->> 'settlement', 'open'), case when extra ->> 'settlement' = 'settled_outside' then now() end,

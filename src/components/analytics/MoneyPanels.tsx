@@ -217,10 +217,10 @@ export function ProfitLossPanel() {
           label="Income"
           cents={pl.incomeCents}
           id="income"
-          note={`${formatCents(pl.carrierCents)} carrier commission + ${formatCents(pl.otherIncomeCents)} recorded${pl.carrierDefaultCount ? ` · ${pl.carrierDefaultCount} at the 10% default or unconfirmed` : ''}`}
+          note={`${formatCents(pl.carrierCents)} carrier commission + ${formatCents(pl.otherIncomeCents)} recorded${pl.carrierNotSetCount ? ` · ${pl.carrierNotSetCount} without a carrier % set` : ''}`}
         />
         <Tile label="Expenses" cents={pl.expenseCents} id="expenses" />
-        <Tile label="Agent commission" cents={pl.commissionCents} id="commission" note={pl.commissionMissing ? `${pl.commissionMissing} ${pl.commissionMissing === 1 ? 'policy / endorsement' : 'policies / endorsements'} without an agent or a %` : 'Net × 10% × each agent’s split, as recorded'} />
+        <Tile label="Agent commission" cents={pl.commissionCents} id="commission" note={pl.commissionMissing ? `${pl.commissionMissing} ${pl.commissionMissing === 1 ? 'policy / endorsement' : 'policies / endorsements'} without an agent, a split or a carrier %` : 'Each agent’s split of the carrier commission, as recorded'} />
         <Tile label={pl.profitCents >= 0 ? 'Profit' : 'Loss'} cents={pl.profitCents} id="profit" tone={pl.profitCents > 0 ? 'good' : pl.profitCents < 0 ? 'bad' : 'plain'} note="Income − expenses − agent commission" />
       </dl>
 
@@ -273,7 +273,7 @@ export function ProfitLossPanel() {
             </div>
           )}
           <p className="mt-3 text-xs text-[var(--color-ink-500)]">
-            Premium bound in this period: <span className="font-medium tabular-nums text-[var(--color-ink-700)]">{formatCents(pl.premiumNetCents)}</span> net. Income includes the carrier commission on it (each carrier’s %, set in Policies &amp; endorsements; 10% until set), and the agent commission is worked out from it too — so don’t also record either one by hand.
+            Premium bound in this period: <span className="font-medium tabular-nums text-[var(--color-ink-700)]">{formatCents(pl.premiumNetCents)}</span> net. Income includes the carrier commission on it (each carrier’s %, set in Policies &amp; endorsements; none until set), and the agent commission is each agent’s split of it — so don’t also record either one by hand.
           </p>
         </CardBody>
       </Card>

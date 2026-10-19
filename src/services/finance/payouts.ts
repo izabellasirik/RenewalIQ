@@ -322,5 +322,3 @@ export function runPeriodLabel(run: Pick<PayoutRun, 'stream' | 'periodStart' | '
   return `Policies bound ${s.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${sameMonth ? e.getDate() : e.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${e.getFullYear()}`;
 }
 
-/** The 10% base an agent's split applies to (net × 10%, to the cent), for showing the working. */
-export const baseCents = (netCents: number) => Math.sign(netCents) * Math.round(Math.abs(netCents) * 0.1);

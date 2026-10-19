@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentBalances, baseCents, readyLines, runPeriodLabel, runState, runTotals, toBalanceEntry, toPayout, toRun, toRunDetails, waitingReason } from '../payouts';
+import { agentBalances, readyLines, runPeriodLabel, runState, runTotals, toBalanceEntry, toPayout, toRun, toRunDetails, waitingReason } from '../payouts';
 
 // Fictional data only — the same run as supabase/tests/commission_payouts_0065 (the database does the sums).
 const details = toRunDetails({
@@ -50,11 +50,6 @@ describe('a payout run', () => {
     expect(runPeriodLabel(details.run)).toBe('Policies bound Sep 7 – 13, 2026');
     expect(runPeriodLabel({ stream: 'weekly', periodStart: '2026-09-28', periodEnd: '2026-10-04' })).toBe('Policies bound Sep 28 – Oct 4, 2026');
     expect(runPeriodLabel({ stream: 'monthly', periodStart: '2026-09-01', periodEnd: '2026-09-30' })).toBe('Endorsements in September 2026');
-  });
-  it('the 10% base, to the cent', () => {
-    expect(baseCents(845050)).toBe(84505);
-    expect(baseCents(237525)).toBe(23753);
-    expect(baseCents(-237525)).toBe(-23753);
   });
 });
 

@@ -5,20 +5,15 @@ import { normalizeDateKey, parseDateKey, toLocalDateKey } from './dates';
 /**
  * Policies written from bound markets, and endorsements recorded on endorsed ones. They live on the
  * market (MarketQuote.policies), so they sync, work offline and are visible exactly like the market
- * itself. No commission is stored here: it's worked out on display. The agent's commission is always
- * their % (0058) of 10% of the net premium (agentCommissionCents) — the same formula whatever the
- * carrier pays. What the carrier pays the agency is the carrier's own commission % (0063, set by an
- * admin per carrier, 10% until set), which is the agency's income (carrierCommissionCents).
+ * itself. No commission is stored here: it's worked out on display. What the carrier pays the agency is
+ * the net × the carrier's commission % on the bound / endorsed date (0063, set by an admin per carrier),
+ * the agency's income (carrierCommissionCents); the agent's commission is their split (0058) of that
+ * (agentCommissionCents). Without a carrier % there's no commission yet (not set).
  */
 
 export function entryKind(p: Pick<PolicyRecord, 'kind'>): PolicyEntryKind {
   return p.kind === 'endorsement' ? 'endorsement' : 'policy';
 }
-
-/** The carrier commission until an admin sets the carrier's own: 10% of the net premium. */
-export const DEFAULT_CARRIER_RATE = 0.1;
-/** The agent's commission is always worked out on 10% of the net premium, whatever the carrier pays the agency. */
-export const AGENT_COMMISSION_BASE = 0.1;
 
 /** cents × rate, to the cent (half away from zero, so a return premium mirrors its charge). */
 function applyRate(cents: number, rate: number): number {
@@ -28,17 +23,18 @@ function applyRate(cents: number, rate: number): number {
   return cents < 0 ? -out : out;
 }
 
-/** What the carrier pays the agency (its income): the net premium × that carrier's commission %. */
-export function carrierCommissionCents(netCents: number, carrierRate: number = DEFAULT_CARRIER_RATE): number {
-  return applyRate(netCents, carrierRate);
+/** What the carrier pays the agency (its income): the net premium × that carrier's commission % (null: not set). */
+export function carrierCommissionCents(netCents: number, carrierRate: number | null): number | null {
+  return carrierRate === null ? null : applyRate(netCents, carrierRate);
 }
 
 /**
- * The agent's share: their % of 10% of the net premium, rounded at each step — the same whatever
- * commission the carrier pays the agency. $10,000 net → $1,000; an agent on 25% gets $250.
+ * The agent's share: their split of the carrier commission, rounded at each step — the same as
+ * finance_agent_cents() in 0067. $10,000 net at 12% → $1,200; an agent on 25% gets $300. Null while the
+ * carrier has no % set.
  */
-export function agentCommissionCents(netCents: number, agentRate: number): number {
-  return applyRate(applyRate(netCents, AGENT_COMMISSION_BASE), agentRate);
+export function agentCommissionCents(netCents: number, carrierRate: number | null, agentRate: number): number | null {
+  return carrierRate === null ? null : applyRate(applyRate(netCents, carrierRate), agentRate);
 }
 
 /** One carrier, however it's typed: "Granite  Mutual " and "granite mutual" share a commission %. Same as carrier_key() in 0063. */

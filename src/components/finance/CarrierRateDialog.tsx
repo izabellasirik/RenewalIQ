@@ -39,7 +39,7 @@ export function CarrierRateDialog({ carrier: initialCarrier, effectiveFrom, onCl
       open
       onClose={onClose}
       title={initialCarrier ? `Carrier commission — ${initialCarrier}` : 'Set a carrier commission'}
-      subtitle="What the carrier pays the agency, from a date. Commissions already recorded keep their rate; the agent commission never depends on it."
+      subtitle="What the carrier pays the agency, from a date. The agent commission is the agent’s split of it. Commissions already recorded keep their rate."
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
@@ -69,7 +69,7 @@ export function CarrierRateDialog({ carrier: initialCarrier, effectiveFrom, onCl
           <label className={labelClass} htmlFor="rate-evidence">Evidence (optional)</label>
           <input id="rate-evidence" className={inputClass} value={evidence} onChange={(e) => setEvidence(e.target.value)} maxLength={500} placeholder="e.g. Agency agreement dated 2026-01-15, schedule A" />
         </div>
-        <p className="text-xs text-[var(--color-ink-500)]">Policies and endorsements bound on or after this date, and recorded from now on, use this rate. A rate entered for the same date replaces the earlier one; both stay in the history.</p>
+        <p className="text-xs text-[var(--color-ink-500)]">Policies and endorsements bound on or after this date use this rate: those recorded from now on, and those already waiting for a carrier %. A rate entered for the same date replaces the earlier one; both stay in the history.</p>
       </form>
     </Modal>
   );

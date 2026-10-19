@@ -14,8 +14,8 @@ export interface PoliciesReportOptions {
   isAdmin: boolean;
   /** In an agency: the agent commission column (an agent sees only their own). */
   withCommission: boolean;
-  carrierRateOf: (row: PolicyRow) => number;
-  carrierCentsOf: (row: PolicyRow) => number;
+  carrierRateOf: (row: PolicyRow) => number | null;
+  carrierCentsOf: (row: PolicyRow) => number | null;
   commissionOf: (row: PolicyRow) => number | null;
   agentNameOf: (row: PolicyRow) => string;
   /** "Show: Policies", "Agent: …", "Search: …". */
@@ -50,11 +50,12 @@ export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Rep
     const p = r.policy;
     const endorsement = entryKind(p) === 'endorsement';
     const carrier = o.carrierCentsOf(r);
+    const carrierRate = o.carrierRateOf(r);
     const commission = o.commissionOf(r);
     t.net += p.netPremiumCents;
     t.taxes += p.taxesCents;
     t.fees += p.feesCents;
-    t.carrier += carrier;
+    t.carrier += carrier ?? 0;
     t.commission += commission ?? 0;
     t.docs += (p.attachments ?? []).length;
     return [
@@ -72,7 +73,7 @@ export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Rep
       p.taxesCents,
       p.feesCents,
       policyTotalCents(p),
-      ...(o.isAdmin ? [`${Math.round(o.carrierRateOf(r) * 1e6) / 1e4}%`, carrier] : []),
+      ...(o.isAdmin ? [carrierRate === null ? 'Not set' : `${Math.round(carrierRate * 1e6) / 1e4}%`, carrier] : []),
       ...(o.withCommission ? [o.agentNameOf(r), commission] : []),
       (p.attachments ?? []).length,
     ];

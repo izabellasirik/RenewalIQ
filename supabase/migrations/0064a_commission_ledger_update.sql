@@ -16,6 +16,9 @@ begin
   if to_regclass('public.commission_transactions') is null or to_regclass('public.finance_ledger_install') is null then
     raise exception '0064 isn''t installed: apply 0064_commission_ledger.sql (the final version) instead of this.';
   end if;
+  if to_regprocedure('public.finance_agent_cents(bigint, numeric, numeric)') is not null then
+    raise exception '0067 is installed: 0064a isn''t needed (and would bring back the old commission formula).';
+  end if;
 end $$;
 
 create or replace function public.commission_transactions_guard() returns trigger
