@@ -103,6 +103,8 @@ export interface PolicyInput {
   kind?: PolicyEntryKind;
   notes?: string;
   description?: string;
+  /** An endorsement: the policy it changes. */
+  forPolicyId?: string;
   quoteOptionId: string;
   policyNumber: string;
   carrier: string;
@@ -125,6 +127,10 @@ export interface PolicyCheckContext {
   existing: PolicyRow[];
   /** The policy being edited (excluded from the duplicate check). */
   editingId?: string;
+  /** An endorsement's possible policies (ids on the same account). A new endorsement must name one. */
+  accountPolicyIds?: string[];
+  /** True for a new endorsement (one recorded before links were required may be saved without one). */
+  requirePolicyLink?: boolean;
 }
 
 const COVERAGES = Object.keys(COVERAGE_LABELS) as CoverageType[];
@@ -183,6 +189,12 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
   const description = (input.description ?? '').trim();
   if (description.length > 300) errors.push('The description is too long (300 characters at most).');
 
+  const forPolicyId = kind === 'endorsement' ? (input.forPolicyId ?? '').trim() : '';
+  if (kind === 'endorsement') {
+    if (forPolicyId && ctx.accountPolicyIds && !ctx.accountPolicyIds.includes(forPolicyId)) errors.push('Choose the policy this endorsement changes from this account.');
+    else if (!forPolicyId && ctx.requirePolicyLink) errors.push('Choose the policy this endorsement changes.');
+  }
+
   if (policyNumber && kind === 'policy') {
     // The same policy can't be recorded twice: same number and carrier on another client (or this one).
     const key = normalizePolicyNumber(policyNumber);
@@ -197,6 +209,7 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
     warnings,
     fields: {
       ...(kind === 'endorsement' ? { kind } : {}),
+      ...(forPolicyId ? { forPolicyId } : {}),
       ...(input.quoteOptionId ? { quoteOptionId: input.quoteOptionId } : {}),
       ...(policyNumber ? { policyNumber } : {}),
       carrier,

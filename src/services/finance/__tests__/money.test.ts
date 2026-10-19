@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { CARRIER_COMMISSION_CATEGORY, checkMoneyEntry, monthLabel, profitAndLoss, type MoneyEntry } from '../money';
 import { moneyReport, profitLossReport } from '../../reports/analyticsReports';
 import { reportCsv } from '../../reports/report';
-import type { PolicyRow } from '../../workflow/policies';
+import { carrierKey, type PolicyRow } from '../../workflow/policies';
+import { toTransaction } from '../ledger';
 import type { PolicyRecord } from '../../../types';
 
 // Fictional data only.
@@ -56,7 +57,9 @@ describe('profitAndLoss', () => {
     row({ id: 'p3', boundDate: '2026-10-21', netPremiumCents: 500_000 }, 'agent-without-rate'),
   ];
   // Agent on 25% (always of 10% of net); Sample Mutual pays the agency 15%, Other Specialty is at the 10% default.
-  const pl = profitAndLoss(entries, rows, { 'agent-a': 0.25 }, '2026-10-01', '2026-11-30', { 'sample mutual': 0.15 });
+  const sample = (c: string) => carrierKey(c) === 'sample mutual';
+  const carrier = { rateOn: (c: string) => (sample(c) ? 0.15 : 0.1), isSet: (c: string) => sample(c) };
+  const pl = profitAndLoss(entries, rows, { 'agent-a': 0.25 }, '2026-10-01', '2026-11-30', { carrier });
 
   it('the carrier % doesn’t change the agent commission: 25% of 10% of net', () => {
     expect(pl.commissionCents).toBe(20_000); // 10,000 × 10% × 25% = 250; −2,000 × 10% × 25% = −50
@@ -93,5 +96,35 @@ describe('profitAndLoss', () => {
     expect(csv[0]).toBe('Month,Carrier commission,Other income,Total income,Expenses,Agent commission,Profit / loss');
     expect(csv[1]).toBe('Oct 2026,2750.00,10000.00,12750.00,2500.00,250.00,10000.00');
     expect(csv[3]).toBe('Total,2450.00,10500.00,12950.00,5000.00,200.00,7750.00');
+  });
+});
+
+describe('profitAndLoss from commission records (0064)', () => {
+  const rec = (patch: Record<string, unknown>) =>
+    toTransaction({ id: 't', submission_id: 'a', client_name: 'Sample Haulers', kind: 'policy', stream: 'weekly', origin: 'recorded', carrier_name: 'Sample Mutual', carrier_key: 'sample mutual',
+      event_date: '2026-10-03', payable_from: '2026-10-03', net_cents: 0, agent_rate: '0.25', agent_cents: 0, carrier_rate: '0.12', carrier_rate_source: 'carrier_rate', carrier_cents: 0,
+      proof_status: 'has_proof', verification_status: 'verified', settlement: 'open', review_flags: [], ...patch });
+  const rows = [row({ id: 'p1', boundDate: '2026-10-03', netPremiumCents: 1_000_000 }), row({ id: 'p9', boundDate: '2026-10-08', netPremiumCents: 200_000 })];
+  // p1 was recorded at 12% (frozen); today the carrier is at 15% and the agent at 50% — the records don't move.
+  const ledger = [
+    rec({ id: 't1', policy_id: 'p1', net_cents: 1_000_000, agent_cents: 25_000, carrier_cents: 120_000 }),
+    rec({ id: 't2', kind: 'cancellation', original_transaction_id: 't1', event_date: '2026-11-02', net_cents: -400_000, agent_cents: -10_000, carrier_cents: -48_000, carrier_rate_source: 'actual' }),
+    rec({ id: 't3', kind: 'correction', original_transaction_id: 't1', event_date: '2026-10-20', net_cents: 100_000, agent_cents: 2_500, carrier_cents: 12_000 }),
+    rec({ id: 't4', policy_id: 'p8', net_cents: 999_999, carrier_cents: 99_999, agent_cents: 9_999, verification_status: 'void' }),
+    rec({ id: 't5', policy_id: 'p7', net_cents: 777_777, carrier_cents: 77_777, agent_cents: 7_777, replaced_by: 't6', verification_status: 'void' }),
+  ];
+  const carrier = { rateOn: () => 0.15, isSet: () => true };
+  const pl = profitAndLoss([], rows, { 'agent-a': 0.5 }, '2026-10-01', '2026-11-30', { carrier, ledger });
+  it('uses the frozen amounts, corrections and cancellations included, in the month they are dated', () => {
+    // records: 1,200 + 120 − 480 carrier; 250 + 25 − 100 agent. p9 has no record yet: estimated at today's 15% / 50%.
+    expect(pl.fromRecords).toBe(true);
+    expect(pl.carrierCents).toBe(120_000 + 12_000 - 48_000 + 30_000);
+    expect(pl.commissionCents).toBe(25_000 + 2_500 - 10_000 + 10_000);
+    expect(pl.adjustmentCount).toBe(2);
+    expect(pl.estimatedCount).toBe(1);
+    expect(pl.months.map((m) => [m.month, m.carrierCents, m.commissionCents])).toEqual([['2026-10', 162_000, 37_500], ['2026-11', -48_000, -10_000]]);
+  });
+  it('void and replaced records are left out', () => {
+    expect(pl.premiumNetCents).toBe(1_000_000 + 100_000 - 400_000 + 200_000);
   });
 });

@@ -1,14 +1,17 @@
 import { normalizeDateKey } from '../workflow/dates';
-import { DEFAULT_CARRIER_RATE, agentCommissionCents, carrierCommissionCents, carrierKey, parseMoneyCents, type PolicyRow } from '../workflow/policies';
+import { DEFAULT_CARRIER_RATE, agentCommissionCents, carrierCommissionCents, parseMoneyCents, type PolicyRow } from '../workflow/policies';
+import type { LedgerTransaction } from './ledger';
 
 /**
  * The agency's income and expenses (0059) and its profit and loss. Admin-only records the owner keeps
  * so they can see whether the agency makes or loses money — records only, nothing here moves money.
  *
- * Profit = income − expenses − agent commission. Two amounts aren't recorded by hand — they're worked
- * out from the policies and endorsements bound / endorsed in the period, so they must not also be
- * entered here: the carrier commission (net × that carrier's %, 10% until an admin sets it) is income,
- * and the agent commission (the agent's % of 10% of net) is a cost.
+ * Profit = income − expenses − agent commission. Two amounts aren't recorded by hand — they come from
+ * the policies and endorsements of the period, so they must not also be entered here: the carrier
+ * commission (net × that carrier's % on the bound date, 10% where none is set) is income, and the agent
+ * commission (net × 10% × the agent's split) is a cost. With commission records (0064) both are the
+ * amounts frozen in the records — corrections and cancellations included, in the period they're dated —
+ * so later rate changes never move a past month; anything not recorded yet is estimated (and counted).
  */
 
 export type MoneyKind = 'income' | 'expense';
@@ -106,6 +109,12 @@ export interface ProfitLoss {
   otherIncomeCents: number;
   /** Policies / endorsements in the period whose carrier has no % set yet (10% used). */
   carrierDefaultCount: number;
+  /** From commission records (true), or worked out from the policies (false: no 0064). */
+  fromRecords: boolean;
+  /** Policies / endorsements of the period without a record yet (historical ones before the backfill), estimated. */
+  estimatedCount: number;
+  /** Cancellations and corrections in the period (records only). */
+  adjustmentCount: number;
   /** Income entries in the period recorded by hand as carrier commission — possibly counted twice now. */
   recordedCarrierEntries: number;
   expenseCents: number;
@@ -127,12 +136,26 @@ export function rowCommissionCents(row: Pick<PolicyRow, 'assignedUserId' | 'poli
   return rate === undefined ? null : agentCommissionCents(row.policy.netPremiumCents, rate);
 }
 
-/** What the carrier pays the agency on one row: net × the carrier's % (keyed by carrierKey; 10% until set). */
-export function rowCarrierCents(row: Pick<PolicyRow, 'policy'>, carrierRates: Record<string, number>): number {
-  return carrierCommissionCents(row.policy.netPremiumCents, carrierRates[carrierKey(row.policy.carrier)] ?? DEFAULT_CARRIER_RATE);
+export interface CarrierRateLookup {
+  /** The carrier's % on a date (10% where none is set). */
+  rateOn: (carrier: string, dateKey: string) => number;
+  isSet: (carrier: string, dateKey: string) => boolean;
+}
+const DEFAULT_LOOKUP: CarrierRateLookup = { rateOn: () => DEFAULT_CARRIER_RATE, isSet: () => false };
+
+/** What the carrier pays the agency on one row: net × the carrier's % on its bound / endorsed date (10% until set). */
+export function rowCarrierCents(row: Pick<PolicyRow, 'policy'>, carrier: CarrierRateLookup = DEFAULT_LOOKUP): number {
+  return carrierCommissionCents(row.policy.netPremiumCents, carrier.rateOn(row.policy.carrier, row.policy.boundDate));
 }
 
-export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: Record<string, number>, from: string, to: string, carrierRates: Record<string, number> = {}): ProfitLoss {
+export interface ProfitLossOptions {
+  carrier?: CarrierRateLookup;
+  /** The agency's commission records (0064): used instead of working the amounts out. */
+  ledger?: LedgerTransaction[];
+}
+
+export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: Record<string, number>, from: string, to: string, opts: ProfitLossOptions = {}): ProfitLoss {
+  const carrierLookup = opts.carrier ?? DEFAULT_LOOKUP;
   const months = new Map<string, MonthLine>();
   const month = (key: string) => {
     const m = key.slice(0, 7);
@@ -165,22 +188,37 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
   let commissionCents = 0;
   let commissionMissing = 0;
   let premiumNetCents = 0;
+  let estimatedCount = 0;
+  let adjustmentCount = 0;
+  const add = (date: string, net: number, carrier: number, commission: number | null, isDefault: boolean) => {
+    premiumNetCents += net;
+    carrierCents += carrier;
+    carrierCount++;
+    if (isDefault) carrierDefaultCount++;
+    month(date).carrierCents += carrier;
+    if (commission === null) {
+      commissionMissing++;
+      return;
+    }
+    commissionCents += commission;
+    month(date).commissionCents += commission;
+  };
+  const ledger = opts.ledger;
+  const recorded = new Set<string>();
+  if (ledger) {
+    for (const t of ledger) {
+      if (t.policyId) recorded.add(`${t.submissionId}|${t.policyId}`);
+      if (t.verificationStatus === 'void' || t.replacedBy || !inRange(t.eventDate, from, to)) continue;
+      if (t.kind === 'cancellation' || t.kind === 'correction') adjustmentCount++;
+      add(t.eventDate, t.netCents, t.carrierCents, t.agentCents, t.carrierRateSource === 'default' || t.carrierRateSource === 'historical');
+    }
+  }
   for (const r of rows) {
     const d = r.policy.boundDate;
     if (!d || !inRange(d, from, to)) continue;
-    premiumNetCents += r.policy.netPremiumCents;
-    const carrier = rowCarrierCents(r, carrierRates);
-    carrierCents += carrier;
-    carrierCount++;
-    if (!(carrierKey(r.policy.carrier) in carrierRates)) carrierDefaultCount++;
-    month(d).carrierCents += carrier;
-    const c = rowCommissionCents(r, rates);
-    if (c === null) {
-      commissionMissing++;
-      continue;
-    }
-    commissionCents += c;
-    month(d).commissionCents += c;
+    if (ledger && recorded.has(`${r.accountId}|${r.policy.id}`)) continue;
+    if (ledger) estimatedCount++;
+    add(d, r.policy.netPremiumCents, rowCarrierCents(r, carrierLookup), rowCommissionCents(r, rates), !carrierLookup.isSet(r.policy.carrier, d));
   }
   if (carrierCount) byCat.income.set(CARRIER_COMMISSION_CATEGORY, { category: CARRIER_COMMISSION_CATEGORY, cents: carrierCents, count: carrierCount });
   const list = (m: Map<string, CategoryTotal>) => [...m.values()].sort((a, b) => b.cents - a.cents || a.category.localeCompare(b.category));
@@ -196,6 +234,9 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     carrierCents,
     otherIncomeCents,
     carrierDefaultCount,
+    fromRecords: !!ledger,
+    estimatedCount,
+    adjustmentCount,
     recordedCarrierEntries,
     expenseCents,
     commissionCents,

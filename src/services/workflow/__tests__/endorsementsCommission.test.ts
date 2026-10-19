@@ -36,6 +36,18 @@ describe('agent commission = the agent’s % of 10% of net, whatever the carrier
 });
 
 describe('endorsements', () => {
+  it('a new endorsement must name its policy on this account; one recorded earlier may be saved without', () => {
+    const base = { kind: 'endorsement' as const, netPremium: '1,000' };
+    const ctx = { existing: [], accountPolicyIds: ['pol_1'], requirePolicyLink: true };
+    expect(checkPolicy(input(base), ctx)).toMatchObject({ ok: false, errors: ['Choose the policy this endorsement changes.'] });
+    expect(checkPolicy(input({ ...base, forPolicyId: 'pol_other' }), ctx)).toMatchObject({ ok: false, errors: ['Choose the policy this endorsement changes from this account.'] });
+    const ok = checkPolicy(input({ ...base, forPolicyId: 'pol_1' }), ctx);
+    expect(ok.ok && ok.fields.forPolicyId).toBe('pol_1');
+    expect(checkPolicy(input(base), { ...ctx, requirePolicyLink: false }).ok).toBe(true);
+    // A policy never carries a link.
+    const pol = checkPolicy(input({ forPolicyId: 'pol_1' }), ctx);
+    expect(pol.ok && 'forPolicyId' in pol.fields).toBe(false);
+  });
   it('may be negative (a return premium); a policy may not', () => {
     const e = checkPolicy(input({ kind: 'endorsement', netPremium: '-1,250.00', taxes: '-37.50', fees: '0' }));
     expect(e.ok && e.fields).toMatchObject({ kind: 'endorsement', netPremiumCents: -125_000, taxesCents: -3750, feesCents: 0 });

@@ -45,27 +45,66 @@ export async function setAgentCommissionRate(userId: string, rate: number | null
 export const MIGRATION_0063_MESSAGE = 'Carrier commission % needs database migration 0063_carrier_commission_rates.sql.';
 const isMissing0063 = (e: { code?: string; message?: string }) => e.code === '42P01' || e.code === 'PGRST205' || e.code === 'PGRST202' || /carrier_commission_rate/i.test(e.message ?? '');
 
-/** carrier key → the carrier's commission % (a fraction), where an admin has set one. Admins only (agents read nothing). */
-export async function fetchCarrierCommissionRates(): Promise<RepoResult<Record<string, number>>> {
+export interface CarrierRateRow {
+  id: number;
+  carrierKey: string;
+  carrierName: string;
+  /** A fraction: 0.12 = 12%. */
+  rate: number;
+  /** The date it applies from (YYYY-MM-DD). */
+  effectiveFrom: string;
+  evidence: string | null;
+  setAt: string;
+  retiredAt: string | null;
+  retiredReason: string | null;
+}
+
+/** Every carrier rate the agency has set, by date, retired ones included (history). Admins only — agents read nothing. */
+export async function fetchCarrierRateRows(): Promise<RepoResult<CarrierRateRow[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const res = await supabase.from('carrier_commission_rates').select('carrier_key, rate');
+    const res = await supabase.from('carrier_commission_rates').select('id, carrier_key, carrier_name, rate, effective_from, evidence, set_at, retired_at, retired_reason').order('carrier_key').order('effective_from', { ascending: false });
     if (res.error) return isMissing0063(res.error) ? { ok: false, message: MIGRATION_0063_MESSAGE, missingMigration: true } : { ok: false, message: res.error.message };
-    return { ok: true, data: Object.fromEntries(((res.data ?? []) as { carrier_key: string; rate: number | string }[]).map((r) => [r.carrier_key, Number(r.rate)])) };
+    return {
+      ok: true,
+      data: ((res.data ?? []) as Record<string, unknown>[]).map((r) => ({
+        id: Number(r.id),
+        carrierKey: String(r.carrier_key),
+        carrierName: String(r.carrier_name),
+        rate: Number(r.rate),
+        effectiveFrom: String(r.effective_from),
+        evidence: (r.evidence as string) ?? null,
+        setAt: String(r.set_at ?? ''),
+        retiredAt: (r.retired_at as string) ?? null,
+        retiredReason: (r.retired_reason as string) ?? null,
+      })),
+    };
   } catch (err) {
     return { ok: false, message: (err as Error)?.message ?? 'Could not load carrier commissions.' };
   }
 }
 
-/** Sets a carrier's commission % (0–1) for every policy and endorsement with that carrier, or clears it (null) back to 10%. Admins only. */
-export async function setCarrierCommissionRate(carrier: string, rate: number | null): Promise<RepoResult> {
+/** Sets a carrier's commission % (0–1) from a date, with optional evidence. Records already made keep their rate. Admins only. */
+export async function setCarrierCommissionRate(carrier: string, rate: number, effectiveFrom: string, evidence?: string): Promise<RepoResult> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const res = await supabase.rpc('set_carrier_commission_rate', { p_carrier: carrier, p_rate: rate });
+    const res = await supabase.rpc('set_carrier_commission_rate', { p_carrier: carrier, p_rate: rate, p_effective_from: effectiveFrom, p_evidence: evidence?.trim() || null });
     if (res.error) return isMissing0063(res.error) ? { ok: false, message: MIGRATION_0063_MESSAGE, missingMigration: true } : { ok: false, message: res.error.message };
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, message: (err as Error)?.message ?? 'Could not save the carrier commission.' };
+  }
+}
+
+/** Retires a rate set by mistake (kept in the history, with the reason). Admins only. */
+export async function retireCarrierCommissionRate(id: number, reason: string): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res = await supabase.rpc('retire_carrier_commission_rate', { p_id: id, p_reason: reason });
+    if (res.error) return isMissing0063(res.error) ? { ok: false, message: MIGRATION_0063_MESSAGE, missingMigration: true } : { ok: false, message: res.error.message };
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, message: (err as Error)?.message ?? 'Could not retire the rate.' };
   }
 }
 

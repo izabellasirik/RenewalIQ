@@ -7,6 +7,7 @@ import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAgentCommissionRates } from '../../hooks/useAgentCommission';
 import { useMoneyEntries } from '../../hooks/useMoneyEntries';
 import { useCarrierRates } from '../../hooks/useCarrierRates';
+import { useLedger } from '../../hooks/useLedger';
 import { formatShortDate, toLocalDateKey } from '../../services/workflow/dates';
 import { centsInput, formatCents, policyRows } from '../../services/workflow/policies';
 import { useRememberedView } from '../../hooks/useRememberedView';
@@ -173,7 +174,12 @@ export function ProfitLossPanel() {
   const rates = useAgentCommissionRates();
   const rows = useMemo(() => policyRows(accounts, quotes), [accounts, quotes]);
   const carrier = useCarrierRates();
-  const pl = useMemo(() => profitAndLoss(money.entries, rows, rates.rates, period.from, period.to, carrier.rates), [money.entries, rows, rates.rates, period.from, period.to, carrier.rates]);
+  const ledger = useLedger();
+  const pl = useMemo(
+    () => profitAndLoss(money.entries, rows, rates.rates, period.from, period.to, { carrier: { rateOn: carrier.rateOn, isSet: carrier.isSet }, ledger: ledger.data?.transactions }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [money.entries, rows, rates.rates, period.from, period.to, carrier.rows, ledger.data]
+  );
   const [, setParams] = useSearchParams();
 
   return (
@@ -200,15 +206,21 @@ export function ProfitLossPanel() {
         </p>
       )}
 
+      <p className="text-xs text-[var(--color-ink-500)]" data-testid="pl-source">
+        {pl.fromRecords
+          ? `Carrier commission and agent commission are the amounts frozen in the commission records${pl.adjustmentCount ? `, ${pl.adjustmentCount} correction${pl.adjustmentCount === 1 ? '' : 's'} and cancellation${pl.adjustmentCount === 1 ? '' : 's'} included` : ''}.${pl.estimatedCount ? ` ${pl.estimatedCount} ${pl.estimatedCount === 1 ? 'policy isn’t' : 'policies aren’t'} recorded yet (historical) and ${pl.estimatedCount === 1 ? 'is' : 'are'} estimated with today’s rates.` : ''}`
+          : 'Worked out from the policies and endorsements with the carrier rates on their bound dates (commission records need migration 0064).'}
+      </p>
+
       <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="pl-totals">
         <Tile
           label="Income"
           cents={pl.incomeCents}
           id="income"
-          note={`${formatCents(pl.carrierCents)} carrier commission + ${formatCents(pl.otherIncomeCents)} recorded${pl.carrierDefaultCount ? ` · ${pl.carrierDefaultCount} at the 10% default` : ''}`}
+          note={`${formatCents(pl.carrierCents)} carrier commission + ${formatCents(pl.otherIncomeCents)} recorded${pl.carrierDefaultCount ? ` · ${pl.carrierDefaultCount} at the 10% default or unconfirmed` : ''}`}
         />
         <Tile label="Expenses" cents={pl.expenseCents} id="expenses" />
-        <Tile label="Agent commission" cents={pl.commissionCents} id="commission" note={pl.commissionMissing ? `${pl.commissionMissing} ${pl.commissionMissing === 1 ? 'policy / endorsement' : 'policies / endorsements'} without an agent or a %` : 'Each agent’s % of 10% of the net bound in the period'} />
+        <Tile label="Agent commission" cents={pl.commissionCents} id="commission" note={pl.commissionMissing ? `${pl.commissionMissing} ${pl.commissionMissing === 1 ? 'policy / endorsement' : 'policies / endorsements'} without an agent or a %` : 'Net × 10% × each agent’s split, as recorded'} />
         <Tile label={pl.profitCents >= 0 ? 'Profit' : 'Loss'} cents={pl.profitCents} id="profit" tone={pl.profitCents > 0 ? 'good' : pl.profitCents < 0 ? 'bad' : 'plain'} note="Income − expenses − agent commission" />
       </dl>
 

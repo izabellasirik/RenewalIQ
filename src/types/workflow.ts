@@ -218,6 +218,8 @@ export interface PolicyRecord {
   feesCents: number;
   /** A short description of what was written or changed (e.g. "Added 2023 Freightliner, VIN …"). */
   description?: string;
+  /** An endorsement: the policy it changes (PolicyRecord.id on this account). Required for new endorsements. */
+  forPolicyId?: string;
   notes?: string;
   /** Proof (binder, policy, endorsement): optional when recorded, flagged as missing until added. */
   attachments?: QuoteAttachment[];

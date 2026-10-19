@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { FileCheck2, FilePlus2, FileWarning, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Ban, FileCheck2, FilePlus2, FileWarning, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { MarketQuote, PolicyBusinessType, PolicyEntryKind, PolicyRecord } from '../../types';
 import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -8,6 +8,11 @@ import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCom
 import { formatShortDate } from '../../services/workflow/dates';
 import { activeEndorsements, activePolicies, centsInput, checkPolicy, formatCents, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
 import { policyNumberTaken } from '../../services/supabase/commissionRepo';
+import { useAccountCommissionStatuses } from '../../hooks/useLedger';
+import type { AccountCommissionStatus } from '../../services/supabase/ledgerRepo';
+import { FLAG_LABELS, payoutWords } from '../../services/finance/ledger';
+import { CommissionStatusBadge } from '../finance/CommissionStatusBadge';
+import { CancellationRequestDialog } from '../finance/CancellationRequestDialog';
 import { inputClass, labelClass } from './formStyles';
 
 const KIND = {
@@ -20,24 +25,29 @@ const KIND = {
  * endorsements on an endorsed one — or wherever some were recorded before the market moved off that
  * status, flagged, so nothing silently disappears. Each one carries its documents (binder, policy,
  * endorsement page), each with a description; until it has one, it's marked "Missing Documents". The agent's commission shows only
- * to that agent and the agency's admins, worked out from the net amount (never stored here).
+ * to that agent and the agency's admins: once the database has recorded it (0064), the amount frozen in
+ * that record and its status (Missing Proof → Pending Verification → Verified); before, worked out from
+ * the net amount (never stored here). A recorded policy's agent can request its cancellation here.
  */
 export function PoliciesSection({ accountId, quote }: { accountId: string; quote: MarketQuote }) {
   const commission = useAgentCommission(accountId);
+  const records = useAccountCommissionStatuses(accountId);
   if (!policiesFeatureEnabled()) return null;
   const bound = quote.status === 'bound';
   return (
     <>
-      <EntryList accountId={accountId} quote={quote} kind="policy" entries={activePolicies(quote)} active={bound} commission={commission} />
-      <EntryList accountId={accountId} quote={quote} kind="endorsement" entries={activeEndorsements(quote)} active={bound && !!quote.endorsed} commission={commission} />
+      <EntryList accountId={accountId} quote={quote} kind="policy" entries={activePolicies(quote)} active={bound} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} />
+      <EntryList accountId={accountId} quote={quote} kind="endorsement" entries={activeEndorsements(quote)} active={bound && !!quote.endorsed} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} />
     </>
   );
 }
 
-function EntryList({ accountId, quote, kind, entries, active, commission }: { accountId: string; quote: MarketQuote; kind: PolicyEntryKind; entries: PolicyRecord[]; active: boolean; commission: CommissionView }) {
+function EntryList({ accountId, quote, kind, entries, active, commission, records, onRecordsChanged }: { accountId: string; quote: MarketQuote; kind: PolicyEntryKind; entries: PolicyRecord[]; active: boolean; commission: CommissionView; records: Map<string, AccountCommissionStatus>; onRecordsChanged: () => void }) {
   const removePolicy = useAccountsStore((s) => s.removePolicy);
   const [editing, setEditing] = useState<PolicyRecord | 'new' | null>(null);
   const [removing, setRemoving] = useState<PolicyRecord | null>(null);
+  const [cancelling, setCancelling] = useState<{ entry: PolicyRecord; record: AccountCommissionStatus } | null>(null);
+  const [sent, setSent] = useState('');
   const k = KIND[kind];
   if (!active && entries.length === 0) return null;
   const tone = kind === 'policy' ? 'border-[var(--color-success-600)]/20 bg-[var(--color-success-100)]/30' : 'border-[var(--color-info-600)]/20 bg-[var(--color-info-100)]/30';
@@ -67,12 +77,34 @@ function EntryList({ accountId, quote, kind, entries, active, commission }: { ac
       ) : (
         <ul className="mt-2 flex flex-col gap-2">
           {entries.map((p) => (
-            <EntryItem key={p.id} quote={quote} entry={p} commission={commission} onEdit={() => setEditing(p)} onRemove={() => setRemoving(p)} />
+            <EntryItem
+              key={p.id}
+              quote={quote}
+              entry={p}
+              commission={commission}
+              record={records.get(p.id)}
+              onEdit={() => setEditing(p)}
+              onRemove={() => setRemoving(p)}
+              onRequestCancellation={(record) => setCancelling({ entry: p, record })}
+            />
           ))}
         </ul>
       )}
 
+      {sent && <p className="mt-2 text-xs text-[var(--color-success-600)]" role="status" data-testid="cancel-request-sent">{sent}</p>}
       {editing && <EntryForm key={editing === 'new' ? 'new' : editing.id} accountId={accountId} quote={quote} kind={kind} editing={editing} onClose={() => setEditing(null)} />}
+      {cancelling && (
+        <CancellationRequestDialog
+          accountId={accountId}
+          transactionId={cancelling.record.transactionId}
+          policyLabel={cancelling.entry.policyNumber ?? cancelling.entry.carrier}
+          onClose={() => setCancelling(null)}
+          onSent={() => {
+            setSent(`Cancellation of ${cancelling.entry.policyNumber ?? 'the policy'} requested — an admin approves it with the carrier’s actual refund.`);
+            onRecordsChanged();
+          }}
+        />
+      )}
       <ConfirmDialog
         open={!!removing}
         onCancel={() => setRemoving(null)}
@@ -88,10 +120,12 @@ function EntryList({ accountId, quote, kind, entries, active, commission }: { ac
   );
 }
 
-function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; onEdit: () => void; onRemove: () => void }) {
+function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRequestCancellation }: { quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; record?: AccountCommissionStatus; onEdit: () => void; onRemove: () => void; onRequestCancellation: (record: AccountCommissionStatus) => void }) {
   const kind: PolicyEntryKind = p.kind === 'endorsement' ? 'endorsement' : 'policy';
   const k = KIND[kind];
   const files = p.attachments ?? [];
+  const canRequestCancellation = kind === 'policy' && !!record && record.status !== 'void';
+  const forPolicy = kind === 'endorsement' && p.forPolicyId ? (quote.policies ?? []).find((x) => x.id === p.forPolicyId) : undefined;
   return (
     <li className="rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2.5" data-policy={p.id} data-kind={kind}>
       <div className="flex items-start justify-between gap-3">
@@ -106,7 +140,13 @@ function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: M
                 <FileWarning size={12} aria-hidden /> Missing Documents
               </span>
             )}
+            {record && <CommissionStatusBadge status={record.status} />}
           </p>
+          {kind === 'endorsement' && (
+            <p className="mt-0.5 text-xs text-[var(--color-ink-600)]" data-field="for-policy">
+              {p.forPolicyId ? `Changes policy ${forPolicy?.policyNumber ?? '(on another market)'}` : <span className="text-[var(--color-warning-600)]">Not linked to its policy — edit to choose it</span>}
+            </p>
+          )}
           {p.description && <p className="mt-0.5 text-sm text-[var(--color-ink-700)]" data-field="description">{p.description}</p>}
           <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{p.carrier !== quote.marketName ? `${p.carrier} via ${quote.marketName}` : p.carrier}</p>
           <p className="mt-1 text-xs text-[var(--color-ink-600)]" data-field="dates">
@@ -117,7 +157,8 @@ function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: M
         <OverflowMenu
           items={[
             { key: 'edit', label: `Edit ${k.one}`, icon: <Pencil size={14} />, onSelect: onEdit },
-            { key: 'remove', label: `Remove ${k.one}`, icon: <Trash2 size={14} />, tone: 'danger', onSelect: onRemove },
+            ...(canRequestCancellation ? [{ key: 'cancel', label: 'Request cancellation', icon: <Ban size={14} />, onSelect: () => onRequestCancellation(record!) }] : []),
+            { key: 'remove', label: `Remove ${k.one}`, icon: <Trash2 size={14} />, tone: 'danger' as const, onSelect: onRemove },
           ]}
         />
       </div>
@@ -127,7 +168,10 @@ function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: M
         <Amount label="Fees" cents={p.feesCents} />
         <Amount label="Total" cents={policyTotalCents(p)} strong />
       </dl>
-      <CommissionLine commission={commission} netCents={p.netPremiumCents} />
+      <CommissionLine commission={commission} netCents={p.netPremiumCents} record={record} />
+      {record && record.flags.length > 0 && (
+        <p className="mt-0.5 text-[11px] text-[var(--color-warning-600)]" data-field="commission-flags">{record.flags.map((f) => FLAG_LABELS[f] ?? f).join(' · ')}</p>
+      )}
       {p.notes && <p className="mt-1.5 whitespace-pre-line text-xs text-[var(--color-ink-600)]" data-field="notes">{p.notes}</p>}
       <div className="mt-2 flex flex-col gap-1 text-xs" data-field="documents">
         {files.map((f) => (
@@ -145,10 +189,23 @@ function EntryItem({ quote, entry: p, commission, onEdit, onRemove }: { quote: M
   );
 }
 
-/** "Agent commission: $300.00" (the agent's % of 10% of the net) — only for the agent and the agency's admins. */
-export function CommissionLine({ commission, netCents }: { commission: CommissionView; netCents: number }) {
-  if (commission.kind === 'hidden') return null;
+/**
+ * "Agent commission: $300.00" (net × 10% × the agent's split) — only for the agent and the agency's admins.
+ * Once recorded (0064), the frozen amount and its expected payout; before, worked out from the current split.
+ */
+export function CommissionLine({ commission, netCents, record }: { commission: CommissionView; netCents: number; record?: AccountCommissionStatus }) {
+  if (commission.kind === 'hidden' && !record) return null;
   const base = 'mt-1.5 text-xs';
+  if (record && record.agentCents !== null) {
+    const payout = record.expectedPayDate ? ` · ${payoutWords(record.expectedPayDate, record.status === 'verified')}` : '';
+    return (
+      <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
+        Agent commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(record.agentCents)}</strong>
+        <span className="text-[var(--color-ink-500)]"> as recorded{payout}</span>
+      </p>
+    );
+  }
+  if (commission.kind === 'hidden') return null;
   if (commission.kind === 'no_agent') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: No agent assigned</p>;
   if (commission.kind === 'no_rate') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: no commission % set for {commission.agentName} (an admin sets it on the Team page)</p>;
   if (commission.kind === 'unavailable') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: {commission.message}</p>;
@@ -206,6 +263,8 @@ export function EntryForm({
   const boundFor = quote.renewalId ? renewals.find((r) => r.id === quote.renewalId) : undefined;
   const options = quote.options ?? [];
   const existing = useMemo(() => policyRows(accounts, allQuotes, { includeArchived: true }), [accounts, allQuotes]);
+  // An endorsement changes one of this account's policies (any of its markets).
+  const accountPolicies = useMemo(() => (allQuotes[accountId] ?? []).flatMap((q) => activePolicies(q).map((p) => ({ policy: p, marketName: q.marketName }))), [allQuotes, accountId]);
   const k = KIND[kind];
 
   const [f, setF] = useState<PolicyInput>(() => {
@@ -214,6 +273,7 @@ export function EntryForm({
         kind,
         notes: editing.notes ?? '',
         description: editing.description ?? '',
+        forPolicyId: editing.forPolicyId ?? '',
         quoteOptionId: editing.quoteOptionId ?? '',
         policyNumber: editing.policyNumber ?? '',
         carrier: editing.carrier,
@@ -233,6 +293,7 @@ export function EntryForm({
       return {
         kind,
         notes: '',
+        forPolicyId: policy?.id ?? '',
         quoteOptionId: '',
         policyNumber: policy?.policyNumber ?? '',
         carrier: policy?.carrier ?? quote.marketName,
@@ -272,16 +333,25 @@ export function EntryForm({
   const detach = useAccountsStore((s) => s.removePolicyAttachment);
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id });
+  const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id, accountPolicyIds: accountPolicies.map((x) => x.policy.id), requirePolicyLink: kind === 'endorsement' && editing === 'new' });
   const live = (v: string) => {
     const c = parseMoneyCents(v);
     return c === null || Number.isNaN(c) ? 0 : c;
   };
   const total = live(f.netPremium) + live(f.taxes) + live(f.fees);
 
-  const set = <K extends keyof PolicyInput>(key: K, value: PolicyInput[K]) =>
+  const set = <K extends keyof PolicyInput>(key: K, value: PolicyInput[K]) => {
+    // Once a policy is chosen, the "choose the policy" message no longer applies.
+    if (key === 'forPolicyId' && value) setErrors((errs) => errs.filter((m) => !m.startsWith('Choose the policy this endorsement changes')));
     setF((cur) => {
       const next = { ...cur, [key]: value };
+      // Picking the endorsed policy fills its number and carrier, unless they were changed by hand.
+      if (key === 'forPolicyId') {
+        const pick = accountPolicies.find((x) => x.policy.id === value)?.policy;
+        const fromAPolicy = (v: string, field: 'policyNumber' | 'carrier') => !v || v === quote.marketName || accountPolicies.some((x) => (x.policy[field] ?? '') === v);
+        if (pick && fromAPolicy(cur.policyNumber, 'policyNumber')) next.policyNumber = pick.policyNumber ?? '';
+        if (pick && fromAPolicy(cur.carrier, 'carrier')) next.carrier = pick.carrier;
+      }
       // Picking a quote fills the net premium if it's still blank or still that of the previous quote.
       if (key === 'quoteOptionId') {
         const prev = options.find((o) => o.id === cur.quoteOptionId)?.premium;
@@ -290,6 +360,7 @@ export function EntryForm({
       }
       return next;
     });
+  };
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -344,6 +415,23 @@ export function EntryForm({
           </ul>
         )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {kind === 'endorsement' && (
+            <div className="sm:col-span-2">
+              <label className={labelClass} htmlFor="policy-for">
+                Changes policy {editing === 'new' && <Required />}
+              </label>
+              <select id="policy-for" className={inputClass} value={f.forPolicyId ?? ''} onChange={(e) => set('forPolicyId', e.target.value)}>
+                <option value="">{accountPolicies.length ? '— Choose the policy this endorsement changes' : '— No policy recorded on this account yet'}</option>
+                {accountPolicies.map(({ policy: p, marketName }) => (
+                  <option key={p.id} value={p.id}>
+                    {p.policyNumber ?? 'Number to come'} — {p.carrier}
+                    {p.carrier !== marketName ? ` via ${marketName}` : ''} (bound {formatShortDate(p.boundDate)})
+                  </option>
+                ))}
+              </select>
+              {editing !== 'new' && !editing.forPolicyId && <p className="mt-1 text-xs text-[var(--color-warning-600)]">Recorded before endorsements were linked — choose its policy so the commission can be verified.</p>}
+            </div>
+          )}
           <div>
             <label className={labelClass} htmlFor="policy-bound">
               {k.date} <Required />
