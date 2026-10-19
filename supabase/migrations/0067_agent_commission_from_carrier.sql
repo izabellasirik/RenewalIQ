@@ -1,7 +1,7 @@
 -- 0067 Agent commission = the agent's split of the carrier commission (needs 0063 and 0064; 0065 optional).
 --
 --   carrier commission = net × the carrier's commission % (on the bound / endorsed date)
---   agent commission   = carrier commission × the agent's split        e.g. $10,000 × 12% = $1,200 × 30% = $360
+--   agent commission   = carrier commission × the agent's split        e.g. $10,000 × 12% = $1,200 × 25% = $300
 --
 -- Until now the agent's split applied to 10% of the net. From this migration on:
 -- - A policy or endorsement whose carrier has no % set on its date is recorded without a commission and
