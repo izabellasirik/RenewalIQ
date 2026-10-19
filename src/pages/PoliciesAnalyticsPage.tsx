@@ -284,7 +284,7 @@ function PoliciesPanel() {
                 <thead>
                   <tr>
                     <th className={th}>Client / policy</th>
-                    <th className={th}>Bound date</th>
+                    <th className={th}>Bound / Endorsed Date</th>
                     <th className={`${th} ${num}`}>Net</th>
                     <th className={`${th} ${num}`}>Taxes</th>
                     <th className={`${th} ${num}`}>Fees</th>
