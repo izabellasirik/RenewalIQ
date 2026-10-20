@@ -225,3 +225,41 @@ export async function createMyAgency(name: string): Promise<RepoResult<string>> 
     return fail(err, 'Could not create the agency.');
   }
 }
+
+/**
+ * Invitation-only access (0051 + 0069). `allowed` = an agency member or the founder. Before 0069 is
+ * installed everyone signed in is allowed, as before (the database is what enforces it).
+ */
+export type ProductAccess = { allowed: true } | { allowed: false; invitations: MyInvitation[] };
+export interface MyInvitation {
+  id: string;
+  agencyName: string;
+  role: TeamRole;
+}
+const missingFn = (e: { code?: string; message?: string }, name: string) => e.code === 'PGRST202' || e.code === '42883' || (e.message ?? '').includes(name);
+
+export async function fetchProductAccess(): Promise<RepoResult<ProductAccess>> {
+  if (!supabase) return { ok: true, data: { allowed: true } };
+  try {
+    const access = await supabase.rpc('has_product_access');
+    if (access.error) return missingFn(access.error, 'has_product_access') ? { ok: true, data: { allowed: true } } : fail(access.error, 'Could not check your access.');
+    if (access.data === true) return { ok: true, data: { allowed: true } };
+    const inv = await supabase.rpc('my_open_invitations');
+    if (inv.error) return fail(inv.error, 'Could not check your invitations.');
+    const rows = (inv.data ?? []) as { id: string; agency_name: string; role: TeamRole }[];
+    return { ok: true, data: { allowed: false, invitations: rows.map((r) => ({ id: r.id, agencyName: r.agency_name, role: r.role })) } };
+  } catch (err) {
+    return fail(err, 'Could not check your access.');
+  }
+}
+
+/** Joins the agency of one of the signed-in person's own invitations (0051). Returns the agency name. */
+export async function acceptMyInvitation(id: string): Promise<RepoResult<string>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('accept_my_invitation', { p_invitation_id: id });
+    return error ? fail(error, 'Could not join the agency.') : { ok: true, data: data as string };
+  } catch (err) {
+    return fail(err, 'Could not join the agency.');
+  }
+}

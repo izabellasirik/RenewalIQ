@@ -21,6 +21,7 @@ import { IntakeLinksPage } from './pages/IntakeLinksPage';
 import { ClientRequestPage } from './pages/ClientRequestPage';
 import { RequireBrokerAuth } from './components/layout/RequireBrokerAuth';
 import { ProfileGate } from './components/profile/ProfileGate';
+import { MembershipGate } from './components/team/MembershipGate';
 import { InvitePage } from './pages/InvitePage';
 import { TeamPage } from './pages/TeamPage';
 import { CarriersPage } from './pages/CarriersPage';
@@ -45,9 +46,12 @@ export const router = createBrowserRouter([
     // Signed-out visitors are sent to /login (see RequireBrokerAuth).
     element: (
       <RequireBrokerAuth>
-        <ProfileGate>
-          <AppShell />
-        </ProfileGate>
+        {/* Invitation-only: no agency, no product (0069 enforces it in the database too). */}
+        <MembershipGate>
+          <ProfileGate>
+            <AppShell />
+          </ProfileGate>
+        </MembershipGate>
       </RequireBrokerAuth>
     ),
     children: [
