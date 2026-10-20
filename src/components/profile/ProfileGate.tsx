@@ -5,7 +5,7 @@ import { pendingInvite } from '../../services/supabase/teamRepo';
 import { Navigate } from 'react-router-dom';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { AuthShell } from '../auth/AuthShell';
-import { Skeleton } from '../ui';
+import { AppLoading } from '../branding/AppLoading';
 import { ProfileForm } from './ProfileForm';
 
 /**
@@ -35,17 +35,13 @@ export function ProfileGate({ children }: { children: ReactNode }) {
     };
   }, [userId, setMyProfile]);
 
+  // This hook instance may still be reading the session: keep the loading screen rather than flash the app.
+  if (session.status === 'loading') return <AppLoading />;
   if (session.status !== 'signed_in' || !userId) return <>{children}</>;
   // An invitation opened before signing up / in (e.g. the confirmation email landed on the home page): finish joining first.
   const invite = pendingInvite();
   if (invite) return <Navigate to={`/invite/${invite}`} replace />;
-  if (state === 'loading' && !myProfile?.fullName) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-[var(--color-ink-50)] p-8">
-        <Skeleton variant="block" className="h-24 w-full max-w-md" />
-      </div>
-    );
-  }
+  if (state === 'loading' && !myProfile?.fullName) return <AppLoading />;
   if (state === 'setup') {
     return (
       <AuthShell>

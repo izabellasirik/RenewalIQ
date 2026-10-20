@@ -3,7 +3,8 @@ import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { signOutBroker } from '../../services/supabase/brokerAuth';
 import { acceptMyInvitation, fetchProductAccess, type ProductAccess } from '../../services/supabase/teamRepo';
 import { AuthShell } from '../auth/AuthShell';
-import { Button, Skeleton } from '../ui';
+import { Button } from '../ui';
+import { AppLoading } from '../branding/AppLoading';
 
 /**
  * RenewalIQ is invitation-only. A signed-in person who isn't in an agency sees only this screen: Join
@@ -25,7 +26,10 @@ export function MembershipGate({ children }: { children: ReactNode }) {
     if (userId) check();
   }, [userId, check]);
 
+  // This hook instance may still be reading the session: keep the loading screen rather than flash the app.
+  if (session.status === 'loading') return <AppLoading />;
   if (!userId || access?.allowed) return <>{children}</>;
+  if (!access && !error) return <AppLoading />;
 
   const join = async (id: string) => {
     setJoining(id);
@@ -39,8 +43,7 @@ export function MembershipGate({ children }: { children: ReactNode }) {
   };
 
   let body: ReactNode;
-  if (!access && !error) body = <Skeleton variant="block" className="h-24 w-full" />;
-  else if (!access) {
+  if (!access) {
     body = (
       <>
         <p className="text-base font-semibold text-[var(--color-ink-900)]">We couldn’t check your access</p>
