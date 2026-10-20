@@ -12,6 +12,7 @@ export const AUTH_MESSAGES = {
   signIn: 'Sign in to use AI document reading.',
   notAllowed: 'AI document reading needs a confirmed RenewalIQ account.',
   unavailable: 'Could not confirm your sign-in — try again in a moment.',
+  noAgency: 'AI document reading is for members of a RenewalIQ agency. Join your agency first.',
 } as const;
 
 /**
@@ -49,5 +50,25 @@ export async function verifyCaller(authorization: string | null, supabaseUrl: st
   if (user?.id !== claimed) return { ok: false, status: 401, error: AUTH_MESSAGES.signIn };
   const banned = typeof user.banned_until === 'string' && Date.parse(user.banned_until) > now();
   if (user.is_anonymous === true || !user.email_confirmed_at || banned) return { ok: false, status: 403, error: AUTH_MESSAGES.notAllowed };
+  // Invitation-only (0069): an agency member or the founder, asked of the database as this caller.
+  // Anything but a plain `true` — no such function, an error, unreachable — is refused (fail closed).
+  let access: Response;
+  try {
+    access = await fetchImpl(`${supabaseUrl}/rest/v1/rpc/has_product_access`, { method: 'POST', headers: { apikey: apiKey, Authorization: authorization, 'Content-Type': 'application/json' }, body: '{}' });
+  } catch (err) {
+    console.error('extract-document-vision: access check failed', String(err));
+    return { ok: false, status: 503, error: AUTH_MESSAGES.unavailable };
+  }
+  if (!access.ok) {
+    console.error('extract-document-vision: access check returned', access.status);
+    return { ok: false, status: 503, error: AUTH_MESSAGES.unavailable };
+  }
+  let allowed: unknown;
+  try {
+    allowed = await access.json();
+  } catch {
+    return { ok: false, status: 503, error: AUTH_MESSAGES.unavailable };
+  }
+  if (allowed !== true) return { ok: false, status: 403, error: AUTH_MESSAGES.noAgency };
   return { ok: true, userId: claimed };
 }

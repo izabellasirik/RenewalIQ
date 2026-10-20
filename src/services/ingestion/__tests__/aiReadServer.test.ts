@@ -166,10 +166,12 @@ describe('AI read: signed-in brokers only', () => {
   const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, '');
   const token = (claims: object) => `Bearer ${b64({ alg: 'HS256' })}.${b64(claims)}.sig`;
   const userToken = token({ sub: USER, role: 'authenticated' });
-  const authFetch = (status: number, body: object = {}) => {
+  // Supabase Auth answers `status`/`body`; the membership check (has_product_access) answers `access`.
+  const authFetch = (status: number, body: object = {}, access: { status: number; body: unknown } = { status: 200, body: true }) => {
     const calls: { url: string; headers: Record<string, string> }[] = [];
     const fetchImpl = (async (url: string, init?: RequestInit) => {
       calls.push({ url, headers: init?.headers as Record<string, string> });
+      if (url.endsWith('/rest/v1/rpc/has_product_access')) return new Response(JSON.stringify(access.body), { status: access.status });
       return new Response(JSON.stringify(body), { status });
     }) as typeof fetch;
     return { calls, fetchImpl };
@@ -188,7 +190,25 @@ describe('AI read: signed-in brokers only', () => {
   it('a confirmed broker is accepted after Supabase Auth confirms the token', async () => {
     const { calls, fetchImpl } = authFetch(200, confirmed);
     expect(await verifyCaller(userToken, 'https://x.supabase.co', 'anon-key', fetchImpl)).toEqual({ ok: true, userId: USER });
-    expect(calls).toEqual([{ url: 'https://x.supabase.co/auth/v1/user', headers: { apikey: 'anon-key', Authorization: userToken } }]);
+    expect(calls).toEqual([
+      { url: 'https://x.supabase.co/auth/v1/user', headers: { apikey: 'anon-key', Authorization: userToken } },
+      { url: 'https://x.supabase.co/rest/v1/rpc/has_product_access', headers: { apikey: 'anon-key', Authorization: userToken, 'Content-Type': 'application/json' } },
+    ]);
+  });
+
+  it('a confirmed login without agency membership (and not the founder) is refused', async () => {
+    expect(await verifyCaller(userToken, 'u', 'k', authFetch(200, confirmed, { status: 200, body: false }).fetchImpl)).toEqual({ ok: false, status: 403, error: AUTH_MESSAGES.noAgency });
+  });
+
+  it('fails closed when membership can’t be checked: no such function (before 0069), an error, or unreachable', async () => {
+    for (const access of [{ status: 404, body: { code: 'PGRST202' } }, { status: 500, body: {} }, { status: 200, body: 'yes' }]) {
+      expect(statusOf(await verifyCaller(userToken, 'u', 'k', authFetch(200, confirmed, access).fetchImpl))).toBe(access.status === 200 ? 403 : 503);
+    }
+    const authOnly = (async (url: string) => {
+      if (url.includes('/rest/v1/')) throw new Error('ECONNREFUSED');
+      return new Response(JSON.stringify(confirmed), { status: 200 });
+    }) as typeof fetch;
+    expect(statusOf(await verifyCaller(userToken, 'u', 'k', authOnly))).toBe(503);
   });
 
   it('a forged, expired or signed-out token (Auth says no) and a token for someone else are refused', async () => {
