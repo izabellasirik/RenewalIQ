@@ -145,11 +145,11 @@ function PoliciesPanel() {
   const mine = useMyCommissions(!!agencyAccess && !isAdmin);
   const records = useMemo(() => {
     // carrierRate / carrierCents null: recorded without a carrier % (not set yet).
-    const out = new Map<string, { agentCents: number | null; carrierCents: number | null; carrierRate: number | null }>();
+    const out = new Map<string, { agentCents: number | null; carrierCents: number | null; carrierRate: number | null; agentUserId?: string | null; agentName?: string | null }>();
     if (isAdmin && ledger.data)
       for (const [k, t] of currentRecordsByPolicy(ledger.data.transactions)) {
         const notSet = t.reviewFlags.includes('no_carrier_rate');
-        out.set(k, { agentCents: t.agentCents, carrierCents: notSet ? null : t.carrierCents, carrierRate: notSet ? null : t.carrierRate });
+        out.set(k, { agentCents: t.agentCents, carrierCents: notSet ? null : t.carrierCents, carrierRate: notSet ? null : t.carrierRate, agentUserId: t.agentUserId, agentName: t.agentName });
       }
     if (!isAdmin) for (const c of mine.commissions) if (c.policyId) out.set(`${c.submissionId}|${c.policyId}`, { agentCents: c.agentCents, carrierCents: null, carrierRate: c.carrierRate });
     return out;
@@ -199,6 +199,12 @@ function PoliciesPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, rates.rates, carrier.rows, agencyAccess, records]);
   const agentName = (id: string | null) => (id ? (members.find((m) => m.userId === id)?.name ?? 'Agent') : '');
+  // Whose commission it is: the agent it was recorded for (their current name), else the account's agent.
+  const commissionAgentName = (r: PolicyRow) => {
+    const rec = recordOf(r);
+    if (rec?.agentUserId) return members.find((m) => m.userId === rec.agentUserId)?.name ?? rec.agentName ?? 'Agent';
+    return agentName(r.assignedUserId);
+  };
   const report = () =>
     policiesReport(rows, {
       isAdmin,
@@ -374,6 +380,11 @@ function PoliciesPanel() {
                         {agencyAccess && (
                           <td className={`${td} ${num}`} data-field="commission">
                             {c === null ? <span className="text-xs text-[var(--color-ink-400)]">{noCommissionWhy(r)}</span> : <span className="font-semibold">{formatCents(c)}</span>}
+                            {isAdmin && commissionAgentName(r) && (
+                              <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" data-field="commission-agent">
+                                {commissionAgentName(r)}
+                              </span>
+                            )}
                             {!isAdmin && carrierRateOf(r) !== null && (
                               <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" data-field="carrier-rate">
                                 Carrier {formatRate(carrierRateOf(r)!)}
