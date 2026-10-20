@@ -8,6 +8,7 @@ import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { signOutBroker } from '../../services/supabase/brokerAuth';
 import { NotificationBell } from './NotificationBell';
 import { ProfileForm } from '../profile/ProfileForm';
+import { GmailConnection } from '../profile/GmailConnection';
 import { Modal } from '../ui';
 
 /** email + Sign out when signed in; a discreet "Sign in" link otherwise. Deliberately small — see PROJECT direction not to overbuild profiles yet. */
@@ -18,6 +19,15 @@ function AccountMenu() {
   const [profileOpen, setProfileOpen] = useState(false);
   const myProfile = useAccountsStore((s) => s.myProfile);
   const ref = useRef<HTMLDivElement>(null);
+  // Back from Google's consent page (?gmail=connected|cancelled|failed): show the result in Your profile.
+  const [gmailResult] = useState(() => new URLSearchParams(window.location.search).get('gmail'));
+  useEffect(() => {
+    if (!gmailResult) return;
+    setProfileOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('gmail');
+    window.history.replaceState(null, '', url.toString());
+  }, [gmailResult]);
 
   useEffect(() => {
     if (!open) return;
@@ -92,6 +102,7 @@ function AccountMenu() {
       )}
       <Modal open={profileOpen} onClose={() => setProfileOpen(false)} title="Your profile">
         {profileOpen && <ProfileForm email={session.email ?? ''} initial={myProfile} submitLabel="Save" onSaved={() => setProfileOpen(false)} />}
+        {profileOpen && <GmailConnection result={gmailResult} />}
       </Modal>
     </div>
   );

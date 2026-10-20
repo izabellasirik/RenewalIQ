@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { RelatedEmailsCard } from '../components/workspace/RelatedEmailsCard';
 import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Building2, ClipboardList, Clock, FilePlus2, FileText, Mail } from 'lucide-react';
@@ -143,6 +144,7 @@ export function AccountWorkspacePage() {
       {tab === 'overview' && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
           <div className="flex min-w-0 flex-col gap-5 lg:col-span-2">
+            <RelatedEmailsCard accountId={accountId} />
             <Card id="needs-attention" className="scroll-mt-24">
               <CardBody className="pt-5">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
