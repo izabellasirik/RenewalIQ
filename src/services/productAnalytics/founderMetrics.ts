@@ -28,6 +28,8 @@ export interface SnapshotUser {
   email: string | null;
   orgId: string | null;
   isFounder: boolean;
+  /** Designated by the founder as a test login (0070): their activity counts as test activity. */
+  isTest?: boolean;
   firstSeen: string | null;
   lastSeen: string | null;
   /** 0047: agency role and when they joined (agency members are listed even with no activity). */
@@ -86,7 +88,10 @@ export type FeatureKey =
   | 'market_finder'
   | 'carrier_appetite'
   | 'markets_quotes'
-  | 'follow_ups';
+  | 'follow_ups'
+  | 'account_updates'
+  | 'client_requests'
+  | 'email';
 
 const source = (e: SnapshotEvent) => (typeof e.metadata?.source === 'string' ? e.metadata.source : undefined);
 
@@ -106,8 +111,15 @@ export const FEATURES: { key: FeatureKey; label: string; matches: (e: SnapshotEv
     label: 'Carrier Appetite',
     matches: (e) => e.name === 'carrier_appetite_generated' || ((e.name === 'carrier_match_opened' || e.name === 'market_added_to_account') && source(e) === 'carrier_appetite'),
   },
-  { key: 'markets_quotes', label: 'Markets & Quotes', matches: (e) => ['market_added', 'market_status_changed', 'quote_added', 'quote_updated'].includes(e.name) },
-  { key: 'follow_ups', label: 'Follow-ups', matches: (e) => e.name === 'follow_up_created' || e.name === 'follow_up_completed' },
+  { key: 'markets_quotes', label: 'Markets & Quotes', matches: (e) => ['market_added', 'market_status_changed', 'quote_added', 'quote_updated', 'policy_bound'].includes(e.name) },
+  { key: 'follow_ups', label: 'Follow-ups', matches: (e) => ['follow_up_created', 'follow_up_updated', 'follow_up_completed'].includes(e.name) },
+  { key: 'account_updates', label: 'Account updates & notes', matches: (e) => e.name === 'account_updated' || e.name === 'note_added' },
+  {
+    key: 'client_requests',
+    label: 'Client document requests',
+    matches: (e) => ['requirements_added', 'document_request_prepared', 'document_request_sent', 'requested_document_received', 'requirement_verified', 'requirement_not_applicable'].includes(e.name),
+  },
+  { key: 'email', label: 'Email', matches: (e) => e.name === 'email_reviewed' || e.name === 'email_draft_opened' },
 ];
 
 export const FUNNEL_STAGES: { label: string; events: ProductEventName[] }[] = [
@@ -153,10 +165,17 @@ export const EVENT_LABELS: Record<ProductEventName, [string, string]> = {
   requirement_verified: ['Document verified', 'documents verified'],
   requirement_not_applicable: ['Requirement marked not applicable', 'requirements marked not applicable'],
   agency_created: ['Agency created', 'agencies created'],
+  account_updated: ['Account updated', 'account updates'],
+  note_added: ['Note added', 'notes added'],
+  follow_up_updated: ['Follow-up changed', 'follow-up changes'],
+  policy_bound: ['Policy bound', 'policies bound'],
+  email_reviewed: ['Email reviewed', 'emails reviewed'],
+  email_draft_opened: ['Email draft opened', 'email drafts opened'],
 };
 
 /** A visit, not work: doesn't make a broker or an account "active" on its own. */
-const PASSIVE: ReadonlySet<ProductEventName> = new Set(['account_opened_on_later_day']);
+// Not the broker working: re-opening an account, and a client submitting an intake form (stored under the link's broker).
+const PASSIVE: ReadonlySet<ProductEventName> = new Set(['account_opened_on_later_day', 'intake_submitted']);
 const MARKET_RESEARCH: ReadonlySet<ProductEventName> = new Set(['market_search_completed', 'carrier_appetite_generated', 'carrier_match_opened', 'market_added_to_account']);
 
 export interface FounderFilters {
@@ -215,7 +234,7 @@ export class FounderView {
     const feature = filters.feature ? FEATURES.find((f) => f.key === filters.feature) : undefined;
     this.scoped = snapshot.events.filter((e) => {
       if (!filters.includeFounder && e.userId && this.users.get(e.userId)?.isFounder) return false;
-      const test = this.isTestAccount(e.accountId);
+      const test = this.isTestAccount(e.accountId) || this.isTestUser(e.userId);
       if (filters.accounts === 'real' && test) return false;
       if (filters.accounts === 'test' && !test) return false;
       if (filters.orgId && this.orgOf(e) !== filters.orgId) return false;
@@ -236,6 +255,9 @@ export class FounderView {
 
   isTestAccount(accountId: string | null): boolean {
     return !!accountId && !!this.accounts.get(accountId)?.isTest;
+  }
+  isTestUser(userId: string | null): boolean {
+    return !!userId && !!this.users.get(userId)?.isTest;
   }
   orgOf(e: Pick<SnapshotEvent, 'orgId' | 'userId'>): string | null {
     return e.orgId ?? (e.userId ? (this.users.get(e.userId)?.orgId ?? null) : null);
@@ -276,7 +298,7 @@ export class FounderView {
     const thisWeekBrokers = this.activeBrokersIn(this.thisWeek);
     const lastWeekBrokers = this.activeBrokersIn(this.lastWeek);
     return {
-      activeBrokerages: this.distinct(r.map((e) => this.orgOf(e) ?? (e.userId ? `user:${e.userId}` : null))).size,
+      activeBrokerages: this.distinct(r.filter((e) => !PASSIVE.has(e.name)).map((e) => this.orgOf(e) ?? (e.userId ? `user:${e.userId}` : null))).size,
       activeBrokers: this.distinct(r.filter((e) => !PASSIVE.has(e.name)).map((e) => e.userId)).size,
       weeklyActiveBrokers: thisWeekBrokers.size,
       weeklyActiveAccounts: this.activeAccounts(this.thisWeek).size,
@@ -350,7 +372,7 @@ export class FounderView {
    * never counted. "Activated" = at least one meaningful action, ever.
    */
   adoption() {
-    const members = [...this.users.values()].filter((u) => !!u.orgId && !u.isFounder && (!this.filters.orgId || u.orgId === this.filters.orgId));
+    const members = [...this.users.values()].filter((u) => !!u.orgId && !u.isFounder && !u.isTest && (!this.filters.orgId || u.orgId === this.filters.orgId));
     const activeEver = (u: SnapshotUser) => !!u.firstMeaningful || this.meaningful.some((e) => e.userId === u.id);
     const notActivated = members
       .filter((u) => !activeEver(u))
@@ -434,7 +456,7 @@ export class FounderView {
     return FEATURES.map((f) => {
       const evs = this.inRange.filter(f.matches);
       const daysByUser = new Map<string, Set<string>>();
-      for (const e of evs) if (e.userId) daysByUser.set(e.userId, (daysByUser.get(e.userId) ?? new Set()).add(localDay(e.at)));
+      for (const e of evs) if (e.userId && !PASSIVE.has(e.name)) daysByUser.set(e.userId, (daysByUser.get(e.userId) ?? new Set()).add(localDay(e.at)));
       return {
         key: f.key,
         label: f.label,
@@ -485,7 +507,7 @@ export class FounderView {
       const at = new Date(t.at).getTime();
       if (at < from || at >= to) return false;
       if (!this.filters.includeFounder && this.users.get(t.userId)?.isFounder) return false;
-      const test = this.isTestAccount(t.accountId);
+      const test = this.isTestAccount(t.accountId) || this.isTestUser(t.userId);
       if (this.filters.accounts === 'real' && test) return false;
       if (this.filters.accounts === 'test' && !test) return false;
       if (this.filters.orgId && t.orgId !== this.filters.orgId) return false;

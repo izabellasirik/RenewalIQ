@@ -32,6 +32,13 @@ export async function setAccountAnalyticsMode(accountId: string, mode: 'auto' | 
   return error ? { ok: false, message: error.message } : { ok: true };
 }
 
+/** Designate a login as a test user (0070): their activity is test activity from then on, past and future. */
+export async function setUserAnalyticsTest(userId: string, test: boolean): Promise<{ ok: boolean; message?: string }> {
+  if (!supabase) return { ok: false, message: 'Cloud is not configured.' };
+  const { error } = await supabase.rpc('set_user_analytics_test', { p_user_id: userId, p_test: test });
+  return error ? { ok: false, message: /set_user_analytics_test/.test(error.message) ? 'Test users need database migration 0070.' : error.message } : { ok: true };
+}
+
 /** AI Usage & Cost (0046) — founder only; the database refuses everyone else. */
 export interface FounderAiUsage {
   timezone: string;
