@@ -21,14 +21,15 @@ interface PlateView {
   broker: string;
   /** Outside an agency: only accounts assigned to me (as before). */
   mineOnly: boolean;
-  /** All tasks, today's, renewals, what's coming up in the next 7 days, or everything other than renewals. */
+  /** All tasks, overdue, today's, renewals, what's coming up in the next 7 days, or everything other than renewals. */
   show: PlateShow;
 }
-type PlateShow = 'all' | 'due_today' | 'renewal' | 'coming_up' | 'other';
-const PLATE_SHOW: PlateShow[] = ['all', 'due_today', 'renewal', 'coming_up', 'other'];
+type PlateShow = 'all' | 'overdue' | 'due_today' | 'renewal' | 'coming_up' | 'other';
+const PLATE_SHOW: PlateShow[] = ['all', 'overdue', 'due_today', 'renewal', 'coming_up', 'other'];
 /** The "Show" menu, in this order. */
 const SHOW_LABELS: Record<PlateShow, string> = {
   all: 'All tasks',
+  overdue: 'Overdue',
   due_today: 'Due today',
   renewal: 'Renewals',
   coming_up: 'Coming up',
@@ -146,10 +147,11 @@ export function TodaysPlatePage() {
     doneRows.sort((a, b) => (a.doneAt < b.doneAt ? 1 : -1));
     // "Show": everything; only today's; renewals (today's and the next 7 days'); only the next 7 days; or
     // everything but renewals (today's, the next 7 days' and what's waiting on others).
-    const kept = (a: ActionItem) => showsKind(show, a.kind);
+    // Overdue: only what's past due; Due today: today's without the overdue ones.
+    const kept = (a: ActionItem) => showsKind(show, a.kind) && (show === 'overdue' ? a.overdue : show === 'due_today' ? !a.overdue : true);
     return {
       now: show === 'coming_up' ? [] : sortActions(allNow.filter(kept)),
-      upcoming: show === 'due_today' ? [] : sortActions(allUpcoming.filter(kept)),
+      upcoming: show === 'due_today' || show === 'overdue' ? [] : sortActions(allUpcoming.filter(kept)),
       waiting: show === 'all' || show === 'other' ? waitingRows : [],
       doneToday: doneRows,
     };
