@@ -23,10 +23,14 @@ create table if not exists public.gmail_connections (
   -- Gmail's history position after the last sync (incremental sync starts here).
   history_id text check (length(history_id) <= 40),
   last_synced_at timestamptz,
+  -- Gmail thread ids found but not fetched yet (beyond one Refresh's batch, or a failed fetch): the next
+  -- Refresh continues with them, so no mail is skipped. Ids only — no content.
+  sync_backlog text[] not null default '{}',
   connected_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 alter table public.gmail_connections enable row level security;
+alter table public.gmail_connections add column if not exists sync_backlog text[] not null default '{}';
 
 -- Server only: no policies and no grants for signed-in users or the public.
 create table if not exists public.gmail_tokens (
@@ -282,7 +286,7 @@ grant execute on function public.gmail_oauth_stash(text, uuid, text, text, times
 -- Complete it as the signed-in caller (p_user comes from their verified sign-in, never from the URL).
 -- Single use: the parked return is removed first, whatever happens next — so a wrong person, an
 -- expired one or a second attempt can never connect it. Only then is the mailbox saved. Refusals are
--- returned ('mismatch' / 'expired' / 'used_or_unknown'), not raised, so the removal always sticks.
+-- returned ('mismatch' / 'expired' / 'used_or_unknown' / 'no_agency'), not raised, so the removal always sticks.
 create or replace function public.gmail_oauth_complete(p_pending uuid, p_user uuid)
 returns text
 language plpgsql volatile security definer set search_path = ''
@@ -294,6 +298,7 @@ begin
   if not found then return 'used_or_unknown'; end if;
   if v.expires_at < now() then return 'expired'; end if;
   if v.user_id is distinct from p_user then return 'mismatch'; end if;
+  if not exists (select 1 from public.profiles p where p.user_id = v.user_id) then return 'no_agency'; end if;
   insert into public.gmail_connections (user_id, agency_id, email_address, status, history_id, connected_at, updated_at)
   values (v.user_id, (select p.agency_id from public.profiles p where p.user_id = v.user_id), v.email_address, 'connected', null, now(), now())
   on conflict (user_id) do update set agency_id = excluded.agency_id, email_address = excluded.email_address, status = 'connected',

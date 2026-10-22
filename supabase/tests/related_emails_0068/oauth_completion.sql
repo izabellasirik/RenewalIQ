@@ -15,6 +15,10 @@ end $$;
 insert into auth.users (id, email, email_confirmed_at) values
   ('00000000-0000-0000-0000-0000000000c1', 'starter@example.example', now()),
   ('00000000-0000-0000-0000-0000000000c2', 'other@example.example', now());
+-- The starter is an agency member; 'other' (…c2) and 'nomember' (…c3) aren't.
+insert into auth.users (id, email, email_confirmed_at) values ('00000000-0000-0000-0000-0000000000c3', 'nomember@example.example', now());
+with a as (insert into public.agencies (name) values ('Fictional Agency') returning id)
+insert into public.profiles (user_id, agency_id, role, email) select '00000000-0000-0000-0000-0000000000c1', a.id, 'admin', 'starter@example.example' from a;
 set local role service_role;
 create temp table p (k text primary key, id uuid);
 insert into p values ('good', public.gmail_oauth_stash('n-good', '00000000-0000-0000-0000-0000000000c1', 'starter@gmail.example', 'v1:iv:ct-good', now() + interval '10 minutes'));
@@ -35,6 +39,9 @@ insert into p values ('old', public.gmail_oauth_stash('n-old', '00000000-0000-00
 select pg_temp.check('O8 an expired one is refused', public.gmail_oauth_complete((select id from p where k = 'old'), '00000000-0000-0000-0000-0000000000c1') = 'expired');
 -- (a separate statement: one statement still sees the row the function just removed)
 select pg_temp.check('O8b ...and removed', not exists (select 1 from public.gmail_oauth_pending where state_nonce = 'n-old'));
+insert into p values ('nomember', public.gmail_oauth_stash('n-nm', '00000000-0000-0000-0000-0000000000c3', 'nm@gmail.example', 'v1:iv:ct-nm', now() + interval '10 minutes'));
+select pg_temp.check('O12 someone without an agency membership can''t connect Gmail', public.gmail_oauth_complete((select id from p where k = 'nomember'), '00000000-0000-0000-0000-0000000000c3') = 'no_agency');
+select pg_temp.check('O12b ...nothing was connected for them', not exists (select 1 from public.gmail_connections where user_id = '00000000-0000-0000-0000-0000000000c3'));
 select pg_temp.check('O9 an unknown id is refused', public.gmail_oauth_complete(gen_random_uuid(), '00000000-0000-0000-0000-0000000000c1') = 'used_or_unknown');
 reset role;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-0000000000c1', true);

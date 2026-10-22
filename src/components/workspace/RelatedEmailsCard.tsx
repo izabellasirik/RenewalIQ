@@ -93,7 +93,10 @@ export function RelatedEmailsCard({ accountId }: { accountId: string }) {
     const { saved: suggested, failed, firstError } = await saveSuggestions(items, suggestLink);
     if (r.data.status === 'ok')
       setNote(
-        `${r.data.threads.length} new or updated ${r.data.threads.length === 1 ? 'thread' : 'threads'} · ${suggested} new ${suggested === 1 ? 'suggestion' : 'suggestions'}${r.data.truncated ? ' (only the most recent mail was fetched)' : ''}.` +
+        `${r.data.threads.length} new or updated ${r.data.threads.length === 1 ? 'thread' : 'threads'} · ${suggested} new ${suggested === 1 ? 'suggestion' : 'suggestions'}.` +
+          (r.data.remaining ? ` ${r.data.remaining} more to fetch — Refresh again to continue.` : '') +
+          (r.data.failed ? ` ${r.data.failed} couldn’t be fetched this time and will be retried.` : '') +
+          (r.data.olderNotFetched ? ' Mail older than the most recent 2,000 messages from the last 90 days wasn’t fetched.' : '') +
           (failed ? ` ${failed} ${failed === 1 ? 'suggestion' : 'suggestions'} couldn’t be saved: ${firstError}` : '')
       );
     await load();
