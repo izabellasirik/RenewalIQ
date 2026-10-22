@@ -9,7 +9,9 @@
     <title>RenewalIQ</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Shown until the app starts (React replaces it); matches components/branding/AppLoading. -->
+    <style>@keyframes riq-pulse{50%{opacity:.5}}</style>
+    <div id="root"><div style="display:flex;height:100vh;align-items:center;justify-content:center;background:#f4f6fb"><img src="/brand/logo-mark.png" alt="RenewalIQ" style="height:48px;width:auto;animation:riq-pulse 2s cubic-bezier(.4,0,.6,1) infinite" /></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

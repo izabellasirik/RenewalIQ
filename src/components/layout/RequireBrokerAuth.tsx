@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
-import { Skeleton } from '../ui';
+import { AppLoading } from '../branding/AppLoading';
 
 /**
  * Gate for every broker page (everything under AppShell in router.tsx): a signed-out visitor goes
@@ -16,13 +16,7 @@ import { Skeleton } from '../ui';
 export function RequireBrokerAuth({ children }: { children: ReactNode }) {
   const session = useBrokerSession();
 
-  if (session.status === 'loading') {
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-[var(--color-ink-50)] p-8">
-        <Skeleton variant="block" className="h-24 w-full max-w-md" />
-      </div>
-    );
-  }
+  if (session.status === 'loading') return <AppLoading />;
   if (session.status === 'signed_out' || session.status === 'password_recovery') return <Navigate to="/login" replace />;
   return <>{children}</>;
 }

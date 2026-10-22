@@ -3,7 +3,7 @@ import { Activity, Loader2, Lock, RotateCcw } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, CardHeader, EmptyState, Modal } from '../components/ui';
 import { AiUsageSection } from '../components/founder/AiUsageSection';
-import { checkIsFounder, fetchFounderSnapshot, setAccountAnalyticsMode } from '../services/productAnalytics/founderRepo';
+import { checkIsFounder, fetchFounderSnapshot, setAccountAnalyticsMode, setUserAnalyticsTest } from '../services/productAnalytics/founderRepo';
 import { FEATURES, FUNNEL_STAGES, FounderView, type FeatureKey, type FounderFilters, type FounderSnapshot } from '../services/productAnalytics/founderMetrics';
 import { WORKFLOW_LABELS, TIME_SAVED_OPTIONS } from '../services/productAnalytics/timeSaved';
 import { formatDate } from '../utils/dates';
@@ -13,6 +13,13 @@ const RANGES = [
   { key: '30', label: 'Last 30 days', days: 30 },
   { key: '90', label: 'Last 90 days', days: 90 },
 ] as const;
+/** YYYY-MM-DD for a local date (what <input type="date"> uses). */
+const dateKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+/** Local midnight at the start of a YYYY-MM-DD day. */
+const startOfDay = (key: string) => {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
 
 const selectClass = 'rounded-lg border border-[var(--color-ink-200)] bg-white px-2.5 py-1.5 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)]';
 const th = 'border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
@@ -72,9 +79,19 @@ function FounderDashboard() {
   const [brokerOpen, setBrokerOpen] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState<string | null>(null);
 
+  // Custom dates: both days included, local time (from the start of the first day to the end of the last).
+  const [customFrom, setCustomFrom] = useState(() => dateKey(new Date(Date.now() - 29 * 86400000)));
+  const [customTo, setCustomTo] = useState(() => dateKey(new Date()));
+  const custom = rangeKey === 'custom';
+  const customValid = !!customFrom && !!customTo && customFrom <= customTo;
   const days = RANGES.find((r) => r.key === rangeKey)?.days ?? 30;
-  const to = useMemo(() => endOfToday(), []);
-  const from = useMemo(() => new Date(to.getTime() - days * 86400000), [to, days]);
+  const today = useMemo(() => endOfToday(), []);
+  const to = useMemo(() => {
+    if (!custom || !customValid) return today;
+    const [y, m, d] = customTo.split('-').map(Number);
+    return new Date(y, m - 1, d + 1);
+  }, [custom, customValid, customTo, today]);
+  const from = useMemo(() => (custom && customValid ? startOfDay(customFrom) : new Date(today.getTime() - days * 86400000)), [custom, customValid, customFrom, today, days]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,7 +128,16 @@ function FounderDashboard() {
               {r.label}
             </option>
           ))}
+          <option value="custom">Custom dates</option>
         </select>
+        {custom && (
+          <span className="flex items-center gap-1.5 text-sm text-[var(--color-ink-600)]" data-testid="founder-custom-dates">
+            <input type="date" className={selectClass} value={customFrom} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)} aria-label="From date" />
+            to
+            <input type="date" className={selectClass} value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} aria-label="To date" />
+            {!customValid && <span className="text-xs text-[var(--color-danger-600)]">Pick a start date on or before the end date.</span>}
+          </span>
+        )}
         <select className={selectClass} value={orgId} onChange={(e) => setOrgId(e.target.value)} aria-label="Agency">
           <option value="">All agencies</option>
           {(snapshot?.orgs ?? []).map((o) => (
@@ -153,7 +179,7 @@ function FounderDashboard() {
       {!view && !error && <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]"><Loader2 size={15} className="animate-spin" /> Loading…</p>}
       {view && <Dashboard view={view} onBroker={setBrokerOpen} onAccount={setAccountOpen} />}
 
-      {view && brokerOpen && <BrokerDetail view={view} userId={brokerOpen} onClose={() => setBrokerOpen(null)} onAccount={(a) => (setBrokerOpen(null), setAccountOpen(a))} />}
+      {view && brokerOpen && <BrokerDetail view={view} userId={brokerOpen} onClose={() => setBrokerOpen(null)} onAccount={(a) => (setBrokerOpen(null), setAccountOpen(a))} onModeChanged={load} />}
       {view && accountOpen && (
         <AccountDetail
           view={view}
@@ -248,7 +274,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
         <Stat label="Market Finder accounts" value={k.marketFinderAccounts} hint={`${k.marketFinderSearches} account-free searches`} testId="kpi-market-finder" />
         <Stat label="Applications reviewed / downloaded" value={`${k.applicationsReviewed} / ${k.applicationsDownloaded}`} hint="accounts" testId="kpi-applications" />
         <Stat label="Markets added" value={k.marketsAdded} testId="kpi-markets" />
-        <Stat label="Quotes added" value={k.quotesAdded} testId="kpi-quotes" />
+        <Stat label="Quotes added" value={k.quotesAdded} hint="Before the analytics update (0070) one quote could be counted twice; older counts may still include duplicates." testId="kpi-quotes" />
         <Stat label="Follow-ups completed" value={k.followUpsCompleted} testId="kpi-followups" />
       </div>
 
@@ -516,11 +542,29 @@ function Timeline({ items, view, showUser }: { items: ReturnType<FounderView['ac
   );
 }
 
-function BrokerDetail({ view, userId, onClose, onAccount }: { view: FounderView; userId: string; onClose: () => void; onAccount: (id: string) => void }) {
+function BrokerDetail({ view, userId, onClose, onAccount, onModeChanged }: { view: FounderView; userId: string; onClose: () => void; onAccount: (id: string) => void; onModeChanged: () => Promise<void> }) {
   const d = view.brokerDetail(userId);
+  const isTest = view.isTestUser(userId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function toggleTest() {
+    setBusy(true);
+    setError(null);
+    const res = await setUserAnalyticsTest(userId, !isTest);
+    setBusy(false);
+    if (!res.ok) return setError(res.message ?? 'Could not change it.');
+    await onModeChanged();
+  }
   return (
     <Modal open onClose={onClose} title={d.name} subtitle={`${d.brokerage}${d.email ? ` · ${d.email}` : ''}`} size="lg">
       <div className="flex flex-col gap-4" data-testid="founder-broker-detail">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 text-sm">
+          {isTest ? <Badge tone="warning">Test user — not counted as real usage</Badge> : <Badge tone="success">Real user</Badge>}
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void toggleTest()} data-testid="toggle-test-user">
+            Mark as {isTest ? 'real user' : 'test user'}
+          </Button>
+        </div>
+        {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="First active" value={when(d.firstActive)} />
           <Stat label="Last active" value={when(d.lastActive)} />

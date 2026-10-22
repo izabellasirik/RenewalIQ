@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { CalendarClock, Check, Plus, Trash2 } from 'lucide-react';
+import { CalendarClock, Check, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button, Card, CardBody } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
@@ -25,6 +25,8 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
   const [dueDate, setDueDate] = useState(addBusinessDays(new Date(), 2));
   const [notes, setNotes] = useState('');
   const [showDone, setShowDone] = useState(false);
+  /** The follow-up being edited, with its draft subject, date and notes. */
+  const [editing, setEditing] = useState<{ id: string; subject: string; dueDate: string; notes: string } | null>(null);
 
   const open = [...followUps].filter((f) => !f.doneAt).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
   const done = [...followUps].filter((f) => f.doneAt).sort((a, b) => (a.doneAt! < b.doneAt! ? 1 : -1));
@@ -39,6 +41,13 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
     setNotes('');
     setDueDate(addBusinessDays(new Date(), 2));
     setAdding(false);
+  }
+
+  function saveEdit(e: FormEvent) {
+    e.preventDefault();
+    if (!editing || !editing.subject.trim() || !editing.dueDate) return;
+    updateFollowUp(accountId, editing.id, { subject: editing.subject.trim(), dueDate: editing.dueDate, notes: editing.notes });
+    setEditing(null);
   }
 
   return (
@@ -96,6 +105,39 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
           {open.length === 0 && !adding && <li className="text-sm italic text-[var(--color-ink-400)]">No follow-ups scheduled.</li>}
           {open.map((f) => {
             const due = f.dueDate <= today;
+            if (editing?.id === f.id)
+              return (
+                <li key={f.id} className="rounded-lg border border-[var(--color-brand-200)] px-3 py-2">
+                  <form onSubmit={saveEdit} className="grid grid-cols-1 gap-2 sm:grid-cols-[2fr_1fr]" data-testid="follow-up-edit">
+                    <div>
+                      <label className={labelClass} htmlFor={`fu-edit-subject-${f.id}`}>
+                        Follow up for
+                      </label>
+                      <input id={`fu-edit-subject-${f.id}`} value={editing.subject} onChange={(e) => setEditing({ ...editing, subject: e.target.value })} list={`fu-suggest-${accountId}`} className={inputClass} autoFocus />
+                    </div>
+                    <div>
+                      <label className={labelClass} htmlFor={`fu-edit-date-${f.id}`}>
+                        Follow-up date
+                      </label>
+                      <input id={`fu-edit-date-${f.id}`} type="date" value={editing.dueDate} onChange={(e) => setEditing({ ...editing, dueDate: e.target.value })} className={inputClass} />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className={labelClass} htmlFor={`fu-edit-notes-${f.id}`}>
+                        Notes
+                      </label>
+                      <textarea id={`fu-edit-notes-${f.id}`} value={editing.notes} onChange={(e) => setEditing({ ...editing, notes: e.target.value })} rows={3} className={inputClass} placeholder="e.g. Rescheduled — client asked to call back Thursday" />
+                    </div>
+                    <div className="flex justify-end gap-2 sm:col-span-2">
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(null)}>
+                        Cancel
+                      </Button>
+                      <Button type="submit" size="sm" disabled={!editing.subject.trim() || !editing.dueDate}>
+                        Save
+                      </Button>
+                    </div>
+                  </form>
+                </li>
+              );
             return (
               <li key={f.id} className={cn('rounded-lg border px-3 py-2', due ? 'border-[var(--color-danger-100)] bg-[var(--color-danger-100)]/30' : 'border-[var(--color-ink-100)]')}>
                 <div className="flex items-start justify-between gap-2">
@@ -104,6 +146,9 @@ export function FollowUpsCard({ accountId }: { accountId: string }) {
                     {f.notes && <p className="mt-0.5 whitespace-pre-line text-xs text-[var(--color-ink-600)]">{f.notes}</p>}
                   </div>
                   <div className="flex shrink-0 items-center gap-0.5">
+                    <button onClick={() => setEditing({ id: f.id, subject: f.subject, dueDate: f.dueDate, notes: f.notes ?? '' })} className="rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] hover:text-[var(--color-ink-700)] cursor-pointer" aria-label={`Edit follow-up for ${f.subject}`} title="Edit">
+                      <Pencil size={13} />
+                    </button>
                     <button onClick={() => completeFollowUp(accountId, f.id)} className="rounded-md p-1.5 text-[var(--color-success-600)] hover:bg-[var(--color-success-100)] cursor-pointer" aria-label={`Mark follow-up for ${f.subject} done`} title="Done">
                       <Check size={14} />
                     </button>

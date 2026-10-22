@@ -74,7 +74,7 @@ import { licenseReadReasons, licenseWarnings } from '../services/extraction/lice
 import { freshnessApplies, freshnessInstructions, freshnessItemLabel, freshnessTemplateKey, outdatedReports } from '../services/workflow/freshness';
 import { layerAgencyCarriers, type AgencyCarrier } from '../services/appetite/agencyCarriers';
 import { fetchAgencyCarriers } from '../services/supabase/carriersRepo';
-import { trackEvent, markAccountDemo } from '../services/productAnalytics/trackEvent';
+import { trackAccountUpdated, trackEvent, markAccountDemo } from '../services/productAnalytics/trackEvent';
 import { sampleAccount } from '../data/sampleAccounts';
 import { sampleDocumentFixtures } from '../data/sampleDocuments';
 import { generateId } from '../utils/id';
@@ -1437,6 +1437,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
 
@@ -1476,6 +1477,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
 
@@ -1505,6 +1507,7 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog: appendEvent(s.activityLog, accountId, 'coverage_added', `Added ${coverageType.replace(/_/g, ' ')} coverage.`),
           };
         });
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
 
@@ -1535,6 +1538,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
       updateVehicle: (accountId, vehicleId, patch) => {
@@ -1549,6 +1553,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
       deleteVehicle: (accountId, vehicleId) => {
@@ -1578,6 +1583,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
       updateDriver: (accountId, driverId, patch) => {
@@ -1592,6 +1598,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
       mergeDrivers: (accountId, keepId, dropId) => {
@@ -1671,6 +1678,7 @@ export const useAccountsStore = create<AccountsState>()(
             `Added loss run from ${run.carrier}${run.policyNumber ? ` (policy ${run.policyNumber})` : ''}${run.reportDate ? `, report dated ${formatShortDate(run.reportDate)}` : ''}${actorSuffix(s.currentUserEmail)}.`
           ),
         }));
+        trackAccountUpdated(accountId);
         syncNow(accountId);
         return run.id;
       },
@@ -1691,6 +1699,7 @@ export const useAccountsStore = create<AccountsState>()(
               ? appendEvent(s.activityLog, accountId, 'record_edited', `Loss run from ${next.carrier}: report date ${next.reportDate ? formatShortDate(next.reportDate) : 'cleared'}${actorSuffix(s.currentUserEmail)}.`)
               : appendEvent(s.activityLog, accountId, 'record_edited', `Edited loss run from ${next.carrier}.`),
         }));
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
 
@@ -1725,6 +1734,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
       updateLoss: (accountId, lossId, patch) => {
@@ -1739,6 +1749,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         get().runMatching(accountId);
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
       deleteLoss: (accountId, lossId) => {
@@ -1965,6 +1976,7 @@ export const useAccountsStore = create<AccountsState>()(
           ),
           activityLog: appendEvent(s.activityLog, accountId, 'account_updated', `Changed ${changes.join(' and ')}.`),
         }));
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
 
@@ -1986,11 +1998,13 @@ export const useAccountsStore = create<AccountsState>()(
 
       recordEmailReviewed: (accountId, message) => {
         set((s) => (s.accounts.some((a) => a.id === accountId) ? { activityLog: appendEvent(s.activityLog, accountId, 'email_reviewed', message) } : {}));
+        trackEvent('email_reviewed', { accountId, metadata: { source: 'email_assistant' } });
         syncNow(accountId);
       },
 
       recordEmailDraftOpened: (accountId, to, subject) => {
         set((s) => (s.accounts.some((a) => a.id === accountId) ? { activityLog: appendEvent(s.activityLog, accountId, 'email_draft_opened', `Email draft opened in Gmail for ${to}: “${subject}” (not sent from Renewal IQ)`) } : {}));
+        trackEvent('email_draft_opened', { accountId, metadata: { source: 'email_assistant' } });
         syncNow(accountId);
       },
 
@@ -2008,6 +2022,7 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog: appendEvent(s.activityLog, accountId, 'contact_added', `Added contact ${contact.name}${contact.role ? ` (${contact.role})` : ''}.`),
           };
         });
+        trackAccountUpdated(accountId);
         syncNow(accountId);
         return id;
       },
@@ -2024,6 +2039,7 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog: appendEvent(s.activityLog, accountId, 'contact_updated', patch.primary && Object.keys(patch).length === 1 ? `Made ${name} the primary contact.` : `Updated contact ${name}.`),
           };
         });
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
 
@@ -2044,6 +2060,7 @@ export const useAccountsStore = create<AccountsState>()(
             activityLog: appendEvent(s.activityLog, accountId, 'contact_removed', `Removed contact ${removed?.name ?? ''}.`.replace(' .', '.')),
           };
         });
+        trackAccountUpdated(accountId);
         syncNow(accountId);
       },
 
@@ -2505,9 +2522,11 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
         if (statusChanged) {
           trackEvent('market_status_changed', { accountId, metadata: { status: next.status } });
-          if (next.status === 'quoted' && !(before.options ?? []).length) trackEvent('quote_added', { accountId, metadata: { source: 'status' } });
+          // One quote is counted once: by becoming Quoted, by its first premium, or by a quote option — whichever comes first.
+          if (next.status === 'quoted' && !(before.options ?? []).length && !before.premium) trackEvent('quote_added', { accountId, metadata: { source: 'status' } });
         } else if (patch.premium !== undefined && next.premium !== before.premium) {
-          trackEvent(before.premium ? 'quote_updated' : 'quote_added', { accountId, metadata: { source: 'premium' } });
+          const alreadyCounted = !!before.premium || before.status === 'quoted' || (before.options ?? []).length > 0;
+          trackEvent(alreadyCounted ? 'quote_updated' : 'quote_added', { accountId, metadata: { source: 'premium' } });
         }
       },
 
@@ -2526,6 +2545,7 @@ export const useAccountsStore = create<AccountsState>()(
             `${policy.kind === 'endorsement' ? 'Endorsement to policy' : 'Policy'} ${policy.policyNumber ?? '(number to come)'} recorded with ${policy.carrier}${quote.marketName !== policy.carrier ? ` via ${quote.marketName}` : ''}: ${policy.kind === 'endorsement' ? 'endorsed' : 'bound'} ${formatShortDate(policy.boundDate)}, total ${formatCents(policyTotalCents(policy))}${actorSuffix(s.currentUserEmail)}.`
           ),
         }));
+        trackEvent('policy_bound', { accountId, metadata: { status: fields.kind === 'endorsement' ? 'endorsed' : 'bound' } });
         syncNow(accountId);
         return policy.id;
       },
@@ -2686,6 +2706,7 @@ export const useAccountsStore = create<AccountsState>()(
           accounts: touchAccount(s.accounts, accountId),
           activityLog: appendEvent(s.activityLog, accountId, 'carrier_note_added', `Note on ${quote.marketName}: ${trimmed.length > 140 ? `${trimmed.slice(0, 140)}…` : trimmed}`),
         }));
+        trackEvent('note_added', { accountId, metadata: { source: 'market' } });
         syncNow(accountId);
       },
 
@@ -2771,6 +2792,7 @@ export const useAccountsStore = create<AccountsState>()(
               ? appendEvent(s.activityLog, accountId, 'follow_up_scheduled', `Follow-up for ${patch.subject ?? before.subject} moved to ${formatShortDate(patch.dueDate)}.`)
               : s.activityLog,
         }));
+        trackEvent('follow_up_updated', { accountId, metadata: { source: patch.dueDate && patch.dueDate !== before.dueDate ? 'rescheduled' : 'edited' } });
         syncNow(accountId);
       },
 
@@ -3195,6 +3217,7 @@ export const useAccountsStore = create<AccountsState>()(
           authorName: s.myProfile?.fullName || currentActor?.name || s.currentUserEmail || 'You',
         };
         set((st) => ({ accounts: touchAccount(st.accounts.map((a) => (a.id === accountId ? { ...a, notes: [...(a.notes ?? []), note] } : a)), accountId) }));
+        trackEvent('note_added', { accountId, metadata: { source: 'account' } });
         syncNow(accountId);
       },
 
