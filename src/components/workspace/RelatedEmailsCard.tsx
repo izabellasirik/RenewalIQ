@@ -4,7 +4,7 @@ import { Badge, Button, Card, CardBody, Drawer, Modal } from '../ui';
 import { inputClass } from './formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { buildMatchInputs } from '../../services/emailAssistant/matchAccount';
-import { gmailThreadUrl, relatedEmailsView, saveSuggestions, suggestThreadLinks, threadsToMatch, type EmailThreadMeta } from '../../services/relatedEmails/relatedEmails';
+import { gmailThreadUrl, linkSearchView, linkableInputs, relatedEmailsView, saveSuggestions, suggestThreadLinks, threadsToMatch, type EmailThreadMeta, type LinkSearchState } from '../../services/relatedEmails/relatedEmails';
 import {
   actOnLink,
   fetchAccountEmails,
@@ -75,7 +75,12 @@ export function RelatedEmailsCard({ accountId }: { accountId: string }) {
   const refresh = async () => {
     setBusy(true);
     setNote(null);
-    const r = await syncGmail();
+    // Timings (ms) and counts only, in the browser console: never mailbox content, addresses or ids.
+    const t0 = performance.now();
+    const since = (from: number) => Math.round(performance.now() - from);
+    // The stored threads are read while Gmail syncs: this sync's threads come back with the response anyway.
+    const [r, stored] = await Promise.all([syncGmail(), searchMyThreads('', 500)]);
+    const syncMs = since(t0);
     if (!r.ok) {
       setNote(r.message);
       setBusy(false);
@@ -83,14 +88,23 @@ export function RelatedEmailsCard({ accountId }: { accountId: string }) {
     }
     if (r.data.status === 'reconnect_needed') setNote('Gmail access has expired. Reconnect it in Your profile.');
     // Match this sync's threads AND the ones already stored, so contacts saved since then are found.
-    const stored = await searchMyThreads('', 500);
+    let at = performance.now();
     const pool = threadsToMatch(r.data.threads, stored.ok ? stored.data : []);
     const linked = await fetchLinkedAccounts(pool.map((p) => p.thread.id));
-    const inputs = buildMatchInputs({ accounts, riskProfiles, quotes }, { agencyId });
+    const readMs = since(at);
+    at = performance.now();
+    const inputs = linkableInputs(buildMatchInputs({ accounts, riskProfiles, quotes }, { agencyId }), agencyId);
     const items = pool.flatMap(({ thread: t, snippet }) =>
       suggestThreadLinks(t, snippet, inputs, linked.ok ? (linked.data[t.id] ?? []) : [], { agencyId }).map((suggestion) => ({ threadId: t.id, suggestion }))
     );
+    const matchMs = since(at);
+    at = performance.now();
     const { saved: suggested, failed, firstError } = await saveSuggestions(items, suggestLink);
+    console.info('Related Emails refresh timing', {
+      ms: { sync: syncMs, readLinks: readMs, match: matchMs, saveSuggestions: since(at), total: since(t0) },
+      server: r.data.timing ?? null,
+      counts: { synced: r.data.threads.length, matched: pool.length, accounts: inputs.length, suggestions: items.length, saved: suggested, failed },
+    });
     if (r.data.status === 'ok')
       setNote(
         `${r.data.threads.length} new or updated ${r.data.threads.length === 1 ? 'thread' : 'threads'} · ${suggested} new ${suggested === 1 ? 'suggestion' : 'suggestions'}.` +
@@ -212,12 +226,26 @@ export function RelatedEmailsCard({ accountId }: { accountId: string }) {
 /** Link one of the broker's own synced emails to this account by hand (confirmed). Searches RenewalIQ's copy of headers, never Gmail. */
 function LinkEmailDialog({ accountId, linkedThreadIds, onClose, onLinked }: { accountId: string; linkedThreadIds: Set<string>; onClose: () => void; onLinked: () => void }) {
   const [q, setQ] = useState('');
-  const [rows, setRows] = useState<EmailThreadMeta[]>([]);
+  const [search, setSearch] = useState<LinkSearchState>({ status: 'loading' });
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const t = setTimeout(() => void searchMyThreads(q).then((r) => (r.ok ? setRows(r.data) : setError(r.message))), 250);
-    return () => clearTimeout(t);
+    // Loading until this search answers; a newer search, or closing the dialog, discards its answer.
+    let current = true;
+    setSearch({ status: 'loading' });
+    const t = setTimeout(
+      () =>
+        void searchMyThreads(q).then((r) => {
+          if (current) setSearch(r.ok ? { status: 'done', rows: r.data } : { status: 'error', message: r.message });
+        }),
+      250
+    );
+    return () => {
+      current = false;
+      clearTimeout(t);
+    };
   }, [q]);
+  const view = linkSearchView(search);
+  const rows = search.status === 'done' ? search.rows : [];
   const link = async (threadId: string) => {
     const r = await linkManually(threadId, accountId);
     if (r.ok) onLinked();
@@ -237,7 +265,9 @@ function LinkEmailDialog({ accountId, linkedThreadIds, onClose, onLinked }: { ac
             {linkedThreadIds.has(t.id) ? <span className="text-xs text-[var(--color-ink-400)]">Linked</span> : <Button size="sm" onClick={() => link(t.id)}>Link</Button>}
           </li>
         ))}
-        {rows.length === 0 && <li className="py-3 text-sm text-[var(--color-ink-500)]">No emails found.</li>}
+        {view === 'loading' && <li className="py-3 text-sm text-[var(--color-ink-500)]" role="status">Loading emails…</li>}
+        {view === 'error' && search.status === 'error' && <li className="py-3 text-sm text-[var(--color-danger-600)]" role="alert">{search.message}</li>}
+        {view === 'empty' && <li className="py-3 text-sm text-[var(--color-ink-500)]">No emails found.</li>}
       </ul>
     </Modal>
   );

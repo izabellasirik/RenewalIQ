@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gmailThreadUrl, relatedEmailsView, saveSuggestions, suggestThreadLinks, threadsToMatch, type EmailAccountLink, type EmailThreadMeta } from '../relatedEmails';
+import { gmailThreadUrl, linkSearchView, linkableInputs, relatedEmailsView, saveSuggestions, suggestThreadLinks, threadsToMatch, type EmailAccountLink, type EmailThreadMeta } from '../relatedEmails';
 import { AGENCY_A, candidates } from '../../emailAssistant/__tests__/world';
 
 // Synthetic accounts and mail only (the Email Assistant's test world).
@@ -86,5 +86,51 @@ describe('Refresh reports suggestions the database refused (no silent "0 new sug
     const results = [{ ok: false as const, message: 'You can’t open that account.' }, { ok: true as const }, { ok: false as const, message: 'other' }];
     const r = await saveSuggestions([{ threadId: 't1', suggestion: s }, { threadId: 't2', suggestion: s }, { threadId: 't3', suggestion: s }], async () => results.shift()!);
     expect(r).toEqual({ saved: 1, failed: 2, firstError: 'You can’t open that account.' });
+  });
+});
+
+describe('Refresh saves suggestions a few at a time (was one by one)', () => {
+  const s = { accountId: 'acct-northwind', reasons: [] };
+  it('never more than the limit at once, every item saved once, failures still reported', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const seen: string[] = [];
+    const items = Array.from({ length: 20 }, (_, i) => ({ threadId: `t${i}`, suggestion: s }));
+    const r = await saveSuggestions(items, async (threadId) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      seen.push(threadId);
+      await new Promise((res) => setTimeout(res, 2));
+      inFlight--;
+      return threadId === 't7' ? { ok: false as const, message: 'refused' } : { ok: true as const };
+    }, 6);
+    expect(peak).toBe(6);
+    expect([...seen].sort()).toEqual(items.map((i) => i.threadId).sort());
+    expect(r).toEqual({ saved: 19, failed: 1, firstError: 'refused' });
+  });
+});
+
+describe('Related Emails suggests only the agency’s own accounts (the database refuses the rest)', () => {
+  const personal = { ...pool[0], account: { ...pool[0].account, id: 'acct-personal', agencyId: undefined } };
+  it('personal and other-agency accounts are left out; agency accounts kept; no agency, none', () => {
+    const kept = linkableInputs([...pool, personal], AGENCY_A);
+    expect(kept.every((i) => i.account.agencyId === AGENCY_A)).toBe(true);
+    expect(kept.length).toBe(pool.filter((i) => i.account.agencyId === AGENCY_A).length);
+    expect(linkableInputs(pool, null)).toEqual([]);
+  });
+  it('the same agency accounts are still suggested (coverage unchanged)', () => {
+    const t = thread('Renewal docs', pool.find((i) => i.account.agencyId === AGENCY_A && i.contacts.some((c) => c.email))!.contacts.find((c) => c.email)!.email!);
+    const before = suggestThreadLinks(t, '', pool, [], { agencyId: AGENCY_A }).filter((x) => pool.find((i) => i.account.id === x.accountId)!.account.agencyId === AGENCY_A);
+    expect(suggestThreadLinks(t, '', linkableInputs(pool, AGENCY_A), [], { agencyId: AGENCY_A })).toEqual(before);
+    expect(before.length).toBeGreaterThan(0);
+  });
+});
+
+describe('"Link an email" shows "No emails found" only after a search succeeded empty', () => {
+  it('loading, error and empty are distinct', () => {
+    expect(linkSearchView({ status: 'loading' })).toBe('loading');
+    expect(linkSearchView({ status: 'error', message: 'x' })).toBe('error');
+    expect(linkSearchView({ status: 'done', rows: [] })).toBe('empty');
+    expect(linkSearchView({ status: 'done', rows: [{ id: '1' } as EmailThreadMeta] })).toBe('rows');
   });
 });

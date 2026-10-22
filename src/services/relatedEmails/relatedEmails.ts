@@ -119,26 +119,50 @@ export function relatedEmailsView<L extends EmailAccountLink>(accountId: string,
   };
 }
 
+/** How many suggestions Refresh saves at once (each is one small database call). */
+export const SAVE_CONCURRENCY = 6;
+
 /**
- * Saves Refresh's suggestions one by one and reports what the database refused, instead of silently
+ * Saves Refresh's suggestions, a few at a time, and reports what the database refused, instead of silently
  * counting it as "0 new suggestions". `save` returns the repository's result.
  */
 export async function saveSuggestions(
   items: { threadId: string; suggestion: LinkSuggestion }[],
-  save: (threadId: string, s: LinkSuggestion) => Promise<{ ok: true } | { ok: false; message: string }>
+  save: (threadId: string, s: LinkSuggestion) => Promise<{ ok: true } | { ok: false; message: string }>,
+  concurrency = SAVE_CONCURRENCY
 ): Promise<{ saved: number; failed: number; firstError: string | null }> {
   let saved = 0;
   let failed = 0;
   let firstError: string | null = null;
-  for (const { threadId, suggestion } of items) {
-    const r = await save(threadId, suggestion);
-    if (r.ok) saved++;
-    else {
-      failed++;
-      firstError ??= r.message;
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const { threadId, suggestion } = items[next++];
+      const r = await save(threadId, suggestion);
+      if (r.ok) saved++;
+      else {
+        failed++;
+        firstError ??= r.message;
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
   return { saved, failed, firstError };
+}
+
+/**
+ * The accounts Related Emails may suggest: only the agency's own (the database refuses links to personal or
+ * other agencies' accounts, so suggesting them only fails again on every Refresh).
+ */
+export function linkableInputs<I extends Pick<MatchCandidateInput, 'account'>>(inputs: I[], agencyId: string | null | undefined): I[] {
+  return agencyId ? inputs.filter((i) => i.account.agencyId === agencyId) : [];
+}
+
+/** What "Link an email" shows: results only after a search has finished; "No emails found" only when it succeeded empty. */
+export type LinkSearchState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'done'; rows: EmailThreadMeta[] };
+export function linkSearchView(state: LinkSearchState): 'loading' | 'error' | 'empty' | 'rows' {
+  if (state.status !== 'done') return state.status;
+  return state.rows.length ? 'rows' : 'empty';
 }
 
 /**

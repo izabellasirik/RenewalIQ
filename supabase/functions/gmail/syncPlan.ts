@@ -64,3 +64,12 @@ export async function withRetry<T extends { status: number }>(fn: () => Promise<
   }
   return r;
 }
+
+/** Runs `fn` over `items`, at most `limit` at a time; each worker starts the next item as soon as one finishes. */
+export async function mapPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
