@@ -13,11 +13,11 @@ const RESULT_TEXT: Record<string, string> = {
  * Connect / Disconnect the broker's own Gmail (read-only). Shown in Your profile. Hidden where Related
  * Emails isn't set up (no 0068 in this database).
  */
-export function GmailConnection({ result }: { result?: string | null }) {
+export function GmailConnection({ result, message: resultMessage }: { result?: string | null; message?: string | null }) {
   const [conn, setConn] = useState<Connection | null | undefined>(undefined);
   const [available, setAvailable] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(result ? (RESULT_TEXT[result] ?? null) : null);
+  const [message, setMessage] = useState<string | null>(resultMessage ?? (result ? (RESULT_TEXT[result] ?? null) : null));
 
   const load = () =>
     void fetchGmailConnection().then((r) => {

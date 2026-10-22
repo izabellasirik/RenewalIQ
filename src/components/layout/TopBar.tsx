@@ -9,6 +9,7 @@ import { signOutBroker } from '../../services/supabase/brokerAuth';
 import { NotificationBell } from './NotificationBell';
 import { ProfileForm } from '../profile/ProfileForm';
 import { GmailConnection } from '../profile/GmailConnection';
+import { completeGmailConnect } from '../../services/supabase/gmailRepo';
 import { Modal } from '../ui';
 
 /** email + Sign out when signed in; a discreet "Sign in" link otherwise. Deliberately small — see PROJECT direction not to overbuild profiles yet. */
@@ -19,15 +20,27 @@ function AccountMenu() {
   const [profileOpen, setProfileOpen] = useState(false);
   const myProfile = useAccountsStore((s) => s.myProfile);
   const ref = useRef<HTMLDivElement>(null);
-  // Back from Google's consent page (?gmail=connected|cancelled|failed): show the result in Your profile.
-  const [gmailResult] = useState(() => new URLSearchParams(window.location.search).get('gmail'));
+  // Back from Google's consent page (?gmail=complete&gmail_pending=… | cancelled | failed): finish the
+  // connection as the signed-in user (the server checks it's the one who started it), then show the result.
+  const [gmailReturn] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return { result: q.get('gmail'), pending: q.get('gmail_pending') };
+  });
+  const [gmailResult, setGmailResult] = useState<string | null>(gmailReturn.result === 'complete' ? null : gmailReturn.result);
+  const [gmailMessage, setGmailMessage] = useState<string | null>(null);
   useEffect(() => {
-    if (!gmailResult) return;
-    setProfileOpen(true);
+    if (!gmailReturn.result) return;
     const url = new URL(window.location.href);
     url.searchParams.delete('gmail');
+    url.searchParams.delete('gmail_pending');
     window.history.replaceState(null, '', url.toString());
-  }, [gmailResult]);
+    if (gmailReturn.result !== 'complete') return setProfileOpen(true);
+    void completeGmailConnect(gmailReturn.pending ?? '').then((r) => {
+      setGmailResult(r.ok ? 'connected' : 'failed');
+      if (!r.ok) setGmailMessage(r.message);
+      setProfileOpen(true);
+    });
+  }, [gmailReturn]);
 
   useEffect(() => {
     if (!open) return;
@@ -102,7 +115,7 @@ function AccountMenu() {
       )}
       <Modal open={profileOpen} onClose={() => setProfileOpen(false)} title="Your profile">
         {profileOpen && <ProfileForm email={session.email ?? ''} initial={myProfile} submitLabel="Save" onSaved={() => setProfileOpen(false)} />}
-        {profileOpen && <GmailConnection result={gmailResult} />}
+        {profileOpen && <GmailConnection result={gmailResult} message={gmailMessage} />}
       </Modal>
     </div>
   );

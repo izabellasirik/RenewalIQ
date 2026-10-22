@@ -37,6 +37,21 @@ create table if not exists public.gmail_tokens (
 );
 alter table public.gmail_tokens enable row level security;
 
+-- Server only. Google's return is parked here (token encrypted) until the SAME signed-in person who
+-- started the connection completes it from the app: single use, 10 minutes, one per OAuth state.
+create table if not exists public.gmail_oauth_pending (
+  id uuid primary key default gen_random_uuid(),
+  state_nonce text not null unique check (length(state_nonce) <= 64),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  email_address text not null check (length(email_address) <= 320),
+  refresh_token_ciphertext text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+alter table public.gmail_oauth_pending enable row level security;
+revoke all on public.gmail_oauth_pending from public, anon, authenticated;
+grant all on public.gmail_oauth_pending to service_role;
+
 create table if not exists public.email_threads (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references public.gmail_connections (user_id) on delete cascade,
@@ -239,3 +254,55 @@ grant execute on function public.email_suggest_link(uuid, text, jsonb), public.e
 drop function if exists public.email_suggest_link(uuid, uuid, text, jsonb);
 
 notify pgrst, 'reload schema';
+
+-- OAuth completion (service role only; the gmail function calls these).
+-- Park Google's return for the user named in the signed state. A state can be used once: a second
+-- return with the same state (replay) is refused. Expired parked returns are cleared.
+create or replace function public.gmail_oauth_stash(p_nonce text, p_user uuid, p_email text, p_ciphertext text, p_expires timestamptz)
+returns uuid
+language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v_id uuid;
+begin
+  delete from public.gmail_oauth_pending where expires_at < now();
+  insert into public.gmail_oauth_pending (state_nonce, user_id, email_address, refresh_token_ciphertext, expires_at)
+  values (p_nonce, p_user, p_email, p_ciphertext, p_expires)
+  on conflict (state_nonce) do nothing
+  returning id into v_id;
+  if v_id is null then
+    raise exception 'replay' using errcode = '42501';
+  end if;
+  return v_id;
+end;
+$$;
+revoke all on function public.gmail_oauth_stash(text, uuid, text, text, timestamptz) from public, anon, authenticated;
+grant execute on function public.gmail_oauth_stash(text, uuid, text, text, timestamptz) to service_role;
+
+-- Complete it as the signed-in caller (p_user comes from their verified sign-in, never from the URL).
+-- Single use: the parked return is removed first, whatever happens next — so a wrong person, an
+-- expired one or a second attempt can never connect it. Only then is the mailbox saved. Refusals are
+-- returned ('mismatch' / 'expired' / 'used_or_unknown'), not raised, so the removal always sticks.
+create or replace function public.gmail_oauth_complete(p_pending uuid, p_user uuid)
+returns text
+language plpgsql volatile security definer set search_path = ''
+as $$
+declare
+  v public.gmail_oauth_pending%rowtype;
+begin
+  delete from public.gmail_oauth_pending where id = p_pending returning * into v;
+  if not found then return 'used_or_unknown'; end if;
+  if v.expires_at < now() then return 'expired'; end if;
+  if v.user_id is distinct from p_user then return 'mismatch'; end if;
+  insert into public.gmail_connections (user_id, agency_id, email_address, status, history_id, connected_at, updated_at)
+  values (v.user_id, (select p.agency_id from public.profiles p where p.user_id = v.user_id), v.email_address, 'connected', null, now(), now())
+  on conflict (user_id) do update set agency_id = excluded.agency_id, email_address = excluded.email_address, status = 'connected',
+    history_id = null, connected_at = now(), updated_at = now();
+  insert into public.gmail_tokens (user_id, refresh_token_ciphertext, key_version, updated_at)
+  values (v.user_id, v.refresh_token_ciphertext, 1, now())
+  on conflict (user_id) do update set refresh_token_ciphertext = excluded.refresh_token_ciphertext, key_version = 1, updated_at = now();
+  return 'connected';
+end;
+$$;
+revoke all on function public.gmail_oauth_complete(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.gmail_oauth_complete(uuid, uuid) to service_role;

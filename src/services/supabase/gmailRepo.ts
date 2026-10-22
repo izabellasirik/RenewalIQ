@@ -44,6 +44,8 @@ async function invoke<T>(body: Record<string, unknown>, fallback: string): Promi
 
 /** Google's consent page for this broker; Google sends them back to `returnTo` with ?gmail=connected. */
 export const startGmailConnect = (returnTo: string) => invoke<{ url: string }>({ action: 'start', returnTo }, 'Gmail couldn’t be connected.');
+/** Finishes a connection after Google's return, as the signed-in user (must be the one who started it). */
+export const completeGmailConnect = (pending: string) => invoke<{ status: 'connected' }>({ action: 'complete', pending }, 'Gmail couldn’t be connected.');
 export const disconnectGmail = () => invoke<{ status: string }>({ action: 'disconnect' }, 'Gmail couldn’t be disconnected.');
 
 export interface SyncedThread extends EmailThreadMeta {

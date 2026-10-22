@@ -11,6 +11,7 @@
 // Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GMAIL_TOKEN_KEY (base64, 32 bytes), APP_ORIGINS (comma-separated
 // app origins allowed as returnTo). SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 
+import { STATE_TTL_MS, allowedReturn, signState, verifyState } from './oauthState.ts';
 const URL_ = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? '';
@@ -29,8 +30,6 @@ const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-const b64url = (s: string) => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const unb64url = (s: string) => atob(s.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(s.length / 4) * 4, '='));
 
 // ── keys: AES-GCM for the refresh token, HMAC (a key derived from the same secret) for the OAuth state ──
 const rawKey = () => unb64(KEY_B64);
@@ -47,9 +46,6 @@ async function decrypt(stored: string): Promise<string> {
   const [v, iv, ct] = stored.split(':');
   if (v !== 'v1') throw new Error('unknown token format');
   return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, await aesKey(), unb64(ct)));
-}
-async function sign(payload: string): Promise<string> {
-  return b64url(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign('HMAC', await hmacKey(), new TextEncoder().encode(payload)))));
 }
 
 // ── Supabase (service role) ──
@@ -81,35 +77,40 @@ async function gmail(path: string, access: string) {
 }
 
 async function start(uid: string, returnTo: string) {
-  if (!ORIGINS.some((o) => returnTo === o || returnTo.startsWith(`${o}/`))) return json({ error: 'That return address isn’t allowed.' }, 400);
-  const payload = b64url(JSON.stringify({ u: uid, r: returnTo, e: Date.now() + 10 * 60_000, n: crypto.randomUUID() }));
-  const state = `${payload}.${await sign(payload)}`;
+  if (!allowedReturn(returnTo, ORIGINS)) return json({ error: 'That return address isn’t allowed.' }, 400);
+  const state = await signState({ u: uid, r: returnTo, e: Date.now() + STATE_TTL_MS, n: crypto.randomUUID() }, await hmacKey());
   const url = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: 'code', scope: SCOPES, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', state })}`;
   return json({ url });
 }
 
+// Google's return. Nothing is connected here: the encrypted token is parked (single use, one per
+// state) and the browser goes back to the app, where the SAME signed-in user must complete it.
 async function callback(params: URLSearchParams) {
-  const [payload, mac] = (params.get('state') ?? '').split('.');
-  if (!payload || !mac || mac !== (await sign(payload))) return new Response('Invalid request.', { status: 400 });
-  const st = JSON.parse(unb64url(payload)) as { u: string; r: string; e: number };
-  const back = (result: string) => Response.redirect(`${st.r}${st.r.includes('?') ? '&' : '?'}gmail=${result}`, 302);
-  if (Date.now() > st.e || !ORIGINS.some((o) => st.r === o || st.r.startsWith(`${o}/`))) return new Response('This link has expired. Try connecting again.', { status: 400 });
-  if (params.get('error') || !params.get('code')) return back('cancelled');
+  const checked = await verifyState(params.get('state'), await hmacKey(), ORIGINS);
+  if (!checked.ok) return new Response(checked.reason === 'expired' ? 'This link has expired. Try connecting again.' : 'Invalid request.', { status: 400 });
+  const st = checked.state;
+  const back = (query: string) => Response.redirect(`${st.r}${st.r.includes('?') ? '&' : '?'}${query}`, 302);
+  if (params.get('error') || !params.get('code')) return back('gmail=cancelled');
   const tok = await tokenRequest({ code: params.get('code')!, redirect_uri: REDIRECT_URI, grant_type: 'authorization_code' });
-  if (!tok.ok || !tok.body.refresh_token || !String(tok.body.scope ?? '').includes('gmail.readonly')) return back('failed');
+  if (!tok.ok || !tok.body.refresh_token || !String(tok.body.scope ?? '').includes('gmail.readonly')) return back('gmail=failed');
   const profile = await gmail('profile', tok.body.access_token);
-  if (!profile.body?.emailAddress) return back('failed');
-  const prof = await (await db(`profiles?user_id=eq.${st.u}&select=agency_id`)).json();
-  const agency = prof?.[0]?.agency_id ?? null;
-  const conn = await db('gmail_connections?on_conflict=user_id', {
-    method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' },
-    body: JSON.stringify({ user_id: st.u, agency_id: agency, email_address: profile.body.emailAddress, status: 'connected', history_id: null, connected_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+  if (!profile.body?.emailAddress) return back('gmail=failed');
+  const res = await db('rpc/gmail_oauth_stash', {
+    method: 'POST',
+    body: JSON.stringify({ p_nonce: st.n, p_user: st.u, p_email: profile.body.emailAddress, p_ciphertext: await encrypt(tok.body.refresh_token), p_expires: new Date(st.e).toISOString() }),
   });
-  const saved = conn.ok && (await db('gmail_tokens?on_conflict=user_id', {
-    method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' },
-    body: JSON.stringify({ user_id: st.u, refresh_token_ciphertext: await encrypt(tok.body.refresh_token), key_version: 1, updated_at: new Date().toISOString() }),
-  })).ok;
-  return back(saved ? 'connected' : 'failed');
+  if (!res.ok) return new Response('Invalid request.', { status: 400 }); // replay of a used state
+  return back(`gmail=complete&gmail_pending=${encodeURIComponent(await res.json())}`);
+}
+
+// The app finishes the connection as the signed-in user; the database checks it's the user who started it.
+async function complete(uid: string, pending: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(pending)) return json({ error: 'This connection link isn’t valid. Try connecting again.' }, 400);
+  const res = await db('rpc/gmail_oauth_complete', { method: 'POST', body: JSON.stringify({ p_pending: pending, p_user: uid }) });
+  if (!res.ok) throw new Error(`gmail_oauth_complete: ${res.status}`);
+  const reason = await res.json();
+  if (reason === 'connected') return json({ status: 'connected' });
+  return json({ error: reason === 'mismatch' ? 'This Gmail connection was started by a different RenewalIQ user, so it wasn’t connected.' : 'This connection link has expired or was already used. Try connecting again.' }, reason === 'mismatch' ? 403 : 400);
 }
 
 async function accessToken(uid: string): Promise<string | 'reconnect' | null> {
@@ -223,6 +224,7 @@ Deno.serve(async (req) => {
     if (!uid) return json({ error: 'Sign in first.' }, 401);
     const body = await req.json().catch(() => ({}));
     if (body.action === 'start') return await start(uid, String(body.returnTo ?? ''));
+    if (body.action === 'complete') return await complete(uid, String(body.pending ?? ''));
     if (body.action === 'refresh') return await refresh(uid);
     if (body.action === 'disconnect') return await disconnect(uid);
     return json({ error: 'Unknown action' }, 400);
