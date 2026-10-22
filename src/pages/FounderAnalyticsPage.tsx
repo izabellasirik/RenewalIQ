@@ -13,6 +13,13 @@ const RANGES = [
   { key: '30', label: 'Last 30 days', days: 30 },
   { key: '90', label: 'Last 90 days', days: 90 },
 ] as const;
+/** YYYY-MM-DD for a local date (what <input type="date"> uses). */
+const dateKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+/** Local midnight at the start of a YYYY-MM-DD day. */
+const startOfDay = (key: string) => {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
 
 const selectClass = 'rounded-lg border border-[var(--color-ink-200)] bg-white px-2.5 py-1.5 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)]';
 const th = 'border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
@@ -72,9 +79,19 @@ function FounderDashboard() {
   const [brokerOpen, setBrokerOpen] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState<string | null>(null);
 
+  // Custom dates: both days included, local time (from the start of the first day to the end of the last).
+  const [customFrom, setCustomFrom] = useState(() => dateKey(new Date(Date.now() - 29 * 86400000)));
+  const [customTo, setCustomTo] = useState(() => dateKey(new Date()));
+  const custom = rangeKey === 'custom';
+  const customValid = !!customFrom && !!customTo && customFrom <= customTo;
   const days = RANGES.find((r) => r.key === rangeKey)?.days ?? 30;
-  const to = useMemo(() => endOfToday(), []);
-  const from = useMemo(() => new Date(to.getTime() - days * 86400000), [to, days]);
+  const today = useMemo(() => endOfToday(), []);
+  const to = useMemo(() => {
+    if (!custom || !customValid) return today;
+    const [y, m, d] = customTo.split('-').map(Number);
+    return new Date(y, m - 1, d + 1);
+  }, [custom, customValid, customTo, today]);
+  const from = useMemo(() => (custom && customValid ? startOfDay(customFrom) : new Date(today.getTime() - days * 86400000)), [custom, customValid, customFrom, today, days]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,7 +128,16 @@ function FounderDashboard() {
               {r.label}
             </option>
           ))}
+          <option value="custom">Custom dates</option>
         </select>
+        {custom && (
+          <span className="flex items-center gap-1.5 text-sm text-[var(--color-ink-600)]" data-testid="founder-custom-dates">
+            <input type="date" className={selectClass} value={customFrom} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)} aria-label="From date" />
+            to
+            <input type="date" className={selectClass} value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} aria-label="To date" />
+            {!customValid && <span className="text-xs text-[var(--color-danger-600)]">Pick a start date on or before the end date.</span>}
+          </span>
+        )}
         <select className={selectClass} value={orgId} onChange={(e) => setOrgId(e.target.value)} aria-label="Agency">
           <option value="">All agencies</option>
           {(snapshot?.orgs ?? []).map((o) => (
