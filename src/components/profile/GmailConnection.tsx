@@ -38,10 +38,11 @@ export function GmailConnection({ result, message: resultMessage }: { result?: s
     }
   };
   const disconnect = async () => {
+    if (!window.confirm('Disconnect Gmail? RenewalIQ’s access is revoked and the email details and email links it stored for you are deleted. Your accounts and documents are not affected.')) return;
     setBusy(true);
     const r = await disconnectGmail();
     setBusy(false);
-    setMessage(r.ok ? 'Gmail disconnected. RenewalIQ no longer has access to it.' : r.message);
+    setMessage(r.ok ? 'Gmail disconnected. RenewalIQ’s access was revoked and the email details it stored for you were deleted.' : r.message);
     load();
   };
   const connected = conn && conn.status !== 'disconnected';

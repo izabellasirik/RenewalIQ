@@ -5,13 +5,14 @@ import { PUBLIC_FACTS, PublicLayout } from './PublicLayout';
  * migration 0068, RelatedEmailsCard): keep it in step when that changes.
  */
 export function PrivacyPage() {
-  const { operator, contactEmail, updated } = PUBLIC_FACTS;
+  const { operator, contactEmail, siteUrl, updated } = PUBLIC_FACTS;
+  const mail = <a href={`mailto:${contactEmail}`} className="font-medium text-[var(--color-brand-700)] underline">{contactEmail}</a>;
   return (
     <PublicLayout>
       <h1>Privacy Policy</h1>
       <p className="text-sm text-[var(--color-ink-500)]">Last updated: {updated}</p>
       <p>
-        This policy explains what information {operator} (“RenewalIQ”, “we”) collects when agencies and their agents use RenewalIQ, how it is used,
+        This policy explains what information {operator} (“we”) collects when agencies and their agents use RenewalIQ at {siteUrl}, how it is used,
         and the choices you have.
       </p>
 
@@ -54,9 +55,11 @@ export function PrivacyPage() {
           AI or machine-learning service, and is not used to train models.
         </li>
         <li>
-          <strong>Disconnecting:</strong> you can disconnect Gmail at any time in Your profile. RenewalIQ then revokes its access at Google and deletes the
-          stored token; you can also remove access in your Google Account settings. Thread details and email links already stored remain visible to you
-          until they are deleted on request (see “Retention and deletion”).
+          <strong>Disconnecting deletes your Gmail data:</strong> you can disconnect Gmail at any time in Your profile. RenewalIQ then revokes its access at
+          Google and deletes, from its database, everything it stored for your mailbox: the encrypted token, any unfinished connection, the stored thread
+          details, the links between threads and client accounts, and their review history. Your client accounts, documents and other work are not
+          affected, and other users’ Gmail data is not touched. You can also remove RenewalIQ’s access in your Google Account settings; RenewalIQ then
+          stops syncing, and you can disconnect in Your profile to delete the stored data.
         </li>
       </ul>
 
@@ -99,8 +102,9 @@ export function PrivacyPage() {
 
       <h2>Retention and deletion</h2>
       <p>
-        Information is kept while your agency uses RenewalIQ. You can disconnect Gmail at any time. To have your account, or the Gmail information stored
-        for you, deleted, contact us at {contactEmail}; deleting your account deletes the Gmail information stored for it.
+        Information is kept while your agency uses RenewalIQ. Gmail information is kept only while Gmail is connected: disconnecting deletes it
+        immediately from our database (see above), and deleting your user account also deletes it. To have your account deleted, contact us at {mail}.
+        Copies may remain in our hosting provider’s database backups until those backups expire under its backup schedule.
       </p>
 
       <h2>Security</h2>
@@ -111,7 +115,7 @@ export function PrivacyPage() {
 
       <h2>Changes and contact</h2>
       <p>
-        We will update this page when our practices change. Questions or requests: {contactEmail}.
+        We will update this page when our practices change. Questions or requests: {mail}.
       </p>
     </PublicLayout>
   );

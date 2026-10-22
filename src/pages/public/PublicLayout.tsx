@@ -3,14 +3,16 @@ import { Link } from 'react-router-dom';
 import { BrandLogo } from '../../components/branding/Logo';
 
 /**
- * Public pages (home, privacy, terms): readable without signing in. Facts the owner still has to supply
- * are marked TO CONFIRM rather than invented — see PUBLIC_FACTS.
+ * Public pages (home, privacy, terms): readable without signing in. Owner-supplied facts live in PUBLIC_FACTS;
+ * the Gmail wording in PrivacyPage follows the code and must change with it.
  */
 export const PUBLIC_FACTS = {
-  /** The legal entity that operates RenewalIQ. */
+  /** Display name of the operator (no legal entity stated yet). */
   operator: 'RenewalIQ',
   /** Where users write about privacy and data deletion. */
-  contactEmail: 'TO CONFIRM — privacy contact email',
+  contactEmail: 'renewaliq@gmail.com',
+  /** The public site. */
+  siteUrl: 'https://www.renewaliq.app',
   /** When these pages last changed. */
   updated: 'October 23, 2026',
 };

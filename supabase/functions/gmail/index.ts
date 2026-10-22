@@ -241,8 +241,9 @@ async function disconnect(uid: string) {
       await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(await decrypt(rows[0].refresh_token_ciphertext))}`, { method: 'POST' });
     } catch { /* deleted below either way */ }
   }
-  await db(`gmail_tokens?user_id=eq.${uid}`, { method: 'DELETE' });
-  await db(`gmail_connections?user_id=eq.${uid}`, { method: 'PATCH', body: JSON.stringify({ status: 'disconnected', history_id: null, updated_at: new Date().toISOString() }) });
+  // Access revoked at Google above; now delete everything RenewalIQ stored for this mailbox (0071).
+  const forgot = await db('rpc/gmail_forget_mailbox', { method: 'POST', body: JSON.stringify({ p_user: uid }) }); // returns no content
+  if (!forgot.ok) throw new Error(`gmail_forget_mailbox: ${forgot.status}`);
   return json({ status: 'disconnected' });
 }
 
