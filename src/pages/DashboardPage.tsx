@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { accountsEmptyState } from '../services/workflow/accountsEmptyState';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Sparkles, Building2, Search, Archive, ArrowLeft } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -159,6 +160,12 @@ export function DashboardPage() {
     return counts;
   }, [accounts, showArchived, stageOf]);
   const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS || renewalFilter !== 'any' || boundFilter !== 'any';
+  const clearAll = () => {
+    setSearch('');
+    resetView();
+  };
+  // Empty archive vs. archived accounts all hidden by the search or the filters (they apply in both views).
+  const empty = accountsEmptyState({ showArchived, inView: accounts.filter((a) => a.archived === showArchived).length, searching: !!search.trim(), filtersActive });
 
   const historyAccount = historyAccountId ? accounts.find((a) => a.id === historyAccountId) : null;
 
@@ -220,13 +227,13 @@ export function DashboardPage() {
       ) : (
         <>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            {!showArchived && (
+            {(
               <div className="relative w-full sm:max-w-sm">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-ink-400)]" />
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search accounts…"
+                  placeholder={showArchived ? 'Search archived accounts…' : 'Search accounts…'}
                   className="w-full rounded-lg border border-[var(--color-ink-200)] py-2 pl-9 pr-3 text-sm outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15"
                 />
               </div>
@@ -286,12 +293,12 @@ export function DashboardPage() {
                 <input type="date" value={view.boundTo} onChange={(e) => updateView({ boundTo: e.target.value })} className={filterClass} aria-label="Bound to" />
               </span>
             )}
-            {filtersActive && (
+            {(filtersActive || search) && (
               <button
-                onClick={resetView}
+                onClick={clearAll}
                 className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer"
               >
-                Clear filters
+                Clear search and filters
               </button>
             )}
           </div>
@@ -299,7 +306,14 @@ export function DashboardPage() {
           {visible.length === 0 ? (
             <EmptyState
               icon={<Search size={24} strokeWidth={1.5} />}
-              title={showArchived ? 'No archived accounts' : 'No matching accounts'}
+              title={empty.title}
+              action={
+                empty.hiddenByFilters ? (
+                  <Button size="sm" variant="secondary" onClick={clearAll}>
+                    Clear search and filters
+                  </Button>
+                ) : undefined
+              }
               description={showArchived ? undefined : renewalFilter === 'due' ? 'No renewals to work on right now. A renewal shows here from its start-working date (45 days before, unless changed) until it’s bound.' : range ? 'No markets were bound in these dates. A market’s bound date is set when it’s marked Bound (and can be changed on the market).' : 'Try a different search term or clear the filters.'}
             />
           ) : (

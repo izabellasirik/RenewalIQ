@@ -1,4 +1,6 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { PrivacyPage } from './pages/public/PrivacyPage';
+import { TermsPage } from './pages/public/TermsPage';
 import { AppShell } from './components/layout/AppShell';
 import { AdminShell } from './components/layout/AdminShell';
 import { LoginPage } from './pages/LoginPage';
@@ -30,6 +32,9 @@ import { FounderAnalyticsPage } from './pages/FounderAnalyticsPage';
 import { PoliciesAnalyticsPage } from './pages/PoliciesAnalyticsPage';
 
 export const router = createBrowserRouter([
+  // Public (no sign-in): the policies Google's OAuth review and visitors read. Signed-out visitors at / see HomePage.
+  { path: '/privacy', element: <PrivacyPage /> },
+  { path: '/terms', element: <TermsPage /> },
   { path: '/login', element: <LoginPage /> },
   { path: '/signup', element: <SignupPage /> },
   // Deliberately outside AppShell and unauthenticated — an applicant opening this link has no

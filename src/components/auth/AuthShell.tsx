@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { BrandLogo } from '../branding/Logo';
 
 /** Shared centered-card layout for /login and /signup — deliberately outside AppShell (no Sidebar/TopBar/workspace chrome), since a visitor here isn't in a submission workspace yet. */
@@ -10,6 +11,10 @@ export function AuthShell({ children }: { children: ReactNode }) {
           <BrandLogo size={40} />
         </div>
         {children}
+        <p className="mt-6 flex justify-center gap-4 text-xs text-[var(--color-ink-500)]">
+          <Link to="/privacy" className="hover:underline">Privacy Policy</Link>
+          <Link to="/terms" className="hover:underline">Terms of Service</Link>
+        </p>
       </div>
     </div>
   );
