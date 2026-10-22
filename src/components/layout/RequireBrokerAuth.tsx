@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
-import { HomePage } from '../../pages/public/HomePage';
+import { Navigate } from 'react-router-dom';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { AppLoading } from '../branding/AppLoading';
 
@@ -16,11 +15,8 @@ import { AppLoading } from '../branding/AppLoading';
  */
 export function RequireBrokerAuth({ children }: { children: ReactNode }) {
   const session = useBrokerSession();
-  const location = useLocation();
 
   if (session.status === 'loading') return <AppLoading />;
-  // The site's front door is public: a signed-out visitor at / sees what RenewalIQ is (and the policies).
-  if (session.status === 'signed_out' && location.pathname === '/') return <HomePage />;
   if (session.status === 'signed_out' || session.status === 'password_recovery') return <Navigate to="/login" replace />;
   return <>{children}</>;
 }

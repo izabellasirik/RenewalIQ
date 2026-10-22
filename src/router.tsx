@@ -32,7 +32,7 @@ import { FounderAnalyticsPage } from './pages/FounderAnalyticsPage';
 import { PoliciesAnalyticsPage } from './pages/PoliciesAnalyticsPage';
 
 export const router = createBrowserRouter([
-  // Public (no sign-in): the policies Google's OAuth review and visitors read. Signed-out visitors at / see HomePage.
+  // Public (no sign-in): the policies Google's OAuth review and visitors read.
   { path: '/privacy', element: <PrivacyPage /> },
   { path: '/terms', element: <TermsPage /> },
   { path: '/login', element: <LoginPage /> },
