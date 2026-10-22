@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gmailThreadUrl, relatedEmailsView, suggestThreadLinks, threadsToMatch, type EmailAccountLink, type EmailThreadMeta } from '../relatedEmails';
+import { gmailThreadUrl, relatedEmailsView, saveSuggestions, suggestThreadLinks, threadsToMatch, type EmailAccountLink, type EmailThreadMeta } from '../relatedEmails';
 import { AGENCY_A, candidates } from '../../emailAssistant/__tests__/world';
 
 // Synthetic accounts and mail only (the Email Assistant's test world).
@@ -77,5 +77,14 @@ describe('Refresh re-matches threads fetched earlier (contact saved after the fi
   it('before the fix, only this sync’s threads were matched, so the stored one was never suggested', () => {
     const onlySynced = [fresh].flatMap((t) => suggestThreadLinks(t, t.snippet, candidates(), [], { agencyId: AGENCY_A }));
     expect(onlySynced).toEqual([]);
+  });
+});
+
+describe('Refresh reports suggestions the database refused (no silent "0 new suggestions")', () => {
+  const s = { accountId: 'acct-northwind', reasons: [] };
+  it('a refused save is counted and its message kept; successful ones still count', async () => {
+    const results = [{ ok: false as const, message: 'You can’t open that account.' }, { ok: true as const }, { ok: false as const, message: 'other' }];
+    const r = await saveSuggestions([{ threadId: 't1', suggestion: s }, { threadId: 't2', suggestion: s }, { threadId: 't3', suggestion: s }], async () => results.shift()!);
+    expect(r).toEqual({ saved: 1, failed: 2, firstError: 'You can’t open that account.' });
   });
 });

@@ -120,6 +120,28 @@ export function relatedEmailsView<L extends EmailAccountLink>(accountId: string,
 }
 
 /**
+ * Saves Refresh's suggestions one by one and reports what the database refused, instead of silently
+ * counting it as "0 new suggestions". `save` returns the repository's result.
+ */
+export async function saveSuggestions(
+  items: { threadId: string; suggestion: LinkSuggestion }[],
+  save: (threadId: string, s: LinkSuggestion) => Promise<{ ok: true } | { ok: false; message: string }>
+): Promise<{ saved: number; failed: number; firstError: string | null }> {
+  let saved = 0;
+  let failed = 0;
+  let firstError: string | null = null;
+  for (const { threadId, suggestion } of items) {
+    const r = await save(threadId, suggestion);
+    if (r.ok) saved++;
+    else {
+      failed++;
+      firstError ??= r.message;
+    }
+  }
+  return { saved, failed, firstError };
+}
+
+/**
  * What Refresh matches: the threads this sync returned (with Gmail's snippet) plus every thread already
  * stored (subject and sender only — snippets aren't kept), so a contact or account added after a thread
  * was first fetched still finds it. Each thread once, the synced copy first.
