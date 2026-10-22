@@ -119,6 +119,16 @@ export function relatedEmailsView<L extends EmailAccountLink>(accountId: string,
   };
 }
 
+/**
+ * What Refresh matches: the threads this sync returned (with Gmail's snippet) plus every thread already
+ * stored (subject and sender only — snippets aren't kept), so a contact or account added after a thread
+ * was first fetched still finds it. Each thread once, the synced copy first.
+ */
+export function threadsToMatch(synced: (EmailThreadMeta & { snippet: string })[], stored: EmailThreadMeta[]): { thread: EmailThreadMeta; snippet: string }[] {
+  const seen = new Set(synced.map((t) => t.id));
+  return [...synced.map(({ snippet, ...thread }) => ({ thread, snippet })), ...stored.filter((t) => !seen.has(t.id)).map((thread) => ({ thread, snippet: '' }))];
+}
+
 /** Opens the thread in the mailbox it belongs to (Gmail picks the right signed-in account by address). */
 export function gmailThreadUrl(mailbox: string, gmailThreadId: string): string {
   return `https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox)}#all/${encodeURIComponent(gmailThreadId)}`;

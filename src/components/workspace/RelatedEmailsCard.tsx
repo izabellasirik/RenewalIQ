@@ -4,7 +4,7 @@ import { Badge, Button, Card, CardBody, Drawer, Modal } from '../ui';
 import { inputClass } from './formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { buildMatchInputs } from '../../services/emailAssistant/matchAccount';
-import { gmailThreadUrl, relatedEmailsView, suggestThreadLinks, type EmailThreadMeta } from '../../services/relatedEmails/relatedEmails';
+import { gmailThreadUrl, relatedEmailsView, suggestThreadLinks, threadsToMatch, type EmailThreadMeta } from '../../services/relatedEmails/relatedEmails';
 import {
   actOnLink,
   fetchAccountEmails,
@@ -82,15 +82,18 @@ export function RelatedEmailsCard({ accountId }: { accountId: string }) {
       return;
     }
     if (r.data.status === 'reconnect_needed') setNote('Gmail access has expired. Reconnect it in Your profile.');
-    const linked = await fetchLinkedAccounts(r.data.threads.map((t) => t.id));
+    // Match this sync's threads AND the ones already stored, so contacts saved since then are found.
+    const stored = await searchMyThreads('', 500);
+    const pool = threadsToMatch(r.data.threads, stored.ok ? stored.data : []);
+    const linked = await fetchLinkedAccounts(pool.map((p) => p.thread.id));
     const inputs = buildMatchInputs({ accounts, riskProfiles, quotes }, { agencyId });
     let suggested = 0;
-    for (const t of r.data.threads) {
-      for (const s of suggestThreadLinks(t, t.snippet, inputs, linked.ok ? (linked.data[t.id] ?? []) : [], { agencyId })) {
+    for (const { thread: t, snippet } of pool) {
+      for (const s of suggestThreadLinks(t, snippet, inputs, linked.ok ? (linked.data[t.id] ?? []) : [], { agencyId })) {
         if ((await suggestLink(t.id, s)).ok) suggested++;
       }
     }
-    if (r.data.status === 'ok') setNote(`${r.data.threads.length} new or updated ${r.data.threads.length === 1 ? 'thread' : 'threads'} · ${suggested} new ${suggested === 1 ? 'suggestion' : 'suggestions'}${r.data.truncated ? ' (more next Refresh)' : ''}.`);
+    if (r.data.status === 'ok') setNote(`${r.data.threads.length} new or updated ${r.data.threads.length === 1 ? 'thread' : 'threads'} · ${suggested} new ${suggested === 1 ? 'suggestion' : 'suggestions'}${r.data.truncated ? ' (only the most recent mail was fetched)' : ''}.`);
     await load();
     setBusy(false);
   };

@@ -93,8 +93,10 @@ export async function fetchAccountEmails(accountId: string): Promise<RepoResult<
 /** Accounts already linked to each of these threads (any status), so they aren't suggested again. */
 export async function fetchLinkedAccounts(threadIds: string[]): Promise<RepoResult<Record<string, string[]>>> {
   if (!supabase) return NOT_CONFIGURED;
+  const all = threadIds.length > 100; // a long id list doesn't fit in a URL: read all of this broker's links instead (RLS: own only)
   if (!threadIds.length) return { ok: true, data: {} };
-  const { data, error } = await supabase.from('email_account_links').select('thread_id,submission_id').in('thread_id', threadIds);
+  const q = supabase.from('email_account_links').select('thread_id,submission_id');
+  const { data, error } = await (all ? q.limit(10000) : q.in('thread_id', threadIds));
   if (error) return fail(error, 'Could not load related emails.');
   const out: Record<string, string[]> = {};
   for (const r of data ?? []) (out[r.thread_id] ??= []).push(r.submission_id);

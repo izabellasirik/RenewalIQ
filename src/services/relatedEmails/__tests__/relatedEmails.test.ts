@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gmailThreadUrl, relatedEmailsView, suggestThreadLinks, type EmailAccountLink, type EmailThreadMeta } from '../relatedEmails';
+import { gmailThreadUrl, relatedEmailsView, suggestThreadLinks, threadsToMatch, type EmailAccountLink, type EmailThreadMeta } from '../relatedEmails';
 import { AGENCY_A, candidates } from '../../emailAssistant/__tests__/world';
 
 // Synthetic accounts and mail only (the Email Assistant's test world).
@@ -60,5 +60,22 @@ describe('what the Overview shows', () => {
   });
   it('links to the thread in the right mailbox', () => {
     expect(gmailThreadUrl('agent.a@agency.example', '18c2f0a1b')).toBe('https://mail.google.com/mail/?authuser=agent.a%40agency.example#all/18c2f0a1b');
+  });
+});
+
+describe('Refresh re-matches threads fetched earlier (contact saved after the first sync)', () => {
+  const stored: EmailThreadMeta = { id: 'th-old', gmailThreadId: 'g-old', subject: 'MVRs attached', fromName: 'Dana Reyes', fromEmail: 'dana@northwindfreight.example', lastMessageId: 'm-old', lastMessageAt: '2026-10-01T10:00:00Z', messageCount: 1 };
+  const fresh = { ...stored, id: 'th-new', gmailThreadId: 'g-new', subject: 'Unrelated newsletter', fromEmail: 'news@example.example', snippet: 'Weekly news' };
+
+  it('a stored thread not in this sync is matched — and suggested — once its sender is a contact', () => {
+    const pool = threadsToMatch([fresh], [stored, { ...fresh, snippet: undefined } as unknown as EmailThreadMeta]);
+    expect(pool.map((p) => p.thread.id)).toEqual(['th-new', 'th-old']); // each once, the synced copy first
+    const suggested = pool.flatMap((p) => suggestThreadLinks(p.thread, p.snippet, candidates(), [], { agencyId: AGENCY_A }).map((s) => `${p.thread.id}→${s.accountId}`));
+    expect(suggested).toEqual(['th-old→acct-northwind']);
+  });
+
+  it('before the fix, only this sync’s threads were matched, so the stored one was never suggested', () => {
+    const onlySynced = [fresh].flatMap((t) => suggestThreadLinks(t, t.snippet, candidates(), [], { agencyId: AGENCY_A }));
+    expect(onlySynced).toEqual([]);
   });
 });
