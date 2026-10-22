@@ -202,8 +202,8 @@ export function LoginPage() {
       </p>
       {/* What RenewalIQ is and how it uses Gmail — for visitors and Google's OAuth review (details: /privacy). */}
       <p className="mt-6 text-center text-xs leading-relaxed text-[var(--color-ink-500)]" data-testid="product-purpose">
-        RenewalIQ helps commercial insurance agencies manage client accounts, submissions, market research, and renewal document collection. Optional
-        read-only Gmail access brings related email threads into each client’s account.
+        RenewalIQ is a workspace for commercial insurance agencies to manage client accounts, submissions, market research, and document collection.
+        Optional read-only Gmail access brings related email threads into each client’s account.
       </p>
     </AuthShell>
   );
