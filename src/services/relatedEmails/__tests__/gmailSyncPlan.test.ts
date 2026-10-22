@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planQueue, remainingAfter, threadCounterpart, withRetry, type FetchOutcome } from '../../../../supabase/functions/gmail/syncPlan.ts';
+import { mapPool, planQueue, remainingAfter, threadCounterpart, withRetry, type FetchOutcome } from '../../../../supabase/functions/gmail/syncPlan.ts';
 
 // The Gmail function's sync planning (supabase/functions/gmail/syncPlan.ts). Fictional addresses only.
 const OWNER = 'broker@agency.example';
@@ -51,5 +51,29 @@ describe('Gmail calls retry rate limits and server errors, and give up visibly',
     const c = calls([500]);
     expect((await withRetry(c.fn, noWait)).status).toBe(500);
     expect(c.count()).toBe(4);
+  });
+});
+
+describe('thread fetches run in a pool (no waiting for the slowest of each batch)', () => {
+  it('bounded, every thread once, and a slow thread doesn’t hold the others back', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const done: number[] = [];
+    const items = Array.from({ length: 30 }, (_, i) => i);
+    const start = Date.now();
+    await mapPool(items, 10, async (i) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((res) => setTimeout(res, i === 0 ? 60 : 5));
+      inFlight--;
+      done.push(i);
+    });
+    expect(peak).toBe(10);
+    expect([...done].sort((a, b) => a - b)).toEqual(items);
+    expect(done.indexOf(0)).toBeGreaterThan(20); // the others kept going while thread 0 was slow
+    expect(Date.now() - start).toBeLessThan(200);
+  });
+  it('an empty queue does nothing', async () => {
+    await expect(mapPool([], 10, async () => { throw new Error('no'); })).resolves.toBeUndefined();
   });
 });

@@ -53,7 +53,7 @@ export interface SyncedThread extends EmailThreadMeta {
   snippet: string;
 }
 /** remaining: threads found but not fetched yet (next Refresh continues); failed: fetches that failed this time (retried next Refresh); olderNotFetched: the first 90-day search had more mail than one sync reads. */
-export const syncGmail = () => invoke<{ status: 'ok' | 'reconnect_needed' | 'not_connected'; threads: SyncedThread[]; remaining?: number; failed?: number; olderNotFetched?: boolean }>({ action: 'refresh' }, 'Gmail couldn’t be refreshed.');
+export const syncGmail = () => invoke<{ status: 'ok' | 'reconnect_needed' | 'not_connected'; threads: SyncedThread[]; remaining?: number; failed?: number; olderNotFetched?: boolean; timing?: { ms: Record<string, number>; counts: Record<string, number> } }>({ action: 'refresh' }, 'Gmail couldn’t be refreshed.');
 
 const toThread = (r: Record<string, unknown>): EmailThreadMeta => ({
   id: String(r.id),

@@ -3,7 +3,7 @@
 //
 //   POST {action: 'start', returnTo}  → {url}: Google's consent page (signed-in broker only)
 //   GET  ?code=…&state=…              ← Google's redirect: stores the encrypted refresh token, back to the app
-//   POST {action: 'refresh'}           → {status, threads}: new / changed threads since the last sync (first time:
+//   POST {action: 'refresh'}           → {status, threads, timing}: new / changed threads since the last sync (first time:
 //                                        the last 90 days), with Gmail's short snippet for matching (not stored)
 //   POST {action: 'disconnect'}        → revokes the token at Google and deletes it
 //
@@ -12,7 +12,7 @@
 // app origins allowed as returnTo). SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
 
 import { STATE_TTL_MS, allowedReturn, signState, verifyState } from './oauthState.ts';
-import { planQueue, remainingAfter, threadCounterpart, withRetry, type FetchOutcome } from './syncPlan.ts';
+import { mapPool, planQueue, remainingAfter, threadCounterpart, withRetry, type FetchOutcome } from './syncPlan.ts';
 const URL_ = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? '';
@@ -26,6 +26,7 @@ const FIRST_SYNC_QUERY = 'newer_than:90d -in:chats -in:drafts -in:spam -in:trash
 const CATCH_UP_QUERY = 'newer_than:7d -in:chats -in:drafts -in:spam -in:trash';
 const MAX_MESSAGES = 2000;
 const MAX_THREADS = 500;
+const FETCH_CONCURRENCY = 10; // threads.get costs 10 of Gmail's 250 quota units per user per second; 429s are retried
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -160,12 +161,23 @@ const header = (m: { payload?: { headers?: { name: string; value: string }[] } }
   m.payload?.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
 
 async function refresh(uid: string) {
-  if (!(await isMember(uid))) return json({ error: 'Join your agency to use Gmail in RenewalIQ.' }, 403);
-  const conns = await (await db(`gmail_connections?user_id=eq.${uid}&select=status,history_id,email_address,sync_backlog`)).json();
+  // Durations (ms) and counts only: never mailbox content, addresses, ids or tokens.
+  const t0 = performance.now();
+  const ms: Record<string, number> = {};
+  const lap = (k: string, from: number) => (ms[k] = Math.round(performance.now() - from));
+  const [member, conns] = await Promise.all([
+    isMember(uid),
+    db(`gmail_connections?user_id=eq.${uid}&select=status,history_id,email_address,sync_backlog`).then((r) => r.json()),
+  ]);
+  lap('checks', t0);
+  if (!member) return json({ error: 'Join your agency to use Gmail in RenewalIQ.' }, 403);
   const conn = conns?.[0];
   if (!conn || conn.status === 'disconnected') return json({ status: 'not_connected', threads: [] });
+  let t = performance.now();
   const access = await accessToken(uid);
+  lap('token', t);
   if (access === 'reconnect' || access === null) return json({ status: 'reconnect_needed', threads: [] });
+  t = performance.now();
 
   // 1. What changed since the last position (or the first 90 days). Never moves the position past mail
   //    it hasn't queued: everything found goes into the queue, which carries over between Refreshes.
@@ -196,42 +208,57 @@ async function refresh(uid: string) {
     historyId = null;
   }
   if (!historyId) historyId = (await gmail('profile', access)).body?.historyId ?? conn.history_id ?? null;
+  lap('list', t);
 
-  // 2. Fetch up to MAX_THREADS from the queue (new first, then what's left from before).
+  // 2. Fetch up to MAX_THREADS from the queue (new first, then what's left from before), FETCH_CONCURRENCY
+  //    at a time: each worker takes the next thread as soon as it's done (no waiting for the slowest of a batch).
   const queue = planQueue(newIds, Array.isArray(conn.sync_backlog) ? conn.sync_backlog : []);
   const batch = queue.slice(0, MAX_THREADS);
   const outcomes = new Map<string, FetchOutcome>();
   const threads: unknown[] = [];
-  for (let i = 0; i < batch.length; i += 10) {
-    await Promise.all(batch.slice(i, i + 10).map(async (tid) => {
-      const r = await gmail(`threads/${tid}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject`, access);
-      if (r.status === 404) return void outcomes.set(tid, 'gone');
-      if (!r.body) return void outcomes.set(tid, 'failed');
-      const msgs = (r.body.messages ?? []).filter((m: { labelIds?: string[] }) => !(m.labelIds ?? []).some((l) => l === 'DRAFT' || l === 'SPAM' || l === 'TRASH'));
-      if (!msgs.length) return void outcomes.set(tid, 'gone');
-      msgs.sort((a: { internalDate: string }, b: { internalDate: string }) => Number(a.internalDate) - Number(b.internalDate));
-      const last = msgs[msgs.length - 1];
-      // Who the broker is emailing with — not the broker's own reply.
-      const withWhom = threadCounterpart(msgs.map((m: { internalDate: string; payload?: { headers?: { name: string; value: string }[] } }) => ({ from: header(m, 'From'), to: header(m, 'To'), internalDate: m.internalDate })), conn.email_address ?? '');
-      const subject = header(msgs[0], 'Subject') || header(last, 'Subject');
-      const lastAt = new Date(Number(last.internalDate)).toISOString();
-      try {
-        const id = await rpc('email_record_thread', {
-          p_owner: uid, p_gmail_thread_id: tid, p_subject: subject, p_from_name: withWhom.name, p_from_email: withWhom.email,
-          p_last_message_id: last.id, p_last_message_at: lastAt, p_message_count: msgs.length,
-        });
-        threads.push({ id, gmailThreadId: tid, subject, fromName: withWhom.name, fromEmail: withWhom.email, lastMessageId: last.id, lastMessageAt: lastAt, messageCount: msgs.length, snippet: String(last.snippet ?? '').slice(0, 300) });
-        outcomes.set(tid, 'ok');
-      } catch (e) {
-        console.error('gmail: record thread failed', e instanceof Error ? e.message : e);
-        outcomes.set(tid, 'failed');
-      }
-    }));
-  }
+  let gmailMs = 0;
+  let saveMs = 0;
+  t = performance.now();
+  await mapPool(batch, FETCH_CONCURRENCY, async (tid) => {
+    let s = performance.now();
+    const r = await gmail(`threads/${tid}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject`, access);
+    gmailMs += performance.now() - s;
+    if (r.status === 404) return void outcomes.set(tid, 'gone');
+    if (!r.body) return void outcomes.set(tid, 'failed');
+    const msgs = (r.body.messages ?? []).filter((m: { labelIds?: string[] }) => !(m.labelIds ?? []).some((l) => l === 'DRAFT' || l === 'SPAM' || l === 'TRASH'));
+    if (!msgs.length) return void outcomes.set(tid, 'gone');
+    msgs.sort((a: { internalDate: string }, b: { internalDate: string }) => Number(a.internalDate) - Number(b.internalDate));
+    const last = msgs[msgs.length - 1];
+    // Who the broker is emailing with — not the broker's own reply.
+    const withWhom = threadCounterpart(msgs.map((m: { internalDate: string; payload?: { headers?: { name: string; value: string }[] } }) => ({ from: header(m, 'From'), to: header(m, 'To'), internalDate: m.internalDate })), conn.email_address ?? '');
+    const subject = header(msgs[0], 'Subject') || header(last, 'Subject');
+    const lastAt = new Date(Number(last.internalDate)).toISOString();
+    s = performance.now();
+    try {
+      const id = await rpc('email_record_thread', {
+        p_owner: uid, p_gmail_thread_id: tid, p_subject: subject, p_from_name: withWhom.name, p_from_email: withWhom.email,
+        p_last_message_id: last.id, p_last_message_at: lastAt, p_message_count: msgs.length,
+      });
+      threads.push({ id, gmailThreadId: tid, subject, fromName: withWhom.name, fromEmail: withWhom.email, lastMessageId: last.id, lastMessageAt: lastAt, messageCount: msgs.length, snippet: String(last.snippet ?? '').slice(0, 300) });
+      outcomes.set(tid, 'ok');
+    } catch (e) {
+      console.error('gmail: record thread failed', e instanceof Error ? e.message : e);
+      outcomes.set(tid, 'failed');
+    }
+    saveMs += performance.now() - s;
+  });
+  lap('fetchAndSave', t);
   const backlog = remainingAfter(queue, MAX_THREADS, outcomes).slice(0, 5000);
   const failed = [...outcomes.values()].filter((o) => o === 'failed').length;
+  t = performance.now();
   await db(`gmail_connections?user_id=eq.${uid}`, { method: 'PATCH', body: JSON.stringify({ history_id: historyId, sync_backlog: backlog, last_synced_at: new Date().toISOString(), status: 'connected', updated_at: new Date().toISOString() }) });
-  return json({ status: 'ok', threads, remaining: backlog.length, failed, olderNotFetched: capped });
+  lap('cursor', t);
+  ms.gmailCallsSum = Math.round(gmailMs);
+  ms.recordCallsSum = Math.round(saveMs);
+  lap('total', t0);
+  const counts = { queued: queue.length, fetched: batch.length, recorded: threads.length, failed, remaining: backlog.length, catchUp: catchUp ? 1 : 0 };
+  console.log('gmail refresh timing', JSON.stringify({ ms, counts }));
+  return json({ status: 'ok', threads, remaining: backlog.length, failed, olderNotFetched: capped, timing: { ms, counts } });
 }
 
 async function disconnect(uid: string) {
