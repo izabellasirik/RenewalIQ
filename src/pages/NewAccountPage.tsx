@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CircleCheck, Clock, Loader2, Sparkles, TriangleAlert, UploadCloud } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
@@ -16,6 +16,10 @@ import { DocumentLinkError } from '../services/ingestion/documentLinks';
 import { NewAccountTypeFields } from '../components/renewals/NewAccountTypeFields';
 import { EMPTY_ACCOUNT_TYPE, readAccountType, type NewAccountTypeValue } from '../components/renewals/renewalForm';
 import { normalizeDateKey } from '../services/workflow/dates';
+import { DuplicateAccountWarning } from '../components/newSubmission/DuplicateAccountWarning';
+import { localAccountCandidates, runDuplicateCheck, unseenMatches, type AccountIdentity, type DuplicateCheckResult } from '../services/accounts/duplicateCheck';
+import { fetchAccountDuplicates } from '../services/supabase/intakeRepo';
+import { isSupabaseConfigured } from '../services/supabase/client';
 
 type Mode = 'choice' | 'manual' | 'processing' | 'confirm' | 'error';
 type DraftDoc = Omit<UploadedDocument, 'accountId'>;
@@ -93,7 +97,75 @@ export function NewAccountPage() {
   const [typeTouched, setTypeTouched] = useState(false);
   const setup = readAccountType(accountType);
 
+  // Possible existing accounts (0072): checked as the name is typed, and again right before an account is saved.
+  const accounts = useAccountsStore((s) => s.accounts);
+  const riskProfiles = useAccountsStore((s) => s.riskProfiles);
+  const currentUserId = useAccountsStore((s) => s.currentUserId);
+  const agencyMembers = useAccountsStore((s) => s.agencyMembers);
+  const memberEmail = (userId: string) => agencyMembers.find((m) => m.userId === userId)?.email ?? null;
+  const checkDuplicates = (identity: AccountIdentity) =>
+    runDuplicateCheck(identity, {
+      remote: isSupabaseConfigured && currentUserId ? () => fetchAccountDuplicates(identity) : undefined,
+      local: localAccountCandidates(accounts, riskProfiles),
+    });
+  type Gate = { identity: AccountIdentity; status: 'checking' | 'review' | 'failed'; result?: DuplicateCheckResult; message?: string; proceed: () => void };
+  const [gate, setGate] = useState<Gate | null>(null);
+  const [preview, setPreview] = useState<{ identity: AccountIdentity; result: DuplicateCheckResult } | null>(null);
+
+  /**
+   * Saves through the duplicate check: no possible match (and every account compared) → saved; otherwise the
+   * broker sees the matches and chooses. "Create separate account" checks once more and asks again only if
+   * something new turned up. A failed check is shown with Retry — never taken as "no duplicates".
+   */
+  async function guardedCreate(identity: AccountIdentity, proceed: () => void, shown?: DuplicateCheckResult) {
+    setGate({ identity, status: 'checking', result: shown, proceed });
+    const r = await checkDuplicates(identity);
+    // A review happens on the confirm step when the account comes from documents (their draft is kept).
+    const hold = () => setMode((m) => (m === 'processing' ? 'confirm' : m));
+    if (!r.ok) {
+      setGate({ identity, status: 'failed', message: r.message, proceed });
+      hold();
+      return;
+    }
+    const fresh = shown ? unseenMatches(shown.matches, r.result.matches) : r.result.matches;
+    if (fresh.length === 0 && (shown || r.result.complete)) {
+      setGate(null);
+      proceed();
+      return;
+    }
+    setGate({ identity, status: 'review', result: r.result, proceed });
+    hold();
+  }
+
+  useEffect(() => {
+    const name = namedInsuredInput.trim();
+    if (mode !== 'manual' || name.length < 3) return setPreview(null);
+    let current = true;
+    const t = setTimeout(() => {
+      void checkDuplicates({ name }).then((r) => {
+        if (current) setPreview(r.ok && r.result.matches.length ? { identity: { name }, result: r.result } : null);
+      });
+    }, 500);
+    return () => {
+      current = false;
+      clearTimeout(t);
+    };
+  }, [namedInsuredInput, mode]);
+
   function finalizeAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
+    const identity = { name: namedInsured, dotNumber: profile.transportation.dotNumber.value ?? null, mcNumber: profile.transportation.mcNumber.value ?? null };
+    void guardedCreate(identity, () => {
+      try {
+        commitAccount(namedInsured, state, docs, profile, files);
+      } catch (err) {
+        console.error('New submission failed', err);
+        setFatalError(err instanceof Error ? err.message : String(err));
+        setMode('error');
+      }
+    });
+  }
+
+  function commitAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
     const id = createAccountFromExtraction(namedInsured, state, docs, profile, files, undefined, setup ? { setup } : undefined);
     // Straight to the Risk Profile to review what was extracted.
     navigate(`/accounts/${id}/risk-profile`);
@@ -109,6 +181,7 @@ export function NewAccountPage() {
   const keys = useRef(new WeakMap<File, string>());
 
   function startOver() {
+    setGate(null);
     queue.current = [];
     draft.current = null;
     setItems([]);
@@ -260,9 +333,45 @@ export function NewAccountPage() {
     e.preventDefault();
     setTypeTouched(true);
     if (!namedInsuredInput.trim() || !stateInput || !setup) return;
-    const id = createAccount(namedInsuredInput.trim(), stateInput, setup);
-    navigate(`/accounts/${id}/upload`);
+    const name = namedInsuredInput.trim();
+    void guardedCreate({ name }, () => {
+      const id = createAccount(name, stateInput, setup);
+      navigate(`/accounts/${id}/upload`);
+    });
   }
+
+  const gatePanel = gate && (
+    <div className="mb-4" data-testid="duplicate-gate">
+      {gate.status === 'checking' && !gate.result && (
+        <p className="flex items-center gap-2 text-sm text-[var(--color-ink-600)]" role="status">
+          <Loader2 size={14} className="animate-spin" /> Checking for existing accounts in your agency…
+        </p>
+      )}
+      {gate.status === 'failed' && (
+        <div className="rounded-lg border border-[var(--color-warning-500)] bg-[var(--color-warning-100)] p-3 text-sm" role="alert" data-testid="duplicate-check-failed">
+          <p className="font-semibold text-[var(--color-ink-900)]">Couldn’t check for existing accounts</p>
+          <p className="mt-1 text-xs text-[var(--color-ink-600)]">{gate.message} Nothing was saved. Try again, or create the account without the check.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => void guardedCreate(gate.identity, gate.proceed)}>Retry</Button>
+            <Button size="sm" variant="secondary" onClick={() => { const go = gate.proceed; setGate(null); go(); }}>Create without checking</Button>
+            <Button size="sm" variant="ghost" onClick={() => setGate(null)}>Cancel</Button>
+          </div>
+        </div>
+      )}
+      {gate.result && gate.status !== 'failed' && (
+        <DuplicateAccountWarning
+          identity={gate.identity}
+          matches={gate.result.matches}
+          complete={gate.result.complete}
+          currentUserId={currentUserId}
+          memberEmail={memberEmail}
+          busy={gate.status === 'checking'}
+          onCreateAnyway={() => void guardedCreate(gate.identity, gate.proceed, gate.result)}
+          onCancel={() => setGate(null)}
+        />
+      )}
+    </div>
+  );
 
   function handleUseSample() {
     const id = ensureSampleAccount();
@@ -333,8 +442,12 @@ export function NewAccountPage() {
                     ))}
                   </select>
                 </div>
+                {!gate && preview && preview.identity.name === namedInsuredInput.trim() && (
+                  <DuplicateAccountWarning identity={preview.identity} matches={preview.result.matches} complete={preview.result.complete} currentUserId={currentUserId} memberEmail={memberEmail} />
+                )}
                 <NewAccountTypeFields value={accountType} onChange={setAccountType} showErrors={typeTouched} />
-                <Button type="submit" disabled={!namedInsuredInput.trim() || !stateInput} className="mt-1">
+                {gatePanel}
+                <Button type="submit" disabled={!namedInsuredInput.trim() || !stateInput || !!gate} className="mt-1">
                   Create Submission
                 </Button>
 
@@ -440,11 +553,12 @@ export function NewAccountPage() {
               </CardBody>
             </Card>
 
+            {gatePanel}
             <div className="flex items-center justify-between">
               <button onClick={startOver} className="text-xs font-medium text-[var(--color-ink-500)] hover:text-[var(--color-ink-700)] cursor-pointer">
                 Cancel and start over
               </button>
-              <Button disabled={!canContinue} onClick={handleContinue}>
+              <Button disabled={!canContinue || !!gate} onClick={handleContinue}>
                 Continue
               </Button>
             </div>

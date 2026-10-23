@@ -1,6 +1,7 @@
 import { precheckUpload, rejectedFileError, storageBody, storageContentType, verifyUploadOnServer } from '../uploads/uploadCheck';
 import { supabase } from './client';
 import type { DuplicateCandidate } from '../intake/duplicateDetection';
+import type { AccountDuplicate, AccountIdentity, DuplicateReason } from '../accounts/duplicateCheck';
 import type { CoverageType, IntakeDocument, IntakeEvent, IntakeContact, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../../types';
 import { errorMessage, errorStatus, isTransientError, withRetry, withTimeout } from '../intake/retry';
 import { generateId } from '../../utils/id';
@@ -573,6 +574,36 @@ export async function fetchIntakeDuplicateCandidates(intakeSubmissionId: string)
         assignedName: r.assigned_name,
         canOpen: r.can_open,
         archived: r.archived,
+      })),
+    };
+  } catch (err) {
+    return fail(err instanceof Error ? err.message : 'Could not check for existing accounts.');
+  }
+}
+
+/**
+ * New Account's agency-wide check (0072): accounts in the caller's own agency that may be the same business.
+ * Accounts the caller can't open come back without an id, and only for strong matches. `null` when the
+ * database doesn't have the check yet (the caller then compares the accounts on this device, and says so).
+ */
+export async function fetchAccountDuplicates(identity: AccountIdentity): Promise<RepoResult<AccountDuplicate[] | null>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('find_account_duplicates', { p_name: identity.name, p_dot: identity.dotNumber ?? null, p_mc: identity.mcNumber ?? null });
+    if (error && isMissingFunction(error)) return { ok: true, data: null };
+    if (error) return fail(error.message);
+    type Row = { account_id: string | null; named_insured: string; assigned_user_id: string | null; assigned_name: string | null; can_open: boolean; archived: boolean; reasons: DuplicateReason[]; similarity: number | null };
+    return {
+      ok: true,
+      data: ((data ?? []) as Row[]).map((r) => ({
+        accountId: r.can_open ? r.account_id : null,
+        namedInsured: r.named_insured,
+        assignedUserId: r.assigned_user_id,
+        assignedName: r.assigned_name,
+        canOpen: r.can_open,
+        archived: r.archived,
+        reasons: r.reasons ?? [],
+        similarity: r.similarity === null ? null : Number(r.similarity),
       })),
     };
   } catch (err) {
