@@ -20,7 +20,7 @@ const CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? '';
 const KEY_B64 = Deno.env.get('GMAIL_TOKEN_KEY') ?? '';
 const ORIGINS = (Deno.env.get('APP_ORIGINS') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const REDIRECT_URI = `${URL_}/functions/v1/gmail`;
-const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly email';
+const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly'; // only scope requested; the mailbox address comes from Gmail's profile
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
 const FIRST_SYNC_QUERY = 'newer_than:90d -in:chats -in:drafts -in:spam -in:trash';
 const CATCH_UP_QUERY = 'newer_than:7d -in:chats -in:drafts -in:spam -in:trash';
@@ -92,7 +92,7 @@ async function start(uid: string, returnTo: string) {
   if (!(await isMember(uid))) return json({ error: 'Join your agency to connect Gmail.' }, 403);
   if (!allowedReturn(returnTo, ORIGINS)) return json({ error: 'That return address isn’t allowed.' }, 400);
   const state = await signState({ u: uid, r: returnTo, e: Date.now() + STATE_TTL_MS, n: crypto.randomUUID() }, await hmacKey());
-  const url = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: 'code', scope: SCOPES, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', state })}`;
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, response_type: 'code', scope: SCOPES, access_type: 'offline', prompt: 'consent', state })}`;
   return json({ url });
 }
 
