@@ -123,3 +123,22 @@ export async function policyNumberTaken(carrier: string, policyNumber: string, a
     return null;
   }
 }
+
+/**
+ * The carrier % (0–1) the assigned agent or an admin entered on one policy / endorsement (0073).
+ * 'saved': kept for when it's recorded; 'applied': its unverified commission now uses it; 'locked': its
+ * commission is already verified, so nothing changed.
+ */
+export async function enterPolicyCarrierRate(accountId: string, policyId: string, rate: number): Promise<RepoResult<'saved' | 'applied' | 'locked'>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('enter_policy_carrier_rate', { p_submission_id: accountId, p_policy_id: policyId, p_rate: rate });
+    if (error) {
+      if (error.code === 'PGRST202' || /could not find the function/i.test(error.message)) return { ok: false, message: 'Saving the carrier % needs database migration 0073.' };
+      return { ok: false, message: error.message || 'The carrier % couldn’t be saved.' };
+    }
+    return { ok: true, data: data as 'saved' | 'applied' | 'locked' };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'The carrier % couldn’t be saved.' };
+  }
+}

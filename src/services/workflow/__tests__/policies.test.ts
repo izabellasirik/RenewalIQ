@@ -310,3 +310,27 @@ describe('two copies of the same account (someone else saved in the meantime)', 
     expect(mergeQuotes(plain, plain, SEEN)).toEqual(plain);
   });
 });
+
+describe('the carrier % typed on a policy or endorsement (0073)', () => {
+  it('accepts 12, 12.5 and 12% as a share; refuses empty, 0, above 50 and more than two decimals', async () => {
+    const { parseCarrierPercent } = await import('../policies');
+    expect(parseCarrierPercent('12')).toBe(0.12);
+    expect(parseCarrierPercent(' 12.5 % ')).toBe(0.125);
+    expect(parseCarrierPercent('50')).toBe(0.5);
+    for (const bad of ['', '0', '0.00', '50.01', '51', '12.345', 'abc', '-5', '100']) expect(parseCarrierPercent(bad)).toBeNull();
+  });
+  it('carrier and agent commission from the typed %: $10,000 × 12% = $1,200; 25% split = $300', async () => {
+    const { agentCommissionCents, carrierCommissionCents, parseCarrierPercent } = await import('../policies');
+    const rate = parseCarrierPercent('12')!;
+    expect(carrierCommissionCents(1_000_000, rate)).toBe(120_000);
+    expect(agentCommissionCents(1_000_000, rate, 0.25)).toBe(30_000);
+  });
+});
+
+describe('dates with the year (Analytics: Bound / Endorsed Date)', () => {
+  it('always shows the year, e.g. Oct 18, 2026', async () => {
+    const { formatDateWithYear } = await import('../dates');
+    expect(formatDateWithYear('2026-10-18')).toBe('Oct 18, 2026');
+    expect(formatDateWithYear(null)).toBe('—');
+  });
+});

@@ -16,7 +16,7 @@ import { useRememberedView } from '../hooks/useRememberedView';
 import { aDateKey, aString, defined, oneOf } from '../services/preferences/viewPreferences';
 import { policiesReport } from '../services/reports/analyticsReports';
 import { DownloadButtons } from '../components/analytics/DownloadButtons';
-import { formatShortDate } from '../services/workflow/dates';
+import { formatDateWithYear, formatShortDate } from '../services/workflow/dates';
 import {
   DATE_PRESET_LABELS,
   POLICY_DATE_LABELS,
@@ -145,11 +145,11 @@ function PoliciesPanel() {
   const mine = useMyCommissions(!!agencyAccess && !isAdmin);
   const records = useMemo(() => {
     // carrierRate / carrierCents null: recorded without a carrier % (not set yet).
-    const out = new Map<string, { agentCents: number | null; carrierCents: number | null; carrierRate: number | null; agentUserId?: string | null; agentName?: string | null }>();
+    const out = new Map<string, { agentCents: number | null; carrierCents: number | null; carrierRate: number | null; agentUserId?: string | null; agentName?: string | null; carrierRateSource?: string }>();
     if (isAdmin && ledger.data)
       for (const [k, t] of currentRecordsByPolicy(ledger.data.transactions)) {
         const notSet = t.reviewFlags.includes('no_carrier_rate');
-        out.set(k, { agentCents: t.agentCents, carrierCents: notSet ? null : t.carrierCents, carrierRate: notSet ? null : t.carrierRate, agentUserId: t.agentUserId, agentName: t.agentName });
+        out.set(k, { agentCents: t.agentCents, carrierCents: notSet ? null : t.carrierCents, carrierRate: notSet ? null : t.carrierRate, agentUserId: t.agentUserId, agentName: t.agentName, carrierRateSource: t.carrierRateSource });
       }
     if (!isAdmin) for (const c of mine.commissions) if (c.policyId) out.set(`${c.submissionId}|${c.policyId}`, { agentCents: c.agentCents, carrierCents: null, carrierRate: c.carrierRate });
     return out;
@@ -225,7 +225,7 @@ function PoliciesPanel() {
     <>
       {agencyAccess && !isAdmin && rates.status === 'ready' && (
         <p className="text-sm text-[var(--color-ink-600)]" data-testid="my-commission">
-          Your agent commission: <strong className="text-[var(--color-ink-900)]">{myRate === undefined ? 'not set yet' : formatRate(myRate)}</strong> of the carrier commission (net × the carrier’s %), set by your agency admin.
+          Your agent commission: <strong className="text-[var(--color-ink-900)]">{myRate === undefined ? 'not set yet' : formatRate(myRate)}</strong> of the carrier commission (net × the carrier’s %).
         </p>
       )}
       <Card>
@@ -367,14 +367,14 @@ function PoliciesPanel() {
                             {r.policy.carrier !== r.marketName ? ` via ${r.marketName}` : ''}
                           </span>
                         </td>
-                        <td className={`${td} whitespace-nowrap`} data-field="bound">{r.policy.boundDate ? formatShortDate(r.policy.boundDate) : '—'}</td>
+                        <td className={`${td} whitespace-nowrap`} data-field="bound">{r.policy.boundDate ? formatDateWithYear(r.policy.boundDate) : '—'}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.netPremiumCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.taxesCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.feesCents)}</td>
                         <td className={`${td} ${num} font-semibold`}>{formatCents(policyTotalCents(r.policy))}</td>
                         {isAdmin && (
                           <td className={`${td} ${num}`} data-field="carrier">
-                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} canEdit={carrier.status === 'ready'} onChange={() => setRateFor(r)} />
+                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} canEdit={carrier.status === 'ready' && recordOf(r)?.carrierRateSource !== 'policy_rate'} onChange={() => setRateFor(r)} />
                           </td>
                         )}
                         {agencyAccess && (
@@ -419,11 +419,6 @@ function PoliciesPanel() {
           {isAdmin && rows.length > 0 && carrier.status === 'unavailable' && carrier.message && (
             <p className="mt-3 text-xs text-[var(--color-warning-600)]" data-testid="carrier-rates-unavailable">
               {carrier.message} Until then no carrier % is set.
-            </p>
-          )}
-          {isAdmin && rows.length > 0 && (
-            <p className="mt-3 text-xs text-[var(--color-ink-500)]">
-              Carrier commission = net × the carrier’s % on the bound / endorsed date. Agent commission = the agent’s split of that carrier commission. Without a carrier % there’s no commission yet: set it with “Set rate”, and policies waiting for it get it. A new rate applies from its date; commissions already recorded keep their rate.
             </p>
           )}
           {rateFor && <CarrierRateDialog carrier={rateFor.policy.carrier} effectiveFrom={rateFor.policy.boundDate} onClose={() => setRateFor(null)} onSaved={() => void ledger.reload()} />}

@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Ban, FileCheck2, FilePlus2, FileWarning, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { MarketQuote, PolicyBusinessType, PolicyEntryKind, PolicyRecord } from '../../types';
 import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
@@ -6,8 +6,10 @@ import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCommission';
 import { formatShortDate } from '../../services/workflow/dates';
-import { activeEndorsements, activePolicies, centsInput, checkPolicy, formatCents, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
-import { policyNumberTaken } from '../../services/supabase/commissionRepo';
+import { activeEndorsements, activePolicies, agentCommissionCents, carrierCommissionCents, centsInput, checkPolicy, formatCents, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
+import { enterPolicyCarrierRate, policyNumberTaken } from '../../services/supabase/commissionRepo';
+import { isSupabaseConfigured } from '../../services/supabase/client';
+import { generateId } from '../../utils/id';
 import { useAccountCommissionStatuses } from '../../hooks/useLedger';
 import type { AccountCommissionStatus } from '../../services/supabase/ledgerRepo';
 import { FLAG_LABELS, payoutWords } from '../../services/finance/ledger';
@@ -268,6 +270,17 @@ export function EntryForm({
   const accounts = useAccountsStore((s) => s.accounts);
   const allQuotes = useAccountsStore((s) => s.quotes);
   const commission = useAgentCommission(accountId);
+  // The carrier % (0073): typed by hand on every new or edited entry (never filled in), by the account's
+  // assigned agent or an admin of its agency — the people who may set it. Required for them.
+  const account = accounts.find((a) => a.id === accountId);
+  const agencyAccess = useAccountsStore((s) => s.agencyAccess);
+  const me = useAccountsStore((s) => s.currentUserId);
+  const asksCarrierPct = isSupabaseConfigured && !!agencyAccess && !!account?.agencyId && (agencyAccess.role === 'admin' || (!!me && account.assignedUserId === me));
+  const [carrierPct, setCarrierPct] = useState('');
+  const carrierRate = parseCarrierPercent(carrierPct);
+  // Saving without any document asks first (see the confirmation below).
+  const [confirmNoDocs, setConfirmNoDocs] = useState(false);
+  const attachRef = useRef<HTMLInputElement>(null);
   // Bound for a tracked renewal: the policy is that renewal's term (the account's date may already be next year's).
   const { renewals } = useAccountRenewals(accountId);
   const boundFor = quote.renewalId ? renewals.find((r) => r.id === quote.renewalId) : undefined;
@@ -372,10 +385,15 @@ export function EntryForm({
     });
   };
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!check.ok) {
-      setErrors(check.errors);
+  async function submit(e?: FormEvent, withoutDocuments = false) {
+    e?.preventDefault();
+    const pctError = asksCarrierPct && carrierRate === null ? ['Enter the carrier commission % (more than 0, at most 50, e.g. 12).'] : [];
+    if (!check.ok || pctError.length) {
+      setErrors([...(check.ok ? [] : check.errors), ...pctError]);
+      return;
+    }
+    if (!withoutDocuments && kept.length === 0 && files.length === 0) {
+      setConfirmNoDocs(true);
       return;
     }
     // The same policy on a client this browser can't see (another agent's) — the agency-wide check.
@@ -388,8 +406,19 @@ export function EntryForm({
         return;
       }
     }
+    // The carrier % is saved first: if it can't be, nothing is saved.
+    const entryId = editing === 'new' ? generateId('policy') : editing.id;
+    if (asksCarrierPct && carrierRate !== null) {
+      setSaving(true);
+      const r = await enterPolicyCarrierRate(accountId, entryId, carrierRate);
+      setSaving(false);
+      if (!r.ok) {
+        setErrors([`The carrier % couldn’t be saved, so nothing was saved: ${r.message}`]);
+        return;
+      }
+    }
     if (editing === 'new') {
-      const id = addPolicy(accountId, quote.id, check.fields);
+      const id = addPolicy(accountId, quote.id, check.fields, entryId);
       if (id) for (const nf of files) attach(accountId, quote.id, id, nf.file, nf.description);
       if (id) onSaved?.({ id, date: check.fields.boundDate });
     } else {
@@ -403,7 +432,7 @@ export function EntryForm({
     }
     onClose();
   }
-  const shownErrors = errors.length > 0 ? (check.ok ? errors : check.errors) : [];
+  const shownErrors = errors.length > 0 ? (check.ok ? errors : [...check.errors, ...errors.filter((m) => m.startsWith('Enter the carrier'))]) : [];
 
   return (
     <Modal
@@ -529,8 +558,29 @@ export function EntryForm({
             <p className={labelClass}>Total</p>
             <p className="px-0.5 py-2 text-sm font-semibold text-[var(--color-ink-900)] tabular-nums" data-testid="policy-total">{formatCents(total)}</p>
           </div>
+          {asksCarrierPct && (
+            <div>
+              <label className={labelClass} htmlFor="policy-carrier-pct">
+                Carrier commission (%) <Required />
+              </label>
+              <input
+                id="policy-carrier-pct"
+                inputMode="decimal"
+                className={inputClass}
+                value={carrierPct}
+                onChange={(e) => setCarrierPct(e.target.value)}
+                placeholder="e.g. 12"
+                aria-required="true"
+                data-testid="carrier-pct"
+              />
+            </div>
+          )}
           <div className="sm:col-span-4" data-testid="form-commission">
-            <CommissionLine commission={commission} netCents={live(f.netPremium)} carrier={f.carrier} dateKey={f.boundDate} />
+            {asksCarrierPct ? (
+              <CarrierPctLine commission={commission} netCents={live(f.netPremium)} rate={carrierRate} editing={editing !== 'new'} />
+            ) : (
+              <CommissionLine commission={commission} netCents={live(f.netPremium)} carrier={f.carrier} dateKey={f.boundDate} />
+            )}
           </div>
         </fieldset>
 
@@ -568,6 +618,7 @@ export function EntryForm({
             <FilePlus2 size={14} aria-hidden /> Attach Document
           </label>
           <input
+            ref={attachRef}
             id="policy-attach"
             type="file"
             multiple
@@ -590,7 +641,49 @@ export function EntryForm({
           </ul>
         )}
       </form>
+      <ConfirmDialog
+        open={confirmNoDocs}
+        variant="default"
+        title="Save without a document?"
+        description={`No binder or ${kind === 'policy' ? 'policy' : 'endorsement'} document is attached. You can add it later. Until then this ${kind === 'policy' ? 'policy' : 'endorsement'} shows Missing Documents and its commission can't be verified.`}
+        cancelLabel="Attach document"
+        confirmLabel="Save without document"
+        onCancel={() => {
+          setConfirmNoDocs(false);
+          attachRef.current?.click();
+        }}
+        onConfirm={() => {
+          setConfirmNoDocs(false);
+          void submit(undefined, true);
+        }}
+      />
     </Modal>
+  );
+}
+
+/** While the carrier % is typed: "Carrier commission $1,200.00 · Agent commission $300.00 (25% split)". */
+function CarrierPctLine({ commission, netCents, rate, editing }: { commission: CommissionView; netCents: number; rate: number | null; editing: boolean }) {
+  const base = 'text-xs';
+  if (rate === null) return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Enter the carrier’s commission % to see the commission.{editing ? ' A commission that’s already verified keeps its %.' : ''}</p>;
+  const carrier = carrierCommissionCents(netCents, rate) ?? 0;
+  const split = commission.kind === 'amount' ? commission.rate : null;
+  return (
+    <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
+      Carrier commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(carrier)}</strong>
+      {' · '}Agent commission:{' '}
+      {split !== null ? (
+        <>
+          <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(agentCommissionCents(netCents, rate, split) ?? 0)}</strong> ({Math.round(split * 1000) / 10}% split)
+        </>
+      ) : commission.kind === 'no_rate' ? (
+        `${commission.agentName}’s split isn’t set yet`
+      ) : commission.kind === 'no_agent' ? (
+        'no agent assigned to this account'
+      ) : (
+        'shown once recorded'
+      )}
+      {editing ? <span className="text-[var(--color-ink-500)]"> · A commission that’s already verified keeps its %.</span> : null}
+    </p>
   );
 }
 

@@ -316,7 +316,8 @@ interface AccountsState {
   addQuote: (accountId: string, input: { marketName: string; appetiteRecordId?: string; status?: QuoteStatus; submittedAt?: string; followUpDate?: string }) => string;
   updateQuote: (accountId: string, quoteId: string, patch: Partial<Pick<MarketQuote, 'marketName' | 'status' | 'submittedAt' | 'followUpDate' | 'premium' | 'declineReason' | 'boundDate' | 'endorsed'>>) => void;
   /** A policy written from a bound market (commission is worked out on display, never stored here). Returns its id, or '' if the market is gone. */
-  addPolicy: (accountId: string, quoteId: string, fields: PolicyFields) => string;
+  /** `id`: given when something must refer to the policy before it's saved (its carrier %, 0073). */
+  addPolicy: (accountId: string, quoteId: string, fields: PolicyFields, id?: string) => string;
   updatePolicy: (accountId: string, quoteId: string, policyId: string, fields: PolicyFields) => void;
   /** Changes only a policy's or endorsement's description (Analytics); everything else on it stays. */
   setPolicyDescription: (accountId: string, quoteId: string, policyId: string, description: string) => void;
@@ -2530,11 +2531,11 @@ export const useAccountsStore = create<AccountsState>()(
         }
       },
 
-      addPolicy: (accountId, quoteId, fields) => {
+      addPolicy: (accountId, quoteId, fields, id) => {
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         if (!quote) return '';
         const now = new Date().toISOString();
-        const policy: PolicyRecord = { ...fields, id: generateId('policy'), createdAt: now, updatedAt: now, createdByName: actorName(get()) };
+        const policy: PolicyRecord = { ...fields, id: id ?? generateId('policy'), createdAt: now, updatedAt: now, createdByName: actorName(get()) };
         set((s) => ({
           quotes: { ...s.quotes, [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, policies: [...(q.policies ?? []), policy], updatedAt: now })) },
           accounts: touchAccount(s.accounts, accountId),

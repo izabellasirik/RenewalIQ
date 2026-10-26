@@ -37,6 +37,18 @@ export function agentCommissionCents(netCents: number, carrierRate: number | nul
   return carrierRate === null ? null : applyRate(applyRate(netCents, carrierRate), agentRate);
 }
 
+/**
+ * The carrier commission % typed on a policy / endorsement ("12", "12.5", "12%") as a share (0.12), or null
+ * when it's missing or out of range: more than 0% and at most 50%, up to two decimals (as 0073 accepts).
+ */
+export function parseCarrierPercent(raw: string): number | null {
+  const t = raw.trim().replace(/%$/, '').trim();
+  if (!/^\d{1,2}(\.\d{1,2})?$/.test(t)) return null;
+  const pct = Number(t);
+  if (!(pct > 0 && pct <= 50)) return null;
+  return Math.round(pct * 100) / 10000;
+}
+
 /** One carrier, however it's typed: "Granite  Mutual " and "granite mutual" share a commission %. Same as carrier_key() in 0063. */
 export const carrierKey = (carrier: string) => carrier.trim().replace(/\s+/g, ' ').toLowerCase();
 

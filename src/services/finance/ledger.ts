@@ -36,7 +36,8 @@ export interface LedgerTransaction {
   agentRate: number | null;
   agentCents: number | null;
   carrierRate: number;
-  carrierRateSource: 'carrier_rate' | 'default' | 'historical' | 'confirmed' | 'actual';
+  /** 'policy_rate': the carrier % entered on the policy / endorsement itself (0073). */
+  carrierRateSource: 'carrier_rate' | 'default' | 'historical' | 'confirmed' | 'actual' | 'policy_rate';
   carrierCents: number;
   proofStatus: 'missing_proof' | 'has_proof';
   verificationStatus: 'unverified' | 'verified' | 'void';
@@ -107,6 +108,7 @@ export const STATUS_LABELS: Record<LedgerStatus, string> = {
 export const KIND_LABELS: Record<LedgerKind, string> = { policy: 'Policy', endorsement: 'Endorsement', cancellation: 'Cancellation', correction: 'Correction' };
 
 export const FLAG_LABELS: Record<string, string> = {
+  carrier_rate_differs: 'Carrier % entered differs from the agency’s rate',
   historical: 'Recorded before commission tracking',
   uncertain_carrier_rate: 'Carrier rate not confirmed',
   uncertain_agent: 'Agent not confirmed',

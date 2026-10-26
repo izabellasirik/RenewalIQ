@@ -55,6 +55,12 @@ export function normalizeDateKey(value: string | undefined | null): string | nul
 }
 
 /** "Sep 25" (adds the year only when it isn't the current one). */
+/** Always with the year: "Oct 18, 2026". */
+export function formatDateWithYear(value: string | undefined | null): string {
+  const d = parseDateKey(value);
+  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+}
+
 export function formatShortDate(value: string | undefined | null): string {
   const d = parseDateKey(value);
   if (!d) return '—';

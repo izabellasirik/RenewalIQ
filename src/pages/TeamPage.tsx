@@ -112,26 +112,26 @@ export function TeamPage() {
           ) : (
             <ul className="divide-y divide-[var(--color-ink-100)]">
               {members.map((m) => (
-                <li key={m.userId} className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3">
-                  <div className="min-w-0 flex-1 basis-56">
+                <li key={m.userId} className="grid grid-cols-1 gap-x-6 gap-y-2 py-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_6rem_10rem_6.5rem_6.5rem] lg:items-center">
+                  <div className="min-w-0">
                     <p className="text-sm font-semibold text-[var(--color-ink-900)]">
                       {m.name ?? m.email ?? 'Unnamed'}
                       {m.userId === currentUserId && <span className="font-normal text-[var(--color-ink-400)]"> (you)</span>}
                     </p>
                     {m.jobTitle && <p className="text-xs text-[var(--color-ink-500)]">{m.jobTitle}</p>}
                   </div>
-                  <div className="min-w-0 basis-56 text-sm text-[var(--color-ink-600)]">
+                  <div className="min-w-0 text-sm text-[var(--color-ink-600)]">
                     {m.email && <p className="truncate">{m.email}</p>}
                     {m.phone && <p className="text-xs text-[var(--color-ink-500)]">{m.phone}</p>}
                   </div>
                   {m.userId === currentUserId ? (
-                    <Badge tone={m.role === 'admin' ? 'brand' : 'neutral'}>{ROLE_LABEL[m.role]}</Badge>
+                    <span><Badge tone={m.role === 'admin' ? 'brand' : 'neutral'}>{ROLE_LABEL[m.role]}</Badge></span>
                   ) : (
                     <select
                       value={m.role}
                       disabled={roleBusy === m.userId}
                       onChange={(e) => changeRole(m, e.target.value as TeamRole)}
-                      className="rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-xs font-medium text-[var(--color-ink-800)] cursor-pointer disabled:opacity-60"
+                      className="w-24 justify-self-start rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-xs font-medium text-[var(--color-ink-800)] cursor-pointer disabled:opacity-60"
                       aria-label={`Role for ${m.name ?? m.email ?? 'team member'}`}
                     >
                       <option value="agent">Agent</option>
@@ -139,10 +139,10 @@ export function TeamPage() {
                     </select>
                   )}
                   <CommissionRateInput member={m} />
-                  <p className="w-32 text-right text-sm text-[var(--color-ink-600)]">
+                  <p className="text-sm text-[var(--color-ink-600)] lg:text-right">
                     <span className="font-semibold text-[var(--color-ink-900)]">{assignedCount.get(m.userId) ?? 0}</span> account{(assignedCount.get(m.userId) ?? 0) === 1 ? '' : 's'}
                   </p>
-                  <span className="w-24 text-right">
+                  <span className="lg:text-right">
                     {m.userId !== currentUserId && (
                       <Button size="sm" variant="ghost" icon={<UserMinus size={13} />} onClick={() => setRemoving(m)} aria-label={`Remove ${m.name ?? m.email ?? 'team member'}`}>
                         Remove

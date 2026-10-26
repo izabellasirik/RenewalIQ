@@ -206,11 +206,11 @@ export function ProfitLossPanel() {
         </p>
       )}
 
-      <p className="text-xs text-[var(--color-ink-500)]" data-testid="pl-source">
-        {pl.fromRecords
-          ? `Carrier commission and agent commission are the amounts frozen in the commission records${pl.adjustmentCount ? `, ${pl.adjustmentCount} correction${pl.adjustmentCount === 1 ? '' : 's'} and cancellation${pl.adjustmentCount === 1 ? '' : 's'} included` : ''}.${pl.estimatedCount ? ` ${pl.estimatedCount} ${pl.estimatedCount === 1 ? 'policy isn’t' : 'policies aren’t'} recorded yet (historical) and ${pl.estimatedCount === 1 ? 'is' : 'are'} estimated with today’s rates.` : ''}`
-          : 'Worked out from the policies and endorsements with the carrier rates on their bound dates (commission records need migration 0064).'}
-      </p>
+      {!pl.fromRecords && (
+        <p className="text-xs text-[var(--color-ink-500)]" data-testid="pl-source">
+          Worked out from the policies and endorsements with the carrier rates on their bound dates (commission records need migration 0064).
+        </p>
+      )}
 
       <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="pl-totals">
         <Tile
@@ -250,6 +250,14 @@ export function ProfitLossPanel() {
                   </tr>
                 </thead>
                 <tbody className="tabular-nums">
+                  <tr className="bg-[var(--color-ink-50)] font-semibold text-[var(--color-ink-900)]" data-row="total">
+                    <td className="border-b border-[var(--color-ink-100)] px-3 py-2">Total</td>
+                    <td className="whitespace-nowrap border-b border-[var(--color-ink-100)] px-3 py-2 text-right">{formatCents(pl.carrierCents)}</td>
+                    <td className="whitespace-nowrap border-b border-[var(--color-ink-100)] px-3 py-2 text-right">{formatCents(pl.incomeCents)}</td>
+                    <td className="whitespace-nowrap border-b border-[var(--color-ink-100)] px-3 py-2 text-right">{formatCents(pl.expenseCents)}</td>
+                    <td className="whitespace-nowrap border-b border-[var(--color-ink-100)] px-3 py-2 text-right">{formatCents(pl.commissionCents)}</td>
+                    <td className={cn('whitespace-nowrap border-b border-[var(--color-ink-100)] px-3 py-2 text-right', pl.profitCents < 0 && 'text-[var(--color-danger-600)]')}>{formatCents(pl.profitCents)}</td>
+                  </tr>
                   {pl.months.map((m) => (
                     <tr key={m.month} data-month={m.month}>
                       <td className="border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-800)]">{monthLabel(m.month)}</td>
@@ -260,21 +268,10 @@ export function ProfitLossPanel() {
                       <td className={cn('whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold', m.profitCents < 0 ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-900)]')}>{formatCents(m.profitCents)}</td>
                     </tr>
                   ))}
-                  <tr className="font-semibold text-[var(--color-ink-900)]">
-                    <td className="px-3 py-2">Total</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right">{formatCents(pl.carrierCents)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right">{formatCents(pl.incomeCents)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right">{formatCents(pl.expenseCents)}</td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right">{formatCents(pl.commissionCents)}</td>
-                    <td className={cn('whitespace-nowrap px-3 py-2 text-right', pl.profitCents < 0 && 'text-[var(--color-danger-600)]')}>{formatCents(pl.profitCents)}</td>
-                  </tr>
                 </tbody>
               </table>
             </div>
           )}
-          <p className="mt-3 text-xs text-[var(--color-ink-500)]">
-            Premium bound in this period: <span className="font-medium tabular-nums text-[var(--color-ink-700)]">{formatCents(pl.premiumNetCents)}</span> net. Income includes the carrier commission on it (each carrier’s %, set in Policies &amp; endorsements; none until set), and the agent commission is each agent’s split of it — so don’t also record either one by hand.
-          </p>
         </CardBody>
       </Card>
     </>

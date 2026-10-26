@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BadgeDollarSign, Building2, ChevronDown, ChevronRight, FileQuestion, Pencil, Plus, Send, ShieldCheck, StickyNote, Trash2, XCircle } from 'lucide-react';
 import type { MarketQuote, MissingItem, MissingItemType, QuoteNote, QuoteStatus } from '../../types';
 import { AWAITING_CARRIER_STATUSES, MARKET_STATUS_CHOICES, QUOTE_STATUS_LABELS, QUOTE_STATUS_ORDER, marketStatusChoice, marketStatusLabel, type MarketStatusChoice, type PolicyEntryKind } from '../../types';
@@ -31,6 +31,13 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
   // Just bound: ask which renewal it was for, then offer next year's (see AfterBindDialog).
   const { account, renewals } = useAccountRenewals(accountId);
   const [justBound, setJustBound] = useState<string | null>(null);
+  // A market added as Bound / Endorsed: its policy form (then, for Endorsed, the endorsement form) opens
+  // right away; cancelling the policy form removes the market again, so nothing half-bound is left.
+  const [binding, setBinding] = useState<{ quoteId: string; step: 'policy' | 'endorsement'; then: 'bound' | 'endorsed' } | null>(null);
+  const bindingSaved = useRef(false);
+  const storeUpdateQuote = useAccountsStore((s) => s.updateQuote);
+  const deleteQuote = useAccountsStore((s) => s.deleteQuote);
+  const bindingQuote = binding ? quotes.find((q) => q.id === binding.quoteId) : undefined;
   const asksAboutRenewal = bindAsksAboutRenewal(renewals, account?.businessType);
   const openTracked = renewals.filter((r) => !r.legacy && r.status === 'open');
   const renewalNote = (q: MarketQuote): { text: string; canLink: boolean } | undefined => {
@@ -60,7 +67,34 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
         </div>
       </div>
 
-      {adding && <AddMarketForm accountId={accountId} marketNames={marketNames} onDone={() => setAdding(false)} />}
+      {adding && <AddMarketForm accountId={accountId} marketNames={marketNames} onDone={() => setAdding(false)} onBind={(quoteId, then) => setBinding({ quoteId, step: 'policy', then })} />}
+
+      {binding && bindingQuote && (
+        <EntryForm
+          key={`${binding.quoteId}-${binding.step}`}
+          accountId={accountId}
+          quote={bindingQuote}
+          kind={binding.step}
+          editing="new"
+          title={binding.step === 'policy' ? `Mark Bound — ${bindingQuote.marketName}` : `Mark Endorsed — ${bindingQuote.marketName}`}
+          onSaved={({ date }) => {
+            bindingSaved.current = true;
+            if (binding.step === 'policy') {
+              storeUpdateQuote(accountId, binding.quoteId, { status: 'bound', boundDate: date });
+              if (asksAboutRenewal) setJustBound(binding.quoteId);
+            } else storeUpdateQuote(accountId, binding.quoteId, { status: 'bound', endorsed: true });
+          }}
+          onClose={() => {
+            const saved = bindingSaved.current;
+            bindingSaved.current = false;
+            if (saved && binding.step === 'policy' && binding.then === 'endorsed') return setBinding({ ...binding, step: 'endorsement' });
+            // Policy form cancelled: the market was only just added for it — remove it. (A cancelled
+            // endorsement leaves the market Bound with its policy.)
+            if (!saved && binding.step === 'policy') deleteQuote(accountId, binding.quoteId);
+            setBinding(null);
+          }}
+        />
+      )}
 
       {quotes.length === 0 && !adding ? (
         <EmptyState
@@ -110,12 +144,13 @@ export function QuotesPanel({ accountId, focusQuoteId }: { accountId: string; fo
   );
 }
 
-function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; marketNames: string[]; onDone: () => void }) {
+function AddMarketForm({ accountId, marketNames, onDone, onBind }: { accountId: string; marketNames: string[]; onDone: () => void; onBind: (quoteId: string, then: 'bound' | 'endorsed') => void }) {
   const addQuote = useAccountsStore((s) => s.addQuote);
   const appetiteRecords = useAccountsStore((s) => s.effectiveAppetiteRecords);
   const [name, setName] = useState('');
-  const [status, setStatus] = useState<QuoteStatus>('preparing');
-  const sent = AWAITING_CARRIER_STATUSES.includes(status);
+  const [status, setStatus] = useState<QuoteStatus | 'endorsed'>('preparing');
+  const binds = status === 'bound' || status === 'endorsed';
+  const sent = !binds && AWAITING_CARRIER_STATUSES.includes(status);
   const [submittedAt, setSubmittedAt] = useState(todayKey());
   const [followUpDate, setFollowUpDate] = useState(addBusinessDays(new Date(), 3));
 
@@ -124,13 +159,15 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
     const trimmed = name.trim();
     if (!trimmed) return;
     const record = appetiteRecords.find((r) => r.marketName.toLowerCase() === trimmed.toLowerCase());
-    addQuote(accountId, {
+    const id = addQuote(accountId, {
       marketName: record?.marketName ?? trimmed,
       appetiteRecordId: record?.id,
-      status,
+      // Bound / Endorsed: the market becomes Bound once its policy is saved (the form opens next).
+      status: binds ? 'quoted' : status,
       submittedAt: sent ? submittedAt : undefined,
       followUpDate: sent ? followUpDate : undefined,
     });
+    if (binds && id) onBind(id, status === 'endorsed' ? 'endorsed' : 'bound');
     onDone();
   }
 
@@ -146,14 +183,15 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
             </div>
             <div>
               <label className={labelClass}>Status</label>
-              <select value={status} onChange={(e) => setStatus(e.target.value as QuoteStatus)} className={inputClass} aria-label="Market status">
-                {/* Bound is set on the market once added: marking it Bound asks for the policy (date, amounts, proof). */}
-                {QUOTE_STATUS_ORDER.filter((st) => st !== 'bound').map((st) => (
+              <select value={status} onChange={(e) => setStatus(e.target.value as QuoteStatus | 'endorsed')} className={inputClass} aria-label="Market status">
+                {/* Bound / Endorsed ask for the policy (and the endorsement) next: date, amounts, carrier %, documents. */}
+                {MARKET_STATUS_CHOICES.filter((st) => policiesFeatureEnabled() || (st !== 'bound' && st !== 'endorsed')).map((st) => (
                   <option key={st} value={st}>
-                    {QUOTE_STATUS_LABELS[st]}
+                    {marketStatusLabel(st)}
                   </option>
                 ))}
               </select>
+              {binds && <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">Next: the policy{status === 'endorsed' ? ', then the endorsement' : ''} — dates, amounts and carrier %.</p>}
             </div>
           </div>
           {sent && (
@@ -176,7 +214,7 @@ function AddMarketForm({ accountId, marketNames, onDone }: { accountId: string; 
                 Cancel
               </Button>
               <Button type="submit" size="sm" icon={<Plus size={14} />} disabled={!name.trim()}>
-                Add market
+                {binds ? 'Continue' : 'Add market'}
               </Button>
             </div>
           </div>
