@@ -155,3 +155,9 @@ export function threadsToMatch(synced: (EmailThreadMeta & { snippet: string })[]
 export function gmailThreadUrl(mailbox: string, gmailThreadId: string): string {
   return `https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox)}#all/${encodeURIComponent(gmailThreadId)}`;
 }
+
+/** For now Related Emails shows on the account Overview only for this login (Gmail connection isn't open to everyone yet). */
+export const RELATED_EMAILS_LOGINS = ['renewaliq@gmail.com'];
+export function relatedEmailsShownFor(email: string | null | undefined): boolean {
+  return !!email && RELATED_EMAILS_LOGINS.includes(email.trim().toLowerCase());
+}

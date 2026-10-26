@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gmailThreadUrl, relatedEmailsView, saveSuggestions, suggestThreadLinks, threadsToMatch, type EmailAccountLink, type EmailThreadMeta } from '../relatedEmails';
+import { gmailThreadUrl, relatedEmailsShownFor, relatedEmailsView, saveSuggestions, suggestThreadLinks, threadsToMatch, type EmailAccountLink, type EmailThreadMeta } from '../relatedEmails';
 import { AGENCY_A, candidates } from '../../emailAssistant/__tests__/world';
 
 // Synthetic accounts and mail only (the Email Assistant's test world).
@@ -86,5 +86,15 @@ describe('Refresh reports suggestions the database refused (no silent "0 new sug
     const results = [{ ok: false as const, message: 'You can’t open that account.' }, { ok: true as const }, { ok: false as const, message: 'other' }];
     const r = await saveSuggestions([{ threadId: 't1', suggestion: s }, { threadId: 't2', suggestion: s }, { threadId: 't3', suggestion: s }], async () => results.shift()!);
     expect(r).toEqual({ saved: 1, failed: 2, firstError: 'You can’t open that account.' });
+  });
+});
+
+describe('Related Emails on the Overview is limited to the RenewalIQ login for now', () => {
+  it('shown only for renewaliq@gmail.com (any case/spacing), hidden for everyone else and when signed out', () => {
+    expect(relatedEmailsShownFor('renewaliq@gmail.com')).toBe(true);
+    expect(relatedEmailsShownFor(' RenewalIQ@Gmail.com ')).toBe(true);
+    expect(relatedEmailsShownFor('agent@agency.example')).toBe(false);
+    expect(relatedEmailsShownFor('renewaliq@gmail.com.evil.example')).toBe(false);
+    expect(relatedEmailsShownFor(null)).toBe(false);
   });
 });

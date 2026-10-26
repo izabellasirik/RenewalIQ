@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { RelatedEmailsCard } from '../components/workspace/RelatedEmailsCard';
+import { relatedEmailsShownFor } from '../services/relatedEmails/relatedEmails';
 import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Building2, ClipboardList, Clock, FilePlus2, FileText } from 'lucide-react';
@@ -51,6 +52,8 @@ export function AccountWorkspacePage() {
   const { account, profile, documents, items, quotes, followUps, actions, doneActions } = useAccountWorkflow(accountId);
   const ensureChecklist = useAccountsStore((s) => s.ensureChecklist);
   const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
+  // Related Emails on the Overview: only for the RenewalIQ login while Gmail connection is limited.
+  const showRelatedEmails = relatedEmailsShownFor(useAccountsStore((s) => s.currentUserEmail));
   // Accounts from before new accounts got a checklist automatically get it the first time they're opened.
   useEffect(() => {
     ensureChecklist(accountId);
@@ -123,7 +126,7 @@ export function AccountWorkspacePage() {
       {tab === 'overview' && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
           <div className="flex min-w-0 flex-col gap-5 lg:col-span-2">
-            <RelatedEmailsCard accountId={accountId} />
+            {showRelatedEmails && <RelatedEmailsCard accountId={accountId} />}
             <Card id="needs-attention" className="scroll-mt-24">
               <CardBody className="pt-5">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
