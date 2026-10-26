@@ -21,7 +21,6 @@ import {
   describeSchedule,
   ledgerStatus,
   payoutDate,
-  payoutWords,
   payoutReadiness,
   remainingNetCents,
   verificationBlockers,
@@ -37,7 +36,7 @@ import type { Report } from '../../services/reports/report';
 const th = 'whitespace-nowrap border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
 const td = 'border-b border-[var(--color-ink-50)] px-3 py-2 align-top text-sm text-[var(--color-ink-800)]';
 const num = 'whitespace-nowrap text-right tabular-nums';
-type Section = 'review' | 'records' | 'cancellations' | 'rates' | 'schedule';
+type Section = 'todo' | 'history' | 'rates' | 'schedule';
 
 /**
  * The agency's commission records (0064), for admins: the review queue (historical records, records that
@@ -48,7 +47,7 @@ type Section = 'review' | 'records' | 'cancellations' | 'rates' | 'schedule';
  */
 export function CommissionsPanel() {
   const ledger = useLedger();
-  const [section, setSection] = useState<Section>('review');
+  const [section, setSection] = useState<Section>('todo');
   const [notice, setNotice] = useState<{ tone: 'good' | 'bad'; text: string } | null>(null);
   const data = ledger.data;
   const current = useMemo(() => (data ? data.transactions.filter((t) => !t.replacedBy) : []), [data]);
@@ -69,13 +68,13 @@ export function CommissionsPanel() {
 
   return (
     <div className="flex flex-col gap-4" data-testid="commissions-panel">
+      {/* Two views: what needs a decision now, and everything decided. Rates and the payout schedule are settings, linked below. */}
       <Tabs
         items={[
-          { key: 'review', label: 'Review', count: data ? queue.length : undefined },
-          { key: 'records', label: 'Records' },
-          { key: 'cancellations', label: 'Cancellations', count: data ? openCancellations.length : undefined },
-          { key: 'rates', label: 'Carrier rates' },
-          { key: 'schedule', label: 'Payout schedule' },
+          { key: 'todo', label: 'To do', count: data ? queue.length + openCancellations.length : undefined },
+          { key: 'history', label: 'History' },
+          ...(section === 'rates' ? [{ key: 'rates', label: 'Carrier rates' }] : []),
+          ...(section === 'schedule' ? [{ key: 'schedule', label: 'Payout schedule' }] : []),
         ]}
         active={section}
         onChange={(k) => {
@@ -102,15 +101,25 @@ export function CommissionsPanel() {
             {ledger.message ?? 'Commission records aren’t available right now.'} Until then, Analytics works the amounts out from the policies.
           </CardBody>
         </Card>
-      ) : section === 'review' ? (
-        <ReviewSection queue={queue} all={current} historicalWaiting={data.historicalWaiting} schedule={data.schedule} run={run} />
-      ) : section === 'records' ? (
-        <RecordsSection all={current} receipts={data.receipts} schedule={data.schedule} run={run} />
-      ) : section === 'cancellations' ? (
-        <CancellationsSection cancellations={data.cancellations} all={current} run={run} />
+      ) : section === 'todo' ? (
+        <>
+          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="open" />
+          <ReviewSection queue={queue} all={current} historicalWaiting={data.historicalWaiting} schedule={data.schedule} run={run} nothingElse={openCancellations.length === 0} />
+        </>
+      ) : section === 'history' ? (
+        <>
+          <RecordsSection all={current} receipts={data.receipts} schedule={data.schedule} run={run} />
+          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="decided" />
+        </>
       ) : (
         <ScheduleSection schedule={data.schedule} historicalWaiting={data.historicalWaiting} run={run} />
       )}
+      <p className="text-xs text-[var(--color-ink-500)]" data-testid="commission-settings">
+        Settings:{' '}
+        <button type="button" className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => { setSection('rates'); setNotice(null); }}>Carrier rates</button>
+        {' · '}
+        <button type="button" className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => { setSection('schedule'); setNotice(null); }}>Payout schedule</button>
+      </p>
     </div>
   );
 }
@@ -125,7 +134,7 @@ function useAgentName() {
 const policyLabel = (t: Pick<LedgerTransaction, 'policyNumber' | 'carrierName'>) => t.policyNumber ?? `(no number) ${t.carrierName}`;
 
 /** One record: client, policy, kind, dates and the frozen amounts. */
-function RecordSummary({ t, schedule, extra }: { t: LedgerTransaction; schedule: PayoutSchedule; extra?: ReactNode }) {
+function RecordSummary({ t, extra }: { t: LedgerTransaction; schedule?: PayoutSchedule; extra?: ReactNode }) {
   const agentName = useAgentName();
   const status = ledgerStatus(t);
   return (
@@ -141,11 +150,8 @@ function RecordSummary({ t, schedule, extra }: { t: LedgerTransaction; schedule:
         {t.kind === 'endorsement' ? 'Endorsed' : t.kind === 'cancellation' ? 'Cancelled from' : t.kind === 'correction' ? 'Corrected' : 'Bound'} {formatShortDate(t.eventDate)} · {t.carrierName} · net {formatCents(t.netCents)}
       </p>
       <p className="text-xs text-[var(--color-ink-700)]" data-field="frozen">
-        Agent: <strong>{agentName(t)}</strong>
-        {t.agentRate !== null ? ` at ${formatRate(t.agentRate)}` : ''} → <strong className="tabular-nums">{t.agentCents === null ? '—' : formatCents(t.agentCents)}</strong>
-        {' · '}Carrier {t.carrierRateSource === 'actual' ? 'actual' : formatRate(t.carrierRate)} → <strong className="tabular-nums">{formatCents(t.carrierCents)}</strong>
-        {t.reviewFlags.includes('no_carrier_rate') ? ' (not set)' : t.carrierRateSource === 'default' ? ' (10% default)' : t.carrierRateSource === 'historical' ? ' (not confirmed)' : ''}
-        {status !== 'void' && status !== 'settled_outside' && <> · {t.stream === 'weekly' ? 'weekly' : 'monthly'} {payoutWords(payoutDate(schedule, t.stream, t.payableFrom), status === 'verified')}</>}
+        {agentName(t)}: <strong className="tabular-nums">{t.agentCents === null ? '—' : formatCents(t.agentCents)}</strong>
+        {' · '}Carrier commission: <strong className="tabular-nums">{t.reviewFlags.includes('no_carrier_rate') ? 'not set' : formatCents(t.carrierCents)}</strong>
       </p>
       {t.reviewFlags.length > 0 && <p className="text-[11px] text-[var(--color-warning-600)]" data-field="flags">{t.reviewFlags.map((f) => FLAG_LABELS[f] ?? f).join(' · ')}</p>}
       {t.voidReason && <p className="text-[11px] text-[var(--color-ink-500)]">Voided: {t.voidReason}</p>}
@@ -167,7 +173,7 @@ type Dialog =
   | { kind: 'receipt'; t: LedgerTransaction }
   | { kind: 'settle'; ids: string[] };
 
-function ReviewSection({ queue, all, historicalWaiting, schedule, run }: { queue: LedgerTransaction[]; all: LedgerTransaction[]; historicalWaiting: number; schedule: PayoutSchedule; run: Run }) {
+function ReviewSection({ queue, all, historicalWaiting, schedule, run, nothingElse = true }: { queue: LedgerTransaction[]; all: LedgerTransaction[]; historicalWaiting: number; schedule: PayoutSchedule; run: Run; nothingElse?: boolean }) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [verifying, setVerifying] = useState<LedgerTransaction | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
@@ -228,10 +234,10 @@ function ReviewSection({ queue, all, historicalWaiting, schedule, run }: { queue
           {historicalWaiting} {historicalWaiting === 1 ? 'policy or endorsement' : 'policies and endorsements'} from before commission tracking {historicalWaiting === 1 ? 'isn’t' : 'aren’t'} recorded yet. Record them for review in Payout schedule → Historical records.
         </p>
       )}
-      {queue.length === 0 && <Card><CardBody className="pt-5 text-sm text-[var(--color-ink-600)]" data-testid="review-empty">Nothing waiting for review. Every recorded commission is verified, settled or void.</CardBody></Card>}
+      {queue.length === 0 && nothingElse && <Card><CardBody className="pt-5 text-sm text-[var(--color-ink-600)]" data-testid="review-empty">Nothing to do. You’re all caught up.</CardBody></Card>}
       {group(
         'Historical – needs review',
-        'Recorded before commission tracking. Never verified with today’s rates and never paid until you confirm the agent, split and carrier rate — or mark them settled outside RenewalIQ.',
+        'From before commission tracking: confirm them, or mark them settled outside RenewalIQ.',
         historical,
         (t) => row(t, <Button size="sm" variant="secondary" onClick={() => setDialog({ kind: 'confirm-historical', t })}>Review</Button>, true),
         'review-historical',
@@ -239,15 +245,15 @@ function ReviewSection({ queue, all, historicalWaiting, schedule, run }: { queue
           Settled outside RenewalIQ…
         </Button>
       )}
-      {group('Needs attention', 'Something changed or is missing; deal with it before verifying.', attention, (t) => row(t), 'review-attention')}
+      {group('Needs attention', 'Open the ⋮ menu to fix it.', attention, (t) => row(t), 'review-attention')}
       {group(
         'Missing Document',
-        'Recorded without a document. Attach the binder or endorsement page on the account — or verify without a document, as an exception with a reason.',
+        'Attach the document on the account, or verify without it.',
         missingProof,
         (t) => row(t, <Button size="sm" variant="secondary" onClick={() => reason('Verify without document', 'Reason (kept in the audit)', 'Verify without document', (r) => run(() => repo.verifyCommission(t.id, r), `Verified without document: ${policyLabel(t)}.`), 'An exception: say why the amounts can be trusted without the document.')}>Verify without document</Button>),
         'review-missing-proof'
       )}
-      {group('Pending Verification', 'Check the amounts against the document, then verify. Only verified commissions are eligible for payout.', pending, (t) => row(t, <Button size="sm" onClick={() => setVerifying(t)}>Verify</Button>), 'review-pending')}
+      {group('Ready to verify', 'Check the amounts, then verify.', pending, (t) => row(t, <Button size="sm" onClick={() => setVerifying(t)}>Verify</Button>), 'review-pending')}
 
       <ConfirmDialog
         open={!!verifying}
@@ -782,7 +788,7 @@ function RecordsSection({ all, receipts, schedule, run }: { all: LedgerTransacti
 
 // ─────────────────────────────── cancellations ───────────────────────────────
 
-function CancellationsSection({ cancellations, all, run }: { cancellations: LedgerCancellation[]; all: LedgerTransaction[]; run: Run }) {
+function CancellationsSection({ cancellations, all, run, show }: { cancellations: LedgerCancellation[]; all: LedgerTransaction[]; run: Run; show: 'open' | 'decided' }) {
   const members = useAccountsStore((s) => s.agencyMembers);
   const [approving, setApproving] = useState<LedgerCancellation | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -818,13 +824,11 @@ function CancellationsSection({ cancellations, all, run }: { cancellations: Ledg
         </div>
         {open.includes(c) && (
           <div className="flex shrink-0 items-center gap-1">
-            <Button size="sm" onClick={() => setApproving(c)} disabled={!t}>Approve…</Button>
-            <OverflowMenu
-              items={[
-                ...(c.status === 'requested' ? [{ key: 'await', label: 'Waiting for the carrier’s amount', onSelect: () => void run(() => repo.markCancellationAwaiting(c.id), 'Marked as waiting for the carrier’s amount.') }] : []),
-                { key: 'reject', label: 'Reject…', tone: 'danger' as const, onSelect: () => setDialog({ kind: 'reason', title: 'Reject the cancellation request', label: 'Why', confirm: 'Reject', onConfirm: (why) => run(() => repo.rejectCancellation(c.id, why), 'Request rejected.') }) },
-              ]}
-            />
+            <Button size="sm" onClick={() => setApproving(c)} disabled={!t}>Approve</Button>
+            <Button size="sm" variant="secondary" onClick={() => setDialog({ kind: 'reason', title: 'Reject the cancellation request', label: 'Why', confirm: 'Reject', onConfirm: (why) => run(() => repo.rejectCancellation(c.id, why), 'Request rejected.') })}>Reject</Button>
+            {c.status === 'requested' && (
+              <OverflowMenu items={[{ key: 'await', label: 'Waiting for the carrier’s amount', onSelect: () => void run(() => repo.markCancellationAwaiting(c.id), 'Marked as waiting for the carrier’s amount.') }]} />
+            )}
           </div>
         )}
       </li>
@@ -832,17 +836,19 @@ function CancellationsSection({ cancellations, all, run }: { cancellations: Ledg
   };
   return (
     <>
-      <Card>
-        <CardBody className="pt-4">
-          <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Waiting for a decision ({open.length})</h3>
-          <p className="text-xs text-[var(--color-ink-500)]">Approve with the carrier’s actual refund. The adjustment uses the original policy’s agent and split; the original is never changed or deleted.</p>
-          {open.length ? <ul className="mt-2" data-testid="cancellations-open">{open.map(card)}</ul> : <p className="mt-3 text-sm text-[var(--color-ink-500)]">No open requests.</p>}
-        </CardBody>
-      </Card>
-      {done.length > 0 && (
+      {show === 'open' && open.length > 0 && (
+        <Card data-testid="cancellation-requests">
+          <CardBody className="pt-4">
+            <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Cancellation requests <span className="text-[var(--color-ink-400)]">({open.length})</span></h3>
+            <p className="text-xs text-[var(--color-ink-500)]">Approve with the carrier’s refund, or reject.</p>
+            <ul className="mt-2" data-testid="cancellations-open">{open.map(card)}</ul>
+          </CardBody>
+        </Card>
+      )}
+      {show === 'decided' && done.length > 0 && (
         <Card>
           <CardBody className="pt-4">
-            <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Decided</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Cancellations</h3>
             <ul className="mt-2" data-testid="cancellations-done">{done.map(card)}</ul>
           </CardBody>
         </Card>

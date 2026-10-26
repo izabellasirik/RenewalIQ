@@ -72,7 +72,7 @@ export function PoliciesAnalyticsPage() {
             { key: 'policies', label: 'Policies & endorsements' },
             { key: 'money', label: 'Income & expenses' },
             // Admins: verify commissions and handle agents' cancellation requests (0064).
-            { key: 'commissions', label: 'Commissions & cancellations' },
+            { key: 'commissions', label: 'Commissions' },
           ]}
           active={view}
           onChange={(key) => setParams(new URLSearchParams(key === 'pl' ? {} : { view: key }), { replace: true })}

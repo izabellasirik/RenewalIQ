@@ -117,7 +117,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           policyLabel={cancelling.entry.policyNumber ?? cancelling.entry.carrier}
           onClose={() => setCancelling(null)}
           onSent={() => {
-            setSent(`Cancellation of ${cancelling.entry.policyNumber ?? (cancelling.entry.kind === 'endorsement' ? 'the endorsement' : 'the policy')} requested — an admin approves it in Analytics → Commissions & cancellations, with the carrier’s actual refund.`);
+            setSent(`Cancellation of ${cancelling.entry.policyNumber ?? (cancelling.entry.kind === 'endorsement' ? 'the endorsement' : 'the policy')} requested — an admin approves it in Analytics → Commissions.`);
             onRecordsChanged();
           }}
         />
