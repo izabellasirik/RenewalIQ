@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BadgeDollarSign, Building2, ChevronDown, ChevronRight, FileQuestion, Pencil, Plus, Send, ShieldCheck, StickyNote, Trash2, XCircle } from 'lucide-react';
 import type { MarketQuote, MissingItem, MissingItemType, QuoteNote, QuoteStatus } from '../../types';
-import { AWAITING_CARRIER_STATUSES, MARKET_STATUS_CHOICES, QUOTE_STATUS_LABELS, QUOTE_STATUS_ORDER, marketStatusChoice, marketStatusLabel, type MarketStatusChoice, type PolicyEntryKind } from '../../types';
+import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, QUOTE_STATUS_ORDER, marketStatusLabel, type MarketStatusChoice, type PolicyEntryKind } from '../../types';
 import { Badge, Button, Card, CardBody, EmptyState, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
@@ -185,13 +185,13 @@ function AddMarketForm({ accountId, marketNames, onDone, onBind }: { accountId: 
               <label className={labelClass}>Status</label>
               <select value={status} onChange={(e) => setStatus(e.target.value as QuoteStatus | 'endorsed')} className={inputClass} aria-label="Market status">
                 {/* Bound / Endorsed ask for the policy (and the endorsement) next: date, amounts, carrier %, documents. */}
-                {MARKET_STATUS_CHOICES.filter((st) => policiesFeatureEnabled() || (st !== 'bound' && st !== 'endorsed')).map((st) => (
+                {QUOTE_STATUS_ORDER.filter((st) => policiesFeatureEnabled() || st !== 'bound').map((st) => (
                   <option key={st} value={st}>
                     {marketStatusLabel(st)}
                   </option>
                 ))}
               </select>
-              {binds && <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">Next: the policy{status === 'endorsed' ? ', then the endorsement' : ''} — dates, amounts and carrier %.</p>}
+              {binds && <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">Next: the policy — dates, amounts and carrier %. Endorsements are added on the market afterwards.</p>}
             </div>
           </div>
           {sent && (
@@ -391,7 +391,7 @@ function QuoteCard({
                   {quote.marketName}
                 </button>
               </h3>
-              <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{marketStatusLabel(marketStatusChoice(quote))}</Badge>
+              <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{QUOTE_STATUS_LABELS[quote.status]}</Badge>
               {quote.status === 'bound' && marketTotalCents(quote) !== null ? (
                 <span className="text-sm font-semibold text-[var(--color-success-600)]" title="Total of this market’s policies and endorsements (net, taxes and fees)" data-testid="market-total">
                   {formatCents(marketTotalCents(quote)!)}
@@ -428,13 +428,19 @@ function QuoteCard({
             )}
           </div>
           <div className="flex items-center gap-1">
+            {/* Endorsements are added on a Bound market (Add endorsement); the market stays Bound. */}
+            {quote.status === 'bound' && activeEndorsements(quote).length > 0 && (
+              <span className="mr-1 whitespace-nowrap text-xs font-medium text-[var(--color-info-600)]" data-testid="includes-endorsements">
+                Includes Endorsement{activeEndorsements(quote).length === 1 ? '' : 's'}
+              </span>
+            )}
             <select
-              value={marketStatusChoice(quote)}
+              value={quote.status}
               onChange={(e) => chooseStatus(e.target.value as MarketStatusChoice)}
               className={smallInputClass}
               aria-label={`Status for ${quote.marketName}`}
             >
-              {MARKET_STATUS_CHOICES.map((s) => (
+              {QUOTE_STATUS_ORDER.map((s) => (
                 <option key={s} value={s}>
                   {marketStatusLabel(s)}
                 </option>

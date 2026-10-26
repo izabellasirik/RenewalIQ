@@ -142,3 +142,32 @@ export async function enterPolicyCarrierRate(accountId: string, policyId: string
     return { ok: false, message: err instanceof Error ? err.message : 'The carrier % couldn’t be saved.' };
   }
 }
+
+export interface EnteredCarrierRate {
+  rate: number;
+  /** An admin ticked that the % is right ("Verified"); otherwise "Needs Review". */
+  reviewed: boolean;
+}
+/** The carrier % entered on policies / endorsements (0074), keyed "accountId|policyId" — only what this user may see (assigned agent or admin). */
+export async function fetchEnteredCarrierRates(accountId?: string): Promise<RepoResult<Map<string, EnteredCarrierRate>>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const { data, error } = await supabase.rpc('policy_carrier_rates', accountId ? { p_submission_id: accountId } : {});
+    if (error) {
+      if (error.code === 'PGRST202' || /could not find the function/i.test(error.message)) return { ok: false, message: 'Needs database migration 0074.', missingMigration: true };
+      return { ok: false, message: error.message };
+    }
+    const out = new Map<string, EnteredCarrierRate>();
+    for (const r of (data ?? []) as { submission_id: string; policy_id: string; rate: number; reviewed: boolean }[]) out.set(`${r.submission_id}|${r.policy_id}`, { rate: Number(r.rate), reviewed: !!r.reviewed });
+    return { ok: true, data: out };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : 'Could not load carrier %.' };
+  }
+}
+
+/** An admin ticks (or unticks) that a policy's entered carrier % is right (0074). */
+export async function reviewEnteredCarrierRate(accountId: string, policyId: string, checked: boolean): Promise<RepoResult<boolean>> {
+  if (!supabase) return NOT_CONFIGURED;
+  const { data, error } = await supabase.rpc('review_policy_carrier_rate', { p_submission_id: accountId, p_policy_id: policyId, p_checked: checked });
+  return error ? { ok: false, message: error.message } : { ok: true, data: data === true };
+}

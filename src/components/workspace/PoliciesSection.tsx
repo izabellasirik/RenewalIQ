@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Ban, FileCheck2, FilePlus2, FileWarning, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { MarketQuote, PolicyBusinessType, PolicyEntryKind, PolicyRecord } from '../../types';
 import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
@@ -6,8 +6,8 @@ import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCommission';
 import { formatShortDate } from '../../services/workflow/dates';
-import { activeEndorsements, activePolicies, agentCommissionCents, carrierCommissionCents, centsInput, checkPolicy, formatCents, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
-import { enterPolicyCarrierRate, policyNumberTaken } from '../../services/supabase/commissionRepo';
+import { activeEndorsements, activePolicies, agentCommissionCents, centsInput, checkPolicy, formatCents, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
+import { enterPolicyCarrierRate, fetchEnteredCarrierRates, policyNumberTaken } from '../../services/supabase/commissionRepo';
 import { isSupabaseConfigured } from '../../services/supabase/client';
 import { generateId } from '../../utils/id';
 import { useAccountCommissionStatuses } from '../../hooks/useLedger';
@@ -36,17 +36,20 @@ export function PoliciesSection({ accountId, quote }: { accountId: string; quote
   const records = useAccountCommissionStatuses(accountId);
   if (!policiesFeatureEnabled()) return null;
   const bound = quote.status === 'bound';
+  const endorsements = activeEndorsements(quote);
   return (
     <>
-      <EntryList accountId={accountId} quote={quote} kind="policy" entries={activePolicies(quote)} active={bound} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} />
-      <EntryList accountId={accountId} quote={quote} kind="endorsement" entries={activeEndorsements(quote)} active={bound && !!quote.endorsed} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} />
+      <EntryList accountId={accountId} quote={quote} kind="policy" entries={activePolicies(quote)} active={bound} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} canEndorse={bound && activePolicies(quote).length > 0} />
+      {/* Endorsements are part of a policy: added with "Add endorsement" next to "Add policy"; the market stays Bound. */}
+      <EntryList accountId={accountId} quote={quote} kind="endorsement" entries={endorsements} active={bound && endorsements.length > 0} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} hideAdd />
     </>
   );
 }
 
-function EntryList({ accountId, quote, kind, entries, active, commission, records, onRecordsChanged }: { accountId: string; quote: MarketQuote; kind: PolicyEntryKind; entries: PolicyRecord[]; active: boolean; commission: CommissionView; records: Map<string, AccountCommissionStatus>; onRecordsChanged: () => void }) {
+function EntryList({ accountId, quote, kind, entries, active, commission, records, onRecordsChanged, canEndorse = false, hideAdd = false }: { accountId: string; quote: MarketQuote; kind: PolicyEntryKind; entries: PolicyRecord[]; active: boolean; commission: CommissionView; records: Map<string, AccountCommissionStatus>; onRecordsChanged: () => void; canEndorse?: boolean; hideAdd?: boolean }) {
   const removePolicy = useAccountsStore((s) => s.removePolicy);
   const [editing, setEditing] = useState<PolicyRecord | 'new' | null>(null);
+  const [endorsing, setEndorsing] = useState(false);
   const [removing, setRemoving] = useState<PolicyRecord | null>(null);
   const [cancelling, setCancelling] = useState<{ entry: PolicyRecord; record: AccountCommissionStatus } | null>(null);
   const [sent, setSent] = useState('');
@@ -61,10 +64,17 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           {k.title}
           {entries.length ? ` (${entries.length})` : ''}
         </p>
-        {active && (
-          <Button size="sm" variant={entries.length ? 'secondary' : 'primary'} icon={<Plus size={13} />} onClick={() => setEditing('new')}>
-            {k.add}
-          </Button>
+        {active && !hideAdd && (
+          <span className="flex flex-wrap gap-2">
+            <Button size="sm" variant={entries.length ? 'secondary' : 'primary'} icon={<Plus size={13} />} onClick={() => setEditing('new')}>
+              {k.add}
+            </Button>
+            {canEndorse && (
+              <Button size="sm" variant="secondary" icon={<Plus size={13} />} onClick={() => setEndorsing(true)}>
+                {KIND.endorsement.add}
+              </Button>
+            )}
+          </span>
         )}
       </div>
       {!active && (
@@ -95,6 +105,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
 
       {sent && <p className="mt-2 text-xs text-[var(--color-success-600)]" role="status" data-testid="cancel-request-sent">{sent}</p>}
       {editing && <EntryForm key={editing === 'new' ? 'new' : editing.id} accountId={accountId} quote={quote} kind={kind} editing={editing} onClose={() => setEditing(null)} />}
+      {endorsing && <EntryForm key="new-endorsement" accountId={accountId} quote={quote} kind="endorsement" editing="new" onClose={() => setEndorsing(false)} />}
       {cancelling && (
         <CancellationRequestDialog
           accountId={accountId}
@@ -143,7 +154,8 @@ function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRe
                 <FileWarning size={12} aria-hidden /> Missing Documents
               </span>
             )}
-            {record && <CommissionStatusBadge status={record.status} />}
+            {/* "Missing Documents" above already says it; the commission status shows from Pending Verification on. */}
+            {record && record.status !== 'missing_proof' && <CommissionStatusBadge status={record.status} />}
           </p>
           {kind === 'endorsement' && (
             <p className="mt-0.5 text-xs text-[var(--color-ink-600)]" data-field="for-policy">
@@ -217,7 +229,7 @@ export function CommissionLine({ commission, netCents, carrier, dateKey, record 
   if (cents === null) {
     return (
       <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">
-        Agent commission: {commission.preview ? 'carrier % not set yet (an admin sets it in Analytics)' : 'your split of the carrier commission, shown once it’s recorded'}
+        Agent commission: {commission.preview ? 'carrier % not set yet' : 'shown once it’s recorded'}
       </p>
     );
   }
@@ -278,6 +290,19 @@ export function EntryForm({
   const asksCarrierPct = isSupabaseConfigured && !!agencyAccess && !!account?.agencyId && (agencyAccess.role === 'admin' || (!!me && account.assignedUserId === me));
   const [carrierPct, setCarrierPct] = useState('');
   const carrierRate = parseCarrierPercent(carrierPct);
+  // An endorsement starts from its policy's carrier % (0074) until the % is typed by hand.
+  const [pctTouched, setPctTouched] = useState(false);
+  const [policyRates, setPolicyRates] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (!asksCarrierPct || kind !== 'endorsement') return;
+    let current = true;
+    void fetchEnteredCarrierRates(accountId).then((r) => {
+      if (current && r.ok) setPolicyRates(new Map([...r.data].map(([key, v]) => [key.slice(accountId.length + 1), v.rate])));
+    });
+    return () => {
+      current = false;
+    };
+  }, [accountId, asksCarrierPct, kind]);
   // Saving without any document asks first (see the confirmation below).
   const [confirmNoDocs, setConfirmNoDocs] = useState(false);
   const attachRef = useRef<HTMLInputElement>(null);
@@ -349,6 +374,10 @@ export function EntryForm({
       fees: '',
     };
   });
+  const fromPolicyRate = kind === 'endorsement' && f.forPolicyId ? policyRates.get(f.forPolicyId) : undefined;
+  useEffect(() => {
+    if (!pctTouched && fromPolicyRate !== undefined) setCarrierPct(String(Math.round(fromPolicyRate * 1e4) / 100));
+  }, [fromPolicyRate, pctTouched]);
   // New documents, each with a description; and the ones already attached (description edits, removals) — applied on save.
   const [files, setFiles] = useState<{ key: string; file: File; description: string }[]>([]);
   const [kept, setKept] = useState(() => (editing === 'new' ? [] : (editing.attachments ?? []).map((a) => ({ ...a, description: a.description ?? '' }))));
@@ -568,7 +597,10 @@ export function EntryForm({
                 inputMode="decimal"
                 className={inputClass}
                 value={carrierPct}
-                onChange={(e) => setCarrierPct(e.target.value)}
+                onChange={(e) => {
+                  setPctTouched(true);
+                  setCarrierPct(e.target.value);
+                }}
                 placeholder="e.g. 12"
                 aria-required="true"
                 data-testid="carrier-pct"
@@ -577,7 +609,7 @@ export function EntryForm({
           )}
           <div className="sm:col-span-4" data-testid="form-commission">
             {asksCarrierPct ? (
-              <CarrierPctLine commission={commission} netCents={live(f.netPremium)} rate={carrierRate} editing={editing !== 'new'} />
+              <CarrierPctLine commission={commission} netCents={live(f.netPremium)} rate={carrierRate} />
             ) : (
               <CommissionLine commission={commission} netCents={live(f.netPremium)} carrier={f.carrier} dateKey={f.boundDate} />
             )}
@@ -661,28 +693,19 @@ export function EntryForm({
   );
 }
 
-/** While the carrier % is typed: "Carrier commission $1,200.00 · Agent commission $300.00 (25% split)". */
-function CarrierPctLine({ commission, netCents, rate, editing }: { commission: CommissionView; netCents: number; rate: number | null; editing: boolean }) {
-  const base = 'text-xs';
-  if (rate === null) return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Enter the carrier’s commission % to see the commission.{editing ? ' A commission that’s already verified keeps its %.' : ''}</p>;
-  const carrier = carrierCommissionCents(netCents, rate) ?? 0;
-  const split = commission.kind === 'amount' ? commission.rate : null;
+/** While the carrier % is typed: just the agent's commission in dollars, e.g. "Agent commission: $300.00". */
+function CarrierPctLine({ commission, netCents, rate }: { commission: CommissionView; netCents: number; rate: number | null }) {
+  const muted = 'text-xs text-[var(--color-ink-500)]';
+  if (rate === null) return <p className={muted} data-field="commission">Enter the carrier’s commission % to see the agent commission.</p>;
+  if (commission.kind === 'amount')
+    return (
+      <p className="text-xs text-[var(--color-ink-700)]" data-field="commission">
+        Agent commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(agentCommissionCents(netCents, rate, commission.rate) ?? 0)}</strong>
+      </p>
+    );
   return (
-    <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
-      Carrier commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(carrier)}</strong>
-      {' · '}Agent commission:{' '}
-      {split !== null ? (
-        <>
-          <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(agentCommissionCents(netCents, rate, split) ?? 0)}</strong> ({Math.round(split * 1000) / 10}% split)
-        </>
-      ) : commission.kind === 'no_rate' ? (
-        `${commission.agentName}’s split isn’t set yet`
-      ) : commission.kind === 'no_agent' ? (
-        'no agent assigned to this account'
-      ) : (
-        'shown once recorded'
-      )}
-      {editing ? <span className="text-[var(--color-ink-500)]"> · A commission that’s already verified keeps its %.</span> : null}
+    <p className={muted} data-field="commission">
+      Agent commission: {commission.kind === 'no_rate' ? `${commission.agentName}’s commission % isn’t set yet` : commission.kind === 'no_agent' ? 'no agent assigned to this account' : 'shown once recorded'}
     </p>
   );
 }

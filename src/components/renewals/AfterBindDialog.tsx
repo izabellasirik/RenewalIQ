@@ -52,10 +52,12 @@ export function AfterBindDialog({ accountId, quoteId, onClose }: { accountId: st
   function offerNext(r: ResolvedRenewal | null) {
     if (r && tracked.some((x) => x.record?.previousRenewalId === r.id)) return onClose();
     const base = r?.renewalDate ?? effectiveDate ?? todayKey();
-    // Policies already recorded on the market: next year's renewal is when the first of them expires.
-    const expires = quote ? activePolicies(quote).map((p) => p.expirationDate).filter((d): d is string => !!d).sort()[0] : undefined;
+    // Next year's renewal: the same date next year as the policy just bound took effect (its bound date
+    // when it has no effective date).
+    const latest = quote ? [...activePolicies(quote)].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0] : undefined;
+    const start = latest?.effectiveDate || latest?.boundDate || base;
     setFrom(r);
-    setDates(renewalDatesFrom(expires ?? addYears(base, 1), r?.leadDays ?? 45));
+    setDates(renewalDatesFrom(addYears(start, 1), r?.leadDays ?? 45));
     setStep('next');
   }
 
@@ -116,7 +118,6 @@ export function AfterBindDialog({ accountId, quoteId, onClose }: { accountId: st
       open
       onClose={onClose}
       title="Prepare next year’s renewal?"
-      subtitle={`${quote.marketName} is bound${from?.renewalDate ? ` for the renewal effective ${formatShortDate(from.renewalDate)}` : ''}. Nothing is set up unless you confirm.`}
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
