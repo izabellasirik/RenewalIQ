@@ -77,9 +77,14 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           </span>
         )}
       </div>
+      {sent && (
+        <p className="mt-2 rounded-md border border-[var(--color-success-600)]/25 bg-[var(--color-success-100)] px-3 py-2 text-sm font-medium text-[var(--color-success-600)]" role="status" data-testid="cancel-request-sent">
+          {sent}
+        </p>
+      )}
       {!active && (
         <p className="mt-1.5 text-xs text-[var(--color-warning-600)]">
-          This market is no longer marked {kind === 'policy' ? 'Bound' : 'Endorsed'}. Its {k.title.toLowerCase()} are kept — remove any that weren’t written.
+          This market is no longer marked Bound. Its {k.title.toLowerCase()} are kept — remove any that weren’t written.
         </p>
       )}
       {entries.length === 0 ? (
@@ -103,7 +108,6 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
         </ul>
       )}
 
-      {sent && <p className="mt-2 text-xs text-[var(--color-success-600)]" role="status" data-testid="cancel-request-sent">{sent}</p>}
       {editing && <EntryForm key={editing === 'new' ? 'new' : editing.id} accountId={accountId} quote={quote} kind={kind} editing={editing} onClose={() => setEditing(null)} />}
       {endorsing && <EntryForm key="new-endorsement" accountId={accountId} quote={quote} kind="endorsement" editing="new" onClose={() => setEndorsing(false)} />}
       {cancelling && (
@@ -113,7 +117,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           policyLabel={cancelling.entry.policyNumber ?? cancelling.entry.carrier}
           onClose={() => setCancelling(null)}
           onSent={() => {
-            setSent(`Cancellation of ${cancelling.entry.policyNumber ?? (cancelling.entry.kind === 'endorsement' ? 'the endorsement' : 'the policy')} requested — an admin approves it with the carrier’s actual refund.`);
+            setSent(`Cancellation of ${cancelling.entry.policyNumber ?? (cancelling.entry.kind === 'endorsement' ? 'the endorsement' : 'the policy')} requested — an admin approves it in Analytics → Commissions & cancellations, with the carrier’s actual refund.`);
             onRecordsChanged();
           }}
         />

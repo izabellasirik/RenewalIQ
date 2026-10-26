@@ -4,6 +4,7 @@ import { BarChart3, FileWarning, Paperclip, Pencil, Search } from 'lucide-react'
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { IncomeExpensesPanel, ProfitLossPanel } from '../components/analytics/MoneyPanels';
+import { CommissionsPanel } from '../components/finance/CommissionsPanel';
 import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { formatRate } from '../components/workspace/PoliciesSection';
 import { useAccountsStore } from '../state/useAccountsStore';
@@ -54,7 +55,7 @@ export function PoliciesAnalyticsPage() {
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const isAdmin = agencyAccess?.role === 'admin';
   const [params, setParams] = useSearchParams();
-  const view = isAdmin ? (['pl', 'policies', 'money'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : 'policies';
+  const view = isAdmin ? (['pl', 'policies', 'money', 'commissions'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : 'policies';
   return (
     <PageContainer
       title="Analytics"
@@ -70,6 +71,8 @@ export function PoliciesAnalyticsPage() {
             { key: 'pl', label: 'Profit & loss' },
             { key: 'policies', label: 'Policies & endorsements' },
             { key: 'money', label: 'Income & expenses' },
+            // Admins: verify commissions and handle agents' cancellation requests (0064).
+            { key: 'commissions', label: 'Commissions & cancellations' },
           ]}
           active={view}
           onChange={(key) => setParams(new URLSearchParams(key === 'pl' ? {} : { view: key }), { replace: true })}
@@ -78,6 +81,7 @@ export function PoliciesAnalyticsPage() {
       {view === 'pl' && <ProfitLossPanel />}
       {view === 'money' && <IncomeExpensesPanel />}
       {view === 'policies' && <PoliciesPanel />}
+      {view === 'commissions' && <CommissionsPanel />}
     </PageContainer>
   );
 }
@@ -375,7 +379,7 @@ function PoliciesPanel() {
                             <span className={endorsement ? 'rounded-full bg-[var(--color-info-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-info-600)]' : 'rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-ink-600)]'}>
                               {endorsement ? 'Endorsement' : r.policy.businessType === 'renewal' ? 'Renewal' : 'New business'}
                             </span>
-                            {!r.marketBound && <Badge tone="warning">{endorsement ? 'Market no longer Endorsed' : 'Market no longer Bound'}</Badge>}
+                            {!r.marketBound && <Badge tone="warning">Market no longer Bound</Badge>}
                           </span>
                           <span className="mt-0.5 block text-xs text-[var(--color-ink-500)]">
                             {r.policy.carrier}

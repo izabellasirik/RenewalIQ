@@ -280,7 +280,7 @@ export function policyRows(accounts: Pick<Account, 'id' | 'namedInsured' | 'arch
   for (const a of accounts) {
     if (a.archived && !includeArchived) continue;
     for (const q of quotes[a.id] ?? []) {
-      for (const policy of q.policies ?? []) if (!policy.removedAt) rows.push({ policy, accountId: a.id, insured: a.namedInsured, quoteId: q.id, marketName: q.marketName, marketBound: q.status === 'bound' && (entryKind(policy) === 'policy' || !!q.endorsed), assignedUserId: a.assignedUserId ?? null });
+      for (const policy of q.policies ?? []) if (!policy.removedAt) rows.push({ policy, accountId: a.id, insured: a.namedInsured, quoteId: q.id, marketName: q.marketName, marketBound: q.status === 'bound', assignedUserId: a.assignedUserId ?? null });
     }
   }
   return rows;
