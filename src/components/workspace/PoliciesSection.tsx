@@ -28,7 +28,7 @@ const KIND = {
  * status, flagged, so nothing silently disappears. Each one carries its documents (binder, policy,
  * endorsement page), each with a description; until it has one, it's marked "Missing Documents". The agent's commission shows only
  * to that agent and the agency's admins: once the database has recorded it (0064), the amount frozen in
- * that record and its status (Missing Proof → Pending Verification → Verified); before, worked out from
+ * that record and its status (Missing Document → Pending Verification → Verified); before, worked out from
  * the net amount (never stored here). A recorded policy's agent can request its cancellation here.
  */
 export function PoliciesSection({ accountId, quote }: { accountId: string; quote: MarketQuote }) {

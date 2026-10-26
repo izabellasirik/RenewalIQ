@@ -41,7 +41,7 @@ type Section = 'review' | 'records' | 'cancellations' | 'rates' | 'schedule';
 
 /**
  * The agency's commission records (0064), for admins: the review queue (historical records, records that
- * need attention, Missing Proof, Pending Verification), every record with its corrections and
+ * need attention, Missing Document, Pending Verification), every record with its corrections and
  * cancellations, cancellation requests, carrier rates by date, and the payout schedule. Every action is
  * one of the database's functions — it checks who may do it, keeps the history and writes the audit.
  * Payouts themselves are on the Payouts tab (0065); here each record shows its expected payout date.
@@ -135,7 +135,7 @@ function RecordSummary({ t, schedule, extra }: { t: LedgerTransaction; schedule:
         <span className="font-medium text-[var(--color-ink-800)]">{policyLabel(t)}</span>
         <Badge tone={t.kind === 'cancellation' ? 'danger' : t.kind === 'correction' ? 'brand' : t.kind === 'endorsement' ? 'info' : 'neutral'}>{KIND_LABELS[t.kind]}</Badge>
         <CommissionStatusBadge status={status} />
-        {t.verifiedWithoutProof && <Badge tone="warning">Verified without proof</Badge>}
+        {t.verifiedWithoutProof && <Badge tone="warning">Verified without document</Badge>}
       </p>
       <p className="text-xs text-[var(--color-ink-600)]">
         {t.kind === 'endorsement' ? 'Endorsed' : t.kind === 'cancellation' ? 'Cancelled from' : t.kind === 'correction' ? 'Corrected' : 'Bound'} {formatShortDate(t.eventDate)} · {t.carrierName} · net {formatCents(t.netCents)}
@@ -150,7 +150,7 @@ function RecordSummary({ t, schedule, extra }: { t: LedgerTransaction; schedule:
       {t.reviewFlags.length > 0 && <p className="text-[11px] text-[var(--color-warning-600)]" data-field="flags">{t.reviewFlags.map((f) => FLAG_LABELS[f] ?? f).join(' · ')}</p>}
       {t.voidReason && <p className="text-[11px] text-[var(--color-ink-500)]">Voided: {t.voidReason}</p>}
       {t.settledReason && <p className="text-[11px] text-[var(--color-ink-500)]">Settled outside RenewalIQ: {t.settledReason}</p>}
-      {t.verificationReason && <p className="text-[11px] text-[var(--color-ink-500)]">{t.verifiedWithoutProof ? 'Reason (no proof)' : 'Note'}: {t.verificationReason}</p>}
+      {t.verificationReason && <p className="text-[11px] text-[var(--color-ink-500)]">{t.verifiedWithoutProof ? 'Reason (no document)' : 'Note'}: {t.verificationReason}</p>}
       {extra}
     </div>
   );
@@ -241,13 +241,13 @@ function ReviewSection({ queue, all, historicalWaiting, schedule, run }: { queue
       )}
       {group('Needs attention', 'Something changed or is missing; deal with it before verifying.', attention, (t) => row(t), 'review-attention')}
       {group(
-        'Missing Proof',
-        'Recorded without a document. Attach the binder or endorsement page on the account — or verify without proof, as an exception with a reason.',
+        'Missing Document',
+        'Recorded without a document. Attach the binder or endorsement page on the account — or verify without a document, as an exception with a reason.',
         missingProof,
-        (t) => row(t, <Button size="sm" variant="secondary" onClick={() => reason('Verify without proof', 'Reason (kept in the audit)', 'Verify without proof', (r) => run(() => repo.verifyCommission(t.id, r), `Verified without proof: ${policyLabel(t)}.`), 'An exception: say why the amounts can be trusted without the document.')}>Verify without proof</Button>),
+        (t) => row(t, <Button size="sm" variant="secondary" onClick={() => reason('Verify without document', 'Reason (kept in the audit)', 'Verify without document', (r) => run(() => repo.verifyCommission(t.id, r), `Verified without document: ${policyLabel(t)}.`), 'An exception: say why the amounts can be trusted without the document.')}>Verify without document</Button>),
         'review-missing-proof'
       )}
-      {group('Pending Verification', 'Check the amounts against the proof, then verify. Only verified commissions are eligible for payout.', pending, (t) => row(t, <Button size="sm" onClick={() => setVerifying(t)}>Verify</Button>), 'review-pending')}
+      {group('Pending Verification', 'Check the amounts against the document, then verify. Only verified commissions are eligible for payout.', pending, (t) => row(t, <Button size="sm" onClick={() => setVerifying(t)}>Verify</Button>), 'review-pending')}
 
       <ConfirmDialog
         open={!!verifying}

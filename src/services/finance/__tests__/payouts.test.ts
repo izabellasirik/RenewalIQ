@@ -42,7 +42,7 @@ describe('a payout run', () => {
     expect(readyLines({ ...details, run: { ...details.run, closedAt: '2026-09-15T00:00:00Z' } })).toEqual([]);
   });
   it('says why a record waits', () => {
-    expect(waitingReason(details.waiting[0])).toBe('Missing Proof');
+    expect(waitingReason(details.waiting[0])).toBe('Missing Document');
     expect(waitingReason(details.waiting[1])).toMatch(/changed/i);
     expect(waitingReason({ status: 'verified', flags: [], holdReason: 'Client disputes the premium' })).toBe('Held: Client disputes the premium');
   });

@@ -34,7 +34,7 @@ describe('payout dates', () => {
 });
 
 describe('status and what blocks verification', () => {
-  it('Missing Proof → Pending Verification → Verified', () => {
+  it('Missing Document → Pending Verification → Verified', () => {
     expect(ledgerStatus(rec({ proof_status: 'missing_proof' }))).toBe('missing_proof');
     expect(ledgerStatus(rec({}))).toBe('pending_verification');
     expect(ledgerStatus(rec({ verification_status: 'verified', verified_at: '2026-03-10T00:00:00Z' }))).toBe('verified');

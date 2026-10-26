@@ -97,7 +97,7 @@ export const DEFAULT_PAYOUT_SCHEDULE: PayoutSchedule = { weeklyPeriodStartDow: 1
 export const WEEKDAYS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export const STATUS_LABELS: Record<LedgerStatus, string> = {
-  missing_proof: 'Missing Proof',
+  missing_proof: 'Missing Document',
   pending_verification: 'Pending Verification',
   verified: 'Verified',
   historical_review: 'Historical – needs review',

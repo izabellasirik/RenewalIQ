@@ -10,7 +10,7 @@ const TONES: Record<LedgerStatus, BadgeTone> = {
   void: 'neutral',
 };
 
-/** Missing Proof · Pending Verification · Verified (and Historical – needs review, Settled outside RenewalIQ, Void). */
+/** Missing Document · Pending Verification · Verified (and Historical – needs review, Settled outside RenewalIQ, Void). */
 export function CommissionStatusBadge({ status }: { status: LedgerStatus }) {
   return (
     <Badge tone={TONES[status]} data-commission-status={status}>

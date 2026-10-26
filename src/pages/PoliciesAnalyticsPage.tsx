@@ -43,7 +43,7 @@ const ALL_AGENTS = '';
 
 /**
  * Analytics: the money on bound and endorsed markets. Every policy and endorsement recorded in Markets
- * & Quotes, with their net, taxes, fees and totals, the agent commission, and whether the proof
+ * & Quotes, with their net, taxes, fees and totals, the agent commission, and whether the document
  * document is there — filtered by bound / endorsed, effective or expiration date, and searchable.
  * An agency admin sees every client; an agent sees only the clients assigned to them (and only
  * their own commission). Reads what the app already has; commission comes from the agency's rates,
