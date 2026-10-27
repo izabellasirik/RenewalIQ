@@ -7,7 +7,7 @@ import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCommission';
 import { formatDateWithYear, formatShortDate } from '../../services/workflow/dates';
 import { cancellationState, reloadPolicyCancellations, usePolicyCancellations } from '../../hooks/usePolicyCancellations';
-import { undoCancellation, type PolicyCancellation } from '../../services/supabase/ledgerRepo';
+import { declineCancellationUndo, rejectCancellation, undoCancellation, type PolicyCancellation } from '../../services/supabase/ledgerRepo';
 import { activeEndorsements, activePolicies, agentCommissionCents, centsInput, checkPolicy, formatCents, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
 import { enterPolicyCarrierRate, fetchEnteredCarrierRates, policyNumberTaken } from '../../services/supabase/commissionRepo';
 import { isSupabaseConfigured } from '../../services/supabase/client';
@@ -150,14 +150,17 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
   const waiting = cancellations.find((c) => c.policyId === p.id && (c.status === 'requested' || c.status === 'awaiting_amount'));
   const [undoError, setUndoError] = useState('');
   const [undoing, setUndoing] = useState(false);
-  async function undo(c: PolicyCancellation) {
+  const isAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
+  // Admins decide undo requests and older cancellation requests right here (there's no separate screen).
+  async function act(fn: () => Promise<{ ok: true } | { ok: false; message: string }>) {
     setUndoing(true);
     setUndoError('');
-    const r = await undoCancellation(c.id);
+    const r = await fn();
     setUndoing(false);
     if (!r.ok) return setUndoError(r.message);
     void reloadPolicyCancellations(accountId);
   }
+  const undo = (c: PolicyCancellation) => act(() => undoCancellation(c.id));
   const kind: PolicyEntryKind = p.kind === 'endorsement' ? 'endorsement' : 'policy';
   const k = KIND[kind];
   const files = p.attachments ?? [];
@@ -178,7 +181,6 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
                 <FileWarning size={12} aria-hidden /> Missing Documents
               </span>
             )}
-            {cancelled.full ? <Badge tone="danger">Cancelled</Badge> : cancelled.partial.length > 0 ? <Badge tone="warning">Partially cancelled</Badge> : null}
             {waiting && <Badge tone="warning">Cancellation requested</Badge>}
           </p>
           {kind === 'endorsement' && (
@@ -204,9 +206,40 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
               </>
             )}
           </p>
+          {waiting && (
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs" data-field="cancellation-request">
+              <span className="text-[var(--color-ink-600)]">
+                {waiting.cancelledByName} asked to cancel it ({waiting.type === 'full' ? 'full' : 'partial'}, effective {formatDateWithYear(waiting.effectiveDate)}).
+              </span>
+              {isAdmin ? (
+                <>
+                  <button type="button" disabled={undoing} className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60"
+                    onClick={() => void act(async () => {
+                      const r = await rejectCancellation(waiting.id, 'Cancelled directly instead');
+                      if (r.ok && record) onRequestCancellation(record);
+                      return r;
+                    })}>
+                    Cancel it now
+                  </button>
+                  <button type="button" disabled={undoing} className="cursor-pointer font-medium text-[var(--color-ink-600)] hover:underline disabled:opacity-60" onClick={() => void act(() => rejectCancellation(waiting.id, 'Declined'))}>
+                    Decline
+                  </button>
+                </>
+              ) : (
+                <span className="text-[var(--color-ink-500)]">Waiting for an admin.</span>
+              )}
+              {undoError && <span className="text-[var(--color-danger-600)]">{undoError}</span>}
+            </p>
+          )}
           {latest?.direct && (
             <p className="mt-1 flex flex-wrap items-center gap-2 text-xs" data-field="cancellation-undo">
-              {latest.undoRequestedAt ? (
+              {latest.undoRequestedAt && isAdmin ? (
+                <>
+                  <span className="text-[var(--color-ink-600)]">{latest.cancelledByName} asked to undo this cancellation.</span>
+                  <button type="button" disabled={undoing} onClick={() => void undo(latest)} className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60">Undo it</button>
+                  <button type="button" disabled={undoing} onClick={() => void act(() => declineCancellationUndo(latest.id))} className="cursor-pointer font-medium text-[var(--color-ink-600)] hover:underline disabled:opacity-60">Keep cancelled</button>
+                </>
+              ) : latest.undoRequestedAt ? (
                 <span className="text-[var(--color-ink-500)]">Undo requested — waiting for an admin.</span>
               ) : (
                 <button type="button" disabled={undoing} onClick={() => void undo(latest)} className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60">
