@@ -29,11 +29,12 @@ insert into public.agent_commission_rates (agency_id, user_id, rate) values (pg_
 insert into public.carrier_commission_rates (agency_id, carrier_key, carrier_name, rate, effective_from) values (pg_temp.agency(), 'sample mutual', 'Sample Mutual', 0.12, '2026-01-01');
 insert into public.submissions (id, user_id, organization_id, named_insured, assigned_user_id, market_quotes) values
   ('acct_cx', '00000000-0000-0000-0000-00000000000a', pg_temp.agency(), 'Cancel Test (sample)', '00000000-0000-0000-0000-00000000000a',
-   jsonb_build_array(jsonb_build_object('id', 'q_cx', 'marketName', 'Sample Market', 'status', 'bound', 'policies', jsonb_build_array(pg_temp.entry('cx1', 1000000), pg_temp.entry('cx2', 500000)))));
+   jsonb_build_array(jsonb_build_object('id', 'q_cx', 'marketName', 'Sample Market', 'status', 'bound', 'policies', jsonb_build_array(pg_temp.entry('cx1', 1000000), pg_temp.entry('cx2', 500000), pg_temp.entry('cx3', 250000)))));
 create temp table ids (k text, v text);
 grant all on ids to authenticated;
 select (pg_temp.t('cx1')).id as orig \gset
 select (pg_temp.t('cx2')).id as orig2 \gset
+select (pg_temp.t('cx3')).id as orig3 \gset
 select (pg_temp.t('cx1')).agent_cents as orig_agent \gset
 
 set local role authenticated;
@@ -59,15 +60,23 @@ select pg_temp.check('C6 the cancellation is recorded as done (no admin approval
 select pg_temp.check('C7 the original record is unchanged', (select agent_cents = :orig_agent and net_cents = 1000000 from pg_temp.t('cx1')));
 set local role authenticated;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
-select pg_temp.check('C8 more than what''s left ($6,000) is refused', pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-10-01', 'x', 700000)$$, :'orig')));
-select pg_temp.check('C9 the rest can be cancelled (full, $6,000)', not pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-10-01', 'Cancelled (sample)', 600000)$$, :'orig')));
+select pg_temp.check('C8 a partial refund over what''s left ($6,000) is refused', pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'partial', '2026-10-01', 'x', 700000)$$, :'orig')));
+select pg_temp.check('C9 full cancels exactly what''s left ($6,000), whatever amount is sent', not pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-10-01', 'Cancelled (sample)', 999999999)$$, :'orig')));
+select pg_temp.check('C9b … and then nothing is left to cancel', pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-10-02', 'again', null)$$, :'orig')));
+select public.cancel_policy_commission(:'orig3', 'full', '2026-10-01', 'Whole policy (sample)', null) is not null as x \g /dev/null
+reset role;
+select pg_temp.check('C16 full with no amount: the whole $2,500 is refunded → carrier −$300, agent −$75', exists (
+  select 1 from public.commission_transactions x where x.original_transaction_id = :'orig3' and x.kind = 'cancellation' and x.net_cents = -250000 and x.carrier_cents = -30000 and x.agent_cents = -7500));
+set local role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check('C17 a partial cancellation still needs an amount', pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'partial', '2026-10-01', 'x', null)$$, :'orig2')));
 select pg_temp.check('C10 the agent can''t see or tick the admin check', (select count(*) = 0 from public.agent_cancellation_reviews())
   and pg_temp.refused(format($$select public.review_agent_cancellation(%L, true)$$, (select id from public.commission_cancellations where transaction_id = :'orig' limit 1))));
 select public.request_commission_cancellation(:'orig2', 'full', '2026-09-01', 'Waiting the old way (sample)') is not null as x \g /dev/null
 select pg_temp.check('C11 a policy with a request already waiting for an admin can''t also be cancelled directly',
   pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-09-01', 'x', 100000)$$, :'orig2')));
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
-select pg_temp.check('C12 the admin sees both as Needs Review', (select count(*) = 2 and bool_and(not reviewed) from public.agent_cancellation_reviews()));
+select pg_temp.check('C12 the admin sees all three as Needs Review', (select count(*) = 3 and bool_and(not reviewed) from public.agent_cancellation_reviews()));
 select public.review_agent_cancellation((select cancellation_id from public.agent_cancellation_reviews() limit 1), true) \g /dev/null
 select pg_temp.check('C13 the admin ticks one → Verified', (select count(*) = 1 from public.agent_cancellation_reviews() where reviewed));
 select pg_temp.check('C14 the review table itself stays unreadable', pg_temp.refused($$select * from public.commission_cancellation_reviews$$));

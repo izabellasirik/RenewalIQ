@@ -25,11 +25,12 @@ export function CancellationRequestDialog({ accountId, transactionId, policyLabe
     const errs: string[] = [];
     if (!date) errs.push('Enter the cancellation’s effective date.');
     if (!reason.trim()) errs.push('Say why the policy is cancelled.');
-    const cents = parseMoneyCents(refund);
-    if (cents === null || Number.isNaN(cents) || cents <= 0) errs.push('Enter the net premium the carrier refunds, e.g. 4,000.00.');
+    // Full: the whole premium still on the policy is refunded (worked out by the database). Partial: the amount entered.
+    const cents = type === 'full' ? null : parseMoneyCents(refund);
+    if (type === 'partial' && (cents === null || Number.isNaN(cents) || cents <= 0)) errs.push('Enter the net premium the carrier refunds, e.g. 4,000.00.');
     if (errs.length) return setErrors(errs);
     setSaving(true);
-    const res = await cancelPolicy(transactionId, type, date, reason.trim(), cents as number, docIds);
+    const res = await cancelPolicy(transactionId, type, date, reason.trim(), cents, docIds);
     setSaving(false);
     if (!res.ok) return setErrors([res.message]);
     onSent();
@@ -69,10 +70,14 @@ export function CancellationRequestDialog({ accountId, transactionId, policyLabe
             <label className={labelClass} htmlFor="cancel-date">Effective date</label>
             <input id="cancel-date" type="date" className={inputClass} value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
-          <div>
-            <label className={labelClass} htmlFor="cancel-refund">Refund from the carrier (net, $)</label>
-            <input id="cancel-refund" inputMode="decimal" className={inputClass} value={refund} onChange={(e) => setRefund(e.target.value)} placeholder="e.g. 4,000.00" />
-          </div>
+          {type === 'partial' ? (
+            <div>
+              <label className={labelClass} htmlFor="cancel-refund">Refund from the carrier (net, $)</label>
+              <input id="cancel-refund" inputMode="decimal" className={inputClass} value={refund} onChange={(e) => setRefund(e.target.value)} placeholder="e.g. 4,000.00" />
+            </div>
+          ) : (
+            <p className="self-end pb-2 text-xs text-[var(--color-ink-600)]" data-field="full-refund">The whole remaining premium is refunded — no amount needed.</p>
+          )}
         </div>
         <div>
           <label className={labelClass} htmlFor="cancel-reason">Reason</label>

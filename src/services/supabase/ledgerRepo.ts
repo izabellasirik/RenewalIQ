@@ -219,7 +219,7 @@ export const backfillPreview = () => call<Record<string, number>>('finance_backf
 export const backfillHistorical = () => call<{ recorded: number; skipped: number }>('finance_backfill_historical', {}, 'Could not record the historical policies.');
 
 /** The account's agent (or an admin) cancels a policy / endorsement directly (0075): the commission on the refund is taken back now. */
-export const cancelPolicy = (transactionId: string, cancelType: 'full' | 'partial', effectiveDate: string, reason: string, refundNetCents: number, documentIds: string[]) =>
+export const cancelPolicy = (transactionId: string, cancelType: 'full' | 'partial', effectiveDate: string, reason: string, refundNetCents: number | null, documentIds: string[]) =>
   call<string>('cancel_policy_commission', { p_transaction_id: transactionId, p_cancel_type: cancelType, p_effective_date: effectiveDate, p_reason: reason, p_refund_net_cents: refundNetCents, p_document_ids: documentIds }, 'The policy couldn’t be cancelled.');
 
 /** Admins: cancellations agents made directly, and whether each was checked ("Verified") — keyed by cancellation id. */

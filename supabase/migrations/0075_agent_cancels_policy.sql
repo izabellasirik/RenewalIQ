@@ -1,7 +1,8 @@
 -- 0075 The agent cancels a policy / endorsement directly — no admin approval. Needs 0064, 0067 (0073/0074 not needed).
 --
 -- cancel_policy_commission(record, full|partial, effective date, reason, refund, documents): the account's
--- assigned agent or an agency admin enters the net premium the carrier refunds. In one step it records the
+-- assigned agent or an agency admin cancels it. Full: the whole net premium still on it is refunded (no amount
+-- asked). Partial: they enter the net premium the carrier refunds. In one step it records the
 -- cancellation (as approved) and a negative commission record linked to the policy:
 --   refund × the policy's carrier %  → carrier commission taken back
 --   that × the agent's split         → agent commission taken back       (the policy's own recorded rates)
@@ -52,9 +53,12 @@ begin
   end if;
   if p_cancel_type not in ('full', 'partial') then raise exception 'Choose a full or a partial cancellation.' using errcode = '22023'; end if;
   if p_effective_date is null then raise exception 'Enter the cancellation''s effective date.' using errcode = '22023'; end if;
-  if p_refund_net_cents is null or p_refund_net_cents <= 0 then raise exception 'Enter the net premium the carrier refunds.' using errcode = '22023'; end if;
   remaining := public.finance_remaining_net(t.id);
   if t.kind = 'endorsement' and t.original_transaction_id is not null then remaining := least(remaining, public.finance_remaining_net(t.original_transaction_id)); end if;
+  if remaining <= 0 then raise exception 'Nothing is left on this policy to cancel.' using errcode = '22023'; end if;
+  -- Full: everything still on the policy. Partial: the amount entered.
+  if p_cancel_type = 'full' then p_refund_net_cents := remaining; end if;
+  if p_refund_net_cents is null or p_refund_net_cents <= 0 then raise exception 'Enter the net premium the carrier refunds.' using errcode = '22023'; end if;
   if p_refund_net_cents > remaining then
     raise exception 'That''s more than the % net premium left on the policy.', to_char(remaining / 100.0, 'FM999,999,999,990.00') using errcode = '22023';
   end if;
