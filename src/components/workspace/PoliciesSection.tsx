@@ -5,7 +5,9 @@ import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCommission';
-import { formatShortDate } from '../../services/workflow/dates';
+import { formatDateWithYear, formatShortDate } from '../../services/workflow/dates';
+import { cancellationState, reloadPolicyCancellations, usePolicyCancellations } from '../../hooks/usePolicyCancellations';
+import { undoCancellation, type PolicyCancellation } from '../../services/supabase/ledgerRepo';
 import { activeEndorsements, activePolicies, agentCommissionCents, centsInput, checkPolicy, formatCents, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
 import { enterPolicyCarrierRate, fetchEnteredCarrierRates, policyNumberTaken } from '../../services/supabase/commissionRepo';
 import { isSupabaseConfigured } from '../../services/supabase/client';
@@ -13,7 +15,6 @@ import { generateId } from '../../utils/id';
 import { useAccountCommissionStatuses } from '../../hooks/useLedger';
 import type { AccountCommissionStatus } from '../../services/supabase/ledgerRepo';
 import { FLAG_LABELS, payoutWords } from '../../services/finance/ledger';
-import { CommissionStatusBadge } from '../finance/CommissionStatusBadge';
 import { CancellationRequestDialog } from '../finance/CancellationRequestDialog';
 import { inputClass, labelClass } from './formStyles';
 
@@ -50,6 +51,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
   const removePolicy = useAccountsStore((s) => s.removePolicy);
   const [editing, setEditing] = useState<PolicyRecord | 'new' | null>(null);
   const [endorsing, setEndorsing] = useState(false);
+  const cancellations = usePolicyCancellations(accountId);
   const [removing, setRemoving] = useState<PolicyRecord | null>(null);
   const [cancelling, setCancelling] = useState<{ entry: PolicyRecord; record: AccountCommissionStatus } | null>(null);
   const [sent, setSent] = useState('');
@@ -93,9 +95,12 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
         </p>
       ) : (
         <ul className="mt-2 flex flex-col gap-2">
-          {entries.map((p) => (
+          {/* Newest first. */}
+          {[...entries].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)).map((p) => (
             <EntryItem
               key={p.id}
+              accountId={accountId}
+              cancellations={cancellations}
               quote={quote}
               entry={p}
               commission={commission}
@@ -119,6 +124,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           onSent={() => {
             setSent(`${cancelling.entry.kind === 'endorsement' ? 'Endorsement' : 'Policy'} ${cancelling.entry.policyNumber ?? ''} cancelled — the commission on the refund was taken back.`.replace('  ', ' '));
             onRecordsChanged();
+            void reloadPolicyCancellations(accountId);
           }}
         />
       )}
@@ -137,12 +143,26 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
   );
 }
 
-function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRequestCancellation }: { quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; record?: AccountCommissionStatus; onEdit: () => void; onRemove: () => void; onRequestCancellation: (record: AccountCommissionStatus) => void }) {
+function EntryItem({ accountId, cancellations, quote, entry: p, commission, record, onEdit, onRemove, onRequestCancellation }: { accountId: string; cancellations: PolicyCancellation[]; quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; record?: AccountCommissionStatus; onEdit: () => void; onRemove: () => void; onRequestCancellation: (record: AccountCommissionStatus) => void }) {
+  // Cancelled (fully or partly) — shown with its date; undone cancellations no longer count.
+  const cancelled = cancellationState(cancellations, p.id);
+  const latest = cancelled.all[0];
+  const waiting = cancellations.find((c) => c.policyId === p.id && (c.status === 'requested' || c.status === 'awaiting_amount'));
+  const [undoError, setUndoError] = useState('');
+  const [undoing, setUndoing] = useState(false);
+  async function undo(c: PolicyCancellation) {
+    setUndoing(true);
+    setUndoError('');
+    const r = await undoCancellation(c.id);
+    setUndoing(false);
+    if (!r.ok) return setUndoError(r.message);
+    void reloadPolicyCancellations(accountId);
+  }
   const kind: PolicyEntryKind = p.kind === 'endorsement' ? 'endorsement' : 'policy';
   const k = KIND[kind];
   const files = p.attachments ?? [];
   // A policy, or an endorsement that added premium (its refund is paid back with the monthly endorsement payouts).
-  const canRequestCancellation = (kind === 'policy' || p.netPremiumCents > 0) && !!record && record.status !== 'void';
+  const canRequestCancellation = (kind === 'policy' || p.netPremiumCents > 0) && !!record && record.status !== 'void' && !cancelled.full && !waiting;
   const forPolicy = kind === 'endorsement' && p.forPolicyId ? (quote.policies ?? []).find((x) => x.id === p.forPolicyId) : undefined;
   return (
     <li className="rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2.5" data-policy={p.id} data-kind={kind}>
@@ -158,8 +178,8 @@ function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRe
                 <FileWarning size={12} aria-hidden /> Missing Documents
               </span>
             )}
-            {/* "Missing Documents" above already says it; the commission status shows from Pending Verification on. */}
-            {record && record.status !== 'missing_proof' && <CommissionStatusBadge status={record.status} />}
+            {cancelled.full ? <Badge tone="danger">Cancelled</Badge> : cancelled.partial.length > 0 ? <Badge tone="warning">Partially cancelled</Badge> : null}
+            {waiting && <Badge tone="warning">Cancellation requested</Badge>}
           </p>
           {kind === 'endorsement' && (
             <p className="mt-0.5 text-xs text-[var(--color-ink-600)]" data-field="for-policy">
@@ -169,9 +189,33 @@ function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRe
           {p.description && <p className="mt-0.5 text-sm text-[var(--color-ink-700)]" data-field="description">{p.description}</p>}
           <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{p.carrier !== quote.marketName ? `${p.carrier} via ${quote.marketName}` : p.carrier}</p>
           <p className="mt-1 text-xs text-[var(--color-ink-600)]" data-field="dates">
-            {k.dated} {formatShortDate(p.boundDate)}
-            {p.effectiveDate || p.expirationDate ? ` · Term ${formatShortDate(p.effectiveDate)} – ${formatShortDate(p.expirationDate)}` : ''}
+            {latest ? (
+              <>
+                {k.dated} {formatDateWithYear(p.boundDate)} ·{' '}
+                <span className={cancelled.full ? 'font-medium text-[var(--color-danger-600)]' : 'font-medium text-[var(--color-warning-600)]'}>
+                  {cancelled.full ? 'Cancelled' : 'Partially cancelled'} {formatDateWithYear(latest.effectiveDate)}
+                  {!cancelled.full && latest.refundNetCents !== null ? ` (${formatCents(latest.refundNetCents)} refunded)` : ''}
+                </span>
+              </>
+            ) : (
+              <>
+                {k.dated} {formatShortDate(p.boundDate)}
+                {p.effectiveDate || p.expirationDate ? ` · Term ${formatShortDate(p.effectiveDate)} – ${formatShortDate(p.expirationDate)}` : ''}
+              </>
+            )}
           </p>
+          {latest?.direct && (
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs" data-field="cancellation-undo">
+              {latest.undoRequestedAt ? (
+                <span className="text-[var(--color-ink-500)]">Undo requested — waiting for an admin.</span>
+              ) : (
+                <button type="button" disabled={undoing} onClick={() => void undo(latest)} className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60">
+                  {latest.canUndoNow ? 'Undo cancellation' : 'Ask an admin to undo'}
+                </button>
+              )}
+              {undoError && <span className="text-[var(--color-danger-600)]">{undoError}</span>}
+            </p>
+          )}
         </div>
         <OverflowMenu
           items={[

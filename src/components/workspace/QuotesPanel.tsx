@@ -19,6 +19,7 @@ import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { AfterBindDialog } from '../renewals/AfterBindDialog';
 import { bindAsksAboutRenewal } from '../renewals/renewalForm';
 import { EntryForm, PoliciesSection } from './PoliciesSection';
+import { cancellationState, usePolicyCancellations } from '../../hooks/usePolicyCancellations';
 import { activeEndorsements, activePolicies, formatCents, marketTotalCents, policiesFeatureEnabled } from '../../services/workflow/policies';
 
 
@@ -253,6 +254,9 @@ function QuoteCard({
   renewalNote?: { text: string; canLink: boolean };
 }) {
   const storeUpdateQuote = useAccountsStore((s) => s.updateQuote);
+  // Every policy on the market fully cancelled → "Cancelled" next to its status (it stays Bound).
+  const cancellations = usePolicyCancellations(accountId);
+  const allCancelled = quote.status === 'bound' && activePolicies(quote).length > 0 && activePolicies(quote).every((p) => !!cancellationState(cancellations, p.id).full);
   // Marking a market Bound (any of the ways) or Endorsed first asks for the policy / endorsement —
   // date, amounts, optional proof — and only then sets the status (see EntryForm). A market going
   // back to Bound / Endorsed that still has its policies / endorsements just gets the status back.
@@ -428,6 +432,11 @@ function QuoteCard({
             )}
           </div>
           <div className="flex items-center gap-1">
+            {allCancelled && (
+              <span className="mr-1 whitespace-nowrap text-xs font-semibold text-[var(--color-danger-600)]" data-testid="market-cancelled">
+                Cancelled
+              </span>
+            )}
             {/* Endorsements are added on a Bound market (Add endorsement); the market stays Bound. */}
             {quote.status === 'bound' && activeEndorsements(quote).length > 0 && (
               <span className="mr-1 whitespace-nowrap text-xs font-medium text-[var(--color-info-600)]" data-testid="includes-endorsements">

@@ -4,7 +4,6 @@ import { Badge, Button, Card, CardBody, ConfirmDialog, Modal, OverflowMenu, Tabs
 import { inputClass, labelClass } from '../workspace/formStyles';
 import { formatRate } from '../workspace/PoliciesSection';
 import { DownloadButtons } from '../analytics/DownloadButtons';
-import { CommissionStatusBadge } from './CommissionStatusBadge';
 import { CarrierRateDialog } from './CarrierRateDialog';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useLedger } from '../../hooks/useLedger';
@@ -16,14 +15,12 @@ import {
   KIND_LABELS,
   STATUS_LABELS,
   WEEKDAYS,
-  blockingFlags,
   carrierReceived,
   describeSchedule,
   ledgerStatus,
   payoutDate,
   payoutReadiness,
   remainingNetCents,
-  verificationBlockers,
   type LedgerCancellation,
   type LedgerStatus,
   type LedgerTransaction,
@@ -51,17 +48,19 @@ export function CommissionsPanel() {
   const [notice, setNotice] = useState<{ tone: 'good' | 'bad'; text: string } | null>(null);
   const data = ledger.data;
   const current = useMemo(() => (data ? data.transactions.filter((t) => !t.replacedBy) : []), [data]);
-  const queue = useMemo(() => current.filter((t) => t.verificationStatus === 'unverified' && t.settlement === 'open'), [current]);
   const openCancellations = useMemo(() => (data ? data.cancellations.filter((c) => c.status === 'requested' || c.status === 'awaiting_amount') : []), [data]);
-  // Cancellations agents made directly (0075): "Needs Review" until an admin ticks them "Verified".
-  const [reviews, setReviews] = useState<Map<string, boolean>>(new Map());
-  const loadReviews = () => void repo.fetchAgentCancellationReviews().then((r) => r.ok && setReviews(r.data));
-  useEffect(loadReviews, [data]);
-  const toCheck = data ? data.cancellations.filter((c) => reviews.get(c.id) === false) : [];
-  const review = async (id: string, checked: boolean) => {
-    const res = await repo.reviewAgentCancellation(id, checked);
-    if (!res.ok) setNotice({ tone: 'bad', text: res.message });
-    loadReviews();
+  // Cancellations made with "Cancel policy" (0075/0076): the owner only decides undo requests made after their week.
+  const [policyCancels, setPolicyCancels] = useState<repo.PolicyCancellation[]>([]);
+  const loadCancels = () => void repo.fetchPolicyCancellations().then((r) => r.ok && setPolicyCancels(r.data));
+  useEffect(loadCancels, [data]);
+  const undoRequests = policyCancels.filter((c) => c.undoRequestedAt && !c.undoneAt);
+  const undone = new Set(policyCancels.filter((c) => c.undoneAt).map((c) => c.id));
+  const direct = new Set(policyCancels.filter((c) => c.direct).map((c) => c.id));
+  const decideUndo = async (c: repo.PolicyCancellation, approve: boolean) => {
+    const res = approve ? await repo.undoCancellation(c.id) : await repo.declineCancellationUndo(c.id);
+    setNotice(res.ok ? { tone: 'good', text: approve ? 'Cancellation undone — its amounts no longer count.' : 'Kept cancelled.' } : { tone: 'bad', text: res.message });
+    loadCancels();
+    await ledger.reload();
   };
 
   /** Runs an action, then reloads the records and says how it went. */
@@ -81,7 +80,7 @@ export function CommissionsPanel() {
       {/* Two views: what needs a decision now, and everything decided. Rates and the payout schedule are settings, linked below. */}
       <Tabs
         items={[
-          { key: 'todo', label: 'To do', count: data ? queue.length + openCancellations.length + toCheck.length : undefined },
+          { key: 'todo', label: 'To do', count: data ? openCancellations.length + undoRequests.length : undefined },
           { key: 'history', label: 'History' },
           ...(section === 'rates' ? [{ key: 'rates', label: 'Carrier rates' }] : []),
           ...(section === 'schedule' ? [{ key: 'schedule', label: 'Payout schedule' }] : []),
@@ -113,13 +112,43 @@ export function CommissionsPanel() {
         </Card>
       ) : section === 'todo' ? (
         <>
-          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="open" reviews={reviews} onReview={review} />
-          <ReviewSection queue={queue} all={current} historicalWaiting={data.historicalWaiting} schedule={data.schedule} run={run} nothingElse={openCancellations.length === 0 && toCheck.length === 0} />
+          {undoRequests.length > 0 && (
+            <Card data-testid="undo-requests">
+              <CardBody className="pt-4">
+                <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Undo a cancellation? <span className="text-[var(--color-ink-400)]">({undoRequests.length})</span></h3>
+                <p className="text-xs text-[var(--color-ink-500)]">An agent asked to undo a cancellation from an earlier week.</p>
+                <ul className="mt-2">
+                  {undoRequests.map((c) => {
+                    const t = current.find((x) => x.cancellationId === c.id) ?? current.find((x) => x.policyId === c.policyId);
+                    return (
+                      <li key={c.id} className="flex items-start justify-between gap-3 border-b border-[var(--color-ink-50)] py-3 last:border-b-0" data-undo-request={c.id}>
+                        <div className="min-w-0 text-sm">
+                          <p className="font-medium text-[var(--color-ink-900)]">{t?.clientName ?? 'Account'} {t ? policyLabel(t) : ''}</p>
+                          <p className="text-xs text-[var(--color-ink-600)]">
+                            {c.type === 'full' ? 'Cancelled' : 'Partially cancelled'} {formatShortDate(c.effectiveDate)} by {c.cancelledByName}
+                            {c.refundNetCents !== null ? ` · ${formatCents(c.refundNetCents)} refunded` : ''}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 gap-1">
+                          <Button size="sm" onClick={() => void decideUndo(c, true)}>Undo it</Button>
+                          <Button size="sm" variant="secondary" onClick={() => void decideUndo(c, false)}>Keep cancelled</Button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </CardBody>
+            </Card>
+          )}
+          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="open" undone={undone} direct={direct} />
+          {openCancellations.length === 0 && undoRequests.length === 0 && (
+            <Card><CardBody className="pt-5 text-sm text-[var(--color-ink-600)]" data-testid="review-empty">Nothing to do. You’re all caught up.</CardBody></Card>
+          )}
         </>
       ) : section === 'history' ? (
         <>
           <RecordsSection all={current} receipts={data.receipts} schedule={data.schedule} run={run} />
-          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="decided" reviews={reviews} onReview={review} />
+          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="decided" undone={undone} direct={direct} />
         </>
       ) : (
         <ScheduleSection schedule={data.schedule} historicalWaiting={data.historicalWaiting} run={run} />
@@ -153,8 +182,7 @@ function RecordSummary({ t, extra }: { t: LedgerTransaction; schedule?: PayoutSc
         <Link to={`/accounts/${t.submissionId}?tab=quotes`} className="font-medium text-[var(--color-brand-800)] hover:underline">{t.clientName || 'Account'}</Link>
         <span className="font-medium text-[var(--color-ink-800)]">{policyLabel(t)}</span>
         <Badge tone={t.kind === 'cancellation' ? 'danger' : t.kind === 'correction' ? 'brand' : t.kind === 'endorsement' ? 'info' : 'neutral'}>{KIND_LABELS[t.kind]}</Badge>
-        <CommissionStatusBadge status={status} />
-        {t.verifiedWithoutProof && <Badge tone="warning">Verified without document</Badge>}
+        {status === 'void' && <Badge tone="neutral">{t.kind === 'cancellation' ? 'Undone' : 'Void'}</Badge>}
       </p>
       <p className="text-xs text-[var(--color-ink-600)]">
         {t.kind === 'endorsement' ? 'Endorsed' : t.kind === 'cancellation' ? 'Cancelled from' : t.kind === 'correction' ? 'Corrected' : 'Bound'} {formatShortDate(t.eventDate)} · {t.carrierName} · net {formatCents(t.netCents)}
@@ -182,106 +210,6 @@ type Dialog =
   | { kind: 'correct'; t: LedgerTransaction }
   | { kind: 'receipt'; t: LedgerTransaction }
   | { kind: 'settle'; ids: string[] };
-
-function ReviewSection({ queue, all, historicalWaiting, schedule, run, nothingElse = true }: { queue: LedgerTransaction[]; all: LedgerTransaction[]; historicalWaiting: number; schedule: PayoutSchedule; run: Run; nothingElse?: boolean }) {
-  const [dialog, setDialog] = useState<Dialog | null>(null);
-  const [verifying, setVerifying] = useState<LedgerTransaction | null>(null);
-  const [picked, setPicked] = useState<string[]>([]);
-  const historical = queue.filter((t) => t.origin === 'historical' && !t.rateConfirmedAt);
-  const attention = queue.filter((t) => !historical.includes(t) && blockingFlags(t).length > 0);
-  const missingProof = queue.filter((t) => !historical.includes(t) && !attention.includes(t) && t.proofStatus === 'missing_proof');
-  const pending = queue.filter((t) => !historical.includes(t) && !attention.includes(t) && t.proofStatus === 'has_proof');
-
-  const reason = (title: string, label: string, confirm: string, onConfirm: (r: string) => Promise<boolean>, description?: string) => setDialog({ kind: 'reason', title, label, confirm, onConfirm, description });
-  const actionsFor = (t: LedgerTransaction) => {
-    const items: { key: string; label: string; onSelect: () => void; tone?: 'danger' }[] = [];
-    const flags = t.reviewFlags;
-    if (t.origin === 'historical' && !t.rateConfirmedAt) items.push({ key: 'confirm', label: 'Review agent, split and rate…', onSelect: () => setDialog({ kind: 'confirm-historical', t }) });
-    if (flags.includes('unlinked_endorsement')) items.push({ key: 'link', label: 'Link to its policy…', onSelect: () => setDialog({ kind: 'link', t }) });
-    if (flags.includes('changed_since_recorded')) {
-      items.push({ key: 'rerecord', label: 'Accept the changes (record again, same agent and split)…', onSelect: () => reason('Record again from the account', 'Why', 'Record again', (r) => run(() => repo.rerecordCommission(t.id, r), 'Recorded again from the account, with the same agent and split.'), 'The amounts are taken from the account as it is now. The agent and split stay as first recorded; this record is kept, voided.') });
-      items.push({ key: 'ack', label: 'Keep as recorded…', onSelect: () => reason('Keep the record as it is', 'Note', 'Keep as recorded', (r) => run(() => repo.acknowledgeCommissionChanges(t.id, r), 'Kept as recorded; the account’s current details are accepted.')) });
-    }
-    if (flags.includes('removed')) items.push({ key: 'ack-removed', label: 'Keep (it was removed on purpose)…', onSelect: () => reason('Keep this record', 'Note', 'Keep', (r) => run(() => repo.acknowledgeCommissionChanges(t.id, r), 'Kept.')) });
-    if (flags.includes('no_agent') || flags.includes('no_agent_rate')) items.push({ key: 'resolve-agent', label: t.agentUserId ? 'Add the agent’s split…' : 'Add the agent and split…', onSelect: () => setDialog({ kind: 'resolve-agent', t }) });
-    items.push({ key: 'void', label: 'Void…', tone: 'danger', onSelect: () => reason('Void this commission', 'Why (it stays in the history)', 'Void', (r) => run(() => repo.voidCommission(t.id, r), 'Voided. The record is kept with the reason.')) });
-    return items;
-  };
-
-  const row = (t: LedgerTransaction, primary?: ReactNode, selectable = false) => (
-    <li key={t.id} className="flex items-start justify-between gap-3 border-b border-[var(--color-ink-50)] py-3 last:border-b-0" data-record={t.id} data-policy={t.policyId ?? ''}>
-      <div className="flex min-w-0 items-start gap-2">
-        {selectable && <input type="checkbox" className="mt-1" aria-label={`Select ${policyLabel(t)}`} checked={picked.includes(t.id)} onChange={(e) => setPicked((p) => (e.target.checked ? [...p, t.id] : p.filter((x) => x !== t.id)))} />}
-        <RecordSummary t={t} schedule={schedule} extra={verificationBlockers(t).length > 0 ? <p className="text-[11px] font-medium text-[var(--color-ink-700)]">To verify: {verificationBlockers(t).join('; ')}</p> : undefined} />
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        {primary}
-        <OverflowMenu items={actionsFor(t)} />
-      </div>
-    </li>
-  );
-
-  const group = (title: string, hint: string, list: LedgerTransaction[], render: (t: LedgerTransaction) => ReactNode, testId: string, head?: ReactNode) =>
-    list.length > 0 && (
-      <Card data-testid={testId}>
-        <CardBody className="pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">{title} <span className="text-[var(--color-ink-400)]">({list.length})</span></h3>
-              <p className="text-xs text-[var(--color-ink-500)]">{hint}</p>
-            </div>
-            {head}
-          </div>
-          <ul className="mt-2">{list.map(render)}</ul>
-        </CardBody>
-      </Card>
-    );
-
-  return (
-    <>
-      {historicalWaiting > 0 && (
-        <p className="rounded-lg border border-[var(--color-warning-600)]/30 bg-[var(--color-warning-100)] px-3 py-2 text-sm text-[var(--color-ink-700)]" data-testid="historical-waiting">
-          {historicalWaiting} {historicalWaiting === 1 ? 'policy or endorsement' : 'policies and endorsements'} from before commission tracking {historicalWaiting === 1 ? 'isn’t' : 'aren’t'} recorded yet. Record them for review in Payout schedule → Historical records.
-        </p>
-      )}
-      {queue.length === 0 && nothingElse && <Card><CardBody className="pt-5 text-sm text-[var(--color-ink-600)]" data-testid="review-empty">Nothing to do. You’re all caught up.</CardBody></Card>}
-      {group(
-        'Historical – needs review',
-        'From before commission tracking: confirm them, or mark them settled outside RenewalIQ.',
-        historical,
-        (t) => row(t, <Button size="sm" variant="secondary" onClick={() => setDialog({ kind: 'confirm-historical', t })}>Review</Button>, true),
-        'review-historical',
-        <Button size="sm" variant="secondary" disabled={!picked.some((id) => historical.some((t) => t.id === id))} onClick={() => setDialog({ kind: 'settle', ids: picked.filter((id) => historical.some((t) => t.id === id)) })}>
-          Settled outside RenewalIQ…
-        </Button>
-      )}
-      {group('Needs attention', 'Open the ⋮ menu to fix it.', attention, (t) => row(t), 'review-attention')}
-      {group(
-        'Missing Document',
-        'Attach the document on the account, or verify without it.',
-        missingProof,
-        (t) => row(t, <Button size="sm" variant="secondary" onClick={() => reason('Verify without document', 'Reason (kept in the audit)', 'Verify without document', (r) => run(() => repo.verifyCommission(t.id, r), `Verified without document: ${policyLabel(t)}.`), 'An exception: say why the amounts can be trusted without the document.')}>Verify without document</Button>),
-        'review-missing-proof'
-      )}
-      {group('Ready to verify', 'Check the amounts, then verify.', pending, (t) => row(t, <Button size="sm" onClick={() => setVerifying(t)}>Verify</Button>), 'review-pending')}
-
-      <ConfirmDialog
-        open={!!verifying}
-        onCancel={() => setVerifying(null)}
-        onConfirm={() => {
-          const t = verifying!;
-          setVerifying(null);
-          void run(() => repo.verifyCommission(t.id), `Verified: ${policyLabel(t)}.`);
-        }}
-        title="Verify this commission?"
-        description={verifying ? `${policyLabel(verifying)} — net ${formatCents(verifying.netCents)}, agent commission ${verifying.agentCents === null ? '—' : formatCents(verifying.agentCents)}, carrier commission ${formatCents(verifying.carrierCents)}. A verified commission can't be changed; a correction or cancellation is added instead.` : ''}
-        confirmLabel="Verify"
-        variant="default"
-      />
-      <Dialogs dialog={dialog} all={all} run={run} onClose={() => setDialog(null)} onDone={() => setPicked([])} />
-    </>
-  );
-}
 
 function Dialogs({ dialog, all, run, onClose, onDone }: { dialog: Dialog | null; all: LedgerTransaction[]; run: Run; onClose: () => void; onDone?: () => void }) {
   if (!dialog) return null;
@@ -798,14 +726,13 @@ function RecordsSection({ all, receipts, schedule, run }: { all: LedgerTransacti
 
 // ─────────────────────────────── cancellations ───────────────────────────────
 
-function CancellationsSection({ cancellations, all, run, show, reviews, onReview }: { cancellations: LedgerCancellation[]; all: LedgerTransaction[]; run: Run; show: 'open' | 'decided'; reviews: Map<string, boolean>; onReview: (id: string, checked: boolean) => void }) {
+function CancellationsSection({ cancellations, all, run, show, undone, direct }: { cancellations: LedgerCancellation[]; all: LedgerTransaction[]; run: Run; show: 'open' | 'decided'; undone: Set<string>; direct: Set<string> }) {
   const members = useAccountsStore((s) => s.agencyMembers);
   const [approving, setApproving] = useState<LedgerCancellation | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const byId = new Map(all.map((t) => [t.id, t]));
   const open = cancellations.filter((c) => c.status === 'requested' || c.status === 'awaiting_amount');
   const done = cancellations.filter((c) => !open.includes(c));
-  const toCheck = cancellations.filter((c) => reviews.get(c.id) === false);
   const requester = (id: string) => members.find((m) => m.userId === id)?.name ?? 'Agent';
   const card = (c: LedgerCancellation) => {
     const t = byId.get(c.transactionId);
@@ -818,20 +745,14 @@ function CancellationsSection({ cancellations, all, run, show, reviews, onReview
             <span>{t ? policyLabel(t) : ''}</span>
             <Badge tone={c.cancelType === 'full' ? 'danger' : 'warning'}>{c.cancelType === 'full' ? 'Full cancellation' : 'Partial cancellation'}</Badge>
             <Badge tone={c.status === 'approved' ? 'success' : c.status === 'awaiting_amount' ? 'info' : c.status === 'requested' ? 'warning' : 'neutral'}>
-              {c.status === 'approved' && reviews.has(c.id) ? 'Cancelled' : { requested: 'Requested', awaiting_amount: 'Waiting for the carrier’s amount', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' }[c.status]}
+              {undone.has(c.id) ? 'Undone' : c.status === 'approved' && direct.has(c.id) ? 'Cancelled' : { requested: 'Requested', awaiting_amount: 'Waiting for the carrier’s amount', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' }[c.status]}
             </Badge>
           </p>
           <p className="text-xs text-[var(--color-ink-600)]">
-            Effective {formatShortDate(c.effectiveDate)} · {reviews.has(c.id) ? 'cancelled' : 'requested'} by {requester(c.requestedBy)} {formatShortDate(c.requestedAt.slice(0, 10))}
-            {c.expectedRefundCents !== null ? ` · ${reviews.has(c.id) ? 'refund' : 'expected refund'} ${formatCents(c.expectedRefundCents)}` : ''} · {c.documentIds.length ? `${c.documentIds.length} document${c.documentIds.length === 1 ? '' : 's'}` : 'no notice attached'}
+            Effective {formatShortDate(c.effectiveDate)} · {direct.has(c.id) ? 'cancelled' : 'requested'} by {requester(c.requestedBy)} {formatShortDate(c.requestedAt.slice(0, 10))}
+            {c.expectedRefundCents !== null ? ` · ${direct.has(c.id) ? 'refund' : 'expected refund'} ${formatCents(c.expectedRefundCents)}` : ''} · {c.documentIds.length ? `${c.documentIds.length} document${c.documentIds.length === 1 ? '' : 's'}` : 'no notice attached'}
           </p>
           <p className="text-xs text-[var(--color-ink-700)]">“{c.reason}”</p>
-          {reviews.has(c.id) && (
-            <label className={`inline-flex w-fit cursor-pointer items-center gap-1.5 text-xs font-medium ${reviews.get(c.id) ? 'text-[var(--color-success-600)]' : 'text-[var(--color-warning-600)]'}`} data-field="cancellation-review">
-              <input type="checkbox" checked={!!reviews.get(c.id)} onChange={(e) => onReview(c.id, e.target.checked)} aria-label={`Cancellation checked: ${t ? policyLabel(t) : ''}`} />
-              {reviews.get(c.id) ? 'Verified' : 'Needs Review'}
-            </label>
-          )}
           {c.decisionNote && <p className="text-xs text-[var(--color-ink-500)]">Note: {c.decisionNote}</p>}
           {result && (
             <p className="text-xs text-[var(--color-ink-700)]" data-field="cancellation-result">
@@ -859,15 +780,6 @@ function CancellationsSection({ cancellations, all, run, show, reviews, onReview
             <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Cancellation requests <span className="text-[var(--color-ink-400)]">({open.length})</span></h3>
             <p className="text-xs text-[var(--color-ink-500)]">Approve with the carrier’s refund, or reject.</p>
             <ul className="mt-2" data-testid="cancellations-open">{open.map(card)}</ul>
-          </CardBody>
-        </Card>
-      )}
-      {show === 'open' && toCheck.length > 0 && (
-        <Card data-testid="cancellations-to-check">
-          <CardBody className="pt-4">
-            <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Cancelled by agents <span className="text-[var(--color-ink-400)]">({toCheck.length})</span></h3>
-            <p className="text-xs text-[var(--color-ink-500)]">Already applied. Tick each one once you’ve checked it.</p>
-            <ul className="mt-2">{toCheck.map(card)}</ul>
           </CardBody>
         </Card>
       )}

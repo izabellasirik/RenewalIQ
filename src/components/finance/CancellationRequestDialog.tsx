@@ -89,7 +89,7 @@ export function CancellationRequestDialog({ accountId, transactionId, policyLabe
             <p className="text-xs text-[var(--color-ink-500)]">No documents on this account yet. You can cancel without the notice and upload it in Checklist &amp; Documents later.</p>
           ) : (
             <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto text-sm">
-              {documents.map((d) => (
+              {[...documents].sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : -1)).map((d) => (
                 <li key={d.id}>
                   <label className="flex cursor-pointer items-center gap-2">
                     <input type="checkbox" checked={docIds.includes(d.id)} onChange={(e) => setDocIds((list) => (e.target.checked ? [...list, d.id] : list.filter((x) => x !== d.id)))} />

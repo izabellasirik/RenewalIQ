@@ -310,7 +310,8 @@ export function filterPolicies(rows: PolicyRow[], f: PolicyFilter): PolicyRow[] 
       if (!q) return true;
       return [r.insured, r.policy.policyNumber, r.policy.carrier, r.marketName, r.policy.coverage ? COVERAGE_LABELS[r.policy.coverage] : '', r.policy.description, r.policy.notes].some((s) => (s ?? '').toLowerCase().includes(q));
     })
-    .sort((a, b) => (b.policy[f.dateField] ?? '').localeCompare(a.policy[f.dateField] ?? '') || a.insured.localeCompare(b.insured));
+    // Newest first: latest date on top, and on the same date the one added last.
+    .sort((a, b) => (b.policy[f.dateField] ?? '').localeCompare(a.policy[f.dateField] ?? '') || (b.policy.createdAt ?? '').localeCompare(a.policy.createdAt ?? ''));
 }
 
 export function policyTotals(rows: PolicyRow[]): { count: number; netPremiumCents: number; taxesCents: number; feesCents: number; totalCents: number } {

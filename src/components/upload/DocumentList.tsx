@@ -62,7 +62,8 @@ export function DocumentList({
   return (
     <>
       <ul className="flex flex-col gap-2">
-        {documents.map((doc) => {
+        {/* Newest first. */}
+        {[...documents].sort((a, b) => (a.uploadedAt < b.uploadedAt ? 1 : a.uploadedAt > b.uploadedAt ? -1 : 0)).map((doc) => {
           const Icon = fileIcon(doc);
           const isImage = doc.fileType === 'image';
           const hasThumb = isImage && !!doc.previewDataUrl;

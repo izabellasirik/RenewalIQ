@@ -12,7 +12,7 @@ import { useAgentCommissionRates } from '../hooks/useAgentCommission';
 import { useCarrierRates } from '../hooks/useCarrierRates';
 import { useLedger, useMyCommissions } from '../hooks/useLedger';
 import { CarrierRateDialog } from '../components/finance/CarrierRateDialog';
-import { fetchEnteredCarrierRates, reviewEnteredCarrierRate, type EnteredCarrierRate } from '../services/supabase/commissionRepo';
+import { fetchEnteredCarrierRates, type EnteredCarrierRate } from '../services/supabase/commissionRepo';
 import { currentRecordsByPolicy } from '../services/finance/ledger';
 import { useRememberedView } from '../hooks/useRememberedView';
 import { aDateKey, aString, defined, oneOf } from '../services/preferences/viewPreferences';
@@ -148,20 +148,13 @@ function PoliciesPanel() {
   // the agent's own for an agent. Without them (no 0064, or not recorded yet) the amounts are worked out.
   const ledger = useLedger();
   const mine = useMyCommissions(!!agencyAccess && !isAdmin);
-  // The carrier % entered on each policy / endorsement (0074): "Needs Review" until an admin ticks it "Verified".
+  // The carrier % entered on each policy / endorsement (0074): such rows have no "Set rate".
   const [entered, setEntered] = useState<Map<string, EnteredCarrierRate>>(new Map());
   const loadEntered = () => {
     if (agencyAccess) void fetchEnteredCarrierRates().then((r) => r.ok && setEntered(r.data));
   };
   useEffect(loadEntered, [agencyAccess?.agencyId]);
   const enteredOf = (r: PolicyRow) => entered.get(`${r.accountId}|${r.policy.id}`);
-  const [reviewError, setReviewError] = useState('');
-  async function toggleReview(r: PolicyRow, checked: boolean) {
-    setReviewError('');
-    const res = await reviewEnteredCarrierRate(r.accountId, r.policy.id, checked);
-    if (!res.ok) setReviewError(res.message);
-    loadEntered();
-  }
   const records = useMemo(() => {
     // carrierRate / carrierCents null: recorded without a carrier % (not set yet).
     const out = new Map<string, { agentCents: number | null; carrierCents: number | null; carrierRate: number | null; agentUserId?: string | null; agentName?: string | null; carrierRateSource?: string }>();
@@ -393,7 +386,7 @@ function PoliciesPanel() {
                         <td className={`${td} ${num} font-semibold`}>{formatCents(policyTotalCents(r.policy))}</td>
                         {isAdmin && (
                           <td className={`${td} ${num}`} data-field="carrier">
-                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} canEdit={carrier.status === 'ready' && !enteredOf(r) && recordOf(r)?.carrierRateSource !== 'policy_rate'} onChange={() => setRateFor(r)} review={enteredOf(r) ? { reviewed: enteredOf(r)!.reviewed, onToggle: (checked) => void toggleReview(r, checked) } : undefined} />
+                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} canEdit={carrier.status === 'ready' && !enteredOf(r) && recordOf(r)?.carrierRateSource !== 'policy_rate'} onChange={() => setRateFor(r)} />
                           </td>
                         )}
                         {agencyAccess && (
@@ -407,7 +400,6 @@ function PoliciesPanel() {
                             {!isAdmin && carrierRateOf(r) !== null && (
                               <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" data-field="carrier-rate">
                                 Carrier {formatRate(carrierRateOf(r)!)}
-                                {enteredOf(r) && <ReviewStatus reviewed={enteredOf(r)!.reviewed} />}
                               </span>
                             )}
                           </td>
@@ -441,7 +433,6 @@ function PoliciesPanel() {
               {carrier.message} Until then no carrier % is set.
             </p>
           )}
-          {reviewError && <p className="mt-2 text-xs text-[var(--color-danger-600)]" role="alert">{reviewError}</p>}
           {rateFor && <CarrierRateDialog carrier={rateFor.policy.carrier} effectiveFrom={rateFor.policy.boundDate} onClose={() => setRateFor(null)} onSaved={() => void ledger.reload()} />}
         </CardBody>
       </Card>
@@ -473,16 +464,7 @@ function PoliciesPanel() {
 }
 
 /** A row's carrier commission: the % (as recorded, or in force on its bound date) and the amount; admins can set a new rate from here. */
-/** "Needs Review" until an admin ticks the entered carrier % as right, then "Verified". */
-function ReviewStatus({ reviewed }: { reviewed: boolean }) {
-  return (
-    <span className={`ml-1 font-medium ${reviewed ? 'text-[var(--color-success-600)]' : 'text-[var(--color-warning-600)]'}`} data-field="carrier-review">
-      · {reviewed ? 'Verified' : 'Needs Review'}
-    </span>
-  );
-}
-
-function CarrierCell({ row, rate, cents, canEdit, onChange, review }: { row: PolicyRow; rate: number | null; cents: number | null; canEdit: boolean; onChange: () => void; review?: { reviewed: boolean; onToggle: (checked: boolean) => void } }) {
+function CarrierCell({ row, rate, cents, canEdit, onChange }: { row: PolicyRow; rate: number | null; cents: number | null; canEdit: boolean; onChange: () => void }) {
   return (
     <div className="flex flex-col items-end gap-0.5">
       {rate === null || cents === null ? (
@@ -492,12 +474,6 @@ function CarrierCell({ row, rate, cents, canEdit, onChange, review }: { row: Pol
           <span className="text-sm tabular-nums text-[var(--color-ink-700)]" data-field="carrier-rate">{formatRate(rate)}</span>
           <span className="text-xs font-semibold tabular-nums text-[var(--color-ink-800)]">{formatCents(cents)}</span>
         </>
-      )}
-      {review && (
-        <label className={`inline-flex cursor-pointer items-center gap-1 text-[11px] font-medium ${review.reviewed ? 'text-[var(--color-success-600)]' : 'text-[var(--color-warning-600)]'}`} data-field="carrier-review">
-          <input type="checkbox" checked={review.reviewed} onChange={(e) => review.onToggle(e.target.checked)} aria-label={`Carrier % checked for ${row.policy.policyNumber ?? row.policy.carrier}`} />
-          {review.reviewed ? 'Verified' : 'Needs Review'}
-        </label>
       )}
       {canEdit && (
         <button type="button" onClick={onChange} className="cursor-pointer text-[11px] font-medium text-[var(--color-brand-700)] hover:underline" aria-label={`Set carrier commission % for ${row.policy.carrier}`}>

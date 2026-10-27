@@ -229,3 +229,46 @@ export async function fetchAgentCancellationReviews(): Promise<RepoResult<Map<st
 }
 export const reviewAgentCancellation = (cancellationId: string, checked: boolean) =>
   call<boolean>('review_agent_cancellation', { p_cancellation_id: cancellationId, p_checked: checked }, 'Could not save.');
+
+/** A cancellation on one of an account's policies / endorsements (0076), for its agent and admins. */
+export interface PolicyCancellation {
+  id: string;
+  accountId: string;
+  policyId: string;
+  type: 'full' | 'partial';
+  effectiveDate: string;
+  refundNetCents: number | null;
+  cancelledAt: string | null;
+  cancelledByName: string;
+  /** Made with "Cancel policy" (can be undone); false: an older request approved by an admin. */
+  direct: boolean;
+  undoneAt: string | null;
+  undoRequestedAt: string | null;
+  canUndoNow: boolean;
+  status: string;
+}
+export async function fetchPolicyCancellations(accountId?: string): Promise<RepoResult<PolicyCancellation[]>> {
+  const r = await call<Record<string, unknown>[]>('policy_cancellations', accountId ? { p_submission_id: accountId } : {}, 'Could not load cancellations.');
+  if (!r.ok) return r;
+  return {
+    ok: true,
+    data: (r.data ?? []).map((x) => ({
+      id: String(x.cancellation_id),
+      accountId: String(x.submission_id),
+      policyId: String(x.policy_id ?? ''),
+      type: x.cancel_type === 'full' ? 'full' : 'partial',
+      effectiveDate: String(x.effective_date),
+      refundNetCents: x.refund_net_cents === null || x.refund_net_cents === undefined ? null : Number(x.refund_net_cents),
+      cancelledAt: (x.cancelled_at as string) ?? null,
+      cancelledByName: String(x.cancelled_by_name ?? 'Team member'),
+      direct: !!x.direct,
+      undoneAt: (x.undone_at as string) ?? null,
+      undoRequestedAt: (x.undo_requested_at as string) ?? null,
+      canUndoNow: !!x.can_undo_now,
+      status: String(x.status ?? ''),
+    })),
+  };
+}
+/** Undo a cancellation: done now (same week, or an admin), or asked of an admin after that week. */
+export const undoCancellation = (id: string, reason?: string) => call<'undone' | 'requested'>('undo_policy_cancellation', { p_cancellation_id: id, p_reason: reason || null }, 'Could not undo the cancellation.');
+export const declineCancellationUndo = (id: string) => call('decline_cancellation_undo', { p_cancellation_id: id }, 'Could not save.');
