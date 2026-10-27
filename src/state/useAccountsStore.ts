@@ -203,6 +203,11 @@ interface AccountsState {
   /** Returns the new document ids, in the same order as `files`, so a caller can link one to a checklist item. */
   /** `fromClientRequest`: imported from a client's secure upload link (named) — the client's upload is already in Activity. */
   addFiles: (accountId: string, files: File[], opts?: { fromClientRequest?: string; preRead?: (DocumentRead | undefined)[] }) => string[];
+  /**
+   * Keeps a file as an account document without reading it (e.g. a cancellation notice). Resolves with its id
+   * once it's saved (in the cloud for cloud accounts), or null if that failed.
+   */
+  addPlainDocument: (accountId: string, file: File) => Promise<string | null>;
   loadSampleDocuments: (accountId: string) => Promise<void>;
   /** Removes an uploaded file and safely retracts any extracted data that depended only on it (see removeDocumentFromRiskProfile) — never leaves stale facts pointing at a source that no longer exists. */
   deleteDocument: (accountId: string, documentId: string, opts?: { activityMessage?: string }) => RollbackReport | null;
@@ -1161,6 +1166,30 @@ export const useAccountsStore = create<AccountsState>()(
       },
 
       setActiveAccount: (id) => set({ activeAccountId: id }),
+
+      addPlainDocument: async (accountId, file) => {
+        const doc: UploadedDocument = {
+          id: generateId('doc'),
+          accountId,
+          name: file.name,
+          fileType: inferFileType(file.name),
+          category: 'other',
+          uploadedAt: new Date().toISOString(),
+          status: 'processed',
+          sizeBytes: file.size,
+        };
+        set((s) => ({
+          documents: { ...s.documents, [accountId]: [...(s.documents[accountId] ?? []), doc] },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'document_uploaded', `Uploaded ${doc.name}.`),
+        }));
+        void saveLocalFile(doc.id, file, file.name);
+        trackEvent('document_uploaded', { accountId, metadata: { count: 1, source: 'cancellation' } });
+        const s = get();
+        if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return doc.id;
+        await syncDocumentToCloud(accountId, doc.id, file);
+        return get().documents[accountId]?.find((d) => d.id === doc.id)?.storagePath ? doc.id : null;
+      },
 
       addFiles: (accountId, files, opts) => {
         const newDocs: UploadedDocument[] = files.map((f) => ({

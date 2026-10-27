@@ -54,9 +54,10 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 select pg_temp.check('R1 preview, cancelled Apr 1 2026: 90 days used, 275 of 365 unused → $12,000 × 275 / 365 = $9,041.10',
   (select refund_net_cents = 904110 and term_days = 365 and unused_days = 275 and term_start = '2026-01-01' and term_end = '2027-01-01' and remaining_net_cents = 1200000
      from public.cancellation_refund_preview(:'p1', '2026-04-01')));
-select public.cancel_policy_commission(:'p1', 'full', '2026-04-01', 'Client sold the business (sample)', 999999999) is not null as x \g /dev/null
+select pg_temp.check('R1b an entered amount above what''s left is refused', pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-04-01', 'x', 999999999)$$, :'p1')));
+select public.cancel_policy_commission(:'p1', 'full', '2026-04-01', 'Client sold the business (sample)', null) is not null as x \g /dev/null
 reset role;
-select pg_temp.check('R2 full cancellation records −$9,041.10 (whatever amount is sent), commission back on that, days kept',
+select pg_temp.check('R2 full cancellation with no amount records −$9,041.10, commission back on that, days kept',
   (select net_cents = -904110 and carrier_cents = -108493 and recorded_snapshot -> 'proRata' ->> 'unusedDays' = '275' and recorded_snapshot -> 'proRata' ->> 'termDays' = '365' from pg_temp.cx(:'p1'))
   and public.finance_remaining_net(:'p1') = 295890);
 set local role authenticated;
@@ -69,6 +70,14 @@ select pg_temp.check('R4 after undoing it, it can be cancelled again on another 
   and not pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-07-01', 'Moved coverage (sample)', null)$$, :'p1')));
 reset role;
 select pg_temp.check('R4b … recorded −$6,049.32', (pg_temp.cx(:'p1')).net_cents = -604932);
+set local role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check('R4c the agent enters the carrier''s own amount ($5,800) instead: recorded as entered, worked-out amount kept',
+  public.undo_policy_cancellation((select cancellation_id from public.policy_cancellations('acct_pr') where policy_id = 'pr1' and undone_at is null limit 1)) = 'undone'
+  and not pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-07-01', 'Carrier short-rate (sample)', 580000)$$, :'p1')));
+reset role;
+select pg_temp.check('R4d … −$5,800, calculated $6,049.32 noted, still a full cancellation', (select net_cents = -580000 and recorded_snapshot -> 'proRata' ->> 'calculatedNetCents' = '604932'
+  and recorded_snapshot -> 'proRata' ->> 'entered' = 'true' and recorded_snapshot ->> 'cancelType' = 'full' from pg_temp.cx(:'p1')));
 
 -- A policy with an endorsement and an earlier partial cancellation.
 set local role authenticated;

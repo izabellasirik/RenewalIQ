@@ -7,8 +7,9 @@
 -- An endorsement counts from its own effective (or endorsed) date to the policy's expiration, a correction
 -- like the record it corrects, and an earlier partial cancellation from its own date — so after a partial
 -- the full cancellation refunds only the unused days of what's left. A cancellation on or before the start
--- refunds everything; on or after expiration, nothing. Partial cancellations are unchanged (the agent enters
--- the carrier's refund).
+-- refunds everything; on or after expiration, nothing. The agent can enter the carrier's amount instead
+-- (kept with the worked-out one); it can't be more than what's left. Partial cancellations are unchanged
+-- (the agent enters the carrier's refund).
 -- cancellation_refund_preview(record, date): the refund and the days, for the cancel dialog.
 -- A policy that is fully cancelled can't be cancelled again (undo it first). Re-runnable.
 -- Rollback: supabase/release/rollback_0077.sql.
@@ -146,7 +147,7 @@ end $$;
 revoke all on function public.cancellation_refund_preview(uuid, date) from public, anon;
 grant execute on function public.cancellation_refund_preview(uuid, date) to authenticated;
 
--- 0076's cancellation; a full one now refunds the unused days.
+-- 0076's cancellation; a full one now refunds the unused days unless an amount is entered.
 create or replace function public.cancel_policy_commission(p_transaction_id uuid, p_cancel_type text, p_effective_date date, p_reason text,
   p_refund_net_cents bigint, p_document_ids text[] default '{}') returns uuid
 language plpgsql security definer set search_path = ''
@@ -159,6 +160,7 @@ declare
   docs text[] := (select coalesce(array_agg(distinct d), '{}') from unnest(coalesce(p_document_ids, '{}')) d where d <> '');
   remaining bigint;
   pro_rata jsonb;
+  calculated bigint;
   cid uuid;
   new_id uuid;
 begin
@@ -179,12 +181,17 @@ begin
   remaining := public.finance_remaining_net(t.id);
   if t.kind = 'endorsement' and t.original_transaction_id is not null then remaining := least(remaining, public.finance_remaining_net(t.original_transaction_id)); end if;
   if remaining <= 0 then raise exception 'Nothing is left on this policy to cancel.' using errcode = '22023'; end if;
-  -- Full: the unused days (pro rata). Partial: the amount entered.
+  -- Full: the unused days (pro rata), unless the agent entered the carrier's amount instead. Partial: the amount entered.
   if p_cancel_type = 'full' then
-    select f.refund_net_cents, jsonb_build_object('termStart', f.term_start, 'termEnd', f.term_end, 'termDays', f.term_days, 'unusedDays', f.unused_days)
-      into p_refund_net_cents, pro_rata from public.finance_pro_rata_refund(t.id, p_effective_date) f;
-    if p_refund_net_cents <= 0 then
-      raise exception 'Nothing to refund: the policy has no unused days left on %.', to_char(p_effective_date, 'Mon FMDD, YYYY') using errcode = '22023';
+    select f.refund_net_cents, jsonb_build_object('termStart', f.term_start, 'termEnd', f.term_end, 'termDays', f.term_days, 'unusedDays', f.unused_days, 'calculatedNetCents', f.refund_net_cents)
+      into calculated, pro_rata from public.finance_pro_rata_refund(t.id, p_effective_date) f;
+    if p_refund_net_cents is null then
+      if calculated <= 0 then
+        raise exception 'Nothing to refund: the policy has no unused days left on %.', to_char(p_effective_date, 'Mon FMDD, YYYY') using errcode = '22023';
+      end if;
+      p_refund_net_cents := calculated;
+    else
+      pro_rata := pro_rata || jsonb_build_object('entered', true);
     end if;
   end if;
   if p_refund_net_cents is null or p_refund_net_cents <= 0 then raise exception 'Enter the net premium the carrier refunds.' using errcode = '22023'; end if;

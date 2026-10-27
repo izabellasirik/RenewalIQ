@@ -61,7 +61,7 @@ select pg_temp.check('C7 the original record is unchanged', (select agent_cents 
 set local role authenticated;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
 select pg_temp.check('C8 a partial refund over what''s left ($6,000) is refused', pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'partial', '2026-10-01', 'x', 700000)$$, :'orig')));
-select pg_temp.check('C9 full cancels exactly what''s left ($6,000), whatever amount is sent', not pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-10-01', 'Cancelled (sample)', 999999999)$$, :'orig')));
+select pg_temp.check('C9 full with no amount sent is worked out and applied', not pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-10-01', 'Cancelled (sample)', null)$$, :'orig')));
 select pg_temp.check('C9b … and then nothing is left to cancel', pg_temp.refused(format($$select public.cancel_policy_commission(%L, 'full', '2026-10-02', 'again', null)$$, :'orig')));
 select public.cancel_policy_commission(:'orig3', 'full', '2026-03-01', 'Whole policy before it started (sample)', null) is not null as x \g /dev/null
 reset role;
