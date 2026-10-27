@@ -2,13 +2,13 @@ import { useState, type FormEvent } from 'react';
 import { Button, Modal } from '../ui';
 import { inputClass, labelClass } from '../workspace/formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
-import { requestCancellation } from '../../services/supabase/ledgerRepo';
+import { cancelPolicy } from '../../services/supabase/ledgerRepo';
 import { parseMoneyCents } from '../../services/workflow/policies';
 
 /**
- * An agent (or admin) asks for a policy's cancellation: full or partial, the effective date, why, the
- * refund they expect, and the cancellation notice from the account's documents. Nothing is worked out
- * here — an admin approves it with the carrier's actual refund and commission adjustment.
+ * The account's agent (or an admin) cancels a policy / endorsement (0075): full or partial, the effective
+ * date, why, the net premium the carrier refunds, and the cancellation notice if there is one. It applies
+ * right away — the commission on the refund is taken back — and an admin reviews it afterwards.
  */
 export function CancellationRequestDialog({ accountId, transactionId, policyLabel, onClose, onSent }: { accountId: string; transactionId: string; policyLabel: string; onClose: () => void; onSent: () => void }) {
   const documents = useAccountsStore((s) => s.documents[accountId] ?? []);
@@ -26,10 +26,10 @@ export function CancellationRequestDialog({ accountId, transactionId, policyLabe
     if (!date) errs.push('Enter the cancellation’s effective date.');
     if (!reason.trim()) errs.push('Say why the policy is cancelled.');
     const cents = parseMoneyCents(refund);
-    if (refund.trim() && (cents === null || Number.isNaN(cents) || cents <= 0)) errs.push('Enter the expected refund as an amount, e.g. 4,000.00 (or leave it blank).');
+    if (cents === null || Number.isNaN(cents) || cents <= 0) errs.push('Enter the net premium the carrier refunds, e.g. 4,000.00.');
     if (errs.length) return setErrors(errs);
     setSaving(true);
-    const res = await requestCancellation(transactionId, type, date, reason.trim(), refund.trim() ? (cents as number) : null, docIds);
+    const res = await cancelPolicy(transactionId, type, date, reason.trim(), cents as number, docIds);
     setSaving(false);
     if (!res.ok) return setErrors([res.message]);
     onSent();
@@ -40,12 +40,12 @@ export function CancellationRequestDialog({ accountId, transactionId, policyLabe
     <Modal
       open
       onClose={onClose}
-      title={`Request cancellation — ${policyLabel}`}
-      subtitle="An admin approves it with the carrier’s actual refund. The original policy and its commission stay as recorded."
+      title={`Cancel — ${policyLabel}`}
+      subtitle="The commission on the refunded premium is taken back right away. The original policy stays as recorded."
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="cancel-request-form" disabled={saving}>Send request</Button>
+          <Button variant="secondary" onClick={onClose}>Close</Button>
+          <Button type="submit" form="cancel-request-form" disabled={saving}>{saving ? 'Cancelling…' : 'Cancel policy'}</Button>
         </>
       }
     >
@@ -70,8 +70,8 @@ export function CancellationRequestDialog({ accountId, transactionId, policyLabe
             <input id="cancel-date" type="date" className={inputClass} value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
           <div>
-            <label className={labelClass} htmlFor="cancel-refund">Expected refund (net, $)</label>
-            <input id="cancel-refund" inputMode="decimal" className={inputClass} value={refund} onChange={(e) => setRefund(e.target.value)} placeholder="Optional — the carrier confirms it" />
+            <label className={labelClass} htmlFor="cancel-refund">Refund from the carrier (net, $)</label>
+            <input id="cancel-refund" inputMode="decimal" className={inputClass} value={refund} onChange={(e) => setRefund(e.target.value)} placeholder="e.g. 4,000.00" />
           </div>
         </div>
         <div>
@@ -81,7 +81,7 @@ export function CancellationRequestDialog({ accountId, transactionId, policyLabe
         <div>
           <p className={labelClass}>Cancellation notice</p>
           {documents.length === 0 ? (
-            <p className="text-xs text-[var(--color-ink-500)]">No documents on this account yet. Upload the notice in Checklist &amp; Documents, or send the request without it (the admin will ask for it).</p>
+            <p className="text-xs text-[var(--color-ink-500)]">No documents on this account yet. You can cancel without the notice and upload it in Checklist &amp; Documents later.</p>
           ) : (
             <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto text-sm">
               {documents.map((d) => (

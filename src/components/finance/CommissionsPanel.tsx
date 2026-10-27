@@ -53,6 +53,16 @@ export function CommissionsPanel() {
   const current = useMemo(() => (data ? data.transactions.filter((t) => !t.replacedBy) : []), [data]);
   const queue = useMemo(() => current.filter((t) => t.verificationStatus === 'unverified' && t.settlement === 'open'), [current]);
   const openCancellations = useMemo(() => (data ? data.cancellations.filter((c) => c.status === 'requested' || c.status === 'awaiting_amount') : []), [data]);
+  // Cancellations agents made directly (0075): "Needs Review" until an admin ticks them "Verified".
+  const [reviews, setReviews] = useState<Map<string, boolean>>(new Map());
+  const loadReviews = () => void repo.fetchAgentCancellationReviews().then((r) => r.ok && setReviews(r.data));
+  useEffect(loadReviews, [data]);
+  const toCheck = data ? data.cancellations.filter((c) => reviews.get(c.id) === false) : [];
+  const review = async (id: string, checked: boolean) => {
+    const res = await repo.reviewAgentCancellation(id, checked);
+    if (!res.ok) setNotice({ tone: 'bad', text: res.message });
+    loadReviews();
+  };
 
   /** Runs an action, then reloads the records and says how it went. */
   const run = async (action: () => Promise<{ ok: true } | { ok: false; message: string }>, done: string): Promise<boolean> => {
@@ -71,7 +81,7 @@ export function CommissionsPanel() {
       {/* Two views: what needs a decision now, and everything decided. Rates and the payout schedule are settings, linked below. */}
       <Tabs
         items={[
-          { key: 'todo', label: 'To do', count: data ? queue.length + openCancellations.length : undefined },
+          { key: 'todo', label: 'To do', count: data ? queue.length + openCancellations.length + toCheck.length : undefined },
           { key: 'history', label: 'History' },
           ...(section === 'rates' ? [{ key: 'rates', label: 'Carrier rates' }] : []),
           ...(section === 'schedule' ? [{ key: 'schedule', label: 'Payout schedule' }] : []),
@@ -103,13 +113,13 @@ export function CommissionsPanel() {
         </Card>
       ) : section === 'todo' ? (
         <>
-          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="open" />
-          <ReviewSection queue={queue} all={current} historicalWaiting={data.historicalWaiting} schedule={data.schedule} run={run} nothingElse={openCancellations.length === 0} />
+          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="open" reviews={reviews} onReview={review} />
+          <ReviewSection queue={queue} all={current} historicalWaiting={data.historicalWaiting} schedule={data.schedule} run={run} nothingElse={openCancellations.length === 0 && toCheck.length === 0} />
         </>
       ) : section === 'history' ? (
         <>
           <RecordsSection all={current} receipts={data.receipts} schedule={data.schedule} run={run} />
-          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="decided" />
+          <CancellationsSection cancellations={data.cancellations} all={current} run={run} show="decided" reviews={reviews} onReview={review} />
         </>
       ) : (
         <ScheduleSection schedule={data.schedule} historicalWaiting={data.historicalWaiting} run={run} />
@@ -788,13 +798,14 @@ function RecordsSection({ all, receipts, schedule, run }: { all: LedgerTransacti
 
 // ─────────────────────────────── cancellations ───────────────────────────────
 
-function CancellationsSection({ cancellations, all, run, show }: { cancellations: LedgerCancellation[]; all: LedgerTransaction[]; run: Run; show: 'open' | 'decided' }) {
+function CancellationsSection({ cancellations, all, run, show, reviews, onReview }: { cancellations: LedgerCancellation[]; all: LedgerTransaction[]; run: Run; show: 'open' | 'decided'; reviews: Map<string, boolean>; onReview: (id: string, checked: boolean) => void }) {
   const members = useAccountsStore((s) => s.agencyMembers);
   const [approving, setApproving] = useState<LedgerCancellation | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const byId = new Map(all.map((t) => [t.id, t]));
   const open = cancellations.filter((c) => c.status === 'requested' || c.status === 'awaiting_amount');
   const done = cancellations.filter((c) => !open.includes(c));
+  const toCheck = cancellations.filter((c) => reviews.get(c.id) === false);
   const requester = (id: string) => members.find((m) => m.userId === id)?.name ?? 'Agent';
   const card = (c: LedgerCancellation) => {
     const t = byId.get(c.transactionId);
@@ -807,14 +818,20 @@ function CancellationsSection({ cancellations, all, run, show }: { cancellations
             <span>{t ? policyLabel(t) : ''}</span>
             <Badge tone={c.cancelType === 'full' ? 'danger' : 'warning'}>{c.cancelType === 'full' ? 'Full cancellation' : 'Partial cancellation'}</Badge>
             <Badge tone={c.status === 'approved' ? 'success' : c.status === 'awaiting_amount' ? 'info' : c.status === 'requested' ? 'warning' : 'neutral'}>
-              {{ requested: 'Requested', awaiting_amount: 'Waiting for the carrier’s amount', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' }[c.status]}
+              {c.status === 'approved' && reviews.has(c.id) ? 'Cancelled' : { requested: 'Requested', awaiting_amount: 'Waiting for the carrier’s amount', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' }[c.status]}
             </Badge>
           </p>
           <p className="text-xs text-[var(--color-ink-600)]">
-            Effective {formatShortDate(c.effectiveDate)} · requested by {requester(c.requestedBy)} {formatShortDate(c.requestedAt.slice(0, 10))}
-            {c.expectedRefundCents !== null ? ` · expected refund ${formatCents(c.expectedRefundCents)}` : ''} · {c.documentIds.length ? `${c.documentIds.length} document${c.documentIds.length === 1 ? '' : 's'}` : 'no notice attached'}
+            Effective {formatShortDate(c.effectiveDate)} · {reviews.has(c.id) ? 'cancelled' : 'requested'} by {requester(c.requestedBy)} {formatShortDate(c.requestedAt.slice(0, 10))}
+            {c.expectedRefundCents !== null ? ` · ${reviews.has(c.id) ? 'refund' : 'expected refund'} ${formatCents(c.expectedRefundCents)}` : ''} · {c.documentIds.length ? `${c.documentIds.length} document${c.documentIds.length === 1 ? '' : 's'}` : 'no notice attached'}
           </p>
           <p className="text-xs text-[var(--color-ink-700)]">“{c.reason}”</p>
+          {reviews.has(c.id) && (
+            <label className={`inline-flex w-fit cursor-pointer items-center gap-1.5 text-xs font-medium ${reviews.get(c.id) ? 'text-[var(--color-success-600)]' : 'text-[var(--color-warning-600)]'}`} data-field="cancellation-review">
+              <input type="checkbox" checked={!!reviews.get(c.id)} onChange={(e) => onReview(c.id, e.target.checked)} aria-label={`Cancellation checked: ${t ? policyLabel(t) : ''}`} />
+              {reviews.get(c.id) ? 'Verified' : 'Needs Review'}
+            </label>
+          )}
           {c.decisionNote && <p className="text-xs text-[var(--color-ink-500)]">Note: {c.decisionNote}</p>}
           {result && (
             <p className="text-xs text-[var(--color-ink-700)]" data-field="cancellation-result">
@@ -842,6 +859,15 @@ function CancellationsSection({ cancellations, all, run, show }: { cancellations
             <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Cancellation requests <span className="text-[var(--color-ink-400)]">({open.length})</span></h3>
             <p className="text-xs text-[var(--color-ink-500)]">Approve with the carrier’s refund, or reject.</p>
             <ul className="mt-2" data-testid="cancellations-open">{open.map(card)}</ul>
+          </CardBody>
+        </Card>
+      )}
+      {show === 'open' && toCheck.length > 0 && (
+        <Card data-testid="cancellations-to-check">
+          <CardBody className="pt-4">
+            <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Cancelled by agents <span className="text-[var(--color-ink-400)]">({toCheck.length})</span></h3>
+            <p className="text-xs text-[var(--color-ink-500)]">Already applied. Tick each one once you’ve checked it.</p>
+            <ul className="mt-2">{toCheck.map(card)}</ul>
           </CardBody>
         </Card>
       )}

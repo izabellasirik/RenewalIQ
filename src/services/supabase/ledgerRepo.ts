@@ -217,3 +217,15 @@ export const approveCancellation = (id: string, returnedNetCents: number, carrie
   call<string>('approve_commission_cancellation', { p_id: id, p_returned_net_cents: returnedNetCents, p_carrier_adjustment_cents: carrierAdjustmentCents, p_note: note || null, p_without_proof_reason: withoutProofReason || null }, 'Could not approve the cancellation.');
 export const backfillPreview = () => call<Record<string, number>>('finance_backfill_preview', {}, 'Could not count the historical records.');
 export const backfillHistorical = () => call<{ recorded: number; skipped: number }>('finance_backfill_historical', {}, 'Could not record the historical policies.');
+
+/** The account's agent (or an admin) cancels a policy / endorsement directly (0075): the commission on the refund is taken back now. */
+export const cancelPolicy = (transactionId: string, cancelType: 'full' | 'partial', effectiveDate: string, reason: string, refundNetCents: number, documentIds: string[]) =>
+  call<string>('cancel_policy_commission', { p_transaction_id: transactionId, p_cancel_type: cancelType, p_effective_date: effectiveDate, p_reason: reason, p_refund_net_cents: refundNetCents, p_document_ids: documentIds }, 'The policy couldn’t be cancelled.');
+
+/** Admins: cancellations agents made directly, and whether each was checked ("Verified") — keyed by cancellation id. */
+export async function fetchAgentCancellationReviews(): Promise<RepoResult<Map<string, boolean>>> {
+  const r = await call<{ cancellation_id: string; reviewed: boolean }[]>('agent_cancellation_reviews', {}, 'Could not load cancellation checks.');
+  return r.ok ? { ok: true, data: new Map((r.data ?? []).map((x) => [x.cancellation_id, !!x.reviewed])) } : r;
+}
+export const reviewAgentCancellation = (cancellationId: string, checked: boolean) =>
+  call<boolean>('review_agent_cancellation', { p_cancellation_id: cancellationId, p_checked: checked }, 'Could not save.');

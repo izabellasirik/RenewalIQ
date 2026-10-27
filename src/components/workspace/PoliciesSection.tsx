@@ -117,7 +117,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           policyLabel={cancelling.entry.policyNumber ?? cancelling.entry.carrier}
           onClose={() => setCancelling(null)}
           onSent={() => {
-            setSent(`Cancellation of ${cancelling.entry.policyNumber ?? (cancelling.entry.kind === 'endorsement' ? 'the endorsement' : 'the policy')} requested — an admin approves it in Analytics → Commissions.`);
+            setSent(`${cancelling.entry.kind === 'endorsement' ? 'Endorsement' : 'Policy'} ${cancelling.entry.policyNumber ?? ''} cancelled — the commission on the refund was taken back.`.replace('  ', ' '));
             onRecordsChanged();
           }}
         />
@@ -176,7 +176,7 @@ function EntryItem({ quote, entry: p, commission, record, onEdit, onRemove, onRe
         <OverflowMenu
           items={[
             { key: 'edit', label: `Edit ${k.one}`, icon: <Pencil size={14} />, onSelect: onEdit },
-            ...(canRequestCancellation ? [{ key: 'cancel', label: 'Request cancellation', icon: <Ban size={14} />, onSelect: () => onRequestCancellation(record!) }] : []),
+            ...(canRequestCancellation ? [{ key: 'cancel', label: kind === 'policy' ? 'Cancel policy' : 'Cancel endorsement', icon: <Ban size={14} />, onSelect: () => onRequestCancellation(record!) }] : []),
             { key: 'remove', label: `Remove ${k.one}`, icon: <Trash2 size={14} />, tone: 'danger' as const, onSelect: onRemove },
           ]}
         />
