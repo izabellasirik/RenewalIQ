@@ -25,7 +25,8 @@ export interface AssignedBroker {
  * Where the account stands in the pipeline. Set by the broker by hand, or — when never set —
  * derived from the checklist and quotes (see deriveAccountStage in services/workflow/accountStage.ts).
  */
-export type AccountStage = 'new' | 'collecting_info' | 'ready_to_submit' | 'submitted' | 'quoted' | 'bound' | 'on_hold' | 'lost';
+/** 'cancelled' is automatic only (every bound policy fully cancelled); it's never set or saved by hand. */
+export type AccountStage = 'new' | 'collecting_info' | 'ready_to_submit' | 'submitted' | 'quoted' | 'bound' | 'cancelled' | 'on_hold' | 'lost';
 
 export const ACCOUNT_STAGE_LABELS: Record<AccountStage, string> = {
   new: 'New',
@@ -34,11 +35,14 @@ export const ACCOUNT_STAGE_LABELS: Record<AccountStage, string> = {
   submitted: 'Out to market',
   quoted: 'Quoted',
   bound: 'Bound',
+  cancelled: 'Cancelled',
   on_hold: 'On hold',
   lost: 'Lost / not renewing',
 };
 
-export const ACCOUNT_STAGE_ORDER: AccountStage[] = ['new', 'collecting_info', 'ready_to_submit', 'submitted', 'quoted', 'bound', 'on_hold', 'lost'];
+export const ACCOUNT_STAGE_ORDER: AccountStage[] = ['new', 'collecting_info', 'ready_to_submit', 'submitted', 'quoted', 'bound', 'cancelled', 'on_hold', 'lost'];
+/** The statuses a broker can pick by hand (the database's 0008 list). */
+export const MANUAL_ACCOUNT_STAGES: AccountStage[] = ACCOUNT_STAGE_ORDER.filter((s) => s !== 'cancelled');
 
 /**
  * A follow-up the broker schedules by hand ("call Sara about the renewal on Oct 3") — for

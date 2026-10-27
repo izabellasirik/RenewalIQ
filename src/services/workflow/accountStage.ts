@@ -1,14 +1,23 @@
 import type { Account, AccountStage, MarketQuote, MissingItem } from '../../types';
-import { ACCOUNT_STAGE_ORDER, AWAITING_CARRIER_STATUSES } from '../../types';
+import { AWAITING_CARRIER_STATUSES, MANUAL_ACCOUNT_STAGES } from '../../types';
 
 /**
  * The account's pipeline status as the system sees it, from checklist and quote state. Used
  * whenever the broker hasn't set one by hand, so every account always has a filterable status.
  */
-export function deriveAccountStage(items: MissingItem[], quotes: MarketQuote[]): AccountStage {
-  if (quotes.some((q) => q.status === 'bound')) return 'bound';
+export function deriveAccountStage(items: MissingItem[], quotes: MarketQuote[], cancelled?: (policyId: string) => boolean): AccountStage {
+  const bound = quotes.filter((q) => q.status === 'bound');
+  // Bound while any bound market still has a policy in force (or none recorded); every policy fully
+  // cancelled → Cancelled, unless other markets are still in play (then their status).
+  const inForce = (q: MarketQuote) => {
+    const policies = (q.policies ?? []).filter((p) => !p.removedAt && p.kind !== 'endorsement');
+    return policies.length === 0 || !cancelled || policies.some((p) => !cancelled(p.id));
+  };
+  if (bound.some(inForce)) return 'bound';
+  const allCancelled = bound.length > 0;
   if (quotes.some((q) => q.status === 'quoted')) return 'quoted';
   if (quotes.some((q) => AWAITING_CARRIER_STATUSES.includes(q.status))) return 'submitted';
+  if (allCancelled) return 'cancelled';
   const active = items.filter((i) => i.status !== 'waived');
   if (active.length > 0 && active.every((i) => i.status === 'received')) return 'ready_to_submit';
   if (active.length > 0 || quotes.length > 0) return 'collecting_info';
@@ -26,8 +35,8 @@ export function accountBoundDate(account: Pick<Account, 'stage' | 'boundDate'>, 
   return quotes.filter((q) => q.status === 'bound' && q.boundDate).map((q) => q.boundDate!).sort().at(-1) ?? null;
 }
 
-export function effectiveAccountStage(account: Account, items: MissingItem[], quotes: MarketQuote[]): { stage: AccountStage; manual: boolean } {
+export function effectiveAccountStage(account: Account, items: MissingItem[], quotes: MarketQuote[], cancelled?: (policyId: string) => boolean): { stage: AccountStage; manual: boolean } {
   // (A status this version doesn't know — e.g. one saved by an earlier preview — counts as automatic.)
-  if (account.stage && ACCOUNT_STAGE_ORDER.includes(account.stage)) return { stage: account.stage, manual: true };
-  return { stage: deriveAccountStage(items, quotes), manual: false };
+  if (account.stage && MANUAL_ACCOUNT_STAGES.includes(account.stage)) return { stage: account.stage, manual: true };
+  return { stage: deriveAccountStage(items, quotes, cancelled), manual: false };
 }

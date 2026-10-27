@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useCancelledPolicies } from '../../hooks/usePolicyCancellations';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Check, ChevronRight, Users, Copy, History, Pencil, Trash2, X, ArchiveRestore, Archive as ArchiveIcon } from 'lucide-react';
@@ -41,7 +42,8 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
   const { items, quotes, followUps, effectiveDate, dotNumber, actions } = useAccountWorkflow(account.id);
   // Only something genuinely overdue earns the red flag — otherwise the card stays calm.
   const needsAttention = actions.now.some((a) => a.overdue);
-  const { stage, manual } = effectiveAccountStage(account, items, quotes);
+  const cancelledFor = useCancelledPolicies();
+  const { stage, manual } = effectiveAccountStage(account, items, quotes, cancelledFor(account.id));
   const renewalLabel = renewalLabelOn(account, effectiveDate, quotes, todayKey()).on;
   const boundOn = accountBoundDate(account, stage, quotes);
   // The soonest open renewal (another policy's may come before the account's own); else the effective date.

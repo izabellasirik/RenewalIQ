@@ -1,7 +1,7 @@
 import { supabase } from './client';
 import { driverFromRow, driverToRow, lossFromRow, lossToRow, vehicleFromRow, vehicleToRow, withoutDetails } from './recordRows';
 import type { Account, AccountBusinessType, AccountNote, AccountRenewal, AccountStage, ActivityEvent, AssignedBroker, FollowUp, Contact, CoverageType, DriverEntry, FieldValue, LossEntry, MarketQuote, MissingItem, LossRun, ReviewCandidate, RiskProfile, UploadedDocument, VehicleEntry } from '../../types';
-import { ACCOUNT_STAGE_ORDER, emptyField } from '../../types';
+import { MANUAL_ACCOUNT_STAGES, emptyField } from '../../types';
 import { createEmptyRiskProfile } from '../extraction/emptyRiskProfile';
 import { isRenewalRecord } from '../workflow/renewals';
 
@@ -287,7 +287,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         ...(sub.assigned_broker && typeof sub.assigned_broker === 'object' ? { assignedBroker: sub.assigned_broker as AssignedBroker } : {}),
         // "Renewal" is kept in its own column (0054), so an app that doesn't know it never reads an unknown status;
         // a status that app sets afterwards wins.
-        ...(sub.stage && ACCOUNT_STAGE_ORDER.includes(sub.stage as AccountStage) ? { stage: sub.stage as AccountStage } : {}),
+        ...(sub.stage && MANUAL_ACCOUNT_STAGES.includes(sub.stage as AccountStage) ? { stage: sub.stage as AccountStage } : {}),
         ...(typeof sub.renewal_label === 'boolean' ? { renewalLabel: sub.renewal_label } : {}),
         ...(typeof sub.renewal_label_set_on === 'string' && sub.renewal_label_set_on ? { renewalLabelSetOn: sub.renewal_label_set_on } : {}),
         ...(typeof sub.bound_date === 'string' && sub.bound_date ? { boundDate: sub.bound_date } : {}),

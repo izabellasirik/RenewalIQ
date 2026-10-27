@@ -10,6 +10,7 @@ const STAGE_STYLE: Record<AccountStage, { chip: string; dot: string }> = {
   submitted: { chip: 'bg-[var(--color-info-100)] text-[var(--color-info-600)]', dot: 'bg-[var(--color-info-500)]' }, // blue
   quoted: { chip: 'bg-[var(--color-success-100)] text-[var(--color-success-600)]', dot: 'bg-[var(--color-success-500)]' }, // green
   bound: { chip: 'bg-[var(--color-success-600)] text-white', dot: 'bg-white/80' }, // darker green
+  cancelled: { chip: 'bg-[var(--color-danger-100)] text-[var(--color-danger-600)]', dot: 'bg-[var(--color-danger-600)]' }, // red
   on_hold: { chip: 'bg-[#e4eaf2] text-[#4f6485]', dot: 'bg-[#8095b3]' }, // muted gray-blue
   lost: { chip: 'border border-[var(--color-ink-200)] bg-[var(--color-ink-50)] text-[var(--color-ink-400)]', dot: 'bg-[var(--color-ink-300)]' }, // muted gray
 };

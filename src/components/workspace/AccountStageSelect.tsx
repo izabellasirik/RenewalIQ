@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import type { AccountStage } from '../../types';
-import { ACCOUNT_STAGE_ORDER } from '../../types';
+import { MANUAL_ACCOUNT_STAGES } from '../../types';
+import { useCancelledPolicies } from '../../hooks/usePolicyCancellations';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { deriveAccountStage } from '../../services/workflow/accountStage';
@@ -22,6 +23,7 @@ import { cn } from '../../utils/cn';
  */
 export function AccountStageSelect({ accountId, className }: { accountId: string; className?: string }) {
   const { account, items, quotes, effectiveDate } = useAccountWorkflow(accountId);
+  const cancelled = useCancelledPolicies()(accountId);
   const setAccountStage = useAccountsStore((s) => s.setAccountStage);
   const setRenewalLabel = useAccountsStore((s) => s.setRenewalLabel);
   const [open, setOpen] = useState(false);
@@ -45,7 +47,7 @@ export function AccountStageSelect({ accountId, className }: { accountId: string
   }, [open]);
 
   if (!account) return null;
-  const derived = deriveAccountStage(items, quotes);
+  const derived = deriveAccountStage(items, quotes, cancelled);
   const current = account.stage ?? derived;
   const renewal = renewalLabelOn(account, effectiveDate, quotes, todayKey());
 
@@ -104,7 +106,7 @@ export function AccountStageSelect({ accountId, className }: { accountId: string
             </p>
           </li>
           <li className="my-1 border-t border-[var(--color-ink-100)]" aria-hidden />
-          {ACCOUNT_STAGE_ORDER.map((s) => (
+          {MANUAL_ACCOUNT_STAGES.map((s) => (
             <li key={s} role="option" aria-selected={account.stage === s}>
               <button type="button" onClick={() => choose(s)} className={optionClass}>
                 <StageBadge stage={s} />

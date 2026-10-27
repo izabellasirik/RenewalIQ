@@ -13,6 +13,7 @@ export async function reloadPolicyCancellations(accountId: string): Promise<void
   loading.delete(accountId);
   cache.set(accountId, r.ok ? r.data : []);
   notify();
+  if (allFull) void reloadAll();
 }
 
 /** This account's cancellations that still count (not undone), newest first. */
@@ -35,4 +36,30 @@ export function cancellationState(all: PolicyCancellation[], policyId: string) {
   const mine = all.filter((c) => c.policyId === policyId && !c.undoneAt && c.status === 'approved');
   const full = mine.find((c) => c.type === 'full');
   return { full, partial: full ? [] : mine.filter((c) => c.type === 'partial'), all: mine };
+}
+
+// Every account's full cancellations (what this user may see), for account statuses on lists.
+let allFull: Set<string> | null = null;
+let allLoading = false;
+async function reloadAll() {
+  allLoading = true;
+  const r = await fetchPolicyCancellations();
+  allLoading = false;
+  allFull = new Set((r.ok ? r.data : []).filter((c) => c.type === 'full' && !c.undoneAt && c.status === 'approved').map((c) => `${c.accountId}|${c.policyId}`));
+  notify();
+}
+
+/** (accountId) → (policyId) → fully cancelled? Used to show an account as Cancelled when nothing is in force. */
+export function useCancelledPolicies(): (accountId: string) => (policyId: string) => boolean {
+  const set = useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => allFull
+  );
+  useEffect(() => {
+    if (!allFull && !allLoading) void reloadAll();
+  }, []);
+  return (accountId) => (policyId) => !!set?.has(`${accountId}|${policyId}`);
 }

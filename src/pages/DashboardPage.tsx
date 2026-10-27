@@ -13,6 +13,7 @@ import { normalizeDateKey, todayKey } from '../services/workflow/dates';
 import { renewalLabelOn } from '../services/workflow/renewals';
 import { BOUND_FILTERS, RENEWAL_FILTERS, boundRange, latestBoundIn, renewalFilterDate, type BoundFilter, type RenewalFilter } from '../services/workflow/accountFilters';
 import { ACCOUNT_STAGE_LABELS, ACCOUNT_STAGE_ORDER, type AccountStage } from '../types';
+import { useCancelledPolicies } from '../hooks/usePolicyCancellations';
 import { ALL_BROKERS, UNASSIGNED, matchesBroker } from '../services/workflow/brokerFilter';
 import { useRememberedView } from '../hooks/useRememberedView';
 import { aBoolean, aString, defined, oneOf } from '../services/preferences/viewPreferences';
@@ -89,11 +90,12 @@ export function DashboardPage() {
     return map;
   }, [accounts, riskProfiles, quotes]);
 
+  const cancelledFor = useCancelledPolicies();
   const stageOf = useMemo(() => {
     const map: Record<string, AccountStage> = {};
-    for (const a of accounts) map[a.id] = effectiveAccountStage(a, missingItems[a.id] ?? [], quotes[a.id] ?? []).stage;
+    for (const a of accounts) map[a.id] = effectiveAccountStage(a, missingItems[a.id] ?? [], quotes[a.id] ?? [], cancelledFor(a.id)).stage;
     return map;
-  }, [accounts, missingItems, quotes]);
+  }, [accounts, missingItems, quotes, cancelledFor]);
 
   // Brokers are keyed by name (case-insensitive) — the lightweight assignment model has no broker directory.
   const brokerOptions = useMemo(() => {
