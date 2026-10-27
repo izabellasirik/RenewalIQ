@@ -243,6 +243,73 @@ function AdoptionCard({ view }: { view: FounderView }) {
   );
 }
 
+const ACCOUNTS_SHOWN = 10;
+
+/** Accounts worked: the 10 most recently active, "Show all" for the rest, and a search over all of them. */
+function AccountsWorkedCard({ accounts, onAccount }: { accounts: ReturnType<FounderView['accountsWorked']>; onAccount: (id: string) => void }) {
+  const [showAll, setShowAll] = useState(false);
+  const [q, setQ] = useState('');
+  const search = q.trim().toLowerCase();
+  const matching = search ? accounts.filter((a) => [a.name, a.brokerage, ...a.brokers].some((v) => (v ?? '').toLowerCase().includes(search))) : accounts;
+  const rows = showAll || search ? matching : matching.slice(0, ACCOUNTS_SHOWN);
+  return (
+    <Card>
+      <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
+        <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">
+          Accounts worked <span className="font-normal text-[var(--color-ink-500)]">({accounts.length})</span>
+        </h3>
+        {accounts.length > ACCOUNTS_SHOWN && (
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search account, agency or agent"
+            aria-label="Search accounts worked"
+            className="w-full rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-1.5 text-sm sm:w-64"
+          />
+        )}
+      </CardHeader>
+      <CardBody className="overflow-x-auto pt-0">
+        {accounts.length === 0 ? (
+          <p className="py-4 text-sm text-[var(--color-ink-500)]">No account activity in this range.</p>
+        ) : rows.length === 0 ? (
+          <p className="py-4 text-sm text-[var(--color-ink-500)]">No account matches “{q.trim()}”.</p>
+        ) : (
+          <table className="min-w-full border-collapse" data-testid="founder-accounts">
+            <thead>
+              <tr>
+                {['Account', 'Agency', 'Agent', 'Furthest stage', 'Last active'].map((h) => (
+                  <th key={h} className={th}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((a) => (
+                <tr key={a.accountId} className="cursor-pointer hover:bg-[var(--color-ink-50)]" onClick={() => onAccount(a.accountId)}>
+                  <td className={td}>
+                    <span className="font-medium text-[var(--color-brand-800)] hover:underline">{a.name}</span> {a.isTest && <Badge tone="warning">Test/Demo</Badge>}
+                  </td>
+                  <td className={td}>{a.brokerage}</td>
+                  <td className={td}>{a.brokers.join(', ')}</td>
+                  <td className={td}>{a.stage}</td>
+                  <td className={td}>{when(a.lastActive)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {!search && matching.length > ACCOUNTS_SHOWN && (
+          <button type="button" onClick={() => setShowAll((v) => !v)} className="mt-3 cursor-pointer text-sm font-medium text-[var(--color-brand-700)] hover:underline" data-testid="accounts-worked-toggle">
+            {showAll ? `Show the ${ACCOUNTS_SHOWN} most recent` : `Show all (${matching.length})`}
+          </button>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
 function Stat({ label, value, hint, testId }: { label: string; value: string | number; hint?: string; testId?: string }) {
   return (
     <div className="rounded-xl border border-[var(--color-ink-100)] bg-white px-4 py-3 [box-shadow:var(--shadow-card)]" data-testid={testId}>
@@ -423,41 +490,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
 
       <AdoptionCard view={view} />
 
-      <Card>
-        <CardHeader className="pb-2">
-          <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Accounts worked</h3>
-        </CardHeader>
-        <CardBody className="overflow-x-auto pt-0">
-          {accountsWorked.length === 0 ? (
-            <p className="py-4 text-sm text-[var(--color-ink-500)]">No account activity in this range.</p>
-          ) : (
-            <table className="min-w-full border-collapse" data-testid="founder-accounts">
-              <thead>
-                <tr>
-                  {['Account', 'Agency', 'Agent', 'Furthest stage', 'Last active'].map((h) => (
-                    <th key={h} className={th}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {accountsWorked.slice(0, 100).map((a) => (
-                  <tr key={a.accountId} className="cursor-pointer hover:bg-[var(--color-ink-50)]" onClick={() => onAccount(a.accountId)}>
-                    <td className={td}>
-                      <span className="font-medium text-[var(--color-brand-800)] hover:underline">{a.name}</span> {a.isTest && <Badge tone="warning">Test/Demo</Badge>}
-                    </td>
-                    <td className={td}>{a.brokerage}</td>
-                    <td className={td}>{a.brokers.join(', ')}</td>
-                    <td className={td}>{a.stage}</td>
-                    <td className={td}>{when(a.lastActive)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </CardBody>
-      </Card>
+      <AccountsWorkedCard accounts={accountsWorked} onAccount={onAccount} />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <Card>
