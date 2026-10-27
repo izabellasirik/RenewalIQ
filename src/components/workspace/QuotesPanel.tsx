@@ -395,7 +395,8 @@ function QuoteCard({
                   {quote.marketName}
                 </button>
               </h3>
-              <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{QUOTE_STATUS_LABELS[quote.status]}</Badge>
+              {/* A Bound market whose policies are all fully cancelled reads "Cancelled" (its data stays Bound). */}
+              {allCancelled ? <Badge tone="danger">Cancelled</Badge> : <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{QUOTE_STATUS_LABELS[quote.status]}</Badge>}
               {quote.status === 'bound' && marketTotalCents(quote) !== null ? (
                 <span className="text-sm font-semibold text-[var(--color-success-600)]" title="Total of this market’s policies and endorsements (net, taxes and fees)" data-testid="market-total">
                   {formatCents(marketTotalCents(quote)!)}
@@ -432,11 +433,6 @@ function QuoteCard({
             )}
           </div>
           <div className="flex items-center gap-1">
-            {allCancelled && (
-              <span className="mr-1 whitespace-nowrap text-xs font-semibold text-[var(--color-danger-600)]" data-testid="market-cancelled">
-                Cancelled
-              </span>
-            )}
             {/* Endorsements are added on a Bound market (Add endorsement); the market stays Bound. */}
             {quote.status === 'bound' && activeEndorsements(quote).length > 0 && (
               <span className="mr-1 whitespace-nowrap text-xs font-medium text-[var(--color-info-600)]" data-testid="includes-endorsements">
@@ -444,11 +440,16 @@ function QuoteCard({
               </span>
             )}
             <select
-              value={quote.status}
-              onChange={(e) => chooseStatus(e.target.value as MarketStatusChoice)}
+              value={allCancelled ? 'cancelled' : quote.status}
+              onChange={(e) => e.target.value !== 'cancelled' && chooseStatus(e.target.value as MarketStatusChoice)}
               className={smallInputClass}
               aria-label={`Status for ${quote.marketName}`}
             >
+              {allCancelled && (
+                <option value="cancelled" disabled>
+                  Cancelled
+                </option>
+              )}
               {QUOTE_STATUS_ORDER.map((s) => (
                 <option key={s} value={s}>
                   {marketStatusLabel(s)}
