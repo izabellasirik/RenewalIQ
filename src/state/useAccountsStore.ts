@@ -1073,7 +1073,7 @@ export const useAccountsStore = create<AccountsState>()(
           cloudAccountIds: cloud ? { ...s.cloudAccountIds, [account.id]: true } : s.cloudAccountIds,
         }));
         if (cloud) syncNow(account.id);
-        trackEvent('account_created', { accountId: account.id, metadata: { source: 'manual' } });
+        trackEvent('account_created', { accountId: account.id, metadata: { source: 'manual' }, dedupeKey: `account_created:${account.id}` });
         return account.id;
       },
 
@@ -1124,9 +1124,9 @@ export const useAccountsStore = create<AccountsState>()(
         get().runMatching(account.id);
         if (!options?.skipAutoSync) syncNow(account.id);
         // Founder Analytics — counts only, nothing from the documents themselves.
-        trackEvent(options?.source === 'intake' ? 'account_imported' : 'account_created', { accountId: account.id, metadata: { source: options?.source ?? 'documents' } });
+        trackEvent(options?.source === 'intake' ? 'account_imported' : 'account_created', { accountId: account.id, metadata: { source: options?.source ?? 'documents' }, dedupeKey: `account_created:${account.id}` });
         if (finalDocs.length) {
-          trackEvent('document_uploaded', { accountId: account.id, metadata: { count: finalDocs.length, source: options?.source ?? 'new_submission' } });
+          for (const d of finalDocs) trackEvent('document_uploaded', { accountId: account.id, metadata: { count: 1, source: options?.source ?? 'new_submission' }, dedupeKey: `document_uploaded:${d.id}` });
           const processed = finalDocs.filter((d) => d.status === 'processed');
           if (processed.length) trackEvent('document_processed', { accountId: account.id, metadata: { count: processed.length } });
           const fields = finalDocs.reduce((n, d) => n + (d.fieldsExtracted ?? 0), 0);
@@ -1184,7 +1184,7 @@ export const useAccountsStore = create<AccountsState>()(
           activityLog: appendEvent(s.activityLog, accountId, 'document_uploaded', `Uploaded ${doc.name}.`),
         }));
         void saveLocalFile(doc.id, file, file.name);
-        trackEvent('document_uploaded', { accountId, metadata: { count: 1, source: 'cancellation' } });
+        trackEvent('document_uploaded', { accountId, metadata: { count: 1, source: 'cancellation' }, dedupeKey: `document_uploaded:${doc.id}` });
         const s = get();
         if (!isSupabaseConfigured || !s.currentUserId || !s.cloudAccountIds[accountId]) return doc.id;
         await syncDocumentToCloud(accountId, doc.id, file);
@@ -1219,7 +1219,8 @@ export const useAccountsStore = create<AccountsState>()(
         // Keep the originals in this browser for in-app preview (fire-and-forget, never blocks extraction).
         newDocs.forEach((doc, i) => void saveLocalFile(doc.id, files[i], files[i].name));
         newDocs.forEach((doc, i) => void noteContentHash(accountId, doc.id, files[i]));
-        if (newDocs.length) trackEvent('document_uploaded', { accountId, metadata: { count: newDocs.length, source: opts?.fromClientRequest ? 'client_request' : 'broker' } });
+        // One per document, with the key the database uses too (0078), so each counts once.
+        for (const d of newDocs) trackEvent('document_uploaded', { accountId, metadata: { count: 1, source: opts?.fromClientRequest ? 'client_request' : 'broker' }, dedupeKey: `document_uploaded:${d.id}` });
 
         newDocs.forEach((doc, i) => {
           const file = files[i];
@@ -2474,7 +2475,7 @@ export const useAccountsStore = create<AccountsState>()(
           };
         });
         syncNow(accountId);
-        trackEvent('market_added', { accountId, metadata: { source: input.appetiteRecordId ? 'appetite' : 'manual', status: quote.status } });
+        trackEvent('market_added', { accountId, metadata: { source: input.appetiteRecordId ? 'appetite' : 'manual', status: quote.status }, dedupeKey: `market_added:${accountId}:${quote.id}` });
         return quote.id;
       },
 
@@ -2575,7 +2576,7 @@ export const useAccountsStore = create<AccountsState>()(
             `${policy.kind === 'endorsement' ? 'Endorsement to policy' : 'Policy'} ${policy.policyNumber ?? '(number to come)'} recorded with ${policy.carrier}${quote.marketName !== policy.carrier ? ` via ${quote.marketName}` : ''}: ${policy.kind === 'endorsement' ? 'endorsed' : 'bound'} ${formatShortDate(policy.boundDate)}, total ${formatCents(policyTotalCents(policy))}${actorSuffix(s.currentUserEmail)}.`
           ),
         }));
-        trackEvent('policy_bound', { accountId, metadata: { status: fields.kind === 'endorsement' ? 'endorsed' : 'bound' } });
+        trackEvent('policy_bound', { accountId, metadata: { status: fields.kind === 'endorsement' ? 'endorsed' : 'bound' }, dedupeKey: `policy_bound:${accountId}:${policy.id}` });
         syncNow(accountId);
         return policy.id;
       },

@@ -61,6 +61,8 @@ export interface TrackOptions {
 }
 
 const sentKeys = new Set<string>();
+let oldNameOnly = false;
+const isMissingFunction = (e: { code?: string; message?: string }) => e.code === 'PGRST202' || /could not find the function/i.test(e.message ?? '');
 
 export function trackEvent(eventName: ProductEventName, opts: TrackOptions = {}): void {
   try {
@@ -69,14 +71,24 @@ export function trackEvent(eventName: ProductEventName, opts: TrackOptions = {})
       if (sentKeys.has(opts.dedupeKey)) return;
       sentKeys.add(opts.dedupeKey);
     }
-    void Promise.resolve(
-      supabase.rpc('track_product_event', {
-        p_event_name: eventName,
-        p_account_id: opts.accountId ?? null,
-        p_metadata: opts.metadata ?? {},
-        p_dedupe_key: opts.dedupeKey ?? null,
-      })
-    ).catch(() => undefined);
+    const args = {
+      p_event_name: eventName,
+      p_account_id: opts.accountId ?? null,
+      p_metadata: opts.metadata ?? {},
+      p_dedupe_key: opts.dedupeKey ?? null,
+    };
+    const client = supabase;
+    // note_work (0078): the same call under a name ad / privacy blockers don't drop. Until 0078 is
+    // applied it doesn't exist yet: then (and from then on, in this session) the original name.
+    void (async () => {
+      if (!oldNameOnly) {
+        const res = await client.rpc('note_work', args);
+        if (!res.error) return;
+        if (!isMissingFunction(res.error)) return;
+        oldNameOnly = true;
+      }
+      await client.rpc('track_product_event', args);
+    })().catch(() => undefined);
   } catch {
     // analytics must never get in the way
   }
