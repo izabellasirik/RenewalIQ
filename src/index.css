@@ -105,3 +105,14 @@ select:not([multiple]) {
 .pdf-page .textLayer.selecting .endOfContent {
   top: 0;
 }
+
+/* Date fields take their column's width on phones too (iOS Safari gives them a wider built-in width). */
+input[type='date'] {
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 2.375rem;
+}
+input[type='date']::-webkit-date-and-time-value {
+  text-align: left;
+}

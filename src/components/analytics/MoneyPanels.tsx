@@ -115,7 +115,7 @@ function SavedFiltersNote({ active, onClear, testId }: { active: boolean; onClea
 function PeriodPicker({ period }: { period: ReturnType<typeof usePeriod> }) {
   return (
     <>
-      <div>
+      <div className="col-span-2 lg:col-span-1">
         <label className={labelClass} htmlFor="mp-period">Period</label>
         <select id="mp-period" className={inputClass} value={period.preset} onChange={(e) => period.choose(e.target.value as Period)}>
           {(Object.keys(PERIOD_LABELS) as Exclude<Period, 'custom'>[]).map((p) => (
@@ -186,9 +186,9 @@ export function ProfitLossPanel() {
     <>
       <Card>
         <CardBody className="pt-4">
-          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[200px_170px_170px_1fr]">
+          <div className="grid grid-cols-2 items-end gap-3 lg:grid-cols-[200px_170px_170px_1fr]">
             <PeriodPicker period={period} />
-            <div className="flex justify-start lg:justify-end">
+            <div className="col-span-2 flex justify-start lg:col-span-1 lg:justify-end">
               <DownloadButtons report={() => profitLossReport(pl, period.from, period.to)} testId="pl-download" />
             </div>
           </div>
@@ -342,9 +342,9 @@ export function IncomeExpensesPanel() {
     <>
       <Card>
         <CardBody className="pt-4">
-          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[200px_170px_170px_160px_minmax(0,1fr)]">
+          <div className="grid grid-cols-2 items-end gap-3 lg:grid-cols-[200px_170px_170px_160px_minmax(0,1fr)]">
             <PeriodPicker period={period} />
-            <div>
+            <div className="col-span-2 lg:col-span-1">
               <label className={labelClass} htmlFor="mp-kind">Show</label>
               <select id="mp-kind" className={inputClass} value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
                 <option value="all">All</option>
@@ -352,7 +352,7 @@ export function IncomeExpensesPanel() {
                 <option value="expense">Expenses</option>
               </select>
             </div>
-            <div>
+            <div className="col-span-2 lg:col-span-1">
               <label className={labelClass} htmlFor="mp-search">Search</label>
               <div className="relative">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-ink-400)]" aria-hidden />

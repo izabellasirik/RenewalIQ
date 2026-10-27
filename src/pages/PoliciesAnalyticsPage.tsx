@@ -268,7 +268,7 @@ function PoliciesPanel() {
       )}
       <Card>
         <CardBody className="pt-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1.35fr_1fr_1fr_1fr_1fr]" data-testid="policy-filters">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-[1fr_1.35fr_1fr_1fr_1fr_1fr]" data-testid="policy-filters">
             <div>
               <label className={labelClass} htmlFor="pf-type">Show</label>
               <select id="pf-type" className={inputClass} value={kind} onChange={(e) => update({ type: e.target.value as KindFilter })}>
@@ -284,7 +284,7 @@ function PoliciesPanel() {
                 {DATE_FIELDS.map((f) => <option key={f} value={f}>{POLICY_DATE_LABELS[f]}</option>)}
               </select>
             </div>
-            <div>
+            <div className="col-span-2 lg:col-span-1">
               <label className={labelClass} htmlFor="pf-preset">Period</label>
               <select id="pf-preset" className={inputClass} value={preset} onChange={(e) => e.target.value !== 'custom' && update(presetRange(e.target.value as DatePreset))}>
                 {PRESETS.map((p) => <option key={p} value={p}>{DATE_PRESET_LABELS[p]}</option>)}
@@ -300,7 +300,7 @@ function PoliciesPanel() {
               <input id="pf-to" type="date" className={inputClass} value={to} onChange={(e) => update({ to: e.target.value })} />
             </div>
             {isAdmin && (
-              <div>
+              <div className="col-span-2 lg:col-span-1">
                 <label className={labelClass} htmlFor="pf-agent">Agent</label>
                 <select id="pf-agent" className={inputClass} value={agent} onChange={(e) => update({ agent: e.target.value })}>
                   <option value={ALL_AGENTS}>All agents</option>
@@ -308,7 +308,7 @@ function PoliciesPanel() {
                 </select>
               </div>
             )}
-            <div className={isAdmin ? 'sm:col-span-2 lg:col-span-6' : 'sm:col-span-2 lg:col-span-1'}>
+            <div className={isAdmin ? 'col-span-2 lg:col-span-6' : 'col-span-2 lg:col-span-1'}>
               <label className={labelClass} htmlFor="pf-search">Search</label>
               <div className="relative">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-ink-400)]" aria-hidden />

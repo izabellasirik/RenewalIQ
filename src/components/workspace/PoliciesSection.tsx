@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { Ban, FileCheck2, FilePlus2, FileWarning, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Ban, Undo2, FileCheck2, FilePlus2, FileWarning, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { MarketQuote, PolicyBusinessType, PolicyEntryKind, PolicyRecord } from '../../types';
 import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -54,7 +54,6 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
   const cancellations = usePolicyCancellations(accountId);
   const [removing, setRemoving] = useState<PolicyRecord | null>(null);
   const [cancelling, setCancelling] = useState<{ entry: PolicyRecord; record: AccountCommissionStatus } | null>(null);
-  const [sent, setSent] = useState('');
   const k = KIND[kind];
   if (!active && entries.length === 0) return null;
   const tone = kind === 'policy' ? 'border-[var(--color-success-600)]/20 bg-[var(--color-success-100)]/30' : 'border-[var(--color-info-600)]/20 bg-[var(--color-info-100)]/30';
@@ -79,11 +78,6 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           </span>
         )}
       </div>
-      {sent && (
-        <p className="mt-2 rounded-md border border-[var(--color-success-600)]/25 bg-[var(--color-success-100)] px-3 py-2 text-sm font-medium text-[var(--color-success-600)]" role="status" data-testid="cancel-request-sent">
-          {sent}
-        </p>
-      )}
       {!active && (
         <p className="mt-1.5 text-xs text-[var(--color-warning-600)]">
           This market is no longer marked Bound. Its {k.title.toLowerCase()} are kept — remove any that weren’t written.
@@ -122,7 +116,6 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           policyLabel={cancelling.entry.policyNumber ?? cancelling.entry.carrier}
           onClose={() => setCancelling(null)}
           onSent={() => {
-            setSent(`${cancelling.entry.kind === 'endorsement' ? 'Endorsement' : 'Policy'} ${cancelling.entry.policyNumber ?? ''} cancelled — the commission on the refund was taken back.`.replace('  ', ' '));
             onRecordsChanged();
             void reloadPolicyCancellations(accountId);
           }}
@@ -231,7 +224,8 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
               {undoError && <span className="text-[var(--color-danger-600)]">{undoError}</span>}
             </p>
           )}
-          {latest?.direct && (
+          {/* Undo is in the ⋮ menu; here only an undo that's waiting for an admin (and any error). */}
+          {latest?.direct && (latest.undoRequestedAt || undoError) && (
             <p className="mt-1 flex flex-wrap items-center gap-2 text-xs" data-field="cancellation-undo">
               {latest.undoRequestedAt && isAdmin ? (
                 <>
@@ -241,11 +235,7 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
                 </>
               ) : latest.undoRequestedAt ? (
                 <span className="text-[var(--color-ink-500)]">Undo requested — waiting for an admin.</span>
-              ) : (
-                <button type="button" disabled={undoing} onClick={() => void undo(latest)} className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline disabled:opacity-60">
-                  {latest.canUndoNow ? 'Undo cancellation' : 'Ask an admin to undo'}
-                </button>
-              )}
+              ) : null}
               {undoError && <span className="text-[var(--color-danger-600)]">{undoError}</span>}
             </p>
           )}
@@ -254,6 +244,10 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
           items={[
             { key: 'edit', label: `Edit ${k.one}`, icon: <Pencil size={14} />, onSelect: onEdit },
             ...(canRequestCancellation ? [{ key: 'cancel', label: kind === 'policy' ? 'Cancel policy' : 'Cancel endorsement', icon: <Ban size={14} />, onSelect: () => onRequestCancellation(record!) }] : []),
+            // Undo the latest cancellation: right away this week (or as an admin), else ask an admin.
+            ...(latest?.direct && !latest.undoRequestedAt
+              ? [{ key: 'undo', label: latest.canUndoNow ? 'Undo cancellation' : 'Ask an admin to undo', icon: <Undo2 size={14} />, onSelect: () => void undo(latest) }]
+              : []),
             { key: 'remove', label: `Remove ${k.one}`, icon: <Trash2 size={14} />, tone: 'danger' as const, onSelect: onRemove },
           ]}
         />
