@@ -222,6 +222,22 @@ export const backfillHistorical = () => call<{ recorded: number; skipped: number
 export const cancelPolicy = (transactionId: string, cancelType: 'full' | 'partial', effectiveDate: string, reason: string, refundNetCents: number | null, documentIds: string[]) =>
   call<string>('cancel_policy_commission', { p_transaction_id: transactionId, p_cancel_type: cancelType, p_effective_date: effectiveDate, p_reason: reason, p_refund_net_cents: refundNetCents, p_document_ids: documentIds }, 'The policy couldn’t be cancelled.');
 
+/** What a full cancellation on that date refunds (0077): the unused days of the term, pro rata. */
+export interface CancellationRefundPreview {
+  refundNetCents: number;
+  termStart: string;
+  termEnd: string;
+  termDays: number;
+  unusedDays: number;
+}
+export async function previewCancellationRefund(transactionId: string, effectiveDate: string): Promise<RepoResult<CancellationRefundPreview | null>> {
+  const r = await call<{ refund_net_cents: number; term_start: string; term_end: string; term_days: number; unused_days: number }[]>(
+    'cancellation_refund_preview', { p_transaction_id: transactionId, p_effective_date: effectiveDate }, 'Could not work out the refund.');
+  if (!r.ok) return r;
+  const x = r.data?.[0];
+  return { ok: true, data: x ? { refundNetCents: Number(x.refund_net_cents), termStart: x.term_start, termEnd: x.term_end, termDays: x.term_days, unusedDays: x.unused_days } : null };
+}
+
 /** Admins: cancellations agents made directly, and whether each was checked ("Verified") — keyed by cancellation id. */
 export async function fetchAgentCancellationReviews(): Promise<RepoResult<Map<string, boolean>>> {
   const r = await call<{ cancellation_id: string; reviewed: boolean }[]>('agent_cancellation_reviews', {}, 'Could not load cancellation checks.');
