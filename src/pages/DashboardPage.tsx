@@ -136,6 +136,18 @@ export function DashboardPage() {
     return map;
   }, [accounts, quotes, range]);
 
+  // Archived view: when each was archived (its latest "archived" activity; else its last update).
+  const archivedAt = useMemo(() => {
+    const at: Record<string, string> = {};
+    if (!showArchived) return at;
+    for (const a of accounts) {
+      if (!a.archived) continue;
+      const last = (activityLog[a.id] ?? []).reduce((m, e) => (e.type === 'account_archived' && e.timestamp > m ? e.timestamp : m), '');
+      at[a.id] = last || a.updatedAt;
+    }
+    return at;
+  }, [accounts, activityLog, showArchived]);
+
   const visible = useMemo(() => {
     return accounts
       .filter((a) => a.archived === showArchived)
@@ -145,15 +157,18 @@ export function DashboardPage() {
       .filter((a) => matchesBroker(a, brokerFilter, { byAgent }))
       .filter((a) => renewalFilter === 'any' || renewalDates[renewalFilter][a.id] !== undefined)
       .filter((a) => !range || boundOn[a.id] !== undefined)
-      // Renewal filter on: soonest renewal first; "Bound in": most recently bound first. Otherwise most recently updated first.
+      // Renewal filter on: soonest renewal first; "Bound in": most recently bound first. Archived: most recently
+      // archived first. Otherwise most recently updated first.
       .sort((a, b) =>
         renewalFilter !== 'any'
           ? renewalDates[renewalFilter][a.id].localeCompare(renewalDates[renewalFilter][b.id])
           : range
             ? boundOn[b.id].localeCompare(boundOn[a.id])
-            : a.updatedAt < b.updatedAt ? 1 : -1
+            : showArchived
+              ? (archivedAt[b.id] ?? '').localeCompare(archivedAt[a.id] ?? '')
+              : a.updatedAt < b.updatedAt ? 1 : -1
       );
-  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalLabelOf, renewalFilter, renewalDates, range, boundOn, byAgent]);
+  }, [accounts, showArchived, search, stageFilter, brokerFilter, stageOf, renewalLabelOf, renewalFilter, renewalDates, range, boundOn, byAgent, archivedAt]);
 
   const renewalLabelCount = accounts.filter((a) => a.archived === showArchived && renewalLabelOf[a.id]).length;
   const stageCounts = useMemo(() => {

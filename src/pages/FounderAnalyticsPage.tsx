@@ -276,6 +276,8 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
         <Stat label="Markets added" value={k.marketsAdded} testId="kpi-markets" />
         <Stat label="Quotes added" value={k.quotesAdded} hint="Before the analytics update (0070) one quote could be counted twice; older counts may still include duplicates." testId="kpi-quotes" />
         <Stat label="Follow-ups completed" value={k.followUpsCompleted} testId="kpi-followups" />
+        <Stat label="Policies added" value={k.policiesAdded} hint="bound in Markets & Quotes" testId="kpi-policies" />
+        <Stat label="Endorsements added" value={k.endorsementsAdded} testId="kpi-endorsements" />
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -350,6 +352,20 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
                           <span className="block font-semibold text-[var(--color-ink-900)]">{b.realAccounts}</span>accounts
                         </span>
                       </span>
+                      <span className="mt-2 grid grid-cols-4 gap-2 text-xs text-[var(--color-ink-600)]" data-testid="broker-card-work">
+                        <span>
+                          <span className="block font-semibold text-[var(--color-ink-900)]">{b.marketsAdded}</span>markets
+                        </span>
+                        <span>
+                          <span className="block font-semibold text-[var(--color-ink-900)]">{b.quotesAdded}</span>quotes
+                        </span>
+                        <span>
+                          <span className="block font-semibold text-[var(--color-ink-900)]">{b.policiesAdded}</span>policies
+                        </span>
+                        <span>
+                          <span className="block font-semibold text-[var(--color-ink-900)]">{b.endorsementsAdded}</span>endorsements
+                        </span>
+                      </span>
                       <span className="mt-2 block text-xs text-[var(--color-ink-500)]">
                         First {when(b.firstActivity)} · Last {when(b.lastActivity)}
                       </span>
@@ -361,7 +377,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
                 <table className="min-w-full border-collapse" data-testid="founder-brokers">
                   <thead>
                     <tr>
-                      {['Agent', 'Agency', 'Real accounts', 'Active days', 'Days this week', 'Returning', 'First activity', 'Last activity', 'Main features used'].map((h) => (
+                      {['Agent', 'Agency', 'Real accounts', 'Markets', 'Quotes', 'Policies', 'Endorsements', 'Active days', 'Days this week', 'Returning', 'First activity', 'Last activity', 'Main features used'].map((h) => (
                         <th key={h} className={th}>
                           {h}
                         </th>
@@ -377,6 +393,10 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
                         </td>
                         <td className={td}>{b.brokerage}</td>
                         <td className={td}>{b.realAccounts}</td>
+                        <td className={td}>{b.marketsAdded}</td>
+                        <td className={td}>{b.quotesAdded}</td>
+                        <td className={td}>{b.policiesAdded}</td>
+                        <td className={td}>{b.endorsementsAdded}</td>
                         <td className={td}>{b.activeDays}</td>
                         <td className={td}>{b.daysActiveThisWeek || <span className="text-[var(--color-ink-400)]">—</span>}</td>
                         <td className={td} data-testid="broker-returning">
@@ -443,13 +463,13 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
         <Card>
           <CardHeader className="pb-2">
             <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Feature usage</h3>
-            <p className="text-xs text-[var(--color-ink-500)]">People, accounts and agencies — not clicks. Repeat users used it on 2+ days.</p>
+            <p className="text-xs text-[var(--color-ink-500)]">Most used first. Times used = actions in this range; repeat users used it on 2+ days.</p>
           </CardHeader>
           <CardBody className="overflow-x-auto pt-0">
             <table className="min-w-full border-collapse" data-testid="founder-features">
               <thead>
                 <tr>
-                  {['Feature', 'Unique agents', 'Real accounts', 'Agencies', 'Repeat users'].map((h) => (
+                  {['Feature', 'Times used', 'Unique agents', 'Real accounts', 'Agencies', 'Repeat users'].map((h) => (
                     <th key={h} className={th}>
                       {h}
                     </th>
@@ -460,6 +480,7 @@ function Dashboard({ view, onBroker, onAccount }: { view: FounderView; onBroker:
                 {features.map((f) => (
                   <tr key={f.key}>
                     <td className={td}>{f.label}</td>
+                    <td className={`${td} font-semibold`}>{f.timesUsed}</td>
                     <td className={td}>{f.uniqueBrokers}</td>
                     <td className={td}>{f.realAccounts}</td>
                     <td className={td}>{f.brokerages}</td>

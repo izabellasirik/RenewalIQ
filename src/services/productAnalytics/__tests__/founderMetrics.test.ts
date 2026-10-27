@@ -69,6 +69,23 @@ const view = (over: Partial<ConstructorParameters<typeof FounderView>[1]> = {}) 
   new FounderView(snapshot(), { from: new Date(TO.getTime() - 30 * 86400000), to: TO, accounts: 'real', includeFounder: false, ...over });
 
 describe('Founder Analytics numbers', () => {
+  it('policies and endorsements added, overall and per agent; features most used first', () => {
+    const extra = [
+      ev('policy_bound', 'u1', 'a1', daysAgo(2), { status: 'bound' }),
+      ev('policy_bound', 'u1', 'a1', daysAgo(1), { status: 'bound' }),
+      ev('policy_bound', 'u2', 'a2', daysAgo(1), { status: 'endorsed' }),
+      ev('policy_bound', 'u1', 't1', daysAgo(1), { status: 'bound' }), // test account: not counted
+    ];
+    const snap = snapshot();
+    const v = new FounderView({ ...snap, events: [...snap.events, ...extra] }, { from: new Date(TO.getTime() - 30 * 86400000), to: TO, accounts: 'real', includeFounder: false });
+    expect(v.kpis()).toMatchObject({ policiesAdded: 2, endorsementsAdded: 1, marketsAdded: 10 });
+    const roman = v.brokers().find((b) => b.userId === 'u1')!;
+    expect(roman).toMatchObject({ marketsAdded: 10, quotesAdded: 1, policiesAdded: 2, endorsementsAdded: 0 });
+    expect(v.brokers().find((b) => b.userId === 'u2')).toMatchObject({ policiesAdded: 0, endorsementsAdded: 1 });
+    const usage = v.featureUsage();
+    expect(usage[0]).toMatchObject({ key: 'markets_quotes', timesUsed: 14 }); // 10 markets + 1 quote + 3 policies/endorsements
+    expect(usage.map((f) => f.timesUsed)).toEqual([...usage.map((f) => f.timesUsed)].sort((a, b) => b - a));
+  });
   it('defaults: real accounts only, the founder’s own activity left out', () => {
     const k = view().kpis();
     expect(k.activeBrokers).toBe(3); // u1, u2, u3 — not the founder

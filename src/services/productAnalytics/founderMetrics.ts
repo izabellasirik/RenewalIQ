@@ -95,6 +95,13 @@ export type FeatureKey =
 
 const source = (e: SnapshotEvent) => (typeof e.metadata?.source === 'string' ? e.metadata.source : undefined);
 
+/** Policies and endorsements recorded (policy_bound: status "endorsed" for an endorsement). */
+function policyCounts(events: SnapshotEvent[]) {
+  const bound = events.filter((e) => e.name === 'policy_bound');
+  const endorsements = bound.filter((e) => e.metadata?.status === 'endorsed').length;
+  return { policiesAdded: bound.length - endorsements, endorsementsAdded: endorsements };
+}
+
 export const FEATURES: { key: FeatureKey; label: string; matches: (e: SnapshotEvent) => boolean }[] = [
   { key: 'submission_intake', label: 'Submission Intake', matches: (e) => ['intake_link_created', 'intake_submitted', 'intake_imported', 'account_imported'].includes(e.name) },
   { key: 'documents', label: 'Documents', matches: (e) => e.name === 'document_uploaded' || e.name === 'document_processed' },
@@ -312,6 +319,7 @@ export class FounderView {
       marketsAdded: count('market_added'),
       quotesAdded: count('quote_added'),
       followUpsCompleted: count('follow_up_completed'),
+      ...policyCounts(r),
     };
   }
 
@@ -361,6 +369,9 @@ export class FounderView {
           /** @deprecated kept for the account-detail view; same as lastActivity within the range. */
           lastActive: evs.reduce((m, e) => (e.at > m ? e.at : m), ''),
           mainFeatures: this.featuresOf(evs).slice(0, 3).map((f) => f.label),
+          marketsAdded: evs.filter((e) => e.name === 'market_added').length,
+          quotesAdded: evs.filter((e) => e.name === 'quote_added').length,
+          ...policyCounts(evs),
         };
       })
       .sort((a, b) => (a.lastActive < b.lastActive ? 1 : -1));
@@ -460,12 +471,15 @@ export class FounderView {
       return {
         key: f.key,
         label: f.label,
+        timesUsed: evs.filter((e) => !PASSIVE.has(e.name)).length,
         uniqueBrokers: daysByUser.size,
         realAccounts: this.distinct(evs.map((e) => e.accountId)).size,
         brokerages: this.distinct(evs.map((e) => this.orgOf(e) ?? (e.userId ? `user:${e.userId}` : null))).size,
         repeatUsers: [...daysByUser.values()].filter((d) => d.size >= 2).length,
       };
-    });
+    })
+      // Most used first.
+      .sort((a, b) => b.timesUsed - a.timesUsed || b.uniqueBrokers - a.uniqueBrokers);
   }
 
   /** Accounts created or imported in the range, and how far each got (by the end of the range). */
