@@ -110,39 +110,53 @@ export function TeamPage() {
           {members === null ? (
             <Skeleton variant="block" className="h-24 w-full" />
           ) : (
+            <>
+            {/* Column names on wide screens; narrower screens label each box instead. */}
+            <div className={`hidden gap-x-6 border-b border-[var(--color-ink-100)] pb-2 text-xs font-medium text-[var(--color-ink-500)] xl:grid ${MEMBER_COLS}`} aria-hidden>
+              <span>Name</span>
+              <span>Contact</span>
+              <span>Role</span>
+              <span>Agent commission</span>
+              <span className="text-right">Accounts</span>
+              <span />
+            </div>
             <ul className="divide-y divide-[var(--color-ink-100)]">
               {members.map((m) => (
-                <li key={m.userId} className="grid grid-cols-1 gap-x-6 gap-y-2 py-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_6rem_10rem_6.5rem_6.5rem] lg:items-center">
-                  <div className="min-w-0">
+                <li key={m.userId} className={`grid grid-cols-2 gap-x-6 gap-y-3 py-3 xl:items-center ${MEMBER_COLS}`}>
+                  <div className="col-span-2 min-w-0 sm:col-span-1 xl:col-span-1">
                     <p className="text-sm font-semibold text-[var(--color-ink-900)]">
                       {m.name ?? m.email ?? 'Unnamed'}
                       {m.userId === currentUserId && <span className="font-normal text-[var(--color-ink-400)]"> (you)</span>}
                     </p>
                     {m.jobTitle && <p className="text-xs text-[var(--color-ink-500)]">{m.jobTitle}</p>}
                   </div>
-                  <div className="min-w-0 text-sm text-[var(--color-ink-600)]">
+                  <div className="col-span-2 min-w-0 text-sm text-[var(--color-ink-600)] sm:col-span-1 xl:col-span-1">
                     {m.email && <p className="truncate">{m.email}</p>}
                     {m.phone && <p className="text-xs text-[var(--color-ink-500)]">{m.phone}</p>}
                   </div>
-                  {m.userId === currentUserId ? (
-                    <span><Badge tone={m.role === 'admin' ? 'brand' : 'neutral'}>{ROLE_LABEL[m.role]}</Badge></span>
-                  ) : (
-                    <select
-                      value={m.role}
-                      disabled={roleBusy === m.userId}
-                      onChange={(e) => changeRole(m, e.target.value as TeamRole)}
-                      className="w-24 justify-self-start rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-xs font-medium text-[var(--color-ink-800)] cursor-pointer disabled:opacity-60"
-                      aria-label={`Role for ${m.name ?? m.email ?? 'team member'}`}
-                    >
-                      <option value="agent">Agent</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  )}
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-[var(--color-ink-500)] xl:hidden">Role</span>
+                    {m.userId === currentUserId ? (
+                      // Your own role can't be changed here: shown in the same box shape, not editable.
+                      <span className={`${CONTROL} bg-[var(--color-ink-50)] text-[var(--color-ink-700)]`} title="You can't change your own role">{ROLE_LABEL[m.role]}</span>
+                    ) : (
+                      <select
+                        value={m.role}
+                        disabled={roleBusy === m.userId}
+                        onChange={(e) => changeRole(m, e.target.value as TeamRole)}
+                        className={`${CONTROL} cursor-pointer bg-white text-[var(--color-ink-900)] disabled:opacity-60`}
+                        aria-label={`Role for ${m.name ?? m.email ?? 'team member'}`}
+                      >
+                        <option value="agent">Agent</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    )}
+                  </div>
                   <CommissionRateInput member={m} />
-                  <p className="text-sm text-[var(--color-ink-600)] lg:text-right">
+                  <p className="self-center text-sm text-[var(--color-ink-600)] xl:text-right">
                     <span className="font-semibold text-[var(--color-ink-900)]">{assignedCount.get(m.userId) ?? 0}</span> account{(assignedCount.get(m.userId) ?? 0) === 1 ? '' : 's'}
                   </p>
-                  <span className="lg:text-right">
+                  <span className="self-center justify-self-start xl:justify-self-end">
                     {m.userId !== currentUserId && (
                       <Button size="sm" variant="ghost" icon={<UserMinus size={13} />} onClick={() => setRemoving(m)} aria-label={`Remove ${m.name ?? m.email ?? 'team member'}`}>
                         Remove
@@ -152,6 +166,7 @@ export function TeamPage() {
                 </li>
               ))}
             </ul>
+            </>
           )}
         </CardBody>
       </Card>
@@ -212,6 +227,10 @@ export function TeamPage() {
   );
 }
 
+// The team list's columns on wide screens, and the shared shape of its Role and commission boxes.
+const MEMBER_COLS = 'xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_7rem_7rem_6.5rem_6.5rem]';
+const CONTROL = 'inline-flex h-8 w-24 items-center rounded-md border border-[var(--color-ink-200)] px-2 text-sm';
+
 /** "Agent commission %" for one member — admins only (the database refuses anyone else). Saved on Enter or leaving the box; blank clears it. */
 function CommissionRateInput({ member }: { member: TeamMember }) {
   const rates = useAgentCommissionRates();
@@ -220,7 +239,7 @@ function CommissionRateInput({ member }: { member: TeamMember }) {
   const [value, setValue] = useState<string | null>(null);
   const [state, setState] = useState<{ busy?: boolean; error?: string; ok?: boolean }>({});
   const who = member.name ?? member.email ?? 'team member';
-  if (rates.status === 'unavailable') return <p className="w-40 text-xs text-[var(--color-ink-400)]" title={rates.message}>Commission %: not available</p>;
+  if (rates.status === 'unavailable') return <p className="text-xs text-[var(--color-ink-400)]" title={rates.message}>Commission %: not available</p>;
 
   async function save() {
     if (value === null || value.trim() === shown) return setValue(null);
@@ -236,27 +255,30 @@ function CommissionRateInput({ member }: { member: TeamMember }) {
   }
 
   return (
-    <label className="flex w-40 flex-col text-xs text-[var(--color-ink-500)]">
-      Agent commission %
-      <span className="mt-0.5 flex items-center gap-1">
-        <input
-          inputMode="decimal"
-          value={value ?? shown}
-          placeholder="Not set"
-          disabled={state.busy}
-          onChange={(e) => {
-            setValue(e.target.value);
-            setState({});
-          }}
-          onBlur={save}
-          onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
-          className="w-20 rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-sm text-[var(--color-ink-900)] disabled:opacity-60"
-          aria-label={`Agent commission % for ${who}`}
-        />
+    <div className="flex flex-col gap-1 text-xs">
+      <span className="text-[var(--color-ink-500)] xl:hidden">Agent commission</span>
+      <span className="flex items-center gap-1.5">
+        <span className="relative">
+          <input
+            inputMode="decimal"
+            value={value ?? shown}
+            placeholder="Not set"
+            disabled={state.busy}
+            onChange={(e) => {
+              setValue(e.target.value);
+              setState({});
+            }}
+            onBlur={save}
+            onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+            className={`${CONTROL} bg-white pr-6 tabular-nums text-[var(--color-ink-900)] disabled:opacity-60`}
+            aria-label={`Agent commission % for ${who}`}
+          />
+          <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-sm text-[var(--color-ink-400)]" aria-hidden>%</span>
+        </span>
         {state.ok && <Check size={14} className="text-[var(--color-success-600)]" aria-label="Saved" />}
       </span>
-      {state.error && <span className="mt-0.5 text-[var(--color-danger-600)]">{state.error}</span>}
-    </label>
+      {state.error && <span className="text-[var(--color-danger-600)]">{state.error}</span>}
+    </div>
   );
 }
 
