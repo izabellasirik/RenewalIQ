@@ -477,7 +477,7 @@ export function EntryForm({
       if (key === 'forPolicyId') {
         const pick = accountPolicies.find((x) => x.policy.id === value)?.policy;
         const fromAPolicy = (v: string, field: 'policyNumber' | 'carrier') => !v || v === quote.marketName || accountPolicies.some((x) => (x.policy[field] ?? '') === v);
-        if (pick && fromAPolicy(cur.policyNumber, 'policyNumber')) next.policyNumber = pick.policyNumber ?? '';
+        if (pick && (kind === 'endorsement' || fromAPolicy(cur.policyNumber, 'policyNumber'))) next.policyNumber = pick.policyNumber ?? '';
         if (pick && fromAPolicy(cur.carrier, 'carrier')) next.carrier = pick.carrier;
       }
       // A policy's expiration follows its effective date (one year later) until it's changed by hand.
@@ -564,35 +564,40 @@ export function EntryForm({
           </ul>
         )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {kind === 'endorsement' && (
-            <div className="sm:col-span-2">
-              <label className={labelClass} htmlFor="policy-for">
-                Changes policy {editing === 'new' && <Required />}
-              </label>
-              <select id="policy-for" className={inputClass} value={f.forPolicyId ?? ''} onChange={(e) => set('forPolicyId', e.target.value)}>
-                <option value="">{accountPolicies.length ? '— Choose the policy this endorsement changes' : '— No policy recorded on this account yet'}</option>
-                {accountPolicies.map(({ policy: p, marketName }) => (
-                  <option key={p.id} value={p.id}>
-                    {p.policyNumber ?? 'Number to come'} — {p.carrier}
-                    {p.carrier !== marketName ? ` via ${marketName}` : ''} (bound {formatShortDate(p.boundDate)})
-                  </option>
-                ))}
-              </select>
-              {editing !== 'new' && !editing.forPolicyId && <p className="mt-1 text-xs text-[var(--color-warning-600)]">Recorded before endorsements were linked — choose its policy so the commission can be verified.</p>}
-            </div>
-          )}
           <div>
             <label className={labelClass} htmlFor="policy-bound">
               {k.date} <Required />
             </label>
             <input id="policy-bound" type="date" className={inputClass} value={f.boundDate} onChange={(e) => set('boundDate', e.target.value)} autoFocus />
           </div>
-          <div>
-            <label className={labelClass} htmlFor="policy-number">
-              Policy number <Required />
-            </label>
-            <input id="policy-number" className={inputClass} value={f.policyNumber} onChange={(e) => set('policyNumber', e.target.value)} required aria-required="true" />
-          </div>
+          {kind === 'endorsement' ? (
+            // An endorsement changes a policy on this account: its number is picked from them (which also links it).
+            <div>
+              <label className={labelClass} htmlFor="policy-for">
+                Policy number {editing === 'new' && <Required />}
+              </label>
+              <select id="policy-for" className={inputClass} value={f.forPolicyId ?? ''} onChange={(e) => set('forPolicyId', e.target.value)}>
+                <option value="">{accountPolicies.length ? '— Choose the policy' : '— No policy recorded on this account yet'}</option>
+                {accountPolicies.map(({ policy: p, marketName }) => (
+                  <option key={p.id} value={p.id}>
+                    {p.policyNumber ?? 'Number to come'} — {p.carrier}
+                    {p.carrier !== marketName ? ` via ${marketName}` : ''}
+                  </option>
+                ))}
+              </select>
+              {editing !== 'new' && !editing.forPolicyId && <p className="mt-1 text-xs text-[var(--color-warning-600)]">Recorded before endorsements were linked — choose its policy so the commission can be verified.</p>}
+              {f.forPolicyId && !accountPolicies.find((x) => x.policy.id === f.forPolicyId)?.policy.policyNumber && (
+                <input id="policy-number" className={`${inputClass} mt-2`} value={f.policyNumber} onChange={(e) => set('policyNumber', e.target.value)} placeholder="That policy has no number yet — enter it" aria-label="Policy number" />
+              )}
+            </div>
+          ) : (
+            <div>
+              <label className={labelClass} htmlFor="policy-number">
+                Policy number <Required />
+              </label>
+              <input id="policy-number" className={inputClass} value={f.policyNumber} onChange={(e) => set('policyNumber', e.target.value)} required aria-required="true" />
+            </div>
+          )}
           <div>
             <label className={labelClass} htmlFor="policy-carrier">
               Carrier (writing company) <Required />

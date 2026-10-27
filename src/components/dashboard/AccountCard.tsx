@@ -7,7 +7,7 @@ import type { Account } from '../../types';
 import { Card, CardBody, Badge, OverflowMenu, ConfirmDialog, type OverflowMenuItem } from '../ui';
 import { selectCanManageArchive, useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, deriveSubmissionStatusLabel } from '../layout/WorkflowSteps';
-import { formatShortDate, todayKey } from '../../services/workflow/dates';
+import { formatShortDate, toLocalDateKey, todayKey } from '../../services/workflow/dates';
 import { cn } from '../../utils/cn';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { accountBoundDate, effectiveAccountStage } from '../../services/workflow/accountStage';
@@ -16,7 +16,8 @@ import { StageBadge } from '../workspace/StageBadge';
 import { RenewalBadge } from '../renewals/RenewalLabel';
 import { agentLabel } from '../../services/agency/agentLabel';
 
-export function AccountCard({ account, index, onOpenHistory }: { account: Account; index: number; onOpenHistory: () => void }) {
+/** `archivedAt`: in the archived view, when it was archived (shown on the card). */
+export function AccountCard({ account, index, onOpenHistory, archivedAt }: { account: Account; index: number; onOpenHistory: () => void; archivedAt?: string }) {
   const navigate = useNavigate();
   const renameAccount = useAccountsStore((s) => s.renameAccount);
   const duplicateAccount = useAccountsStore((s) => s.duplicateAccount);
@@ -158,6 +159,12 @@ export function AccountCard({ account, index, onOpenHistory }: { account: Accoun
                 <p className="truncate text-lg font-semibold text-[var(--color-ink-900)]">{account.namedInsured}</p>
               )}
               {isAgencyAdmin && <p className="mt-0.5 truncate text-xs text-[var(--color-ink-500)]">Agent: {agentLabel(account, agencyMembers, currentUserId) ?? 'Unassigned'}</p>}
+              {account.archived && archivedAt && (
+                <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-[var(--color-ink-500)]" data-testid="card-archived-on">
+                  <ArchiveIcon size={12} className="shrink-0 text-[var(--color-ink-400)]" aria-hidden />
+                  Archived {formatShortDate(toLocalDateKey(new Date(archivedAt)))}
+                </p>
+              )}
               {collaborators.length > 0 && (
                 <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-[var(--color-ink-500)]" data-testid="card-collaborators">
                   <Users size={12} className="shrink-0 text-[var(--color-ink-400)]" />
