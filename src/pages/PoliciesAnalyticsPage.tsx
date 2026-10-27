@@ -39,7 +39,7 @@ const td = 'border-b border-[var(--color-ink-50)] px-3 py-2 align-top text-sm te
 const num = 'whitespace-nowrap text-right tabular-nums';
 const DATE_FIELDS = Object.keys(POLICY_DATE_LABELS) as PolicyDateField[];
 const PRESETS = Object.keys(DATE_PRESET_LABELS) as DatePreset[];
-type KindFilter = 'all' | 'policy' | 'endorsement';
+type KindFilter = 'all' | 'policy' | 'endorsement' | 'cancellation';
 const ALL_AGENTS = '';
 
 /**
@@ -94,7 +94,7 @@ interface PolicyView {
 const POLICY_VIEW_DEFAULTS: PolicyView = { type: 'all', date: 'boundDate', from: '', to: '', agent: ALL_AGENTS, search: '' };
 const sanitizePolicyView = (saved: Record<string, unknown>): Partial<PolicyView> =>
   defined<PolicyView>({
-    type: oneOf<KindFilter>(['all', 'policy', 'endorsement'])(saved.type),
+    type: oneOf<KindFilter>(['all', 'policy', 'endorsement', 'cancellation'])(saved.type),
     date: oneOf<PolicyDateField>(DATE_FIELDS)(saved.date),
     from: aDateKey(saved.from),
     to: aDateKey(saved.to),
@@ -129,21 +129,48 @@ function PoliciesPanel() {
   const agent = isAdmin && (view.agent === ALL_AGENTS || members.some((m) => m.userId === view.agent)) ? view.agent : ALL_AGENTS;
   const filtersActive = kind !== 'all' || dateField !== 'boundDate' || !!from || !!to || !!agent || !!search;
 
+  // Commission records (0064): the frozen amounts and status of each policy — the agency's for an admin,
+  // the agent's own for an agent. Without them (no 0064, or not recorded yet) the amounts are worked out.
+  const ledger = useLedger();
+  const mine = useMyCommissions(!!agencyAccess && !isAdmin);
+  // Cancellations (not undone) as their own negative rows, dated on the cancellation's effective date.
+  const cancellationRecords = useMemo(() => {
+    type C = { id: string; accountId: string; client: string; quoteId: string; policyNumber: string | null; carrier: string; date: string; net: number; carrierCents: number | null; agentCents: number | null; carrierRate: number | null; agentUserId: string | null; agentName: string | null; createdAt: string };
+    const out: C[] = [];
+    if (isAdmin && ledger.data)
+      for (const t of ledger.data.transactions)
+        if (t.kind === 'cancellation' && t.verificationStatus !== 'void' && !t.replacedBy)
+          out.push({ id: t.id, accountId: t.submissionId, client: t.clientName, quoteId: t.quoteId ?? '', policyNumber: t.policyNumber, carrier: t.carrierName, date: t.eventDate, net: t.netCents, carrierCents: t.carrierCents, agentCents: t.agentCents, carrierRate: t.carrierRate, agentUserId: t.agentUserId, agentName: t.agentName, createdAt: t.createdAt });
+    if (!isAdmin)
+      for (const c of mine.commissions)
+        if (c.kind === 'cancellation' && c.status !== 'void')
+          out.push({ id: c.id, accountId: c.submissionId, client: c.clientName, quoteId: '', policyNumber: c.policyNumber, carrier: c.carrierName, date: c.eventDate, net: c.netCents, carrierCents: null, agentCents: c.agentCents, carrierRate: c.carrierRate, agentUserId: me, agentName: null, createdAt: c.eventDate });
+    return out;
+  }, [isAdmin, ledger.data, mine.commissions, me]);
   // An agent's analytics are their own clients' (the ones assigned to them).
-  const all = useMemo(() => policyRows(accounts, quotes).filter((r) => !agencyAccess || isAdmin || r.assignedUserId === me), [accounts, quotes, agencyAccess, isAdmin, me]);
+  const all = useMemo(() => {
+    const base = policyRows(accounts, quotes).filter((r) => !agencyAccess || isAdmin || r.assignedUserId === me);
+    const cancelled: PolicyRow[] = cancellationRecords.map((c) => ({
+      policy: { id: `cx-${c.id}`, policyNumber: c.policyNumber ?? undefined, carrier: c.carrier, businessType: 'new', boundDate: c.date, effectiveDate: c.date, netPremiumCents: c.net, taxesCents: 0, feesCents: 0, attachments: [], createdAt: c.createdAt, updatedAt: c.createdAt } as PolicyRow['policy'],
+      accountId: c.accountId,
+      insured: c.client,
+      quoteId: c.quoteId,
+      marketName: c.carrier,
+      marketBound: true,
+      assignedUserId: c.agentUserId,
+      cancellation: true,
+    }));
+    return [...base, ...cancelled];
+  }, [accounts, quotes, agencyAccess, isAdmin, me, cancellationRecords]);
   const rows = useMemo(
     () =>
       filterPolicies(all, { dateField, from, to, search })
-        .filter((r) => kind === 'all' || entryKind(r.policy) === kind)
+        .filter((r) => kind === 'all' || (kind === 'cancellation' ? !!r.cancellation : !r.cancellation && entryKind(r.policy) === kind))
         .filter((r) => !agent || r.assignedUserId === agent),
     [all, dateField, from, to, search, kind, agent]
   );
   const preset = PRESETS.find((p) => p !== 'all' && presetRange(p).from === from && presetRange(p).to === to) ?? (from || to ? 'custom' : 'all');
   const carrier = useCarrierRates();
-  // Commission records (0064): the frozen amounts and status of each policy — the agency's for an admin,
-  // the agent's own for an agent. Without them (no 0064, or not recorded yet) the amounts are worked out.
-  const ledger = useLedger();
-  const mine = useMyCommissions(!!agencyAccess && !isAdmin);
   // The carrier % entered on each policy / endorsement (0074): such rows have no "Set rate".
   const [entered, setEntered] = useState<Map<string, EnteredCarrierRate>>(new Map());
   const loadEntered = () => {
@@ -160,8 +187,10 @@ function PoliciesPanel() {
         out.set(k, { agentCents: t.agentCents, carrierCents: notSet ? null : t.carrierCents, carrierRate: notSet ? null : t.carrierRate, agentUserId: t.agentUserId, agentName: t.agentName, carrierRateSource: t.carrierRateSource });
       }
     if (!isAdmin) for (const c of mine.commissions) if (c.policyId) out.set(`${c.submissionId}|${c.policyId}`, { agentCents: c.agentCents, carrierCents: null, carrierRate: c.carrierRate });
+    for (const c of cancellationRecords)
+      out.set(`${c.accountId}|cx-${c.id}`, { agentCents: c.agentCents, carrierCents: c.carrierCents, carrierRate: c.carrierRate, agentUserId: c.agentUserId, agentName: c.agentName });
     return out;
-  }, [isAdmin, ledger.data, mine.commissions]);
+  }, [isAdmin, ledger.data, mine.commissions, cancellationRecords]);
   const recordOf = (r: PolicyRow) => records.get(`${r.accountId}|${r.policy.id}`);
   const commissionOf = (r: PolicyRow): number | null => {
     if (!agencyAccess) return null;
@@ -188,9 +217,10 @@ function PoliciesPanel() {
   const [rateFor, setRateFor] = useState<PolicyRow | null>(null);
   const setDescription = useAccountsStore((s) => s.setPolicyDescription);
   const totals = useMemo(() => {
-    const t = { policies: 0, endorsements: 0, net: 0, taxes: 0, fees: 0, carrier: 0, carrierMissing: 0, commission: 0, commissionMissing: 0, proofMissing: 0 };
+    const t = { policies: 0, endorsements: 0, cancellations: 0, net: 0, taxes: 0, fees: 0, carrier: 0, carrierMissing: 0, commission: 0, commissionMissing: 0, proofMissing: 0 };
     for (const r of rows) {
-      if (entryKind(r.policy) === 'endorsement') t.endorsements++;
+      if (r.cancellation) t.cancellations++;
+      else if (entryKind(r.policy) === 'endorsement') t.endorsements++;
       else t.policies++;
       t.net += r.policy.netPremiumCents;
       t.taxes += r.policy.taxesCents;
@@ -201,7 +231,7 @@ function PoliciesPanel() {
       const c = commissionOf(r);
       if (c === null) t.commissionMissing++;
       else t.commission += c;
-      if (!(r.policy.attachments ?? []).length) t.proofMissing++;
+      if (!r.cancellation && !(r.policy.attachments ?? []).length) t.proofMissing++;
     }
     return t;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -245,6 +275,7 @@ function PoliciesPanel() {
                 <option value="all">All</option>
                 <option value="policy">Policies</option>
                 <option value="endorsement">Endorsements</option>
+                <option value="cancellation">Cancellations</option>
               </select>
             </div>
             <div>
@@ -330,6 +361,7 @@ function PoliciesPanel() {
                       Totals
                       <span className="mt-0.5 block text-xs font-normal text-[var(--color-ink-600)]" data-total="count">
                         <span data-total="policies">{totals.policies}</span> {totals.policies === 1 ? 'policy' : 'policies'} · <span data-total="endorsements">{totals.endorsements}</span> {totals.endorsements === 1 ? 'endorsement' : 'endorsements'}
+                        {totals.cancellations > 0 && <> · <span data-total="cancellations">{totals.cancellations}</span> {totals.cancellations === 1 ? 'cancellation' : 'cancellations'}</>}
                       </span>
                     </td>
                     <td className={totalCell} />
@@ -360,19 +392,23 @@ function PoliciesPanel() {
                     const c = commissionOf(r);
                     const endorsement = entryKind(r.policy) === 'endorsement';
                     return (
-                      <tr key={r.policy.id} data-row={r.policy.id} data-kind={endorsement ? 'endorsement' : 'policy'}>
+                      <tr key={r.policy.id} data-row={r.policy.id} data-kind={r.cancellation ? 'cancellation' : endorsement ? 'endorsement' : 'policy'}>
                         <td className={`${td} min-w-[220px]`}>
                           <Link to={`/accounts/${r.accountId}?tab=quotes&quote=${r.quoteId}`} className="block font-medium text-[var(--color-brand-800)] hover:underline">{r.insured}</Link>
                           <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-[var(--color-ink-600)]">
                             <span className="font-medium">{r.policy.policyNumber ?? 'Number to come'}</span>
-                            <span className={endorsement ? 'rounded-full bg-[var(--color-info-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-info-600)]' : 'rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-ink-600)]'}>
-                              {endorsement ? 'Endorsement' : r.policy.businessType === 'renewal' ? 'Renewal' : 'New business'}
-                            </span>
+                            {r.cancellation ? (
+                              <span className="rounded-full bg-[var(--color-danger-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-danger-600)]">Cancellation</span>
+                            ) : (
+                              <span className={endorsement ? 'rounded-full bg-[var(--color-info-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-info-600)]' : 'rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-ink-600)]'}>
+                                {endorsement ? 'Endorsement' : r.policy.businessType === 'renewal' ? 'Renewal' : 'New business'}
+                              </span>
+                            )}
                             {!r.marketBound && <Badge tone="warning">Market no longer Bound</Badge>}
                           </span>
                           <span className="mt-0.5 block text-xs text-[var(--color-ink-500)]">
                             {r.policy.carrier}
-                            {r.policy.carrier !== r.marketName ? ` via ${r.marketName}` : ''}
+                            {!r.cancellation && r.policy.carrier !== r.marketName ? ` via ${r.marketName}` : ''}
                           </span>
                         </td>
                         <td className={`${td} whitespace-nowrap`} data-field="bound">{r.policy.boundDate ? formatDateWithYear(r.policy.boundDate) : '—'}</td>
@@ -382,7 +418,7 @@ function PoliciesPanel() {
                         <td className={`${td} ${num} font-semibold`}>{formatCents(policyTotalCents(r.policy))}</td>
                         {isAdmin && (
                           <td className={`${td} ${num}`} data-field="carrier">
-                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} canEdit={carrier.status === 'ready' && !enteredOf(r) && recordOf(r)?.carrierRateSource !== 'policy_rate'} onChange={() => setRateFor(r)} />
+                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} canEdit={!r.cancellation && carrier.status === 'ready' && !enteredOf(r) && recordOf(r)?.carrierRateSource !== 'policy_rate'} onChange={() => setRateFor(r)} />
                           </td>
                         )}
                         {agencyAccess && (
@@ -403,13 +439,15 @@ function PoliciesPanel() {
                         <td className={`${td} min-w-[200px]`} data-field="description">
                           <DescriptionCell
                             text={r.policy.description ?? ''}
-                            canEdit={isAdmin && !r.policy.removedAt}
+                            canEdit={isAdmin && !r.policy.removedAt && !r.cancellation}
                             label={`${r.insured} ${r.policy.policyNumber ?? r.policy.carrier}`}
                             onSave={(text) => setDescription(r.accountId, r.quoteId, r.policy.id, text)}
                           />
                         </td>
                         <td className={`${td} whitespace-nowrap`} data-field="documents">
-                          {(r.policy.attachments ?? []).length ? (
+                          {r.cancellation ? (
+                            <span className="text-xs text-[var(--color-ink-400)]">—</span>
+                          ) : (r.policy.attachments ?? []).length ? (
                             <span className="inline-flex items-center gap-1 text-xs text-[var(--color-ink-600)]" title={r.policy.attachments!.map((a) => (a.description ? `${a.name} — ${a.description}` : a.name)).join('\n')}>
                               <Paperclip size={12} aria-hidden /> {r.policy.attachments!.length}
                             </span>
@@ -432,14 +470,14 @@ function PoliciesPanel() {
           {rateFor && <CarrierRateDialog carrier={rateFor.policy.carrier} effectiveFrom={rateFor.policy.boundDate} onClose={() => setRateFor(null)} onSaved={() => void ledger.reload()} />}
         </CardBody>
       </Card>
-      {!isAdmin && mine.commissions.some((c) => c.kind === 'cancellation' || c.kind === 'correction') && (
+      {!isAdmin && mine.commissions.some((c) => c.kind === 'correction') && (
         <Card>
           <CardBody className="pt-4" data-testid="my-adjustments">
-            <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Cancellations and corrections on your commissions</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Corrections on your commissions</h3>
             <p className="text-xs text-[var(--color-ink-500)]">Approved by your agency admin, with the original policy’s split. A negative amount is taken from your next payouts, never withdrawn.</p>
             <ul className="mt-2 flex flex-col gap-1 text-sm">
               {mine.commissions
-                .filter((c) => c.kind === 'cancellation' || c.kind === 'correction')
+                .filter((c) => c.kind === 'correction')
                 .map((c) => (
                   <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-ink-50)] py-1.5 last:border-b-0" data-adjustment={c.id}>
                     <span>

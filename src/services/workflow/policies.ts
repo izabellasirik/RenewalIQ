@@ -273,6 +273,8 @@ export interface PolicyRow {
   marketBound: boolean;
   /** The account's assigned agent (whose commission rate applies), if any. */
   assignedUserId: string | null;
+  /** Analytics only: a cancellation's negative record shown as its own row (its date = the cancellation's effective date). */
+  cancellation?: boolean;
 }
 
 export function policyRows(accounts: Pick<Account, 'id' | 'namedInsured' | 'archived' | 'assignedUserId'>[], quotes: Record<string, MarketQuote[] | undefined>, { includeArchived = false } = {}): PolicyRow[] {
