@@ -500,13 +500,14 @@ function PoliciesPanel() {
 /** A row's carrier commission: the % (as recorded, or in force on its bound date) and the amount; admins can set a new rate from here. */
 function CarrierCell({ row, rate, cents, canEdit, onChange }: { row: PolicyRow; rate: number | null; cents: number | null; canEdit: boolean; onChange: () => void }) {
   return (
-    <div className="flex flex-col items-end gap-0.5">
+    <div className="flex flex-col items-end">
       {rate === null || cents === null ? (
         <span className="text-xs font-medium text-[var(--color-warning-600)]" data-field="carrier-rate">Not set</span>
       ) : (
         <>
-          <span className="text-sm tabular-nums text-[var(--color-ink-700)]" data-field="carrier-rate">{formatRate(rate)}</span>
-          <span className="text-xs font-semibold tabular-nums text-[var(--color-ink-800)]">{formatCents(cents)}</span>
+          {/* The amount first, in line with the row's other amounts; its % underneath. */}
+          <span className="font-semibold tabular-nums" data-field="carrier-amount">{formatCents(cents)}</span>
+          <span className="mt-0.5 text-[11px] tabular-nums text-[var(--color-ink-500)]" data-field="carrier-rate">{formatRate(rate)}</span>
         </>
       )}
       {canEdit && (
