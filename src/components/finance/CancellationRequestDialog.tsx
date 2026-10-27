@@ -5,6 +5,7 @@ import { inputClass, labelClass } from '../workspace/formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { cancelPolicy, previewCancellationRefund, type CancellationRefundPreview } from '../../services/supabase/ledgerRepo';
 import { centsInput, formatCents, parseMoneyCents } from '../../services/workflow/policies';
+import { formatDateWithYear } from '../../services/workflow/dates';
 
 /**
  * The account's agent (or an admin) cancels a policy / endorsement (0075): full or partial, the effective
@@ -117,7 +118,9 @@ export function CancellationRequestDialog({ accountId, transactionId, policyLabe
                   <span className="text-[var(--color-danger-600)]">{shown.error ?? 'Could not work out the refund.'}</span>
                 ) : (
                   <>
-                    {shown.data.unusedDays} of {shown.data.termDays} days unused
+                    {shown.data.unusedDays >= shown.data.termDays && shown.data.termDays > 0
+                      ? `Before coverage starts (${formatDateWithYear(shown.data.termStart)}) — nothing used yet`
+                      : `${shown.data.unusedDays} of ${shown.data.termDays} days unused`}
                     {differs && (
                       <>
                         {' · '}

@@ -8,7 +8,7 @@ import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCom
 import { formatDateWithYear, formatShortDate } from '../../services/workflow/dates';
 import { cancellationState, reloadPolicyCancellations, usePolicyCancellations } from '../../hooks/usePolicyCancellations';
 import { declineCancellationUndo, rejectCancellation, undoCancellation, type PolicyCancellation } from '../../services/supabase/ledgerRepo';
-import { activeEndorsements, activePolicies, agentCommissionCents, centsInput, checkPolicy, formatCents, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
+import { activeEndorsements, activePolicies, agentCommissionCents, centsInput, checkPolicy, formatCents, oneYearAfter, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
 import { enterPolicyCarrierRate, fetchEnteredCarrierRates, policyNumberTaken } from '../../services/supabase/commissionRepo';
 import { isSupabaseConfigured } from '../../services/supabase/client';
 import { generateId } from '../../utils/id';
@@ -470,6 +470,7 @@ export function EntryForm({
   const set = <K extends keyof PolicyInput>(key: K, value: PolicyInput[K]) => {
     // Once a policy is chosen, the "choose the policy" message no longer applies.
     if (key === 'forPolicyId' && value) setErrors((errs) => errs.filter((m) => !m.startsWith('Choose the policy this endorsement changes')));
+    if (key === 'effectiveDate' && value) setErrors((errs) => errs.filter((m) => m !== 'Enter the effective date.'));
     setF((cur) => {
       const next = { ...cur, [key]: value };
       // Picking the endorsed policy fills its number and carrier, unless they were changed by hand.
@@ -478,6 +479,11 @@ export function EntryForm({
         const fromAPolicy = (v: string, field: 'policyNumber' | 'carrier') => !v || v === quote.marketName || accountPolicies.some((x) => (x.policy[field] ?? '') === v);
         if (pick && fromAPolicy(cur.policyNumber, 'policyNumber')) next.policyNumber = pick.policyNumber ?? '';
         if (pick && fromAPolicy(cur.carrier, 'carrier')) next.carrier = pick.carrier;
+      }
+      // A policy's expiration follows its effective date (one year later) until it's changed by hand.
+      if (key === 'effectiveDate' && kind === 'policy' && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const wasFollowing = !cur.expirationDate || (/^\d{4}-\d{2}-\d{2}$/.test(cur.effectiveDate) && cur.expirationDate === oneYearAfter(cur.effectiveDate));
+        if (wasFollowing) next.expirationDate = oneYearAfter(value);
       }
       // Picking a quote fills the net premium if it's still blank or still that of the previous quote.
       if (key === 'quoteOptionId') {
@@ -633,7 +639,9 @@ export function EntryForm({
         <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">Term</legend>
           <div>
-            <label className={labelClass} htmlFor="policy-effective">Effective</label>
+            <label className={labelClass} htmlFor="policy-effective">
+              Effective <Required />
+            </label>
             <input id="policy-effective" type="date" className={inputClass} value={f.effectiveDate} onChange={(e) => set('effectiveDate', e.target.value)} />
           </div>
           <div>

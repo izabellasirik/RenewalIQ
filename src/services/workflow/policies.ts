@@ -166,8 +166,10 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
   const boundDate = input.boundDate.trim() ? strictDate(input.boundDate) : null;
   if (!input.boundDate.trim()) errors.push(`Enter the ${dateLabel}.`);
   else if (!boundDate) errors.push(`The ${dateLabel} isn’t a valid date.`);
+  // The effective date is required: a cancellation's refund is counted from it (unused days of the term).
   const effectiveDate = input.effectiveDate.trim() ? strictDate(input.effectiveDate) : null;
-  if (input.effectiveDate.trim() && !effectiveDate) errors.push('The effective date isn’t a valid date.');
+  if (!input.effectiveDate.trim()) errors.push('Enter the effective date.');
+  else if (!effectiveDate) errors.push('The effective date isn’t a valid date.');
   const expirationDate = input.expirationDate.trim() ? strictDate(input.expirationDate) : null;
   if (input.expirationDate.trim() && !expirationDate) errors.push('The expiration date isn’t a valid date.');
   if (effectiveDate && expirationDate && expirationDate <= effectiveDate) errors.push('The expiration date must be after the effective date.');

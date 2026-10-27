@@ -84,6 +84,14 @@ describe('checking a policy', () => {
     if (!r.ok) expect(r.errors).toEqual(['Enter the carrier.', 'Enter the bound date.', 'Enter the net premium.']);
     expect(fields({ taxes: '', fees: '' })).toMatchObject({ taxesCents: 0, feesCents: 0 });
   });
+  it('requires the effective date, for policies and endorsements (a cancellation refund counts from it)', () => {
+    const r = checkPolicy(input({ effectiveDate: ' ' }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors).toEqual(['Enter the effective date.']);
+    const e = checkPolicy(input({ kind: 'endorsement', effectiveDate: '' }));
+    expect(e.ok).toBe(false);
+    if (!e.ok) expect(e.errors).toContain('Enter the effective date.');
+  });
   it('refuses impossible dates, a term that ends before it starts, and negative or malformed amounts', () => {
     const r = checkPolicy(input({ boundDate: '2026-02-30', expirationDate: '2026-10-01', netPremium: '-5', taxes: 'ten', fees: '-1' }));
     expect(r.ok).toBe(false);
