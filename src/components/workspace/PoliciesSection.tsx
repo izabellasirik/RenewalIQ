@@ -16,6 +16,7 @@ import { useAccountCommissionStatuses } from '../../hooks/useLedger';
 import type { AccountCommissionStatus } from '../../services/supabase/ledgerRepo';
 import { FLAG_LABELS, payoutWords } from '../../services/finance/ledger';
 import { CancellationRequestDialog } from '../finance/CancellationRequestDialog';
+import { UNDO_SECONDS, removalKey, scheduleRemoval, usePendingRemovals } from '../../state/pendingRemovals';
 import { inputClass, labelClass } from './formStyles';
 
 const KIND = {
@@ -35,12 +36,16 @@ const KIND = {
 export function PoliciesSection({ accountId, quote }: { accountId: string; quote: MarketQuote }) {
   const commission = useAgentCommission(accountId);
   const records = useAccountCommissionStatuses(accountId);
+  // Deleted, still in their Undo window: hidden already.
+  const pending = new Set(usePendingRemovals().map((r) => r.key));
   if (!policiesFeatureEnabled()) return null;
   const bound = quote.status === 'bound';
-  const endorsements = activeEndorsements(quote);
+  const shown = (list: PolicyRecord[]) => list.filter((p) => !pending.has(removalKey(accountId, p.id)));
+  const policies = shown(activePolicies(quote));
+  const endorsements = shown(activeEndorsements(quote));
   return (
     <>
-      <EntryList accountId={accountId} quote={quote} kind="policy" entries={activePolicies(quote)} active={bound} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} canEndorse={bound && activePolicies(quote).length > 0} />
+      <EntryList accountId={accountId} quote={quote} kind="policy" entries={policies} active={bound} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} canEndorse={bound && policies.length > 0} />
       {/* Endorsements are part of a policy: added with "Add endorsement" next to "Add policy"; the market stays Bound. */}
       <EntryList accountId={accountId} quote={quote} kind="endorsement" entries={endorsements} active={bound && endorsements.length > 0} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} hideAdd />
     </>
@@ -125,11 +130,15 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
         open={!!removing}
         onCancel={() => setRemoving(null)}
         onConfirm={() => {
-          if (removing) removePolicy(accountId, quote.id, removing.id);
+          // Gone at once; saved (and out of Analytics) after the Undo window — see pendingRemovals.
+          if (removing) {
+            const entry = removing;
+            scheduleRemoval(removalKey(accountId, entry.id), `${kind === 'policy' ? 'Policy' : 'Endorsement'} ${entry.policyNumber ?? `with ${entry.carrier}`} deleted`, () => removePolicy(accountId, quote.id, entry.id));
+          }
           setRemoving(null);
         }}
         title={`Remove this ${k.one}?`}
-        description={`${removing?.policyNumber ?? `The ${k.one}`} with ${removing?.carrier ?? ''} is removed from this account, and its premium and commission no longer count in Analytics. The market and its quotes are kept; the removal is recorded in History.`}
+        description={`${removing?.policyNumber ?? `The ${k.one}`} with ${removing?.carrier ?? ''} is removed from this account, and its premium and commission no longer count in Analytics. You can undo it for ${UNDO_SECONDS} seconds. The market and its quotes are kept; the removal is recorded in History.`}
         confirmLabel={`Remove ${k.one}`}
       />
     </div>

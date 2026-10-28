@@ -5,6 +5,7 @@ import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { FeedbackWidget } from '../feedback/FeedbackWidget';
 import { TimeSavedPrompt } from '../productAnalytics/TimeSavedPrompt';
+import { UndoBar } from './UndoBar';
 
 export function AppShell() {
   const location = useLocation();
@@ -32,6 +33,7 @@ export function AppShell() {
       </div>
       <FeedbackWidget />
       <TimeSavedPrompt />
+      <UndoBar />
     </div>
   );
 }

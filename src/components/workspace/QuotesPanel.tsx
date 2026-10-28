@@ -3,6 +3,7 @@ import { BadgeDollarSign, Building2, ChevronDown, ChevronRight, FileQuestion, Pe
 import type { MarketQuote, MissingItem, MissingItemType, QuoteNote, QuoteStatus } from '../../types';
 import { AWAITING_CARRIER_STATUSES, QUOTE_STATUS_LABELS, QUOTE_STATUS_ORDER, marketStatusLabel, type MarketStatusChoice, type PolicyEntryKind } from '../../types';
 import { Badge, Button, Card, CardBody, EmptyState, OverflowMenu } from '../ui';
+import { removalKey, usePendingRemovals } from '../../state/pendingRemovals';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { addBusinessDays, formatShortDate, todayKey } from '../../services/workflow/dates';
@@ -256,6 +257,9 @@ function QuoteCard({
   const storeUpdateQuote = useAccountsStore((s) => s.updateQuote);
   // Every policy on the market fully cancelled → "Cancelled" next to its status (it stays Bound).
   const cancellations = usePolicyCancellations(accountId);
+  // The market's total leaves out policies deleted and still in their Undo window.
+  const pendingKeys = new Set(usePendingRemovals().map((r) => r.key));
+  const total = marketTotalCents({ policies: (quote.policies ?? []).filter((p) => !pendingKeys.has(removalKey(accountId, p.id))) });
   const allCancelled = quote.status === 'bound' && activePolicies(quote).length > 0 && activePolicies(quote).every((p) => !!cancellationState(cancellations, p.id).full);
   // Marking a market Bound (any of the ways) or Endorsed first asks for the policy / endorsement —
   // date, amounts, optional proof — and only then sets the status (see EntryForm). A market going
@@ -397,9 +401,9 @@ function QuoteCard({
               </h3>
               {/* A Bound market whose policies are all fully cancelled reads "Cancelled" (its data stays Bound). */}
               {allCancelled ? <Badge tone="danger">Cancelled</Badge> : <Badge tone={QUOTE_STATUS_TONE[quote.status]}>{QUOTE_STATUS_LABELS[quote.status]}</Badge>}
-              {quote.status === 'bound' && marketTotalCents(quote) !== null ? (
+              {quote.status === 'bound' && total !== null ? (
                 <span className="text-sm font-semibold text-[var(--color-success-600)]" title="Total of this market’s policies and endorsements (net, taxes and fees)" data-testid="market-total">
-                  {formatCents(marketTotalCents(quote)!)}
+                  {formatCents(total)}
                 </span>
               ) : quote.premium && (quote.status === 'quoted' || quote.status === 'bound') && (
                 <span className="text-sm font-semibold text-[var(--color-success-600)]">${quote.premium.toLocaleString('en-US')}</span>
