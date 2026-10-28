@@ -14,9 +14,9 @@ with gone as (
                        and c.verification_status <> 'void' and c.replaced_by is null))
 )
 select g.named_insured as account, g.policy_number, g.kind, g.event_date as recorded_for,
-       ((select sum(y.net_cents) from public.commission_transactions y where (y.id = g.id or (y.original_transaction_id = g.id and y.kind in ('correction', 'cancellation'))) and y.verification_status <> 'void' and y.replaced_by is null) / 100.0 as net_still_counting,
-       ((select sum(y.carrier_cents) from public.commission_transactions y where (y.id = g.id or (y.original_transaction_id = g.id and y.kind in ('correction', 'cancellation'))) and y.verification_status <> 'void' and y.replaced_by is null) / 100.0 as carrier_commission_still_counting,
-       ((select sum(y.agent_cents) from public.commission_transactions y where (y.id = g.id or (y.original_transaction_id = g.id and y.kind in ('correction', 'cancellation'))) and y.verification_status <> 'void' and y.replaced_by is null) / 100.0 as agent_commission_still_counting,
+       ((select sum(y.net_cents) from public.commission_transactions y where (y.id = g.id or (y.original_transaction_id = g.id and y.kind in ('correction', 'cancellation'))) and y.verification_status <> 'void' and y.replaced_by is null) / 100.0)::numeric(14,2) as net_still_counting,
+       ((select sum(y.carrier_cents) from public.commission_transactions y where (y.id = g.id or (y.original_transaction_id = g.id and y.kind in ('correction', 'cancellation'))) and y.verification_status <> 'void' and y.replaced_by is null) / 100.0)::numeric(14,2) as carrier_commission_still_counting,
+       ((select sum(y.agent_cents) from public.commission_transactions y where (y.id = g.id or (y.original_transaction_id = g.id and y.kind in ('correction', 'cancellation'))) and y.verification_status <> 'void' and y.replaced_by is null) / 100.0)::numeric(14,2) as agent_commission_still_counting,
        g.agent_name, g.verification_status, g.settlement
   from gone g
  order by g.event_date desc;
