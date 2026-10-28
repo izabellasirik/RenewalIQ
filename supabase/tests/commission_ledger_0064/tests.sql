@@ -170,7 +170,9 @@ select pg_temp.check('N6 an unverified record whose amount changed is recorded a
 reset role;
 select pg_temp.save('acct_led_2', jsonb_build_array(pg_temp.entry('n1', 'policy', 450000, '2026-09-02', 'Sample Mutual', '{"removedAt": "2026-10-01T00:00:00Z"}')));
 select pg_temp.check('N7 removed from the account: flagged, every record kept (n1 recorded three times, two voided; n2 voided)', (select 'removed' = any (review_flags) from pg_temp.t('n1'))
-  and (select count(*) = 4 and count(*) filter (where verification_status = 'void') = 3 from public.commission_transactions where submission_id = 'acct_led_2'));
+  -- From 0079 a deleted policy also leaves the totals: its current record is voided too (all four).
+  and (select count(*) = 4 and count(*) filter (where verification_status = 'void') = case when to_regprocedure('public.finance_remove_entry(public.commission_transactions,text)') is null then 3 else 4 end
+         from public.commission_transactions where submission_id = 'acct_led_2'));
 
 \echo '== historical records'
 insert into public.finance_historical_entries (agency_id, submission_id, policy_id) values (pg_temp.agency(), 'acct_led_h', 'h1'), (pg_temp.agency(), 'acct_led_h', 'h2');

@@ -129,7 +129,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
           setRemoving(null);
         }}
         title={`Remove this ${k.one}?`}
-        description={`${removing?.policyNumber ?? `The ${k.one}`} with ${removing?.carrier ?? ''} is removed from this account. The market and its quotes are kept; the removal is recorded in History.`}
+        description={`${removing?.policyNumber ?? `The ${k.one}`} with ${removing?.carrier ?? ''} is removed from this account, and its premium and commission no longer count in Analytics. The market and its quotes are kept; the removal is recorded in History.`}
         confirmLabel={`Remove ${k.one}`}
       />
     </div>
