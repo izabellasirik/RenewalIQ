@@ -16,7 +16,7 @@ import { useAccountCommissionStatuses } from '../../hooks/useLedger';
 import type { AccountCommissionStatus } from '../../services/supabase/ledgerRepo';
 import { FLAG_LABELS, payoutWords } from '../../services/finance/ledger';
 import { CancellationRequestDialog } from '../finance/CancellationRequestDialog';
-import { UNDO_SECONDS, removalKey, scheduleRemoval, usePendingRemovals } from '../../state/pendingRemovals';
+import { UNDO_SECONDS, removalKey, scheduleRemoval, undoRemoval, usePendingRemovals, type PendingRemoval } from '../../state/pendingRemovals';
 import { inputClass, labelClass } from './formStyles';
 
 const KIND = {
@@ -36,23 +36,23 @@ const KIND = {
 export function PoliciesSection({ accountId, quote }: { accountId: string; quote: MarketQuote }) {
   const commission = useAgentCommission(accountId);
   const records = useAccountCommissionStatuses(accountId);
-  // Deleted, still in their Undo window: hidden already.
-  const pending = new Set(usePendingRemovals().map((r) => r.key));
+  // Deleted, still in their Undo window: shown in their place as "Deleted · Undo".
+  const pending = new Map(usePendingRemovals().map((r) => [r.key, r]));
   if (!policiesFeatureEnabled()) return null;
   const bound = quote.status === 'bound';
-  const shown = (list: PolicyRecord[]) => list.filter((p) => !pending.has(removalKey(accountId, p.id)));
-  const policies = shown(activePolicies(quote));
-  const endorsements = shown(activeEndorsements(quote));
+  const policies = activePolicies(quote);
+  const endorsements = activeEndorsements(quote);
+  const livePolicies = policies.filter((p) => !pending.has(removalKey(accountId, p.id)));
   return (
     <>
-      <EntryList accountId={accountId} quote={quote} kind="policy" entries={policies} active={bound} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} canEndorse={bound && policies.length > 0} />
+      <EntryList accountId={accountId} quote={quote} kind="policy" entries={policies} pending={pending} active={bound} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} canEndorse={bound && livePolicies.length > 0} />
       {/* Endorsements are part of a policy: added with "Add endorsement" next to "Add policy"; the market stays Bound. */}
-      <EntryList accountId={accountId} quote={quote} kind="endorsement" entries={endorsements} active={bound && endorsements.length > 0} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} hideAdd />
+      <EntryList accountId={accountId} quote={quote} kind="endorsement" entries={endorsements} pending={pending} active={bound && endorsements.length > 0} commission={commission} records={records.byPolicy} onRecordsChanged={records.reload} hideAdd />
     </>
   );
 }
 
-function EntryList({ accountId, quote, kind, entries, active, commission, records, onRecordsChanged, canEndorse = false, hideAdd = false }: { accountId: string; quote: MarketQuote; kind: PolicyEntryKind; entries: PolicyRecord[]; active: boolean; commission: CommissionView; records: Map<string, AccountCommissionStatus>; onRecordsChanged: () => void; canEndorse?: boolean; hideAdd?: boolean }) {
+function EntryList({ accountId, quote, kind, entries, pending, active, commission, records, onRecordsChanged, canEndorse = false, hideAdd = false }: { accountId: string; quote: MarketQuote; kind: PolicyEntryKind; entries: PolicyRecord[]; pending: Map<string, PendingRemoval>; active: boolean; commission: CommissionView; records: Map<string, AccountCommissionStatus>; onRecordsChanged: () => void; canEndorse?: boolean; hideAdd?: boolean }) {
   const removePolicy = useAccountsStore((s) => s.removePolicy);
   const [editing, setEditing] = useState<PolicyRecord | 'new' | null>(null);
   const [endorsing, setEndorsing] = useState(false);
@@ -60,6 +60,7 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
   const [removing, setRemoving] = useState<PolicyRecord | null>(null);
   const [cancelling, setCancelling] = useState<{ entry: PolicyRecord; record: AccountCommissionStatus } | null>(null);
   const k = KIND[kind];
+  const liveCount = entries.filter((p) => !pending.has(removalKey(accountId, p.id))).length;
   if (!active && entries.length === 0) return null;
   const tone = kind === 'policy' ? 'border-[var(--color-success-600)]/20 bg-[var(--color-success-100)]/30' : 'border-[var(--color-info-600)]/20 bg-[var(--color-info-100)]/30';
 
@@ -68,11 +69,11 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-500)]">
           {k.title}
-          {entries.length ? ` (${entries.length})` : ''}
+          {liveCount ? ` (${liveCount})` : ''}
         </p>
         {active && !hideAdd && (
           <span className="flex flex-wrap gap-2">
-            <Button size="sm" variant={entries.length ? 'secondary' : 'primary'} icon={<Plus size={13} />} onClick={() => setEditing('new')}>
+            <Button size="sm" variant={liveCount ? 'secondary' : 'primary'} icon={<Plus size={13} />} onClick={() => setEditing('new')}>
               {k.add}
             </Button>
             {canEndorse && (
@@ -95,7 +96,10 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
       ) : (
         <ul className="mt-2 flex flex-col gap-2">
           {/* Newest first. */}
-          {[...entries].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)).map((p) => (
+          {[...entries].sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0)).map((p) => {
+            const waiting = pending.get(removalKey(accountId, p.id));
+            if (waiting) return <DeletedRow key={p.id} item={waiting} />;
+            return (
             <EntryItem
               key={p.id}
               accountId={accountId}
@@ -108,7 +112,8 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
               onRemove={() => setRemoving(p)}
               onRequestCancellation={(record) => setCancelling({ entry: p, record })}
             />
-          ))}
+            );
+          })}
         </ul>
       )}
 
@@ -142,6 +147,26 @@ function EntryList({ accountId, quote, kind, entries, active, commission, record
         confirmLabel={`Remove ${k.one}`}
       />
     </div>
+  );
+}
+
+/** Where a just-deleted policy / endorsement was: "Deleted · Undo" with the seconds left. */
+function DeletedRow({ item }: { item: PendingRemoval }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, []);
+  const left = Math.max(0, Math.ceil((item.until - now) / 1000));
+  return (
+    <li className="flex items-center gap-3 rounded-lg border border-dashed border-[var(--color-ink-200)] bg-white/70 px-3 py-2.5 text-sm text-[var(--color-ink-600)]" data-testid="deleted-row" aria-live="polite">
+      <Trash2 size={14} className="shrink-0 text-[var(--color-ink-400)]" aria-hidden />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      <Button size="sm" variant="secondary" icon={<Undo2 size={13} />} onClick={() => undoRemoval(item.key)}>
+        Undo
+      </Button>
+      <span className="w-7 shrink-0 text-right text-xs tabular-nums text-[var(--color-ink-400)]">{left}s</span>
+    </li>
   );
 }
 
