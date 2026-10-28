@@ -9,9 +9,11 @@ with gone as (
     join public.submissions s on s.id = x.submission_id
    where x.policy_id is not null and x.replaced_by is null and x.kind in ('policy', 'endorsement')
      and not exists (select 1 from public.finance_entries(s.market_quotes) e where e.entry ->> 'id' = x.policy_id and e.entry ->> 'removedAt' is null)
+     -- still counting: not void yet, or what's linked to it doesn't add up to $0
      and (x.verification_status <> 'void'
-          or exists (select 1 from public.commission_transactions c where c.original_transaction_id = x.id and c.kind in ('correction', 'cancellation')
-                       and c.verification_status <> 'void' and c.replaced_by is null))
+          or (select coalesce(sum(c.net_cents), 0) <> 0 or coalesce(sum(c.carrier_cents), 0) <> 0 or coalesce(sum(c.agent_cents), 0) <> 0
+                from public.commission_transactions c where c.original_transaction_id = x.id and c.kind in ('correction', 'cancellation')
+                 and c.verification_status <> 'void' and c.replaced_by is null))
 )
 select g.named_insured as account, g.policy_number, g.kind, g.event_date as recorded_for,
        ((select sum(y.net_cents) from public.commission_transactions y where (y.id = g.id or (y.original_transaction_id = g.id and y.kind in ('correction', 'cancellation'))) and y.verification_status <> 'void' and y.replaced_by is null) / 100.0)::numeric(14,2) as net_still_counting,
@@ -29,6 +31,7 @@ select g.named_insured as account, g.policy_number, g.kind, g.event_date as reco
 --  where x.policy_id is not null and x.replaced_by is null and x.kind in ('policy', 'endorsement')
 --    and not exists (select 1 from public.finance_entries(s.market_quotes) e where e.entry ->> 'id' = x.policy_id and e.entry ->> 'removedAt' is null)
 --    and (x.verification_status <> 'void'
---         or exists (select 1 from public.commission_transactions c where c.original_transaction_id = x.id and c.kind in ('correction', 'cancellation')
---                      and c.verification_status <> 'void' and c.replaced_by is null));
+--         or (select coalesce(sum(c.net_cents), 0) <> 0 or coalesce(sum(c.carrier_cents), 0) <> 0 or coalesce(sum(c.agent_cents), 0) <> 0
+--               from public.commission_transactions c where c.original_transaction_id = x.id and c.kind in ('correction', 'cancellation')
+--                and c.verification_status <> 'void' and c.replaced_by is null));
 -- commit;
