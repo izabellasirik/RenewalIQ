@@ -292,6 +292,12 @@ describe('editing an existing market', () => {
     expect(store().followUps[id]).toHaveLength(1);
   });
 
+  it('New Submission: the DOT number and effective date entered go on the Risk Profile', () => {
+    const id = store().createAccount('ABC Trucking', '', { dotNumber: '1234567', effectiveDate: '2026-12-01' });
+    expect(store().riskProfiles[id].transportation.dotNumber.value).toBe('1234567');
+    expect(store().riskProfiles[id].business.effectiveDate.value).toBe('2026-12-01');
+  });
+
   it('Sent to Client on a chosen date: the follow-up is 2 business days after that date', () => {
     const id = store().createAccount('ABC Trucking', 'TX');
     const q = store().addQuote(id, { marketName: 'Canal', status: 'submitted' });

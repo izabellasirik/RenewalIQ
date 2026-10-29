@@ -428,6 +428,8 @@ export interface NewAccountSetup {
   leadDays?: number;
   /** The effective date entered on New Submission (YYYY-MM-DD); goes on the Risk Profile. */
   effectiveDate?: string;
+  /** The USDOT number entered on New Submission (digits); goes on the Risk Profile. */
+  dotNumber?: string;
 }
 
 const renewalClock = () => ({ now: new Date().toISOString(), newId: () => generateId('rnw') });
@@ -454,8 +456,9 @@ function renewalWhen(date: string, leadDays: number, label?: string): string {
 }
 
 /** Applies a new account's setup: its type, and for a renewal the renewal date (on the Risk Profile) and the main renewal. */
-function applyNewAccountSetup(account: Account, profile: RiskProfile, setup: NewAccountSetup | undefined): { account: Account; profile: RiskProfile; message?: string } {
-  if (!setup) return { account, profile };
+function applyNewAccountSetup(account: Account, startProfile: RiskProfile, setup: NewAccountSetup | undefined): { account: Account; profile: RiskProfile; message?: string } {
+  if (!setup) return { account, profile: startProfile };
+  const profile = setup.dotNumber ? applyManualEdit({ ...startProfile, transportation: { ...startProfile.transportation } }, 'transportation', 'dotNumber', setup.dotNumber) : startProfile;
   if (!setup.businessType) {
     if (!setup.effectiveDate) return { account, profile };
     const withDate = applyManualEdit({ ...profile, business: { ...profile.business } }, 'business', 'effectiveDate', setup.effectiveDate);

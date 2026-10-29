@@ -113,8 +113,12 @@ export function NewAccountPage() {
   const [draftFiles, setDraftFiles] = useState<File[]>([]);
   // The effective date (optional) — on both ways of creating an account.
   const [effectiveInput, setEffectiveInput] = useState('');
+  // USDOT number (optional): digits only.
+  const [dotInput, setDotInput] = useState('');
+  const dot = dotInput.replace(/\D/g, '');
+  const dotBad = dotInput.trim() !== '' && (!/^[\d\s-]+$/.test(dotInput.trim()) || dot.length > 8);
   const [typeTouched, setTypeTouched] = useState(false);
-  const setup: NewAccountSetup | undefined = effectiveInput ? { effectiveDate: effectiveInput } : undefined;
+  const setup: NewAccountSetup | undefined = effectiveInput || dot ? { ...(effectiveInput ? { effectiveDate: effectiveInput } : {}), ...(dot ? { dotNumber: dot } : {}) } : undefined;
   // Documents attached on the form: read into the new account when it's created.
   const [attached, setAttached] = useState<File[]>([]);
   // What was typed on the form, applied over what the documents say.
@@ -185,7 +189,7 @@ export function NewAccountPage() {
   }, [namedInsuredInput, mode]);
 
   function finalizeAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
-    const identity = { name: namedInsured, dotNumber: profile.transportation.dotNumber.value ?? null, mcNumber: profile.transportation.mcNumber.value ?? null };
+    const identity = { name: namedInsured, dotNumber: setupRef.current?.dotNumber ?? profile.transportation.dotNumber.value ?? null, mcNumber: profile.transportation.mcNumber.value ?? null };
     void guardedCreate(identity, () => {
       try {
         commitAccount(namedInsured, state, docs, profile, files);
@@ -223,6 +227,7 @@ export function NewAccountPage() {
     setDraftFiles([]);
     setFailures([]);
     setEffectiveInput('');
+    setDotInput('');
     setAttached([]);
     typed.current = null;
     setTypeTouched(false);
@@ -376,7 +381,7 @@ export function NewAccountPage() {
   function handleManualSubmit(e: FormEvent) {
     e.preventDefault();
     setTypeTouched(true);
-    if (!details || !namedInsuredInput.trim()) return;
+    if (!details || !namedInsuredInput.trim() || dotBad) return;
     // Documents attached: they're read into the account (the name and state typed here win).
     if (attached.length) {
       typed.current = { name: namedInsuredInput.trim(), state: stateInput };
@@ -387,7 +392,7 @@ export function NewAccountPage() {
     }
     const name = namedInsuredInput.trim();
     const chosen = details;
-    void guardedCreate({ name }, () => {
+    void guardedCreate({ name, ...(dot ? { dotNumber: dot } : {}) }, () => {
       const id = createAccount(name, stateInput, setup);
       applyNewAccountDetails(id, chosen);
       navigate(`/accounts/${id}/upload`);
@@ -461,6 +466,20 @@ export function NewAccountPage() {
                     aria-required="true"
                     className={`w-full rounded-lg border ${typeTouched && !namedInsuredInput.trim() ? 'border-[var(--color-danger-500)]' : 'border-[var(--color-ink-200)]'} px-3 py-2.5 text-sm text-[var(--color-ink-900)] outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15`}
                   />
+                </div>
+                <div>
+                  <label htmlFor="new-dot" className="mb-1.5 block text-sm font-medium text-[var(--color-ink-700)]">
+                    DOT Number <span className="font-normal text-[var(--color-ink-400)]">(optional)</span>
+                  </label>
+                  <input
+                    id="new-dot"
+                    inputMode="numeric"
+                    value={dotInput}
+                    onChange={(e) => setDotInput(e.target.value)}
+                    placeholder="e.g. 1234567"
+                    className={`w-full rounded-lg border ${dotBad ? 'border-[var(--color-danger-500)]' : 'border-[var(--color-ink-200)]'} px-3 py-2.5 text-sm text-[var(--color-ink-900)] outline-none placeholder:text-[var(--color-ink-400)] focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15`}
+                  />
+                  {dotBad && <p className="mt-1 text-xs text-[var(--color-danger-600)]">A DOT number is up to 8 digits.</p>}
                 </div>
                 <div>
                   <label htmlFor="new-state" className="mb-1.5 block text-sm font-medium text-[var(--color-ink-700)]">
