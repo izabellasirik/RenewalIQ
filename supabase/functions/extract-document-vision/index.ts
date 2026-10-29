@@ -17,6 +17,7 @@
 //   supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
 //   (optional) supabase secrets set ANTHROPIC_VISION_MODEL=claude-sonnet-5
 //   (optional) supabase secrets set ANTHROPIC_EMAIL_MODEL=...   (the Email Assistant; else the vision model)
+//   (optional) supabase secrets set ANTHROPIC_SUMMARY_MODEL=... (account notes summaries; else the email model)
 //
 // Every read is kept (ai_read_cache, migration 0046) and reused — the same page is paid for once —
 // and every request is logged with its token counts and cost (ai_usage_events; prices in pricing.ts).
@@ -24,6 +25,7 @@
 import { handleRead, type ModelCallResult } from './handler.ts';
 import { restStore, sanitizeContext, userIdFromJwt } from './store.ts';
 import { EMAIL_MAX_TOKENS, EMAIL_PROMPT, EMAIL_TOOL, emailModel, emailUserMessage, validateEmailRequest } from './email.ts';
+import { SUMMARY_MAX_TOKENS, SUMMARY_PROMPT, SUMMARY_TOOL, notesUserMessage, summaryFrom, summaryModel, validateNotesRequest } from './summary.ts';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -328,7 +330,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Vision extraction is not configured on this project yet.' }, 503);
   }
 
-  let body: { imageBase64?: string; mimeType?: string; fileName?: string; mode?: string; context?: unknown; emailText?: unknown };
+  let body: { imageBase64?: string; mimeType?: string; fileName?: string; mode?: string; context?: unknown; emailText?: unknown; notesText?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -368,6 +370,31 @@ Deno.serve(async (req: Request) => {
     );
     // The model that answered goes back with the answer, so the app records which one read the email.
     return result.status === 200 && 'fromCache' in result ? jsonResponse({ extraction: result.body, model: result.model, fromCache: result.fromCache }, 200) : jsonResponse(result.body, result.status);
+  }
+
+  if (body.mode === 'notes_summary') {
+    // The account card's Summarize button (0082): signed-in agents only.
+    const userId = userIdFromJwt(req.headers.get('Authorization'));
+    if (!userId) return jsonResponse({ error: 'Sign in to summarize notes.' }, 401);
+    const checked = validateNotesRequest(body);
+    if (!checked.ok) return jsonResponse({ error: checked.error }, 400);
+    const model = summaryModel((n) => Deno.env.get(n), DEFAULT_MODEL);
+    const result = await handleRead(
+      { operation: 'notes_summary', content: checked.text, fileName: null, context: sanitizeContext(body.context), userId },
+      {
+        store,
+        configuredModel: model,
+        callModel: () =>
+          callAnthropic(
+            apiKey,
+            { model, max_tokens: SUMMARY_MAX_TOKENS, system: SUMMARY_PROMPT, tools: [SUMMARY_TOOL], tool_choice: { type: 'tool', name: SUMMARY_TOOL.name }, messages: [{ role: 'user', content: notesUserMessage(checked.text) }] },
+            model
+          ),
+      }
+    );
+    if (result.status !== 200 || !('fromCache' in result)) return jsonResponse(result.body, result.status);
+    const summary = summaryFrom(result.body);
+    return summary ? jsonResponse({ summary, model: result.model, fromCache: result.fromCache }, 200) : jsonResponse({ error: 'The model did not return a summary.' }, 502);
   }
 
   const { imageBase64, mimeType, fileName } = body;

@@ -5,7 +5,7 @@
 //
 // Plain TypeScript (fetch only, no Deno APIs) so the app's unit tests can exercise it.
 
-export type Operation = 'structured_extraction' | 'transcription' | 'email_extraction';
+export type Operation = 'structured_extraction' | 'transcription' | 'email_extraction' | 'notes_summary';
 export type SourceKind = 'photo' | 'scanned_pdf_page';
 
 export interface ReadContext {
@@ -78,6 +78,7 @@ export const PROMPT_VERSIONS: Record<Operation, string> = {
   structured_extraction: 'x2',
   transcription: 't1',
   email_extraction: 'e1',
+  notes_summary: 's1',
 };
 
 /**

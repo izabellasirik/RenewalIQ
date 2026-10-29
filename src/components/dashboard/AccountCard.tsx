@@ -8,13 +8,13 @@ import { Card, CardBody, Badge, OverflowMenu, ConfirmDialog, type OverflowMenuIt
 import { selectCanManageArchive, useAccountsStore } from '../../state/useAccountsStore';
 import { useWorkflowStatus, deriveSubmissionStatusLabel } from '../layout/WorkflowSteps';
 import { formatShortDate, toLocalDateKey, todayKey } from '../../services/workflow/dates';
-import { cn } from '../../utils/cn';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { accountBoundDate, effectiveAccountStage } from '../../services/workflow/accountStage';
 import { nextOpenRenewal, renewalLabelOn, resolveRenewals } from '../../services/workflow/renewals';
 import { StageBadge } from '../workspace/StageBadge';
 import { RenewalBadge } from '../renewals/RenewalLabel';
 import { agentLabel } from '../../services/agency/agentLabel';
+import { NotesSummary } from './NotesSummary';
 
 /** `archivedAt`: in the archived view, when it was archived (shown on the card). */
 export function AccountCard({ account, index, onOpenHistory, archivedAt }: { account: Account; index: number; onOpenHistory: () => void; archivedAt?: string }) {
@@ -40,7 +40,7 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
 
   const steps = useWorkflowStatus(account.id);
   const status = deriveSubmissionStatusLabel(steps);
-  const { items, quotes, followUps, effectiveDate, dotNumber, actions } = useAccountWorkflow(account.id);
+  const { items, quotes, effectiveDate, dotNumber, actions } = useAccountWorkflow(account.id);
   // Only something genuinely overdue earns the red flag — otherwise the card stays calm.
   const needsAttention = actions.now.some((a) => a.overdue);
   const cancelledFor = useCancelledPolicies();
@@ -50,15 +50,6 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
   // The soonest open renewal (another policy's may come before the account's own); else the effective date.
   const shownDate = nextOpenRenewal(resolveRenewals(account, effectiveDate, quotes))?.renewalDate ?? effectiveDate;
   const newVenture = account.businessType === 'new_venture' && !account.renewals?.length;
-  // Checklist documents not in yet (missing or requested from the client).
-  const missingDocuments = items.filter((i) => i.type === 'document' && (i.status === 'missing' || i.status === 'requested')).length;
-  // The earliest follow-up still open: scheduled follow-ups, client requests, and markets.
-  const nextFollowUp =
-    [
-      ...followUps.filter((f) => !f.doneAt).map((f) => f.dueDate),
-      ...items.filter((i) => i.status === 'requested' && i.followUpDate).map((i) => i.followUpDate!),
-      ...quotes.filter((q) => q.followUpDate && q.status !== 'declined' && q.status !== 'bound').map((q) => q.followUpDate!),
-    ].sort()[0] ?? null;
 
   function commitRename() {
     const trimmed = draftName.trim();
@@ -196,7 +187,7 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
           </div>
 
 
-          {/* Renewal and DOT on one line; below it, what's missing and when to follow up. */}
+          {/* Renewal and DOT on one line; below it, the notes summary. */}
           <div className="mt-4 flex items-center justify-between gap-4 border-t border-[var(--color-ink-100)] pt-3 text-sm">
             <p className="text-[var(--color-ink-500)]">
               {newVenture ? 'Effective' : 'Renewal'}: <span className="font-semibold text-[var(--color-ink-900)]" data-testid="card-renewal">{shownDate ? formatShortDate(shownDate) : '—'}</span>
@@ -205,18 +196,7 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
               DOT # <span className="font-semibold text-[var(--color-ink-900)]">{dotNumber || '—'}</span>
             </p>
           </div>
-          <div className="mt-3 flex items-start justify-between gap-4 border-t border-[var(--color-ink-100)] pt-3 text-sm">
-            <div>
-              <p className="text-[var(--color-ink-500)]">Missing documents</p>
-              <p className="font-semibold text-[var(--color-ink-900)]">{missingDocuments > 0 ? missingDocuments : '—'}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-[var(--color-ink-500)]">Next follow-up</p>
-              <p className={cn('font-semibold', nextFollowUp && nextFollowUp < todayKey() ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-900)]')}>
-                {nextFollowUp ? formatShortDate(nextFollowUp) : '—'}
-              </p>
-            </div>
-          </div>
+          <NotesSummary account={account} quotes={quotes} />
         </CardBody>
       </Card>
 

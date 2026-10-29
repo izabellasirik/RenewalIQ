@@ -12,7 +12,7 @@ export function formatUsd(n: number | null | undefined): string {
 
 const plural = (n: number, word: string) => `${Number(n).toLocaleString()} ${word}${Number(n) === 1 ? '' : 's'}`;
 
-const OPERATION_LABELS: Record<string, string> = { structured_extraction: 'Extraction (upload)', transcription: 'Transcription (preview)', email_extraction: 'Email reading (Email Assistant)' };
+const OPERATION_LABELS: Record<string, string> = { structured_extraction: 'Extraction (upload)', transcription: 'Transcription (preview)', email_extraction: 'Email reading (Email Assistant)', notes_summary: 'Notes summary (account cards)' };
 const SOURCE_LABELS: Record<string, string> = { photo: 'Photos', scanned_pdf_page: 'Scanned PDF pages', unknown: 'Unlabelled' };
 
 function Stat({ label, value, hint, testId }: { label: string; value: string | number; hint?: string; testId?: string }) {
