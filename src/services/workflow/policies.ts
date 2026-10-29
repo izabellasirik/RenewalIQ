@@ -124,6 +124,8 @@ export interface PolicyInput {
   netPremium: string;
   taxes: string;
   fees: string;
+  /** Policies only: the agency's broker fee (split partner → agent → agency, 0081). */
+  brokerFee?: string;
 }
 
 export type PolicyFields = Omit<PolicyRecord, 'id' | 'createdAt' | 'updatedAt' | 'createdByName'>;
@@ -187,6 +189,9 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
   };
   const taxesCents = money('the taxes', input.taxes);
   const feesCents = money('the fees', input.fees);
+  // A broker fee belongs to a policy (endorsements have none).
+  const brokerFee = kind === 'policy' ? parseMoneyCents(input.brokerFee ?? '') : null;
+  if (brokerFee !== null && (Number.isNaN(brokerFee) || brokerFee < 0)) errors.push('Enter the broker fee as an amount, e.g. 350.00 (or leave it blank).');
 
   const policyNumber = input.policyNumber.trim();
   if (!policyNumber) errors.push('Enter the policy number.');
@@ -231,6 +236,7 @@ export function checkPolicy(input: PolicyInput, ctx: PolicyCheckContext = { exis
       netPremiumCents: net as number,
       taxesCents,
       feesCents,
+      ...(brokerFee && brokerFee > 0 ? { brokerFeeCents: brokerFee } : {}),
       ...(description ? { description } : {}),
       ...(notes ? { notes } : {}),
     },

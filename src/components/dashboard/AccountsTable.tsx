@@ -9,6 +9,7 @@ import { formatShortDate, toLocalDateKey, todayKey } from '../../services/workfl
 import { agentLabel } from '../../services/agency/agentLabel';
 import { StageBadge } from '../workspace/StageBadge';
 import { RenewalBadge } from '../renewals/RenewalLabel';
+import { referralLabel, useReferralSources } from '../../hooks/useReferralSources';
 
 const th = 'border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
 const td = 'border-b border-[var(--color-ink-50)] px-3 py-2.5 align-middle text-sm text-[var(--color-ink-800)]';
@@ -22,7 +23,7 @@ export function AccountsTable({ accounts, archivedAt }: { accounts: Account[]; a
       <table className="min-w-full border-collapse" data-testid="accounts-table">
         <thead>
           <tr>
-            {['Client', ...(isAgencyAdmin ? ['Agent'] : []), 'Status', 'Renewal', 'DOT #', ...(archived ? ['Archived'] : [])].map((h) => (
+            {['Client', ...(isAgencyAdmin ? ['Agent'] : []), 'Status', 'Referral', 'Renewal', 'DOT #', ...(archived ? ['Archived'] : [])].map((h) => (
               <th key={h} className={th}>
                 {h}
               </th>
@@ -48,6 +49,7 @@ function AccountRow({ account, showAgent, archivedAt }: { account: Account; show
   const { stage } = effectiveAccountStage(account, items, quotes, cancelledFor(account.id));
   const renewalLabel = renewalLabelOn(account, effectiveDate, quotes, todayKey()).on;
   const renewal = nextOpenRenewal(resolveRenewals(account, effectiveDate, quotes))?.renewalDate ?? effectiveDate;
+  const sources = useReferralSources();
   const open = () => navigate(`/accounts/${account.id}`);
   return (
     <tr className="cursor-pointer hover:bg-[var(--color-ink-50)]" onClick={open} onKeyDown={(e) => e.key === 'Enter' && open()} tabIndex={0} data-testid="accounts-table-row">
@@ -59,6 +61,7 @@ function AccountRow({ account, showAgent, archivedAt }: { account: Account; show
           {renewalLabel && <RenewalBadge />}
         </span>
       </td>
+      <td className={td}>{account.referralSource ? referralLabel(account.referralSource, sources) : <span className="text-[var(--color-ink-400)]">Not set</span>}</td>
       <td className={`${td} tabular-nums`}>{renewal ? formatShortDate(renewal) : '—'}</td>
       <td className={`${td} tabular-nums`}>{dotNumber || '—'}</td>
       {archivedAt !== undefined && <td className={`${td} tabular-nums`}>{archivedAt ? formatShortDate(toLocalDateKey(new Date(archivedAt))) : '—'}</td>}

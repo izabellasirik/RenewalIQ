@@ -291,6 +291,7 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
         <Amount label="Taxes" cents={p.taxesCents} />
         <Amount label="Fees" cents={p.feesCents} />
         <Amount label="Total" cents={policyTotalCents(p)} strong />
+        {kind === 'policy' && !!p.brokerFeeCents && <Amount label="Broker fee" cents={p.brokerFeeCents} />}
       </dl>
       <CommissionLine commission={commission} netCents={p.netPremiumCents} carrier={p.carrier} dateKey={p.boundDate} record={record} />
       {record && record.flags.length > 0 && (
@@ -442,6 +443,7 @@ export function EntryForm({
         netPremium: centsInput(editing.netPremiumCents),
         taxes: centsInput(editing.taxesCents),
         fees: centsInput(editing.feesCents),
+        brokerFee: centsInput(editing.brokerFeeCents),
       };
     }
     if (kind === 'endorsement') {
@@ -709,6 +711,13 @@ export function EntryForm({
             <p className={labelClass}>Total</p>
             <p className="px-0.5 py-2 text-sm font-semibold text-[var(--color-ink-900)] tabular-nums" data-testid="policy-total">{formatCents(total)}</p>
           </div>
+          {kind === 'policy' && (
+            <div>
+              <label className={labelClass} htmlFor="policy-broker-fee">Broker fee ($)</label>
+              <input id="policy-broker-fee" inputMode="decimal" className={inputClass} value={f.brokerFee ?? ''} onChange={(e) => set('brokerFee', e.target.value)} placeholder="0.00" />
+              <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">Split: partner (once per client) → agent → agency.</p>
+            </div>
+          )}
           {asksCarrierPct && (
             <div>
               <label className={labelClass} htmlFor="policy-carrier-pct">

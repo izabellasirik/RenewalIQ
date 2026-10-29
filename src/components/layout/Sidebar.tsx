@@ -238,7 +238,7 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
             }
           >
             <Users size={17} />
-            Team
+            Team and Partners
           </NavLink>
         )}
         {isAgencyAdmin && (

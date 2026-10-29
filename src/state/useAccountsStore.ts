@@ -313,6 +313,10 @@ interface AccountsState {
   /** Set the account's pipeline status by hand; null returns it to automatic. */
   /** `boundDate` (YYYY-MM-DD) goes with a status set to Bound by hand; leaving Bound clears it. */
   setAccountStage: (accountId: string, stage: AccountStage | null, boundDate?: string) => void;
+  /** Where the client came from (0081): a referral source id or 'none'; `label` names it in Activity. */
+  setAccountReferral: (accountId: string, referralSource: string, label: string) => void;
+  /** A new submission's required details: where it came from, a first note, and its status ('new' stays automatic). */
+  applyNewAccountDetails: (accountId: string, details: NewAccountDetails) => void;
   /** The Renewal label: true / false to switch it on / off by hand, null to make it automatic again. */
   setRenewalLabel: (accountId: string, on: boolean | null) => void;
   deleteMissingItem: (accountId: string, itemId: string) => void;
@@ -404,6 +408,14 @@ function newAccount(namedInsured: string, state: string): Account {
 
 function touchAccount(accounts: Account[], accountId: string): Account[] {
   return accounts.map((a) => (a.id === accountId ? { ...a, updatedAt: new Date().toISOString() } : a));
+}
+
+/** Asked on every new submission (by hand, from documents, or an intake import). */
+export interface NewAccountDetails {
+  referralSource: string;
+  referralLabel: string;
+  note: string;
+  stage: AccountStage;
 }
 
 /** New venture or renewal, chosen when the account is created. A renewal's date becomes the account's Renewal / effective date. */
@@ -2376,6 +2388,23 @@ export const useAccountsStore = create<AccountsState>()(
         syncNow(accountId);
       },
 
+      setAccountReferral: (accountId, referralSource, label) => {
+        const account = get().accounts.find((a) => a.id === accountId);
+        if (!account || account.referralSource === referralSource) return;
+        set((s) => ({
+          accounts: touchAccount(s.accounts.map((a) => (a.id === accountId ? { ...a, referralSource } : a)), accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'account_updated', `Referral source set to ${label}${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        syncNow(accountId);
+      },
+
+      applyNewAccountDetails: (accountId, details) => {
+        get().setAccountReferral(accountId, details.referralSource, details.referralLabel);
+        if (details.note.trim()) get().addAccountNote(accountId, details.note);
+        // "New" is what the automatic status says for a new account — set by hand only when it's something else.
+        if (details.stage !== 'new') get().setAccountStage(accountId, details.stage);
+      },
+
       setAccountStage: (accountId, stage, boundDate) => {
         const account = get().accounts.find((a) => a.id === accountId);
         const nextBound = stage === 'bound' ? (boundDate ?? account?.boundDate) : undefined;
@@ -2597,6 +2626,7 @@ export const useAccountsStore = create<AccountsState>()(
         if (next.boundDate !== before.boundDate) changes.push(`bound ${formatShortDate(next.boundDate)}`);
         if (next.effectiveDate !== before.effectiveDate || next.expirationDate !== before.expirationDate) changes.push(`term ${formatShortDate(next.effectiveDate)} – ${formatShortDate(next.expirationDate)}`);
         if (policyTotalCents(next) !== policyTotalCents(before) || next.netPremiumCents !== before.netPremiumCents) changes.push(`net ${formatCents(next.netPremiumCents)}, total ${formatCents(policyTotalCents(next))}`);
+        if ((next.brokerFeeCents ?? 0) !== (before.brokerFeeCents ?? 0)) changes.push(next.brokerFeeCents ? `broker fee ${formatCents(next.brokerFeeCents)}` : 'broker fee removed');
         set((s) => ({
           quotes: {
             ...s.quotes,

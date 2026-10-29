@@ -32,6 +32,7 @@ import { summarizeWaiting, type WorkspaceTab } from '../services/workflow/nextAc
 import { QUOTE_STATUS_LABELS, WORKFLOW_EVENT_TYPES } from '../types';
 import { EMPTY_ACTIVITY_EVENTS } from '../utils/emptyArrays';
 import { AssignedAgent } from '../components/workspace/AssignedAgent';
+import { ReferralSourceSelect } from '../components/workspace/ReferralSourceSelect';
 import { Collaborators } from '../components/workspace/Collaborators';
 
 const TABS: WorkspaceTab[] = ['overview', 'checklist', 'quotes', 'notes', 'activity'];
@@ -103,6 +104,7 @@ export function AccountWorkspacePage() {
               <AccountStageSelect accountId={accountId} />
               <AssignedAgent account={account} />
               <Collaborators account={account} />
+              <ReferralSourceSelect account={account} />
             </div>
           </div>
         </div>

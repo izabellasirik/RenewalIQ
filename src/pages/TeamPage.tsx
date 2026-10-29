@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Check, Copy, Mail, Send, UserMinus, UserPlus, Users, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Badge, Button, Card, CardBody, EmptyState, Modal, Skeleton } from '../components/ui';
+import { Badge, Button, Card, CardBody, EmptyState, Modal, Skeleton, Tabs } from '../components/ui';
+import { PartnershipsPanel } from '../components/team/PartnershipsPanel';
+import { fetchBrokerFeeShares, setAgentBrokerFeeShare, type BrokerFeeShare } from '../services/supabase/partnersRepo';
+import { centsInput, parseMoneyCents } from '../services/workflow/policies';
 import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { trackEvent } from '../services/productAnalytics/trackEvent';
@@ -60,6 +64,20 @@ export function TeamPage() {
     load();
   }, [load]);
 
+  // Team and Partners: the team, or Partnerships (?tab=partners).
+  const [params, setParams] = useSearchParams();
+  const tab: 'team' | 'partners' = params.get('tab') === 'partners' ? 'partners' : 'team';
+  const setTab = (t: 'team' | 'partners') => setParams(t === 'partners' ? { tab: 'partners' } : {}, { replace: true });
+  // Each member's broker fee share (0081), set by an admin.
+  const [shares, setShares] = useState<Record<string, BrokerFeeShare>>({});
+  const reloadShares = useCallback(async () => {
+    const r = await fetchBrokerFeeShares();
+    if (r.ok) setShares(r.data);
+  }, []);
+  useEffect(() => {
+    void reloadShares();
+  }, [reloadShares]);
+
   const assignedCount = useMemo(() => {
     const counts = new Map<string, number>();
     for (const a of accounts) if (a.assignedUserId && !a.archived) counts.set(a.assignedUserId, (counts.get(a.assignedUserId) ?? 0) + 1);
@@ -95,16 +113,24 @@ export function TeamPage() {
 
   return (
     <PageContainer
-      title="Team"
+      title="Team and Partners"
       description={access.agencyName ?? undefined}
       actions={
-        <Button icon={<UserPlus size={15} />} onClick={() => setInviteOpen(true)}>
-          Invite Team Member
-        </Button>
+        tab === 'team' ? (
+          <Button icon={<UserPlus size={15} />} onClick={() => setInviteOpen(true)}>
+            Invite Team Member
+          </Button>
+        ) : undefined
       }
     >
       {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
 
+      <Tabs items={[{ key: 'team', label: 'Team' }, { key: 'partners', label: 'Partnerships' }]} active={tab} onChange={(k) => setTab(k === 'partners' ? 'partners' : 'team')} />
+
+      {tab === 'partners' ? (
+        <PartnershipsPanel />
+      ) : (
+      <>
       <Card>
         <CardBody className="pt-4">
           {members === null ? (
@@ -117,6 +143,7 @@ export function TeamPage() {
               <span>Contact</span>
               <span>Role</span>
               <span>Agent commission</span>
+              <span>Broker fee share</span>
               <span className="text-right">Accounts</span>
               <span />
             </div>
@@ -153,6 +180,7 @@ export function TeamPage() {
                     )}
                   </div>
                   <CommissionRateInput member={m} />
+                  <BrokerFeeShareInput member={m} share={shares[m.userId]} onSaved={reloadShares} />
                   <p className="self-center text-sm text-[var(--color-ink-600)] xl:text-right">
                     <span className="font-semibold text-[var(--color-ink-900)]">{assignedCount.get(m.userId) ?? 0}</span> account{(assignedCount.get(m.userId) ?? 0) === 1 ? '' : 's'}
                   </p>
@@ -201,6 +229,8 @@ export function TeamPage() {
           </CardBody>
         </Card>
       )}
+      </>
+      )}
 
       <InviteDialog
         open={inviteOpen}
@@ -228,8 +258,85 @@ export function TeamPage() {
 }
 
 // The team list's columns on wide screens, and the shared shape of its Role and commission boxes.
-const MEMBER_COLS = 'xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_7rem_7rem_6.5rem_6.5rem]';
+const MEMBER_COLS = 'xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_7rem_7rem_10rem_6.5rem_6.5rem]';
 const CONTROL = 'inline-flex h-8 w-24 items-center rounded-md border border-[var(--color-ink-200)] px-2 text-sm';
+
+/** An agent's share of the broker fee (0081): a fixed $ or a % of what's left after the partner. Saved on Enter or leaving the box; blank clears it. */
+function BrokerFeeShareInput({ member, share, onSaved }: { member: TeamMember; share?: BrokerFeeShare; onSaved: () => void }) {
+  const shownValue = !share ? '' : share.mode === 'percent' ? String(Math.round(share.value * 1e6) / 1e4) : centsInput(share.value) || '0.00';
+  const [mode, setMode] = useState<'amount' | 'percent'>(share?.mode ?? 'amount');
+  const [value, setValue] = useState<string | null>(null);
+  const [state, setState] = useState<{ busy?: boolean; error?: string; ok?: boolean }>({});
+  const who = member.name ?? member.email ?? 'team member';
+  useEffect(() => setMode(share?.mode ?? 'amount'), [share?.mode]);
+
+  async function save(raw = value ?? shownValue) {
+    const text = raw.trim().replace(/[%$]/g, '');
+    if (text === '' && !share) return setValue(null);
+    // Switched $ / % but typed nothing: nothing changes.
+    if (text === '' && share && mode !== share.mode) {
+      setMode(share.mode);
+      return setValue(null);
+    }
+    let next: BrokerFeeShare | null = null;
+    if (text !== '') {
+      if (mode === 'percent') {
+        const pct = Number(text);
+        if (!Number.isFinite(pct) || pct < 0 || pct > 100) return setState({ error: 'Enter 0–100' });
+        next = { mode: 'percent', value: Math.round(pct * 1e4) / 1e6 };
+      } else {
+        const cents = parseMoneyCents(text);
+        if (cents === null || Number.isNaN(cents) || cents < 0) return setState({ error: 'Enter an amount' });
+        next = { mode: 'amount', value: cents };
+      }
+    }
+    if (next && share && next.mode === share.mode && next.value === share.value) return setValue(null);
+    setState({ busy: true });
+    const res = await setAgentBrokerFeeShare(member.userId, next);
+    if (!res.ok) return setState({ error: res.message });
+    onSaved();
+    setValue(null);
+    setState({ ok: true });
+  }
+
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      <span className="text-[var(--color-ink-500)] xl:hidden">Broker fee share</span>
+      <span className="flex items-center gap-1">
+        <select
+          value={mode}
+          onChange={(e) => {
+            // A new type means a new number: the box is emptied to type it (saved on Enter / leaving the box).
+            setMode(e.target.value as 'amount' | 'percent');
+            setValue('');
+            setState({});
+          }}
+          className="h-8 w-16 cursor-pointer rounded-md border border-[var(--color-ink-200)] bg-white px-2 text-sm text-[var(--color-ink-900)]"
+          aria-label={`Broker fee share type for ${who}`}
+        >
+          <option value="amount">$</option>
+          <option value="percent">%</option>
+        </select>
+        <input
+          inputMode="decimal"
+          value={value ?? shownValue}
+          placeholder="Not set"
+          disabled={state.busy}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setState({});
+          }}
+          onBlur={() => void save()}
+          onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+          className="h-8 w-[4.5rem] rounded-md border border-[var(--color-ink-200)] bg-white px-2 text-sm tabular-nums text-[var(--color-ink-900)] disabled:opacity-60"
+          aria-label={`Broker fee share for ${who}`}
+        />
+        {state.ok && <Check size={14} className="text-[var(--color-success-600)]" aria-label="Saved" />}
+      </span>
+      {state.error && <span className="text-[var(--color-danger-600)]">{state.error}</span>}
+    </div>
+  );
+}
 
 /** "Agent commission %" for one member — admins only (the database refuses anyone else). Saved on Enter or leaving the box; blank clears it. */
 function CommissionRateInput({ member }: { member: TeamMember }) {

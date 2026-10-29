@@ -14,6 +14,8 @@ import { US_STATES } from '../utils/usStates';
 import type { RiskProfile, UploadedDocument } from '../types';
 import { DocumentLinkError } from '../services/ingestion/documentLinks';
 import { NewAccountTypeFields } from '../components/renewals/NewAccountTypeFields';
+import { EMPTY_ACCOUNT_DETAILS, NewAccountDetailsFields, readAccountDetails, type NewAccountDetailsValue } from '../components/newSubmission/NewAccountDetailsFields';
+import { useReferralSources } from '../hooks/useReferralSources';
 import { EMPTY_ACCOUNT_TYPE, readAccountType, type NewAccountTypeValue } from '../components/renewals/renewalForm';
 import { normalizeDateKey } from '../services/workflow/dates';
 import { DuplicateAccountWarning } from '../components/newSubmission/DuplicateAccountWarning';
@@ -96,6 +98,13 @@ export function NewAccountPage() {
   const [accountType, setAccountType] = useState<NewAccountTypeValue>(EMPTY_ACCOUNT_TYPE);
   const [typeTouched, setTypeTouched] = useState(false);
   const setup = readAccountType(accountType);
+  // Referral source, status and a first note — required on every new submission.
+  const [detailsInput, setDetailsInput] = useState<NewAccountDetailsValue>(EMPTY_ACCOUNT_DETAILS);
+  const referralSources = useReferralSources();
+  const details = readAccountDetails(detailsInput, referralSources);
+  const detailsRef = useRef(details);
+  detailsRef.current = details;
+  const applyNewAccountDetails = useAccountsStore((s) => s.applyNewAccountDetails);
 
   // Possible existing accounts (0072): checked as the name is typed, and again right before an account is saved.
   const accounts = useAccountsStore((s) => s.accounts);
@@ -167,6 +176,7 @@ export function NewAccountPage() {
 
   function commitAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
     const id = createAccountFromExtraction(namedInsured, state, docs, profile, files, undefined, setup ? { setup } : undefined);
+    if (detailsRef.current) applyNewAccountDetails(id, detailsRef.current);
     // Straight to the Risk Profile to review what was extracted.
     navigate(`/accounts/${id}/risk-profile`);
   }
@@ -297,7 +307,8 @@ export function NewAccountPage() {
     const st = d.profile.business.state;
     const identityResolved = !ni.isMissing && !ni.isConflicting && !st.isMissing && !st.isConflicting;
 
-    if (identityResolved && d.failures.length === 0) {
+    // The referral source, status and note are asked on the confirm step unless already filled in.
+    if (identityResolved && d.failures.length === 0 && detailsRef.current) {
       finalizeAccount(ni.value as string, st.value as string, d.docs, d.profile, d.files);
     } else {
       setMode('confirm');
@@ -313,7 +324,7 @@ export function NewAccountPage() {
   function handleContinue() {
     if (!draftProfile) return;
     setTypeTouched(true);
-    if (!setup) return;
+    if (!setup || !details) return;
     const ni = draftProfile.business.namedInsured;
     const st = draftProfile.business.state;
     if (ni.isMissing || ni.isConflicting) return;
@@ -332,10 +343,12 @@ export function NewAccountPage() {
   function handleManualSubmit(e: FormEvent) {
     e.preventDefault();
     setTypeTouched(true);
-    if (!namedInsuredInput.trim() || !stateInput || !setup) return;
+    if (!namedInsuredInput.trim() || !stateInput || !setup || !details) return;
     const name = namedInsuredInput.trim();
+    const chosen = details;
     void guardedCreate({ name }, () => {
       const id = createAccount(name, stateInput, setup);
+      applyNewAccountDetails(id, chosen);
       navigate(`/accounts/${id}/upload`);
     });
   }
@@ -446,6 +459,7 @@ export function NewAccountPage() {
                   <DuplicateAccountWarning identity={preview.identity} matches={preview.result.matches} complete={preview.result.complete} currentUserId={currentUserId} memberEmail={memberEmail} />
                 )}
                 <NewAccountTypeFields value={accountType} onChange={setAccountType} showErrors={typeTouched} />
+                <NewAccountDetailsFields value={detailsInput} onChange={setDetailsInput} showErrors={typeTouched} />
                 {gatePanel}
                 <Button type="submit" disabled={!namedInsuredInput.trim() || !stateInput || !!gate} className="mt-1">
                   Create Submission
@@ -550,6 +564,12 @@ export function NewAccountPage() {
                   }}
                   showErrors={typeTouched}
                 />
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardBody className="pt-5">
+                <NewAccountDetailsFields value={detailsInput} onChange={setDetailsInput} showErrors={typeTouched} />
               </CardBody>
             </Card>
 

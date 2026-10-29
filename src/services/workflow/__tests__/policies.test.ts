@@ -84,6 +84,14 @@ describe('checking a policy', () => {
     if (!r.ok) expect(r.errors).toEqual(['Enter the carrier.', 'Enter the bound date.', 'Enter the net premium.']);
     expect(fields({ taxes: '', fees: '' })).toMatchObject({ taxesCents: 0, feesCents: 0 });
   });
+  it('a broker fee is kept on a policy (not on an endorsement) and can’t be negative', () => {
+    expect(fields({ brokerFee: '350.00' })).toMatchObject({ brokerFeeCents: 35000 });
+    expect(fields({ brokerFee: '' })).not.toHaveProperty('brokerFeeCents');
+    const e = checkPolicy(input({ kind: 'endorsement', forPolicyId: 'p1', brokerFee: '100' }));
+    if (e.ok) expect(e.fields).not.toHaveProperty('brokerFeeCents');
+    const bad = checkPolicy(input({ brokerFee: '-5' }));
+    expect(bad.ok).toBe(false);
+  });
   it('requires the effective date, for policies and endorsements (a cancellation refund counts from it)', () => {
     const r = checkPolicy(input({ effectiveDate: ' ' }));
     expect(r.ok).toBe(false);

@@ -77,7 +77,7 @@ const PERIODS: Period[] = [...(Object.keys(PERIOD_LABELS) as Period[]), 'custom'
 const PERIOD_DEFAULTS: PeriodView = { period: 'this_year', from: '', to: '' };
 const sanitizePeriod = (saved: Record<string, unknown>): Partial<PeriodView> => defined<PeriodView>({ period: oneOf(PERIODS)(saved.period), from: aDateKey(saved.from), to: aDateKey(saved.to) });
 
-function usePeriod() {
+export function usePeriod() {
   const [view, update, reset] = useRememberedView('analytics-period', PERIOD_DEFAULTS, sanitizePeriod);
   const [params, setParams] = useSearchParams();
   useEffect(() => {
@@ -112,7 +112,7 @@ function SavedFiltersNote({ active, onClear, testId }: { active: boolean; onClea
   );
 }
 
-function PeriodPicker({ period }: { period: ReturnType<typeof usePeriod> }) {
+export function PeriodPicker({ period }: { period: ReturnType<typeof usePeriod> }) {
   return (
     <>
       <div className="col-span-2 lg:col-span-1">

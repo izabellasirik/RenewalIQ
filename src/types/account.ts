@@ -32,6 +32,8 @@ export interface Account {
   boundDate?: string;
   /** Agency this account belongs to (cloud accounts, 0011). Set by the database, read-only here. */
   agencyId?: string;
+  /** Where the client came from (0081): a referral source (partner) id, or 'none' (No referral). Unset on older accounts. */
+  referralSource?: string;
   /** Supabase Auth user id of the agent the account belongs to — what grants access (RLS). Set by the database; only an agency admin can change it (assignAccountToAgent). */
   assignedUserId?: string | null;
   /** Team members helping on the account besides the primary assigned broker (0026) — set by the database. */

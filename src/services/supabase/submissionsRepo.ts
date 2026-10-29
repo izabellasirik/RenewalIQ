@@ -197,7 +197,7 @@ export interface CloudSubmissionBundle {
  */
 let projectHasRenewalLabel = false;
 
-const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions', 'account_notes', 'loss_runs', 'business_type', 'renewals', 'renewal_label', 'renewal_label_set_on', 'bound_date'] as const;
+const WORKFLOW_COLUMNS = ['contacts', 'assigned_broker', 'missing_items', 'market_quotes', 'stage', 'follow_ups', 'done_actions', 'account_notes', 'loss_runs', 'business_type', 'renewals', 'renewal_label', 'renewal_label_set_on', 'bound_date', 'referral_source'] as const;
 
 function isMissingWorkflowColumnError(error: { message: string; code?: string }): boolean {
   return error.code === 'PGRST204' || error.code === '42703' || WORKFLOW_COLUMNS.some((c) => error.message.includes(`'${c}'`) || error.message.includes(`"${c}"`));
@@ -298,6 +298,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         ...(Array.isArray(sub.renewals) && sub.renewals.length > 0 ? { renewals: (sub.renewals as AccountRenewal[]).filter(isRenewalRecord) } : {}),
         // Set by the database (0011) — never sent back on save, so the app can't grant itself access.
         ...(sub.organization_id ? { agencyId: sub.organization_id as string } : {}),
+        ...(typeof sub.referral_source === 'string' && sub.referral_source ? { referralSource: sub.referral_source } : {}),
         ...(sub.assigned_user_id !== undefined ? { assignedUserId: (sub.assigned_user_id as string | null) ?? null } : {}),
         ...(Array.isArray(sub.collaborator_ids) ? { collaboratorIds: sub.collaborator_ids as string[] } : {}),
         ...(sub.original_assigned_user_id !== undefined ? { originalAssignedUserId: (sub.original_assigned_user_id as string | null) ?? null } : {}),
@@ -465,8 +466,11 @@ export async function saveSubmissionSnapshot(
     // A project that hasn't applied the newest migrations still saves everything it can (so the
     // Risk Profile never stops syncing), stepping down one migration at a time — 0009 (follow-ups),
     // 0008 (stage), then 0007 (workflow) — and reports the gap honestly instead of claiming "Saved".
+    // 0081's referral source: sent once set, so accounts without one keep saving on a project without 0081.
+    const referralRow = account.referralSource ? { ...renewalsRow, referral_source: account.referralSource } : renewalsRow;
     const attempts: { row: Record<string, unknown>; missing: string }[] = [
-      { row: renewalsRow, missing: '' },
+      ...(account.referralSource ? [{ row: referralRow, missing: '' }] : []),
+      { row: renewalsRow, missing: account.referralSource ? 'The referral source was not saved to your account — the database needs migration 0081_partners_broker_fees.sql.' : '' },
       { row: lossRunsRow, missing: hasRenewalSetup || hasStatusExtras ? 'Renewal setup and the bound date were not saved to your account — the database needs migration 0054_account_renewals.sql.' : '' },
       { row: notesRow, missing: 'Loss-run reports were not saved to your account — the database needs migration 0025_loss_runs.sql.' },
       { row: doneRow, missing: 'Notes were not saved to your account — the database needs migration 0020_account_notes.sql.' },

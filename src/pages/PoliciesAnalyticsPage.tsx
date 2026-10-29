@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { BrokerFeesPanel } from '../components/analytics/BrokerFeesPanel';
 import { BarChart3, FileWarning, Paperclip, Pencil, Search } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
@@ -54,7 +55,7 @@ export function PoliciesAnalyticsPage() {
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const isAdmin = agencyAccess?.role === 'admin';
   const [params, setParams] = useSearchParams();
-  const view = isAdmin ? (['pl', 'policies', 'money'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : 'policies';
+  const view = isAdmin ? (['pl', 'policies', 'money', 'fees'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : params.get('view') === 'fees' ? 'fees' : 'policies';
   return (
     <PageContainer
       title="Analytics"
@@ -64,20 +65,27 @@ export function PoliciesAnalyticsPage() {
           : 'The policies and endorsements of the clients assigned to you, and your commission on them.'
       }
     >
-      {isAdmin && (
-        <Tabs
-          items={[
-            { key: 'pl', label: 'Profit & loss' },
-            { key: 'policies', label: 'Policies & endorsements' },
-            { key: 'money', label: 'Income & expenses' },
-          ]}
-          active={view}
-          onChange={(key) => setParams(new URLSearchParams(key === 'pl' ? {} : { view: key }), { replace: true })}
-        />
-      )}
+      <Tabs
+        items={
+          isAdmin
+            ? [
+                { key: 'pl', label: 'Profit & loss' },
+                { key: 'policies', label: 'Policies & endorsements' },
+                { key: 'money', label: 'Income & expenses' },
+                { key: 'fees', label: 'Broker fees' },
+              ]
+            : [
+                { key: 'policies', label: 'Policies & endorsements' },
+                { key: 'fees', label: 'Broker fees' },
+              ]
+        }
+        active={view}
+        onChange={(key) => setParams(new URLSearchParams(key === (isAdmin ? 'pl' : 'policies') ? {} : { view: key }), { replace: true })}
+      />
       {view === 'pl' && <ProfitLossPanel />}
       {view === 'money' && <IncomeExpensesPanel />}
       {view === 'policies' && <PoliciesPanel />}
+      {view === 'fees' && <BrokerFeesPanel admin={isAdmin} />}
     </PageContainer>
   );
 }

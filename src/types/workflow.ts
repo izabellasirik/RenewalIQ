@@ -222,6 +222,8 @@ export interface PolicyRecord {
   netPremiumCents: number;
   taxesCents: number;
   feesCents: number;
+  /** The agency's broker fee on a policy (not endorsements), split partner → agent → agency (0081). */
+  brokerFeeCents?: number;
   /** A short description of what was written or changed (e.g. "Added 2023 Freightliner, VIN …"). */
   description?: string;
   /** An endorsement: the policy it changes (PolicyRecord.id on this account). Required for new endorsements. */

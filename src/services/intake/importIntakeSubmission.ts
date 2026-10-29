@@ -1,7 +1,7 @@
 import type { ExtractedFieldResult, IntakeSubmission, VehicleEntry } from '../../types';
 import { generateId } from '../../utils/id';
 import { createEmptyRiskProfile, mergeIntoRiskProfile } from '../extraction';
-import { useAccountsStore } from '../../state/useAccountsStore';
+import { useAccountsStore, type NewAccountDetails } from '../../state/useAccountsStore';
 import { fetchIntakeDocuments, downloadIntakeDocumentFile, markIntakeSubmissionImported } from '../supabase/intakeRepo';
 
 function splitList(raw: string | null): string[] {
@@ -118,7 +118,8 @@ async function waitForUploads(accountId: string, documentIds: string[], timeoutM
   }
 }
 
-export async function importIntakeSubmission(submission: IntakeSubmission): Promise<ImportResult> {
+/** `details`: the referral source, status and first note the broker gave for the new account (required in the app). */
+export async function importIntakeSubmission(submission: IntakeSubmission, details?: NewAccountDetails): Promise<ImportResult> {
   // Still being sent: its remaining files would be refused after an import and lost (the database refuses it too).
   if (submission.status === 'uploading') return { ok: false, message: 'The client is still sending this submission — it can be imported once they finish.' };
   const docsResult = await fetchIntakeDocuments(submission.id);
@@ -162,6 +163,24 @@ export async function importIntakeSubmission(submission: IntakeSubmission): Prom
   if (extraContacts.length) {
     useAccountsStore.setState((st) => ({
       accounts: st.accounts.map((a) => (a.id === accountId ? { ...a, contacts: [...(a.contacts ?? []), ...extraContacts.map((c, i) => ({ ...c, id: generateId('contact'), primary: !a.contacts?.length && i === 0 }))] } : a)),
+    }));
+  }
+
+  // The broker's referral source, status and note — set before the save below, like the contacts.
+  if (details) {
+    const now = new Date().toISOString();
+    const st0 = useAccountsStore.getState();
+    useAccountsStore.setState((st) => ({
+      accounts: st.accounts.map((a) =>
+        a.id === accountId
+          ? {
+              ...a,
+              referralSource: details.referralSource,
+              ...(details.stage !== 'new' ? { stage: details.stage } : {}),
+              notes: [...(a.notes ?? []), { id: generateId('note'), text: details.note, createdAt: now, ...(st0.currentUserId ? { authorId: st0.currentUserId } : {}), authorName: st0.myProfile?.fullName || st0.currentUserEmail || 'You' }],
+            }
+          : a
+      ),
     }));
   }
 

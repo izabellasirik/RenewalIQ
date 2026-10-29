@@ -5,7 +5,9 @@ import { intakeUrl } from '../services/publicLinks';
 import { useNavigate } from 'react-router-dom';
 import { Check, ChevronDown, ChevronRight, Copy, Download, Eye, FileText, FileWarning, Inbox, Link2, Loader2, RotateCcw, Trash2, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Button, Badge, ConfirmDialog, EmptyState, Skeleton, Tabs } from '../components/ui';
+import { Button, Badge, ConfirmDialog, EmptyState, Modal, Skeleton, Tabs } from '../components/ui';
+import { EMPTY_ACCOUNT_DETAILS, NewAccountDetailsFields, readAccountDetails, type NewAccountDetailsValue } from '../components/newSubmission/NewAccountDetailsFields';
+import { useReferralSources } from '../hooks/useReferralSources';
 import { COVERAGE_LABELS } from '../types';
 import type { IntakeDocument, IntakeEvent, IntakeLink, IntakeSubmission, IntakeSubmissionStatus } from '../types';
 import { useBrokerSession } from '../hooks/useBrokerSession';
@@ -394,7 +396,20 @@ function SubmissionCard({
     const candidates = server.data ?? localDuplicateCandidates(accounts, riskProfiles);
     const matches = classifyDuplicates(intakeIdentity(submission), candidates);
     if (matches.length > 0) setDuplicates(matches);
-    else void runImport(() => importIntakeSubmission(submission));
+    else setAsking(true);
+  }
+
+  // A new account from this submission: the referral source, status and a first note are asked first.
+  const [asking, setAsking] = useState(false);
+  const [detailsInput, setDetailsInput] = useState<NewAccountDetailsValue>(EMPTY_ACCOUNT_DETAILS);
+  const [detailsTouched, setDetailsTouched] = useState(false);
+  const referralSources = useReferralSources();
+  function importWithDetails() {
+    setDetailsTouched(true);
+    const details = readAccountDetails(detailsInput, referralSources);
+    if (!details) return;
+    setAsking(false);
+    void runImport(() => importIntakeSubmission(submission, details));
   }
 
   async function runImport(action: () => Promise<ImportResult>) {
@@ -580,6 +595,22 @@ function SubmissionCard({
           </Button>
         </div>
       )}
+      {asking && (
+        <Modal
+          open
+          onClose={() => setAsking(false)}
+          title={`Import ${submission.namedInsured?.trim() || 'this submission'}`}
+          subtitle="A new account is created from it. Where did the client come from?"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setAsking(false)}>Cancel</Button>
+              <Button onClick={importWithDetails} disabled={busy !== null}>Import</Button>
+            </>
+          }
+        >
+          <NewAccountDetailsFields value={detailsInput} onChange={setDetailsInput} showErrors={detailsTouched} />
+        </Modal>
+      )}
       {duplicates && (
         <div className="mt-3 rounded-lg border border-[var(--color-warning-100)] bg-[var(--color-warning-100)]/40 p-3" data-testid="possible-existing-account" role="alert">
           <p className="text-sm font-semibold text-[var(--color-ink-900)]">Possible existing account</p>
@@ -608,7 +639,7 @@ function SubmissionCard({
             ))}
           </ul>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Button size="sm" variant="secondary" disabled={busy !== null} onClick={() => void runImport(() => importIntakeSubmission(submission))}>
+            <Button size="sm" variant="secondary" disabled={busy !== null} onClick={() => (setDuplicates(null), setAsking(true))}>
               Create new account anyway
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setDuplicates(null)}>
