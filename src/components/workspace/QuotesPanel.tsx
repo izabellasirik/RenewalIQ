@@ -200,7 +200,7 @@ function AddMarketForm({ accountId, marketNames, onDone, onBind }: { accountId: 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <>
                 <div>
-                  <label className={labelClass}>Submission sent</label>
+                  <label className={labelClass}>Sent to carrier</label>
                   <input type="date" value={submittedAt} onChange={(e) => setSubmittedAt(e.target.value)} className={inputClass} />
                 </div>
                 <div>
@@ -486,7 +486,7 @@ function QuoteCard({
               </select>
             </div>
             <div>
-              <label className={labelClass}>Submission sent</label>
+              <label className={labelClass}>Sent to carrier</label>
               <input type="date" value={edit.sent} onChange={(e) => setEdit({ ...edit, sent: e.target.value })} className={inputClass} aria-label="Edit date sent" />
             </div>
             <div>
@@ -519,7 +519,7 @@ function QuoteCard({
           <>
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[var(--color-ink-600)]">
           <label className="inline-flex items-center gap-1.5">
-            Sent
+            Sent to Carrier
             <DateInput value={quote.submittedAt} onCommit={(v) => updateQuote(accountId, quote.id, { submittedAt: v })} className={smallInputClass} aria-label={`Date sent to ${quote.marketName}`} />
           </label>
           {quote.status === 'bound' && (
@@ -573,7 +573,7 @@ function QuoteCard({
             {form === 'submit' && (
               <>
                 <div>
-                  <label className={labelClass}>Submission sent</label>
+                  <label className={labelClass}>Sent to carrier</label>
                   <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
                 </div>
                 <div>

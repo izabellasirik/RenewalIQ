@@ -336,7 +336,9 @@ interface AccountsState {
   /** Edit a dated market note: the original date stays; who edited it and when are recorded. */
   updateQuoteNote: (accountId: string, quoteId: string, noteId: string, text: string) => void;
   /** Edit one recorded quote (name, premium, quote date); the market's headline premium follows. */
-  updateQuoteOption: (accountId: string, quoteId: string, optionId: string, patch: { label?: string; premium?: number | null; receivedAt?: string }) => void;
+  updateQuoteOption: (accountId: string, quoteId: string, optionId: string, patch: { label?: string; premium?: number | null; receivedAt?: string; sentToClientAt?: string }) => void;
+  /** A quote sent to the client today: records the date and schedules a client follow-up 2 business days later. */
+  markQuoteSentToClient: (accountId: string, quoteId: string, optionId: string) => void;
   addFollowUp: (accountId: string, input: { subject: string; dueDate: string; notes?: string }) => string;
   updateFollowUp: (accountId: string, followUpId: string, patch: Partial<Pick<FollowUp, 'subject' | 'dueDate' | 'notes'>>) => void;
   completeFollowUp: (accountId: string, followUpId: string) => void;
@@ -2770,6 +2772,7 @@ export const useAccountsStore = create<AccountsState>()(
           ...(patch.label !== undefined ? { label: patch.label.trim() || undefined } : {}),
           ...(patch.premium !== undefined ? { premium: patch.premium === null || !Number.isFinite(patch.premium) || patch.premium <= 0 ? undefined : patch.premium } : {}),
           ...(patch.receivedAt ? { receivedAt: patch.receivedAt } : {}),
+          ...(patch.sentToClientAt ? { sentToClientAt: patch.sentToClientAt } : {}),
         };
         if (JSON.stringify(next) === JSON.stringify(option)) return;
         const now = new Date().toISOString();
@@ -2777,6 +2780,7 @@ export const useAccountsStore = create<AccountsState>()(
         if (next.premium !== option.premium) changes.push(next.premium ? `premium ${money(next.premium)}` : 'premium cleared');
         if (next.receivedAt !== option.receivedAt) changes.push(`quote date ${formatShortDate(next.receivedAt)}`);
         if (next.label !== option.label) changes.push(`name "${next.label ?? 'Quote'}"`);
+        if (next.sentToClientAt !== option.sentToClientAt) changes.push(`sent to client ${formatShortDate(next.sentToClientAt)}`);
         set((s) => ({
           quotes: {
             ...s.quotes,
@@ -2790,6 +2794,26 @@ export const useAccountsStore = create<AccountsState>()(
         }));
         syncNow(accountId);
         trackEvent('quote_updated', { accountId, metadata: { source: 'quote_option' } });
+      },
+
+      markQuoteSentToClient: (accountId, quoteId, optionId) => {
+        const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
+        const option = quote?.options?.find((o) => o.id === optionId);
+        if (!quote || !option || option.sentToClientAt) return;
+        const today = todayKey();
+        const now = new Date().toISOString();
+        const what = `${quote.marketName} ${option.label ?? 'quote'}${option.premium ? ` (${money(option.premium)})` : ''}`;
+        set((s) => ({
+          quotes: {
+            ...s.quotes,
+            [accountId]: updateInList(s.quotes[accountId], quoteId, (q) => ({ ...q, options: (q.options ?? []).map((o) => (o.id === optionId ? { ...o, sentToClientAt: today } : o)), updatedAt: now })),
+          },
+          accounts: touchAccount(s.accounts, accountId),
+          activityLog: appendEvent(s.activityLog, accountId, 'quote_status_changed', `Sent ${what} to the client${actorSuffix(s.currentUserEmail)}.`),
+        }));
+        // The client's answer is the next step: a follow-up on Today's Plate.
+        get().addFollowUp(accountId, { subject: `Client: ${what} sent ${formatShortDate(today)}`, dueDate: addBusinessDays(new Date(), 2) });
+        trackEvent('quote_updated', { accountId, metadata: { source: 'sent_to_client' } });
       },
 
       addFollowUp: (accountId, input) => {

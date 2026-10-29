@@ -108,7 +108,7 @@ function ActionRow({
     <li
       onClick={openTask}
       title={isGroup ? 'Open details' : opens ? 'Open' : undefined}
-      className={cn('flex flex-col gap-2 rounded-lg border bg-white px-3 py-2.5 transition-colors sm:flex-row sm:items-center', opens && 'cursor-pointer hover:border-[var(--color-brand-500)]/50 hover:bg-[var(--color-ink-50)]', action.overdue ? 'border-[var(--color-danger-100)]' : 'border-[var(--color-ink-100)]')}>
+      className={cn('flex flex-col gap-2 rounded-lg border bg-white px-3 py-2.5 transition-colors sm:flex-row sm:items-center', opens && 'cursor-pointer hover:border-[var(--color-brand-500)]/50 hover:bg-[var(--color-ink-50)]', action.overdue || action.urgent ? 'border-[var(--color-danger-100)]' : 'border-[var(--color-ink-100)]')}>
       <div className="flex min-w-0 flex-1 gap-2.5">
         <span className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full', meta.color)}>
           <Icon size={14} />
@@ -122,7 +122,7 @@ function ActionRow({
           ) : (
             <p className={cn('text-sm', showAccount ? 'text-[var(--color-ink-700)]' : 'font-medium text-[var(--color-ink-900)]')}>{action.title}</p>
           )}
-          <p className={cn('text-xs', action.overdue ? 'font-medium text-[var(--color-danger-600)]' : 'text-[var(--color-ink-500)]')}>{withBoldFollowUp(action.detail)}</p>
+          <p className={cn('text-xs', action.overdue || action.urgent ? 'font-medium text-[var(--color-danger-600)]' : 'text-[var(--color-ink-500)]')}>{withBoldFollowUp(action.detail)}</p>
         </div>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 pl-9 sm:pl-0">

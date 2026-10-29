@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { CheckCircle2, Download, Eye, FileText, Loader2, Paperclip, Pencil, Trash2, X } from 'lucide-react';
+import { CheckCircle2, Download, Eye, FileText, Loader2, Paperclip, Pencil, Send, Trash2, X } from 'lucide-react';
 import { quoteOptionFiles, type MarketQuote, type QuoteAttachment, type QuoteOption } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { DocumentPreviewModal, type PreviewableFile } from '../upload/DocumentPreviewModal';
@@ -44,6 +44,7 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
   const [downloading, setDownloading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const updateQuoteOption = useAccountsStore((s) => s.updateQuoteOption);
+  const markSentToClient = useAccountsStore((s) => s.markQuoteSentToClient);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ label: '', premium: '', date: '' });
   const selected = quote.selectedOptionId === option.id;
@@ -106,6 +107,18 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-[var(--color-ink-500)]">
           Received {formatShortDate(option.receivedAt)}
           {files.length > 1 && <span>· {files.length} files</span>}
+          {option.sentToClientAt && (
+            <label className="inline-flex items-center gap-1 font-medium text-[var(--color-success-600)]" data-testid="sent-to-client">
+              · <Send size={11} aria-hidden /> Sent to client
+              <input
+                type="date"
+                value={option.sentToClientAt}
+                onChange={(e) => e.target.value && updateQuoteOption(accountId, quote.id, option.id, { sentToClientAt: e.target.value })}
+                className="rounded border border-transparent bg-transparent px-0.5 text-xs font-medium text-[var(--color-success-600)] hover:border-[var(--color-ink-200)]"
+                aria-label="Date sent to the client"
+              />
+            </label>
+          )}
         </p>
         {files.length > 0 && (
           <ul className="mt-1 flex flex-col gap-0.5" data-testid="quote-files">
@@ -129,6 +142,11 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
         {error && <p className="text-xs text-[var(--color-danger-600)]">{error}</p>}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1">
+        {!option.sentToClientAt && (
+          <Button size="sm" variant="secondary" icon={<Send size={12} />} onClick={() => markSentToClient(accountId, quote.id, option.id)} title="Records today's date and adds a client follow-up in 2 business days">
+            Sent to Client
+          </Button>
+        )}
         <input
           ref={fileRef}
           type="file"

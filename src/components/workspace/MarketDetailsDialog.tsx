@@ -41,7 +41,7 @@ export function MarketDetailsDialog({
 
   const facts: [string, string | null | undefined][] = [
     ['Status', marketStatusLabel(marketStatusChoice(quote))],
-    ['Sent', quote.submittedAt ? formatShortDate(quote.submittedAt) : 'Not submitted yet'],
+    ['Sent to carrier', quote.submittedAt ? formatShortDate(quote.submittedAt) : 'Not submitted yet'],
     ['Follow up', quote.followUpDate ? formatShortDate(quote.followUpDate) : null],
     ['Premium', quote.premium ? `$${quote.premium.toLocaleString('en-US')}` : null],
     ['Declined because', quote.status === 'declined' ? quote.declineReason : null],

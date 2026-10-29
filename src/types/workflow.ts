@@ -178,6 +178,8 @@ export interface QuoteOption {
   notes?: string;
   /** The quote date — when it was received; editable. */
   receivedAt: string;
+  /** When this quote was sent to the client (YYYY-MM-DD); editable. */
+  sentToClientAt?: string;
   /** The first file attached (older quotes have only this one). */
   attachment?: QuoteAttachment;
   /** Further files on the same quote. */

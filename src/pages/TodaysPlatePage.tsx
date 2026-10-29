@@ -24,20 +24,26 @@ interface PlateView {
   /** All tasks, overdue, today's, renewals, what's coming up in the next 7 days, or everything other than renewals. */
   show: PlateShow;
 }
-type PlateShow = 'all' | 'overdue' | 'due_today' | 'renewal' | 'coming_up' | 'other';
-const PLATE_SHOW: PlateShow[] = ['all', 'overdue', 'due_today', 'renewal', 'coming_up', 'other'];
+type PlateShow = 'all' | 'overdue' | 'due_today' | 'follow_ups' | 'renewal' | 'coming_up' | 'other';
+const PLATE_SHOW: PlateShow[] = ['all', 'overdue', 'due_today', 'follow_ups', 'renewal', 'coming_up', 'other'];
 /** The "Show" menu, in this order. */
 const SHOW_LABELS: Record<PlateShow, string> = {
   all: 'All tasks',
   overdue: 'Overdue',
   due_today: 'Due today',
+  follow_ups: 'Follow-ups',
   renewal: 'Renewals',
   coming_up: 'Coming up',
   other: 'Other',
 };
 /** Earlier versions' choices: one kind of task, the follow-ups and what's waiting are now under "Other". */
-const OLD_OTHER = ['action_required', 'ready_to_send', 'follow_ups', 'waiting', 'carrier_follow_up', 'client_follow_up', 'follow_up'];
-const showsKind = (show: PlateShow, kind: ActionKind) => (show === 'renewal' ? kind === 'renewal' : show === 'other' ? kind !== 'renewal' : true);
+const OLD_OTHER = ['action_required', 'ready_to_send', 'waiting', 'carrier_follow_up', 'client_follow_up', 'follow_up'];
+/** Every kind of follow-up: scheduled ones, carrier and client follow-ups. */
+const FOLLOW_UP_KINDS: ActionKind[] = ['follow_up', 'carrier_follow_up', 'client_follow_up'];
+const showsKind = (show: PlateShow, kind: ActionKind) =>
+  show === 'renewal' ? kind === 'renewal' : show === 'follow_ups' ? FOLLOW_UP_KINDS.includes(kind) : show === 'other' ? kind !== 'renewal' : true;
+/** Each section shows its most urgent tasks first; the rest behind "Show all", so no kind of task crowds out the others. */
+const SECTION_SHOWN = 5;
 const PLATE_VIEW_DEFAULTS: PlateView = { broker: ALL_BROKERS, mineOnly: false, show: 'all' };
 const sanitizePlateView = (saved: Record<string, unknown>): Partial<PlateView> =>
   defined<PlateView>({
@@ -75,6 +81,8 @@ export function TodaysPlatePage() {
   const session = useBrokerSession();
   const [plate, updatePlate, resetPlate] = useRememberedView('todays-plate', PLATE_VIEW_DEFAULTS, sanitizePlateView);
   const [view, setView] = useState<'active' | 'done'>('active');
+  // Sections opened past their first few tasks ("Show all").
+  const [expanded, setExpanded] = useState<Set<ActionKind>>(() => new Set());
   const undoActionDone = useAccountsStore((s) => s.undoActionDone);
   const reopenFollowUp = useAccountsStore((s) => s.reopenFollowUp);
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
@@ -152,7 +160,7 @@ export function TodaysPlatePage() {
     return {
       now: show === 'coming_up' ? [] : sortActions(allNow.filter(kept)),
       upcoming: show === 'due_today' || show === 'overdue' ? [] : sortActions(allUpcoming.filter(kept)),
-      waiting: show === 'all' || show === 'other' ? waitingRows : [],
+      waiting: show === 'all' || show === 'other' || show === 'follow_ups' ? waitingRows : [],
       doneToday: doneRows,
     };
   }, [accounts, riskProfiles, missingItems, quotes, followUps, documentRequests, mineOnly, byAgent, broker, show, session.userId, session.email, today, undoActionDone, reopenFollowUp, agencyAccess?.role, accountOwners]);
@@ -295,8 +303,9 @@ export function TodaysPlatePage() {
           const list = now.filter((a) => a.kind === kind);
           if (list.length === 0) return null;
           const Icon = ACTION_KIND_META[kind].icon;
+          const all = expanded.has(kind) || list.length <= SECTION_SHOWN + 1;
           return (
-            <section key={kind} className="flex flex-col gap-2">
+            <section key={kind} className="flex flex-col gap-2" data-testid={`plate-section-${kind}`}>
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-700)]">
                   <Icon size={15} />
@@ -305,7 +314,17 @@ export function TodaysPlatePage() {
                 </h2>
                 <p className="text-xs text-[var(--color-ink-400)]">{hint}</p>
               </div>
-              <ActionList actions={list} showAccount />
+              <ActionList actions={all ? list : list.slice(0, SECTION_SHOWN)} showAccount />
+              {list.length > SECTION_SHOWN + 1 && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((cur) => { const next = new Set(cur); if (next.has(kind)) next.delete(kind); else next.add(kind); return next; })}
+                  className="w-fit cursor-pointer text-sm font-medium text-[var(--color-brand-700)] hover:underline"
+                  data-testid={`plate-section-toggle-${kind}`}
+                >
+                  {all ? 'Show fewer' : `Show all ${list.length}`}
+                </button>
+              )}
             </section>
           );
         })

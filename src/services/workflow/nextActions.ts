@@ -26,6 +26,8 @@ export interface ActionItem {
   /** YYYY-MM-DD this action is due, when it's date-driven. */
   dueDate?: string;
   overdue: boolean;
+  /** Shown as urgent (red) without being overdue: a renewal within RENEWAL_URGENT_DAYS of its date. */
+  urgent?: boolean;
   tab: WorkspaceTab;
   itemId?: string;
   /** Several requested items followed up together (one request email) — opens as one task. */
@@ -60,6 +62,9 @@ export interface DerivedActions {
 }
 
 export const UPCOMING_WINDOW_DAYS = 7;
+
+/** A renewal turns red this many days before its renewal date (before that it's just being worked). */
+export const RENEWAL_URGENT_DAYS = 7;
 
 const KIND_PRIORITY: Record<ActionKind, number> = {
   ready_to_send: 0,
@@ -346,6 +351,7 @@ function deriveAllAccountActions(input: AccountWorkflowInput, today: string): De
       detail: describeRenewalTiming(r, today),
       dueDate: r.renewalDate,
       overdue: r.renewalDate < today,
+      urgent: daysBetween(today, r.renewalDate) <= RENEWAL_URGENT_DAYS,
       // Getting it quoted and bound happens on Markets & Quotes.
       tab: 'quotes',
     });

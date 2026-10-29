@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { accountsEmptyState } from '../services/workflow/accountsEmptyState';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Building2, Search, Archive, ArrowLeft } from 'lucide-react';
+import { Plus, Sparkles, Building2, Search, Archive, ArrowLeft, LayoutGrid, Rows3 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, EmptyState } from '../components/ui';
+import { AccountsTable } from '../components/dashboard/AccountsTable';
 import { AccountCard } from '../components/dashboard/AccountCard';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
@@ -29,8 +30,10 @@ interface AccountsView {
   bound: BoundFilter;
   boundFrom: string;
   boundTo: string;
+  /** Cards or a table — each user's choice. */
+  layout: 'cards' | 'table';
 }
-const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stage: 'all', broker: ALL_BROKERS, renewals: 'any', bound: 'any', boundFrom: '', boundTo: '' };
+const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stage: 'all', broker: ALL_BROKERS, renewals: 'any', bound: 'any', boundFrom: '', boundTo: '', layout: 'cards' };
 const aDate = (v: unknown): string | undefined => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
 const sanitizeAccountsView = (saved: Record<string, unknown>): Partial<AccountsView> =>
   defined<AccountsView>({
@@ -41,6 +44,7 @@ const sanitizeAccountsView = (saved: Record<string, unknown>): Partial<AccountsV
     bound: oneOf(BOUND_FILTERS)(saved.bound),
     boundFrom: aDate(saved.boundFrom),
     boundTo: aDate(saved.boundTo),
+    layout: oneOf(['cards', 'table'] as const)(saved.layout),
   });
 const RENEWAL_FILTER_LABELS: Record<RenewalFilter, string> = { any: 'All renewal dates', due: 'Upcoming renewals (work started)', '30': 'Renewal in the next 30 days', '60': 'Renewal in the next 60 days', '90': 'Renewal in the next 90 days' };
 const BOUND_FILTER_LABELS: Record<BoundFilter, string> = { any: 'Bound: any time', last_7_days: 'Bound in the last 7 days', this_month: 'Bound this month', last_month: 'Bound last month', custom: 'Bound between dates…' };
@@ -66,7 +70,7 @@ export function DashboardPage() {
   const quotes = useAccountsStore((s) => s.quotes);
   const riskProfiles = useAccountsStore((s) => s.riskProfiles);
   const [search, setSearch] = useState('');
-  const [view, updateView, resetView] = useRememberedView('accounts', ACCOUNTS_VIEW_DEFAULTS, sanitizeAccountsView);
+  const [view, updateView] = useRememberedView('accounts', ACCOUNTS_VIEW_DEFAULTS, sanitizeAccountsView);
   const stageFilter = view.stage;
   const setStageFilter = (stage: AccountsView['stage']) => updateView({ stage });
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
@@ -179,7 +183,8 @@ export function DashboardPage() {
   const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS || renewalFilter !== 'any' || boundFilter !== 'any';
   const clearAll = () => {
     setSearch('');
-    resetView();
+    // Filters only: Cards / Table stays as chosen.
+    updateView({ ...ACCOUNTS_VIEW_DEFAULTS, layout: view.layout });
   };
   // Empty archive vs. archived accounts all hidden by the search or the filters (they apply in both views).
   const empty = accountsEmptyState({ showArchived, inView: accounts.filter((a) => a.archived === showArchived).length, searching: !!search.trim(), filtersActive });
@@ -318,6 +323,21 @@ export function DashboardPage() {
                 Clear search and filters
               </button>
             )}
+            {/* Cards or table — remembered for each user. */}
+            <div className="inline-flex w-fit rounded-lg border border-[var(--color-ink-200)] bg-white p-0.5 sm:ml-auto" role="group" aria-label="Show accounts as">
+              {(['cards', 'table'] as const).map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => updateView({ layout: l })}
+                  aria-pressed={view.layout === l}
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium ${view.layout === l ? 'bg-[var(--color-brand-800)] text-white' : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'}`}
+                >
+                  {l === 'cards' ? <LayoutGrid size={14} aria-hidden /> : <Rows3 size={14} aria-hidden />}
+                  {l === 'cards' ? 'Cards' : 'Table'}
+                </button>
+              ))}
+            </div>
           </div>
 
           {visible.length === 0 ? (
@@ -334,11 +354,15 @@ export function DashboardPage() {
               description={showArchived ? undefined : renewalFilter === 'due' ? 'No renewals to work on right now. A renewal shows here from its start-working date (45 days before, unless changed) until it’s bound.' : range ? 'No markets were bound in these dates. A market’s bound date is set when it’s marked Bound (and can be changed on the market).' : 'Try a different search term or clear the filters.'}
             />
           ) : (
+            view.layout === 'table' ? (
+              <AccountsTable accounts={visible} archivedAt={archivedAt} />
+            ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {visible.map((account, i) => (
                 <AccountCard key={account.id} account={account} index={i} onOpenHistory={() => setHistoryAccountId(account.id)} archivedAt={archivedAt[account.id]} />
               ))}
             </div>
+            )
           )}
         </>
       )}

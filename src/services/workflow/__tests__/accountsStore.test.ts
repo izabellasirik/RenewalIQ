@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useAccountsStore } from '../../../state/useAccountsStore';
+import { addBusinessDays, todayKey } from '../dates';
 
 const store = () => useAccountsStore.getState();
 
@@ -272,6 +273,23 @@ describe('editing an existing market', () => {
     expect(quote.options![0]).toMatchObject({ premium: 17250, receivedAt: '2026-09-15T12:00:00.000Z', label: 'Option A2' });
     expect(quote.premium).toBe(17250);
     expect(store().activityLog[id].map((e) => e.message)).toContain('Edited Canal Option A: premium $17,250, quote date Sep 15, name "Option A2".');
+  });
+
+  it('Sent to Client: records today, adds a client follow-up in 2 business days, once; the date can be changed', () => {
+    const id = store().createAccount('ABC Trucking', 'TX');
+    const q = store().addQuote(id, { marketName: 'Canal', status: 'submitted' });
+    const o = store().addQuoteOption(id, q, { label: 'Option A', premium: 18000 });
+    store().markQuoteSentToClient(id, q, o);
+    store().markQuoteSentToClient(id, q, o);
+    const option = store().quotes[id].find((x) => x.id === q)!.options![0];
+    expect(option.sentToClientAt).toBe(todayKey());
+    const followUps = store().followUps[id] ?? [];
+    expect(followUps).toHaveLength(1);
+    expect(followUps[0].subject).toMatch(/^Client: Canal Option A \(\$18,000\) sent /);
+    expect(followUps[0].dueDate).toBe(addBusinessDays(new Date(), 2));
+    store().updateQuoteOption(id, q, o, { sentToClientAt: '2026-10-20' });
+    expect(store().quotes[id].find((x) => x.id === q)!.options![0].sentToClientAt).toBe('2026-10-20');
+    expect(store().followUps[id]).toHaveLength(1);
   });
 
   it('a dated note is editable: text changes, its date stays, the edit is recorded', () => {

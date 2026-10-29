@@ -36,6 +36,11 @@ describe('accounts from before renewal tracking keep the original reminder', () 
     expect(renewalTasks(account(), '2026-11-16', [quote('q1', 'bound')])).toEqual([]);
     expect(renewalTasks(account(), '2026-10-16')).toEqual([]);
   });
+  it('a renewal is red only from 7 days before its date (not while it is just being worked)', () => {
+    expect(renewalTasks(account(), '2026-11-16')[0]).toMatchObject({ urgent: false, overdue: false }); // 30 days out
+    expect(renewalTasks(account(), '2026-10-25')[0]).toMatchObject({ urgent: false }); // 8 days out
+    expect(renewalTasks(account(), '2026-10-24')[0]).toMatchObject({ urgent: true, overdue: false }); // 7 days out
+  });
   it('a new venture’s effective date is not a renewal', () => {
     expect(renewalTasks(account({ businessType: 'new_venture' }), '2026-11-16')).toEqual([]);
   });
