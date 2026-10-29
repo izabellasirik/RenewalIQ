@@ -71,7 +71,6 @@ import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
 import { fetchAppetiteOverrides } from '../services/appetiteUpdates/appetiteUpdateService';
 import { sampleAppetiteRecords } from '../data/carriers';
 import { licenseReadReasons, licenseWarnings } from '../services/extraction/licenseReadability';
-import { freshnessApplies, freshnessInstructions, freshnessItemLabel, freshnessTemplateKey, outdatedReports } from '../services/workflow/freshness';
 import { layerAgencyCarriers, type AgencyCarrier } from '../services/appetite/agencyCarriers';
 import { fetchAgencyCarriers } from '../services/supabase/carriersRepo';
 import { trackAccountUpdated, trackEvent, markAccountDemo } from '../services/productAnalytics/trackEvent';
@@ -153,9 +152,9 @@ interface AccountsState {
   /** No-op, kept for callers: the checklist is no longer pre-filled — brokers add what they need, and items a market requests come from Markets & Quotes. */
   ensureChecklist: (accountId: string) => void;
   /**
-   * MVRs and loss runs older than the freshness policy (14 days) get an "Updated … " checklist item
-   * for the normal request flow; an auto-added item nobody has requested yet goes away once a newer
-   * report date is recorded. Idempotent — safe to call on every render of an account.
+   * The checklist only holds what people add: "Updated MVR / loss run" items the app used to add by itself
+   * are removed while nobody has requested them yet (requested ones stay). Idempotent — safe to call on every
+   * render of an account.
    */
   ensureFreshnessItems: (accountId: string) => void;
   /**
@@ -3366,45 +3365,15 @@ export const useAccountsStore = create<AccountsState>()(
         if (!account || !profile) return;
         if (s.cloudAccountIds[accountId] && (!s.currentUserId || s.cloudHydratedFor !== s.currentUserId)) return;
         const items = s.missingItems[accountId] ?? [];
-        const applies = freshnessApplies(account, items, s.quotes[accountId] ?? []);
-        const outdated = applies ? outdatedReports(account.lossRuns ?? [], profile.drivers) : [];
-        const wanted = new Set(outdated.map(freshnessTemplateKey));
-
-        // Auto-added, never requested, and no longer needed (report updated / removed / account closed).
-        const stale = items.filter((i) => i.templateKey?.startsWith('refresh:') && i.status === 'missing' && !wanted.has(i.templateKey));
-        const toAdd = outdated.filter((r) => {
-          const key = freshnessTemplateKey(r);
-          if (items.some((i) => i.templateKey === key)) return false;
-          // Already asked for by hand (e.g. "Updated MVR — John Smith" via Request document)? Leave it.
-          // The standard checklist's general item ("Loss Runs") doesn't count — it says nothing about this report.
-          const same = findRequirement(
-            items.filter((i) => !i.templateKey),
-            { label: freshnessItemLabel(r) }
-          );
-          return !(same && (same.status === 'missing' || same.status === 'requested'));
-        });
-        if (stale.length === 0 && toAdd.length === 0) return;
-
-        const now = new Date().toISOString();
-        const created: MissingItem[] = toAdd.map((r) => ({
-          id: generateId('item'),
-          accountId,
-          type: 'document',
-          label: freshnessItemLabel(r),
-          status: 'missing',
-          instructions: freshnessInstructions(r),
-          notes: `${r.kind === 'mvr' ? 'MVR' : 'Loss run'} dated ${formatShortDate(r.age.reportDate)} is ${r.age.ageDays} days old (limit ${r.age.maxAgeDays}).`,
-          templateKey: freshnessTemplateKey(r),
-          createdAt: now,
-          updatedAt: now,
-        }));
+        // Added by the app, never requested: no longer wanted.
+        const stale = items.filter((i) => i.templateKey?.startsWith('refresh:') && i.status === 'missing');
+        if (stale.length === 0) return;
         const staleIds = new Set(stale.map((i) => i.id));
         set((st) => {
           let log = st.activityLog;
-          for (const i of created) log = appendEvent(log, accountId, 'item_added', `${i.label} needed — ${i.notes}`);
-          for (const i of stale) log = appendEvent(log, accountId, 'item_removed', `${i.label} no longer needed — a current report is on file.`);
+          for (const i of stale) log = appendEvent(log, accountId, 'item_removed', `${i.label} removed — it was added automatically and never requested.`);
           return {
-            missingItems: { ...st.missingItems, [accountId]: [...(st.missingItems[accountId] ?? []).filter((i) => !staleIds.has(i.id)), ...created] },
+            missingItems: { ...st.missingItems, [accountId]: (st.missingItems[accountId] ?? []).filter((i) => !staleIds.has(i.id)) },
             accounts: touchAccount(st.accounts, accountId),
             activityLog: log,
           };

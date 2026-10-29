@@ -392,27 +392,20 @@ describe('loss runs', () => {
 });
 
 describe('outdated MVRs and loss runs on the checklist', () => {
-  it('adds an "Updated …" item once, clears it when a current report is recorded, skips bound accounts', async () => {
+  it('are no longer added; ones the app added earlier go unless someone requested them', async () => {
     const { todayKey, addDays } = await import('../dates');
     const id = store().createAccount('ABC Trucking', 'TX');
     const old = addDays(todayKey(), -30);
-    const runId = store().addLossRun(id, { carrier: 'Progressive', reportDate: old });
+    store().addLossRun(id, { carrier: 'Progressive', reportDate: old });
     store().addDriver(id, { name: 'John Smith', mvrReportDate: old });
+    const now = new Date().toISOString();
+    const item = (itemId: string, label: string, status: 'missing' | 'requested') => ({ id: itemId, accountId: id, type: 'document' as const, label, status, templateKey: `refresh:${itemId}`, createdAt: now, updatedAt: now });
+    useAccountsStore.setState((st) => ({
+      missingItems: { ...st.missingItems, [id]: [...(st.missingItems[id] ?? []), item('a', 'Updated MVR — John Smith', 'missing'), item('b', 'Updated loss run — Progressive', 'requested')] },
+    }));
     store().ensureFreshnessItems(id);
     store().ensureFreshnessItems(id); // idempotent
-    const labels = () => store().missingItems[id].filter((i) => i.templateKey?.startsWith('refresh:')).map((i) => i.label).sort();
-    expect(labels()).toEqual(['Updated MVR — John Smith', 'Updated loss run — Progressive']);
-    const lr = store().missingItems[id].find((i) => i.label === 'Updated loss run — Progressive')!;
-    expect(lr.instructions).toMatch(/30 days old\) — we need one run within the last 14 days/);
-
-    store().updateLossRun(id, runId, { reportDate: todayKey() });
-    store().ensureFreshnessItems(id);
-    expect(labels()).toEqual(['Updated MVR — John Smith']);
-
-    const q = store().addQuote(id, { marketName: 'Canal', status: 'bound' });
-    expect(q).toBeTruthy();
-    store().ensureFreshnessItems(id);
-    expect(labels()).toEqual([]);
+    expect(store().missingItems[id].map((i) => i.label)).toEqual(['Updated loss run — Progressive']);
   });
 });
 

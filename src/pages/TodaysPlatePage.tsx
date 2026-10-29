@@ -55,13 +55,13 @@ const sanitizePlateView = (saved: Record<string, unknown>): Partial<PlateView> =
 const filterClass =
   'cursor-pointer rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-800)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15';
 
-const SECTION_ORDER: { kind: ActionKind; title: string; hint: string }[] = [
-  { kind: 'ready_to_send', title: 'Ready to send', hint: 'Received from the client — a carrier is waiting for it.' },
-  { kind: 'action_required', title: 'Action required', hint: 'Carrier requests, unsent submissions, and quotes to present.' },
-  { kind: 'carrier_follow_up', title: 'Carrier follow-ups', hint: 'Submissions waiting on a carrier or MGA.' },
-  { kind: 'follow_up', title: 'Follow-ups', hint: 'Follow-ups you scheduled on an account.' },
-  { kind: 'client_follow_up', title: 'Client follow-ups', hint: 'Items requested from the client that are due for a nudge.' },
-  { kind: 'renewal', title: 'Renewals coming up', hint: 'From each renewal’s start-working date (45 days before unless changed) until it’s bound.' },
+const SECTION_ORDER: { kind: ActionKind; title: string }[] = [
+  { kind: 'ready_to_send', title: 'Ready to send' },
+  { kind: 'action_required', title: 'Action required' },
+  { kind: 'carrier_follow_up', title: 'Carrier follow-ups' },
+  { kind: 'follow_up', title: 'Follow-ups' },
+  { kind: 'client_follow_up', title: 'Client follow-ups' },
+  { kind: 'renewal', title: 'Renewals coming up' },
 ];
 
 /**
@@ -299,7 +299,7 @@ export function TodaysPlatePage() {
           </CardBody>
         </Card>
       ) : (
-        SECTION_ORDER.map(({ kind, title, hint }) => {
+        SECTION_ORDER.map(({ kind, title }) => {
           const list = now.filter((a) => a.kind === kind);
           if (list.length === 0) return null;
           const Icon = ACTION_KIND_META[kind].icon;
@@ -312,7 +312,6 @@ export function TodaysPlatePage() {
                   {title}
                   <span className="rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-xs text-[var(--color-ink-600)]">{list.length}</span>
                 </h2>
-                <p className="text-xs text-[var(--color-ink-400)]">{hint}</p>
               </div>
               <ActionList actions={all ? list : list.slice(0, SECTION_SHOWN)} showAccount />
               {list.length > SECTION_SHOWN + 1 && (
