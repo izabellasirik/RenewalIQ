@@ -1,30 +1,25 @@
 import type { Account } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
-import { referralLabel, useReferralSources } from '../../hooks/useReferralSources';
-import { NO_REFERRAL } from '../../services/supabase/partnersRepo';
+import { useReferralSources } from '../../hooks/useReferralSources';
+import { ReferralPicker } from '../referrals/ReferralPicker';
 
-/** "Referral: Safety ▾" in the account header — where the client came from (0081); "Not set" on older accounts. */
+/** "Referral: Safety ▾" in the account header — where the client came from (0081); "Not set" on older accounts; "Other" to add a new partner (0083). */
 export function ReferralSourceSelect({ account }: { account: Account }) {
   const setReferral = useAccountsStore((s) => s.setAccountReferral);
-  const sources = useReferralSources();
-  const shown = sources.filter((s) => s.active || s.id === account.referralSource);
+  const pending = useReferralSources().find((s) => s.id === account.referralSource)?.status === 'pending';
   return (
-    <label className="inline-flex items-center gap-1.5" data-testid="account-referral">
+    <span className="inline-flex items-center gap-1.5" data-testid="account-referral">
       <span>Referral:</span>
-      <select
+      <ReferralPicker
         value={account.referralSource ?? ''}
-        onChange={(e) => e.target.value && setReferral(account.id, e.target.value, referralLabel(e.target.value, sources))}
+        onChange={(v, label) => setReferral(account.id, v, label)}
+        accountId={account.id}
+        placeholder={account.referralSource ? undefined : 'Not set'}
         className="cursor-pointer rounded-md border border-transparent bg-transparent py-0.5 pl-1 pr-6 text-sm font-medium text-[var(--color-ink-800)] hover:border-[var(--color-ink-200)]"
-        aria-label="Referral source"
-      >
-        {!account.referralSource && <option value="">Not set</option>}
-        <option value={NO_REFERRAL}>No referral</option>
-        {shown.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
-    </label>
+        inputClassName="rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-1 text-sm text-[var(--color-ink-900)] outline-none focus:border-[var(--color-brand-500)]"
+        ariaLabel="Referral source"
+      />
+      {pending && <span className="text-xs font-medium text-[var(--color-warning-600)]">Awaiting approval</span>}
+    </span>
   );
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, Copy, Loader2, Lock, Undo2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Copy, Handshake, Loader2, Lock, Undo2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, CardHeader, EmptyState } from '../components/ui';
 import { useAccountsStore } from '../state/useAccountsStore';
@@ -9,6 +9,10 @@ import { declineCancellationUndo, fetchPolicyCancellations, undoCancellation, ty
 import { formatShortDate, toLocalDateKey } from '../services/workflow/dates';
 import { formatCents } from '../services/workflow/policies';
 import { cn } from '../utils/cn';
+import { fetchBrokerFeeShares, resolveReferralPartner, setAgentBrokerFeeShare, type BrokerFeeShare } from '../services/supabase/partnersRepo';
+import { reloadReferralSources, useReferralSources } from '../hooks/useReferralSources';
+import { reloadBrokerFeeShares } from '../hooks/useBrokerFeeShare';
+import { parseMoneyCents } from '../services/workflow/policies';
 
 const day = (iso: string | null | undefined) => (iso ? formatShortDate(toLocalDateKey(new Date(iso))) : '—');
 
@@ -48,16 +52,29 @@ export function AdminReviewPage() {
       </PageContainer>
     );
   }
-  const open = (items ?? []).filter((i) => i.status === 'open');
+  const open = (items ?? []).filter((i) => i.status === 'open' && i.kind === 'possible_duplicate');
+  const partners = (items ?? []).filter((i) => i.status === 'open' && i.kind === 'new_referral_partner');
   const decided = (items ?? []).filter((i) => i.status === 'resolved');
 
   return (
-    <PageContainer title="Admin Review" description="What needs an admin's decision: possible duplicate accounts and requests to undo a cancellation.">
+    <PageContainer title="Admin Review" description="What needs an admin's decision: new referral partners, possible duplicate accounts and requests to undo a cancellation.">
       {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
       {items === null ? (
         <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]"><Loader2 size={15} className="animate-spin" /> Loading…</p>
       ) : (
         <>
+          <section className="flex flex-col gap-3" data-testid="review-partners">
+            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-700)]">
+              <Handshake size={15} /> New referral partners
+              <span className="rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-xs text-[var(--color-ink-600)]">{partners.length}</span>
+            </h2>
+            {partners.length === 0 ? (
+              <p className="text-sm text-[var(--color-ink-500)]">Nothing to review.</p>
+            ) : (
+              partners.map((i) => <PartnerItem key={i.id} item={i} focused={i.id === focus} onDone={load} />)
+            )}
+          </section>
+
           <section className="flex flex-col gap-3" data-testid="review-duplicates">
             <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-700)]">
               <Copy size={15} /> Possible duplicate accounts
@@ -147,6 +164,118 @@ function DuplicateItem({ item, focused, onDone }: { item: AdminReviewItem; focus
   );
 }
 
+const field = 'rounded-lg border border-[var(--color-ink-200)] bg-white px-3 py-2 text-sm text-[var(--color-ink-900)] outline-none focus:border-[var(--color-brand-500)]';
+
+/**
+ * A referral partner an agent typed in under "Other" (0083): approve it with the agreed amount (once per client,
+ * from the broker fee), merge it into an existing partner, or reject it. Agents on its accounts with no broker fee
+ * share yet can be given one here too.
+ */
+function PartnerItem({ item, focused, onDone }: { item: AdminReviewItem; focused: boolean; onDone: () => void }) {
+  const p = item.partner!;
+  const navigate = useNavigate();
+  const hydrate = useAccountsStore((s) => s.hydrateCloudSubmissions);
+  const approved = useReferralSources().filter((x) => x.status === 'approved' && x.active && x.id !== p.sourceId);
+  const [fee, setFee] = useState('');
+  const [mergeInto, setMergeInto] = useState('');
+  const [shares, setShares] = useState<Record<string, BrokerFeeShare> | null>(null);
+  const [newShares, setNewShares] = useState<Record<string, { mode: 'amount' | 'percent'; value: string }>>({});
+  const [busy, setBusy] = useState<'approve' | 'merge' | 'reject' | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    void fetchBrokerFeeShares().then((r) => setShares(r.ok ? r.data : {}));
+  }, []);
+  // The agents on its accounts who have no broker fee share yet.
+  const agents = [...new Map(p.accounts.filter((a) => a.agentId).map((a) => [a.agentId!, a.agent])).entries()].filter(([id]) => shares && !shares[id]);
+
+  async function decide(action: 'approve' | 'merge' | 'reject') {
+    setError('');
+    const feeCents = fee.trim() ? parseMoneyCents(fee) : null;
+    if (action === 'approve' && feeCents !== null && (Number.isNaN(feeCents) || feeCents < 0)) return setError('Enter the agreed amount in dollars, e.g. 50.00, or leave it blank for none.');
+    if (action === 'merge' && !mergeInto) return setError('Choose the existing partner to merge it into.');
+    const shareList: { userId: string; share: BrokerFeeShare }[] = [];
+    if (action === 'approve') {
+      for (const [userId] of agents) {
+        const s = newShares[userId];
+        if (!s?.value.trim()) continue;
+        const n = Number(s.value.replace(/[$,%\s]/g, ''));
+        if (!Number.isFinite(n) || n < 0 || (s.mode === 'percent' && n > 100)) return setError('Enter each agent’s share as a dollar amount, or a % between 0 and 100.');
+        shareList.push({ userId, share: s.mode === 'percent' ? { mode: 'percent', value: n / 100 } : { mode: 'amount', value: Math.round(n * 100) } });
+      }
+    }
+    setBusy(action);
+    const r = await resolveReferralPartner(item.id, action, { partnerFeeCents: feeCents, mergeInto: mergeInto || undefined });
+    if (r.ok) for (const x of shareList) await setAgentBrokerFeeShare(x.userId, x.share);
+    setBusy(null);
+    if (!r.ok) return setError(r.message);
+    await reloadReferralSources();
+    void reloadBrokerFeeShares();
+    if (action !== 'approve') void hydrate();
+    onDone();
+  }
+
+  return (
+    <Card>
+      <CardBody className={cn('flex flex-col gap-3 pt-4', focused && 'rounded-xl ring-2 ring-[var(--color-brand-500)]/40')} id={`review-${item.id}`} data-testid="review-partner">
+        <p className="text-sm text-[var(--color-ink-700)]">
+          <span className="font-medium text-[var(--color-ink-900)]">{item.createdByName ?? 'An agent'}</span> added a new referral partner, <span className="font-semibold text-[var(--color-ink-900)]">{p.name}</span>, on {day(item.createdAt)}. Until you decide, broker fees on its clients aren’t split.
+        </p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span className="text-[var(--color-ink-500)]">{p.accounts.length === 0 ? 'Not on any account yet.' : `Used on ${p.accounts.length === 1 ? '1 account' : `${p.accounts.length} accounts`}:`}</span>
+          {p.accounts.map((a) => (
+            <button key={a.id} type="button" onClick={() => navigate(`/accounts/${a.id}`)} className="inline-flex cursor-pointer items-center gap-1 font-medium text-[var(--color-brand-700)] hover:underline">
+              {a.name} <span className="font-normal text-[var(--color-ink-500)]">({a.agent})</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)]/60 p-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-xs font-medium text-[var(--color-ink-600)]" htmlFor={`fee-${item.id}`}>
+              Agreed amount per client ($)
+              <input id={`fee-${item.id}`} inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 50.00" className={cn(field, 'w-40')} />
+            </label>
+            {agents.map(([userId, name]) => {
+              const v = newShares[userId] ?? { mode: 'percent' as const, value: '' };
+              return (
+                <div key={userId} className="flex flex-col gap-1 text-xs font-medium text-[var(--color-ink-600)]">
+                  {name}’s broker fee share (not set yet)
+                  <span className="flex gap-1">
+                    <select value={v.mode} onChange={(e) => setNewShares({ ...newShares, [userId]: { mode: e.target.value as 'amount' | 'percent', value: '' } })} className={cn(field, 'w-16 px-2')} aria-label={`${name}’s share type`}>
+                      <option value="amount">$</option>
+                      <option value="percent">%</option>
+                    </select>
+                    <input inputMode="decimal" value={v.value} onChange={(e) => setNewShares({ ...newShares, [userId]: { ...v, value: e.target.value } })} placeholder="Not set" className={cn(field, 'w-24')} aria-label={`${name}’s share`} />
+                  </span>
+                </div>
+              );
+            })}
+            <Button onClick={() => void decide('approve')} disabled={!!busy}>{busy === 'approve' ? 'Approving…' : 'Approve'}</Button>
+          </div>
+          <p className="text-xs text-[var(--color-ink-500)]">The partner is paid this amount once per client, from the broker fee. Leave it blank if they get nothing.</p>
+        </div>
+
+        {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-[var(--color-ink-500)]">Already a partner under another name?</span>
+          <select value={mergeInto} onChange={(e) => setMergeInto(e.target.value)} className={cn(field, 'py-1.5')} aria-label="Merge into partner">
+            <option value="">Choose the partner…</option>
+            {approved.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
+              </option>
+            ))}
+          </select>
+          <Button variant="secondary" onClick={() => void decide('merge')} disabled={!!busy || !mergeInto}>{busy === 'merge' ? 'Merging…' : 'Merge'}</Button>
+          <Button variant="secondary" onClick={() => void decide('reject')} disabled={!!busy}>{busy === 'reject' ? 'Rejecting…' : 'Reject'}</Button>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+const DECIDED_WORDS: Record<string, string> = { archived_new: 'archived', kept_both: 'kept both', approved: 'approved', merged: 'merged', rejected: 'rejected' };
+
 function UndoItem({ c, onDone }: { c: PolicyCancellation; onDone: () => void }) {
   const accounts = useAccountsStore((s) => s.accounts);
   const quotes = useAccountsStore((s) => s.quotes);
@@ -199,7 +328,10 @@ function DecidedList({ items }: { items: AdminReviewItem[] }) {
           {items.map((i) => (
             <p key={i.id} className="flex flex-wrap items-center gap-1.5">
               <CheckCircle2 size={13} className="text-[var(--color-success-600)]" />
-              {i.account.name} — {i.resolution === 'archived_new' ? 'archived' : 'kept both'} by {i.resolvedByName ?? 'an admin'} {day(i.resolvedAt)}
+              {i.kind === 'new_referral_partner'
+                ? `Referral partner ${i.partner?.name ?? ''} — ${DECIDED_WORDS[i.resolution ?? ''] ?? 'decided'}${i.resolution === 'merged' && i.partner?.mergedInto ? ` into ${i.partner.mergedInto}` : ''}${i.resolution === 'approved' && i.partner?.partnerFeeCents ? ` at ${formatCents(i.partner.partnerFeeCents)} per client` : ''}`
+                : `${i.account.name} — ${DECIDED_WORDS[i.resolution ?? ''] ?? 'decided'}`}{' '}
+              by {i.resolvedByName ?? 'an admin'} {day(i.resolvedAt)}
             </p>
           ))}
         </CardBody>

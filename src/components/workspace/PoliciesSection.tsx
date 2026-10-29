@@ -5,7 +5,9 @@ import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCommission';
-import { useBrokerFeeShare } from '../../hooks/useBrokerFeeShare';
+import { useBrokerFeeShare, type BrokerFeeShareView } from '../../hooks/useBrokerFeeShare';
+import { referralLabel, useReferralSources } from '../../hooks/useReferralSources';
+import { ReferralPicker } from '../referrals/ReferralPicker';
 import { formatDateWithYear, formatShortDate } from '../../services/workflow/dates';
 import { cancellationState, reloadPolicyCancellations, usePolicyCancellations } from '../../hooks/usePolicyCancellations';
 import { declineCancellationUndo, rejectCancellation, undoCancellation, type PolicyCancellation } from '../../services/supabase/ledgerRepo';
@@ -295,7 +297,7 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
         <Amount label="Total" cents={policyTotalCents(p)} strong />
         {kind === 'policy' && !!p.brokerFeeCents && <Amount label="Broker fee" cents={p.brokerFeeCents} />}
       </dl>
-      <CommissionLine commission={commission} netCents={p.netPremiumCents} carrier={p.carrier} dateKey={p.boundDate} record={record} feeShareCents={kind === 'policy' ? feeShareFor(p.id, p.brokerFeeCents) : null} />
+      <CommissionLine commission={commission} netCents={p.netPremiumCents} carrier={p.carrier} dateKey={p.boundDate} record={record} feeShare={kind === 'policy' ? feeShareFor(p.id, p.brokerFeeCents) : undefined} />
       {record && record.flags.length > 0 && (
         <p className="mt-0.5 text-[11px] text-[var(--color-warning-600)]" data-field="commission-flags">{record.flags.map((f) => FLAG_LABELS[f] ?? f).join(' · ')}</p>
       )}
@@ -321,14 +323,14 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
  * for the agent and the agency's admins. Once recorded (0064), the frozen amount and its expected payout;
  * before, worked out from the carrier's % and the current split.
  */
-export function CommissionLine({ commission, netCents, carrier, dateKey, record, feeShareCents = null }: { commission: CommissionView; netCents: number; carrier: string; dateKey: string; record?: AccountCommissionStatus; feeShareCents?: number | null }) {
+export function CommissionLine({ commission, netCents, carrier, dateKey, record, feeShare }: { commission: CommissionView; netCents: number; carrier: string; dateKey: string; record?: AccountCommissionStatus; feeShare?: BrokerFeeShareView }) {
   if (commission.kind === 'hidden' && !record) return null;
   const base = 'mt-1.5 text-xs';
   if (record && record.agentCents !== null) {
     const payout = record.expectedPayDate ? ` · ${payoutWords(record.expectedPayDate, record.status === 'verified')}` : '';
     return (
       <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
-        Agent commission: <CommissionAmount cents={record.agentCents} feeShareCents={feeShareCents} />
+        Agent commission: <CommissionAmount cents={record.agentCents} feeShare={feeShare} />
         <span className="text-[var(--color-ink-500)]"> as recorded{payout}</span>
       </p>
     );
@@ -342,25 +344,50 @@ export function CommissionLine({ commission, netCents, carrier, dateKey, record,
     return (
       <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">
         Agent commission: {commission.preview ? 'carrier % not set yet' : 'shown once it’s recorded'}
-        {feeShareCents !== null && <> · broker fee share <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(feeShareCents)}</strong></>}
+        {feeShare?.kind === 'amount' && <> · broker fee share <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(feeShare.cents)}</strong></>}
+        <BrokerFeeNote feeShare={feeShare} />
       </p>
     );
   }
   return (
     <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
-      Agent commission: <CommissionAmount cents={cents} feeShareCents={feeShareCents} />
+      Agent commission: <CommissionAmount cents={cents} feeShare={feeShare} />
     </p>
   );
 }
 
-/** "$300.00", or with a broker fee share "$300.00 + $150.00 broker fee = $450.00 total". */
-function CommissionAmount({ cents, feeShareCents }: { cents: number; feeShareCents: number | null }) {
+/** "$300.00", or with a broker fee share "$300.00 + $150.00 broker fee = $450.00 total"; when the broker fee can't be added yet, why. */
+function CommissionAmount({ cents, feeShare }: { cents: number; feeShare?: BrokerFeeShareView }) {
   const strong = 'tabular-nums text-[var(--color-ink-900)]';
-  if (feeShareCents === null) return <strong className={strong}>{formatCents(cents)}</strong>;
+  if (feeShare?.kind !== 'amount') {
+    return (
+      <>
+        <strong className={strong}>{formatCents(cents)}</strong>
+        <BrokerFeeNote feeShare={feeShare} />
+      </>
+    );
+  }
   return (
     <span data-field="commission-total">
-      <span className="tabular-nums">{formatCents(cents)}</span> + <span className="tabular-nums">{formatCents(feeShareCents)}</span> broker fee ={' '}
-      <strong className={strong}>{formatCents(cents + feeShareCents)}</strong> total
+      <span className="tabular-nums">{formatCents(cents)}</span> + <span className="tabular-nums">{formatCents(feeShare.cents)}</span> broker fee ={' '}
+      <strong className={strong}>{formatCents(cents + feeShare.cents)}</strong> total
+    </span>
+  );
+}
+
+/** Why a policy's broker fee isn't in the agent commission yet (nothing when it is, or when there's none). */
+function BrokerFeeNote({ feeShare }: { feeShare?: BrokerFeeShareView }) {
+  const isAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
+  if (!feeShare || (feeShare.kind !== 'no_share' && feeShare.kind !== 'pending_partner')) return null;
+  const fee = <span className="tabular-nums">{formatCents(feeShare.feeCents)}</span>;
+  return (
+    <span className="mt-0.5 block text-[var(--color-warning-600)]" data-field="broker-fee-note">
+      Broker fee {fee} isn’t included yet:{' '}
+      {feeShare.kind === 'pending_partner'
+        ? `${feeShare.partnerName} is a new referral partner. ${isAdmin ? 'Approve it and set the agreed amount in Admin Review first.' : 'Your admin needs to approve it and set the agreed amount first.'}`
+        : isAdmin
+          ? 'the agent’s broker fee share isn’t set yet. Set it on Team and Partners.'
+          : 'your broker fee share isn’t set yet. Your admin sets it on Team and Partners.'}
     </span>
   );
 }
@@ -513,7 +540,13 @@ export function EntryForm({
   const [saving, setSaving] = useState(false);
   const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id, accountPolicyIds: accountPolicies.map((x) => x.policy.id), requirePolicyLink: kind === 'endorsement' && (editing === 'new' || !!editing.forPolicyId) });
   const feeShareFor = useBrokerFeeShare(accountId);
-  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined) : null;
+  // The client's referral partner, asked here when the account doesn't have one yet (accounts from before referral
+  // partners): it decides who shares the broker fee, so it's required once a broker fee is entered.
+  const referralSources = useReferralSources();
+  const setAccountReferral = useAccountsStore((s) => s.setAccountReferral);
+  const [referralChoice, setReferralChoice] = useState('');
+  const asksReferral = kind === 'policy' && !account?.referralSource;
+  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined, referralChoice || undefined) : undefined;
   const live = (v: string) => {
     const c = parseMoneyCents(v);
     return c === null || Number.isNaN(c) ? 0 : c;
@@ -551,8 +584,9 @@ export function EntryForm({
   async function submit(e?: FormEvent, withoutDocuments = false) {
     e?.preventDefault();
     const pctError = asksCarrierPct && carrierRate === null ? ['Enter the carrier commission % (more than 0, at most 50, e.g. 12).'] : [];
-    if (!check.ok || pctError.length) {
-      setErrors([...(check.ok ? [] : check.errors), ...pctError]);
+    const referralError = asksReferral && !referralChoice && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 ? ['Choose the client’s referral partner (it decides who shares the broker fee), or No referral.'] : [];
+    if (!check.ok || pctError.length || referralError.length) {
+      setErrors([...(check.ok ? [] : check.errors), ...pctError, ...referralError]);
       return;
     }
     if (!withoutDocuments && kept.length === 0 && files.length === 0) {
@@ -580,6 +614,7 @@ export function EntryForm({
         return;
       }
     }
+    if (asksReferral && referralChoice) setAccountReferral(accountId, referralChoice, referralLabel(referralChoice, referralSources));
     if (editing === 'new') {
       const id = addPolicy(accountId, quote.id, check.fields, entryId);
       if (id) for (const nf of files) attach(accountId, quote.id, id, nf.file, nf.description);
@@ -726,6 +761,22 @@ export function EntryForm({
               <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">Split: partner (once per client) → agent → agency.</p>
             </div>
           )}
+          {kind === 'policy' && (
+            <div data-testid="policy-referral">
+              <label className={labelClass} htmlFor="policy-referral">
+                Referral partner {asksReferral && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 && <Required />}
+              </label>
+              {asksReferral ? (
+                <ReferralPicker id="policy-referral" value={referralChoice} onChange={(v) => setReferralChoice(v)} accountId={accountId} placeholder="Not set" className={inputClass} />
+              ) : (
+                <p className="px-0.5 py-2 text-sm text-[var(--color-ink-800)]">
+                  {referralLabel(account?.referralSource, referralSources)}
+                  {referralSources.find((x) => x.id === account?.referralSource)?.status === 'pending' && <span className="text-[var(--color-warning-600)]"> (awaiting approval)</span>}
+                </p>
+              )}
+              <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">{asksReferral ? 'Saved on the client: the partner is paid once per client.' : 'For the whole client; change it at the top of the account.'}</p>
+            </div>
+          )}
           {asksCarrierPct && (
             <div>
               <label className={labelClass} htmlFor="policy-carrier-pct">
@@ -748,9 +799,9 @@ export function EntryForm({
           )}
           <div className="sm:col-span-4" data-testid="form-commission">
             {asksCarrierPct ? (
-              <CarrierPctLine commission={commission} netCents={live(f.netPremium)} rate={carrierRate} feeShareCents={formFeeShare} />
+              <CarrierPctLine commission={commission} netCents={live(f.netPremium)} rate={carrierRate} feeShare={formFeeShare} />
             ) : (
-              <CommissionLine commission={commission} netCents={live(f.netPremium)} carrier={f.carrier} dateKey={f.boundDate} feeShareCents={formFeeShare} />
+              <CommissionLine commission={commission} netCents={live(f.netPremium)} carrier={f.carrier} dateKey={f.boundDate} feeShare={formFeeShare} />
             )}
           </div>
         </fieldset>
@@ -833,13 +884,13 @@ export function EntryForm({
 }
 
 /** While the carrier % is typed: just the agent's commission in dollars, e.g. "Agent commission: $300.00". */
-function CarrierPctLine({ commission, netCents, rate, feeShareCents = null }: { commission: CommissionView; netCents: number; rate: number | null; feeShareCents?: number | null }) {
+function CarrierPctLine({ commission, netCents, rate, feeShare }: { commission: CommissionView; netCents: number; rate: number | null; feeShare?: BrokerFeeShareView }) {
   const muted = 'text-xs text-[var(--color-ink-500)]';
   if (rate === null) return <p className={muted} data-field="commission">Enter the carrier’s commission % to see the agent commission.</p>;
   if (commission.kind === 'amount')
     return (
       <p className="text-xs text-[var(--color-ink-700)]" data-field="commission">
-        Agent commission: <CommissionAmount cents={agentCommissionCents(netCents, rate, commission.rate) ?? 0} feeShareCents={feeShareCents} />
+        Agent commission: <CommissionAmount cents={agentCommissionCents(netCents, rate, commission.rate) ?? 0} feeShare={feeShare} />
       </p>
     );
   return (

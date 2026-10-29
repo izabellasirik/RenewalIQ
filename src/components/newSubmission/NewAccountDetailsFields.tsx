@@ -1,9 +1,9 @@
 import type { AccountStage } from '../../types';
 import { ACCOUNT_STAGE_LABELS, MANUAL_ACCOUNT_STAGES } from '../../types';
-import { useReferralSources } from '../../hooks/useReferralSources';
 import { NO_REFERRAL, type ReferralSourceName } from '../../services/supabase/partnersRepo';
 import type { NewAccountDetails } from '../../state/useAccountsStore';
 import { cn } from '../../utils/cn';
+import { ReferralPicker } from '../referrals/ReferralPicker';
 
 export interface NewAccountDetailsValue {
   referralSource: string;
@@ -26,7 +26,6 @@ const Req = () => <span className="text-[var(--color-danger-600)]">*</span>;
 
 /** New Submission (by hand, from documents, or an intake import): where the client came from, status and a first note — all required. */
 export function NewAccountDetailsFields({ value, onChange, showErrors }: { value: NewAccountDetailsValue; onChange: (v: NewAccountDetailsValue) => void; showErrors?: boolean }) {
-  const sources = useReferralSources().filter((s) => s.active || s.id === value.referralSource);
   const err = (bad: boolean) => (showErrors && bad ? 'border-[var(--color-danger-500)]' : 'border-[var(--color-ink-200)]');
   return (
     <div className="flex flex-col gap-3" data-testid="account-details">
@@ -35,15 +34,13 @@ export function NewAccountDetailsFields({ value, onChange, showErrors }: { value
           <label className={label} htmlFor="new-referral">
             Referral source <Req />
           </label>
-          <select id="new-referral" value={value.referralSource} onChange={(e) => onChange({ ...value, referralSource: e.target.value })} className={cn(field, err(!value.referralSource))}>
-            <option value="">Where did the client come from?</option>
-            <option value={NO_REFERRAL}>No referral</option>
-            {sources.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+          <ReferralPicker
+            id="new-referral"
+            value={value.referralSource}
+            onChange={(v) => onChange({ ...value, referralSource: v })}
+            placeholder="Where did the client come from?"
+            className={cn(field, err(!value.referralSource))}
+          />
         </div>
         <div>
           <label className={label} htmlFor="new-stage">

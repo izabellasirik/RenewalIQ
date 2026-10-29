@@ -5,6 +5,7 @@ import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, EmptyState, Modal, Skeleton, Tabs } from '../components/ui';
 import { PartnershipsPanel } from '../components/team/PartnershipsPanel';
 import { fetchBrokerFeeShares, setAgentBrokerFeeShare, type BrokerFeeShare } from '../services/supabase/partnersRepo';
+import { reloadBrokerFeeShares } from '../hooks/useBrokerFeeShare';
 import { centsInput, parseMoneyCents } from '../services/workflow/policies';
 import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { useAccountsStore } from '../state/useAccountsStore';
@@ -295,6 +296,8 @@ function BrokerFeeShareInput({ member, share, onSaved }: { member: TeamMember; s
     const res = await setAgentBrokerFeeShare(member.userId, next);
     if (!res.ok) return setState({ error: res.message });
     onSaved();
+    // Markets & Quotes shows the new share straight away.
+    void reloadBrokerFeeShares();
     setValue(null);
     setState({ ok: true });
   }

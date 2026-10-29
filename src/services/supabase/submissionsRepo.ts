@@ -818,7 +818,8 @@ export async function setSubmissionCollaborators(submissionId: string, userIds: 
 
 export interface AppNotification {
   id: string;
-  type: 'assigned' | 'collaborator_added' | 'admin_review';
+  /** referral_update (0083): an admin decided on a referral partner the agent added. */
+  type: 'assigned' | 'collaborator_added' | 'admin_review' | 'referral_update';
   submissionId: string | null;
   /** An Admin Review item (0080): opens Admin Review there. */
   reviewItemId?: string | null;

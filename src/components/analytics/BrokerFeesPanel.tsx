@@ -61,10 +61,11 @@ export function BrokerFeesPanel({ admin }: { admin: boolean }) {
     return {
       fees: sum((r) => r.brokerFeeCents),
       partners: sum((r) => r.partnerCents ?? 0),
-      agents: sum((r) => r.agentCents),
+      agents: sum((r) => r.agentCents ?? 0),
+      pending: list.filter((r) => r.partnerPending).length,
       agency: sum((r) => r.agencyCents ?? 0),
       byPartner: group((r) => r.partnerName, (r) => r.partnerCents ?? 0),
-      byAgent: group((r) => r.agentName, (r) => r.agentCents),
+      byAgent: group((r) => r.agentName, (r) => r.agentCents ?? 0),
     };
   }, [rows]);
 
@@ -81,6 +82,11 @@ export function BrokerFeesPanel({ admin }: { admin: boolean }) {
         </CardBody>
       </Card>
       {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
+      {rows !== null && totals.pending > 0 && (
+        <p className="rounded-lg border border-[var(--color-warning-500)]/40 bg-[var(--color-warning-100)] px-3 py-2 text-sm text-[var(--color-ink-800)]" data-testid="broker-fees-pending">
+          {totals.pending === 1 ? '1 policy isn’t split yet' : `${totals.pending} policies aren’t split yet`}: the client’s referral partner is new and {admin ? 'needs your approval in Admin Review, with the agreed amount.' : 'an admin needs to approve it and set the agreed amount.'}
+        </p>
+      )}
       {rows === null ? (
         <p className="flex items-center gap-2 text-sm text-[var(--color-ink-500)]"><Loader2 size={15} className="animate-spin" /> Loading…</p>
       ) : admin ? (
@@ -170,14 +176,18 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
                   <td className={td}>{r.clientName}</td>
                   <td className={td}>{r.policyNumber ?? '—'}</td>
                   <td className={num}>{formatCents(r.brokerFeeCents)}</td>
-                  {admin ? (
+                  {r.partnerPending ? (
+                    <td className={`${num} text-[var(--color-warning-600)]`} colSpan={admin ? 3 : 1}>
+                      Waiting for partner approval
+                    </td>
+                  ) : admin ? (
                     <>
                       <td className={num}>{r.partnerCents ? `${formatCents(r.partnerCents)} · ${r.partnerName}` : '—'}</td>
                       <td className={num}>{r.agentCents ? `${formatCents(r.agentCents)} · ${r.agentName}` : '—'}</td>
                       <td className={`${num} font-semibold`}>{formatCents(r.agencyCents ?? 0)}</td>
                     </>
                   ) : (
-                    <td className={`${num} font-semibold`}>{formatCents(r.agentCents)}</td>
+                    <td className={`${num} font-semibold`}>{formatCents(r.agentCents ?? 0)}</td>
                   )}
                 </tr>
               ))}
