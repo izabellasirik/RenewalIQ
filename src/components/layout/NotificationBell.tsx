@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, Inbox, UserPlus } from 'lucide-react';
+import { Bell, Inbox, ShieldAlert, UserPlus } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useBrokerSession } from '../../hooks/useBrokerSession';
 import { fetchIntakeLinks, fetchIntakeSubmissions } from '../../services/supabase/intakeRepo';
@@ -89,6 +89,8 @@ export function NotificationBell() {
       setTeam((cur) => cur.map((x) => (x.id === n.id ? { ...x, readAt: new Date().toISOString() } : x)));
       void markNotificationsRead([n.id]);
     }
+    // A possible duplicate (0080): Admin Review, at that item.
+    if (n.type === 'admin_review' && n.reviewItemId) return navigate(`/admin-review?item=${n.reviewItemId}`);
     if (!n.submissionId) return;
     // Just assigned: the account may not be on this device yet.
     const store = useAccountsStore.getState();
@@ -153,7 +155,7 @@ export function NotificationBell() {
                 <li key={n.id}>
                   <button onClick={() => openAccount(n)} className="flex w-full gap-2.5 px-3 py-2.5 text-left hover:bg-[var(--color-ink-50)] cursor-pointer">
                     <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', n.readAt ? 'bg-transparent' : 'bg-[var(--color-danger-600)]')} />
-                    <UserPlus size={14} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />
+                    {n.type === 'admin_review' ? <ShieldAlert size={14} className="mt-0.5 shrink-0 text-[var(--color-warning-600)]" /> : <UserPlus size={14} className="mt-0.5 shrink-0 text-[var(--color-ink-400)]" />}
                     <span className="min-w-0">
                       <span className={cn('block text-sm', n.readAt ? 'text-[var(--color-ink-700)]' : 'font-medium text-[var(--color-ink-900)]')}>{n.message}</span>
                       <span className="block truncate text-xs text-[var(--color-ink-500)]">

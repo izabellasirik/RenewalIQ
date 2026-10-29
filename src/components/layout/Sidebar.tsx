@@ -1,5 +1,5 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart, ShieldAlert } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { isSupabaseConfigured } from '../../services/supabase/client';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -239,6 +239,22 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
           >
             <Users size={17} />
             Team
+          </NavLink>
+        )}
+        {isAgencyAdmin && (
+          <NavLink
+            to="/admin-review"
+            className={({ isActive }) =>
+              cn(
+                navItemClass,
+                isActive
+                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
+                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
+              )
+            }
+          >
+            <ShieldAlert size={17} />
+            Admin Review
           </NavLink>
         )}
 

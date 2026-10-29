@@ -6,6 +6,7 @@ import { AdminShell } from './components/layout/AdminShell';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { AdminReviewPage } from './pages/AdminReviewPage';
 import { TodaysPlatePage } from './pages/TodaysPlatePage';
 import { AccountWorkspacePage } from './pages/AccountWorkspacePage';
 import { MarketFinderPage } from './pages/MarketFinderPage';
@@ -62,6 +63,7 @@ export const router = createBrowserRouter([
     children: [
       { path: '/', element: <DashboardPage /> },
       { path: '/today', element: <TodaysPlatePage /> },
+      { path: '/admin-review', element: <AdminReviewPage /> },
       // Every policy bound from Markets & Quotes; on unless VITE_FEATURE_POLICIES=false.
       { path: '/policies', element: <Navigate to="/analytics" replace /> },
       // Old link to the accounts list, from when Today's Plate was the home page.

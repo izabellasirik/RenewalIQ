@@ -260,6 +260,8 @@ export interface PolicyCancellation {
   direct: boolean;
   undoneAt: string | null;
   undoRequestedAt: string | null;
+  /** Why the agent asked an admin to undo it. */
+  undoReason?: string | null;
   canUndoNow: boolean;
   status: string;
 }
@@ -280,6 +282,7 @@ export async function fetchPolicyCancellations(accountId?: string): Promise<Repo
       direct: !!x.direct,
       undoneAt: (x.undone_at as string) ?? null,
       undoRequestedAt: (x.undo_requested_at as string) ?? null,
+      undoReason: (x.undo_reason as string) ?? null,
       canUndoNow: !!x.can_undo_now,
       status: String(x.status ?? ''),
     })),

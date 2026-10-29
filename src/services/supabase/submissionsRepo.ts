@@ -814,8 +814,10 @@ export async function setSubmissionCollaborators(submissionId: string, userIds: 
 
 export interface AppNotification {
   id: string;
-  type: 'assigned' | 'collaborator_added';
+  type: 'assigned' | 'collaborator_added' | 'admin_review';
   submissionId: string | null;
+  /** An Admin Review item (0080): opens Admin Review there. */
+  reviewItemId?: string | null;
   message: string;
   actorName: string | null;
   createdAt: string;
@@ -830,7 +832,7 @@ export async function fetchNotifications(): Promise<RepoResult<AppNotification[]
     if (error) return fail(error.message);
     return {
       ok: true,
-      data: (data ?? []).map((n) => ({ id: n.id, type: n.type, submissionId: n.submission_id, message: n.message, actorName: n.actor_name, createdAt: n.created_at, readAt: n.read_at })),
+      data: (data ?? []).map((n) => ({ id: n.id, type: n.type, submissionId: n.submission_id, reviewItemId: n.review_item_id ?? null, message: n.message, actorName: n.actor_name, createdAt: n.created_at, readAt: n.read_at })),
     };
   } catch (err) {
     return fail(err instanceof Error ? err.message : 'Could not load notifications.');
