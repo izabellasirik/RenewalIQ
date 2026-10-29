@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, Hourglass, LayoutGrid, Plus, RotateCcw, Sparkles, Building2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Hourglass, LayoutGrid, Plus, RotateCcw, Sparkles, Building2 } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { ActionList } from '../components/workspace/ActionList';
@@ -23,6 +23,8 @@ interface PlateView {
   mineOnly: boolean;
   /** All tasks, overdue, today's, renewals, what's coming up in the next 7 days, or everything other than renewals. */
   show: PlateShow;
+  /** Sections folded away (their headers stay, with the count). */
+  collapsed: ActionKind[];
 }
 type PlateShow = 'all' | 'overdue' | 'due_today' | 'follow_ups' | 'renewal' | 'coming_up' | 'other';
 const PLATE_SHOW: PlateShow[] = ['all', 'overdue', 'due_today', 'follow_ups', 'renewal', 'coming_up', 'other'];
@@ -44,12 +46,13 @@ const showsKind = (show: PlateShow, kind: ActionKind) =>
   show === 'renewal' ? kind === 'renewal' : show === 'follow_ups' ? FOLLOW_UP_KINDS.includes(kind) : show === 'other' ? kind !== 'renewal' : true;
 /** Each section shows its most urgent tasks first; the rest behind "Show all", so no kind of task crowds out the others. */
 const SECTION_SHOWN = 5;
-const PLATE_VIEW_DEFAULTS: PlateView = { broker: ALL_BROKERS, mineOnly: false, show: 'all' };
+const PLATE_VIEW_DEFAULTS: PlateView = { broker: ALL_BROKERS, mineOnly: false, show: 'all', collapsed: [] };
 const sanitizePlateView = (saved: Record<string, unknown>): Partial<PlateView> =>
   defined<PlateView>({
     broker: aString(saved.broker),
     mineOnly: aBoolean(saved.mineOnly),
     // Saved by earlier versions: 'renewals', the next 7 days, and the separate kinds of task.
+    collapsed: Array.isArray(saved.collapsed) ? (saved.collapsed.filter((k) => typeof k === 'string') as ActionKind[]) : undefined,
     show: saved.show === 'renewals' ? 'renewal' : saved.show === 'next_7_days' ? 'coming_up' : OLD_OTHER.includes(saved.show as string) ? 'other' : oneOf(PLATE_SHOW)(saved.show),
   });
 const filterClass =
@@ -79,7 +82,7 @@ export function TodaysPlatePage() {
   const documentRequests = useAccountsStore((s) => s.documentRequests);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
   const session = useBrokerSession();
-  const [plate, updatePlate, resetPlate] = useRememberedView('todays-plate', PLATE_VIEW_DEFAULTS, sanitizePlateView);
+  const [plate, updatePlate] = useRememberedView('todays-plate', PLATE_VIEW_DEFAULTS, sanitizePlateView);
   const [view, setView] = useState<'active' | 'done'>('active');
   // Sections opened past their first few tasks ("Show all").
   const [expanded, setExpanded] = useState<Set<ActionKind>>(() => new Set());
@@ -235,7 +238,7 @@ export function TodaysPlatePage() {
           ))}
         </select>
         {filtersActive && (
-          <button onClick={resetPlate} className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
+          <button onClick={() => updatePlate({ ...PLATE_VIEW_DEFAULTS, collapsed: plate.collapsed })} className="text-sm font-medium text-[var(--color-brand-700)] hover:underline cursor-pointer">
             Clear filters
           </button>
         )}
@@ -304,17 +307,28 @@ export function TodaysPlatePage() {
           if (list.length === 0) return null;
           const Icon = ACTION_KIND_META[kind].icon;
           const all = expanded.has(kind) || list.length <= SECTION_SHOWN + 1;
+          const folded = plate.collapsed.includes(kind);
           return (
             <section key={kind} className="flex flex-col gap-2" data-testid={`plate-section-${kind}`}>
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-700)]">
+              <h2>
+                <button
+                  type="button"
+                  onClick={() => updatePlate({ collapsed: folded ? plate.collapsed.filter((k) => k !== kind) : [...plate.collapsed, kind] })}
+                  className="flex cursor-pointer items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--color-ink-700)] hover:text-[var(--color-ink-900)]"
+                  aria-expanded={!folded}
+                  data-testid={`plate-section-header-${kind}`}
+                >
+                  {folded ? <ChevronRight size={15} className="text-[var(--color-ink-400)]" /> : <ChevronDown size={15} className="text-[var(--color-ink-400)]" />}
                   <Icon size={15} />
                   {title}
                   <span className="rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-xs text-[var(--color-ink-600)]">{list.length}</span>
-                </h2>
-              </div>
-              <ActionList actions={all ? list : list.slice(0, SECTION_SHOWN)} showAccount />
-              {list.length > SECTION_SHOWN + 1 && (
+                  {folded && list.some((a) => a.overdue || a.urgent) && (
+                    <span className="text-xs font-medium normal-case tracking-normal text-[var(--color-danger-600)]">{list.filter((a) => a.overdue || a.urgent).length} overdue or due soon</span>
+                  )}
+                </button>
+              </h2>
+              {!folded && <ActionList actions={all ? list : list.slice(0, SECTION_SHOWN)} showAccount />}
+              {!folded && list.length > SECTION_SHOWN + 1 && (
                 <button
                   type="button"
                   onClick={() => setExpanded((cur) => { const next = new Set(cur); if (next.has(kind)) next.delete(kind); else next.add(kind); return next; })}

@@ -376,7 +376,7 @@ export function NewAccountPage() {
   function handleManualSubmit(e: FormEvent) {
     e.preventDefault();
     setTypeTouched(true);
-    if (!details || !namedInsuredInput.trim() || !stateInput) return;
+    if (!details || !namedInsuredInput.trim()) return;
     // Documents attached: they're read into the account (the name and state typed here win).
     if (attached.length) {
       typed.current = { name: namedInsuredInput.trim(), state: stateInput };
@@ -385,7 +385,6 @@ export function NewAccountPage() {
       handleFiles(files);
       return;
     }
-    if (!namedInsuredInput.trim() || !stateInput) return;
     const name = namedInsuredInput.trim();
     const chosen = details;
     void guardedCreate({ name }, () => {
@@ -465,14 +464,13 @@ export function NewAccountPage() {
                 </div>
                 <div>
                   <label htmlFor="new-state" className="mb-1.5 block text-sm font-medium text-[var(--color-ink-700)]">
-                    Domicile State <span className="text-[var(--color-danger-600)]">*</span>
+                    Domicile State <span className="font-normal text-[var(--color-ink-400)]">(optional)</span>
                   </label>
                   <select
                     id="new-state"
                     value={stateInput}
                     onChange={(e) => setStateInput(e.target.value)}
-                    aria-required="true"
-                    className={`w-full rounded-lg border ${typeTouched && !stateInput ? 'border-[var(--color-danger-500)]' : 'border-[var(--color-ink-200)]'} px-3 py-2.5 text-sm text-[var(--color-ink-900)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15`}
+                    className={`w-full rounded-lg border border-[var(--color-ink-200)] px-3 py-2.5 text-sm text-[var(--color-ink-900)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15`}
                   >
                     <option value="">Select state…</option>
                     {US_STATES.map((s) => (
@@ -513,7 +511,7 @@ export function NewAccountPage() {
                   <p className="mt-1.5 text-xs text-[var(--color-ink-500)]">We'll read them into the account.</p>
                 </div>
                 {gatePanel}
-                {typeTouched && (!namedInsuredInput.trim() || !stateInput) && <p className="text-xs text-[var(--color-danger-600)]">Enter the named insured and domicile state.</p>}
+                {typeTouched && !namedInsuredInput.trim() && <p className="text-xs text-[var(--color-danger-600)]">Enter the named insured.</p>}
                 <Button type="submit" disabled={!!gate} className="mt-1">
                   Create Submission
                 </Button>

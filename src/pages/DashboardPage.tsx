@@ -357,7 +357,7 @@ export function DashboardPage() {
             view.layout === 'table' ? (
               <AccountsTable accounts={visible} archivedAt={archivedAt} />
             ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {visible.map((account, i) => (
                 <AccountCard key={account.id} account={account} index={i} onOpenHistory={() => setHistoryAccountId(account.id)} archivedAt={archivedAt[account.id]} />
               ))}
