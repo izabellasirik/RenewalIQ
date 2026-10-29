@@ -3,18 +3,23 @@ import type { Account } from '../../types';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountWorkflow } from '../../hooks/useAccountWorkflow';
 import { useCancelledPolicies } from '../../hooks/usePolicyCancellations';
-import { effectiveAccountStage } from '../../services/workflow/accountStage';
+import { accountBoundDate, effectiveAccountStage } from '../../services/workflow/accountStage';
 import { nextOpenRenewal, renewalLabelOn, resolveRenewals } from '../../services/workflow/renewals';
 import { formatShortDate, toLocalDateKey, todayKey } from '../../services/workflow/dates';
 import { agentLabel } from '../../services/agency/agentLabel';
 import { StageBadge } from '../workspace/StageBadge';
 import { RenewalBadge } from '../renewals/RenewalLabel';
 import { referralLabel, useReferralSources } from '../../hooks/useReferralSources';
+import { useNoteSummaries } from '../../hooks/useNoteSummaries';
+import { buildNotesText, notesHash } from '../../services/notes/notesSummary';
 
 const th = 'border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
-const td = 'border-b border-[var(--color-ink-50)] px-3 py-2.5 align-middle text-sm text-[var(--color-ink-800)]';
+const td = 'border-b border-[var(--color-ink-50)] px-3 py-2.5 align-middle text-sm text-[var(--color-ink-800)] whitespace-nowrap';
+// The client's name stays in view while the table scrolls sideways.
+const sticky = 'sticky left-0 z-[1] bg-white group-hover:bg-[var(--color-ink-50)] shadow-[1px_0_0_var(--color-ink-100)]';
+const muted = <span className="text-[var(--color-ink-400)]">—</span>;
 
-/** Accounts as a table (the "Table" view): one row per account, the same accounts and order as the cards. */
+/** Accounts as a table (the "Table" view): one row per account, the same accounts and order as the cards. Scrolls sideways for the rest. */
 export function AccountsTable({ accounts, archivedAt }: { accounts: Account[]; archivedAt: Record<string, string> }) {
   const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   const archived = accounts.some((a) => a.archived);
@@ -23,8 +28,8 @@ export function AccountsTable({ accounts, archivedAt }: { accounts: Account[]; a
       <table className="min-w-full border-collapse" data-testid="accounts-table">
         <thead>
           <tr>
-            {['Client', ...(isAgencyAdmin ? ['Agent'] : []), 'Status', 'Referral', 'Renewal', 'DOT #', ...(archived ? ['Archived'] : [])].map((h) => (
-              <th key={h} className={th}>
+            {['Client', ...(isAgencyAdmin ? ['Agent'] : []), 'Status', 'Referral', 'Renewal', 'DOT #', 'State', 'Markets', 'Bound', 'Missing docs', 'Next follow-up', 'Notes summary', 'Latest note', 'Collaborators', 'Created', 'Updated', ...(archived ? ['Archived'] : [])].map((h, i) => (
+              <th key={h} className={`${th} whitespace-nowrap ${i === 0 ? `sticky left-0 z-[1] bg-white shadow-[1px_0_0_var(--color-ink-100)]` : ''}`}>
                 {h}
               </th>
             ))}
@@ -44,16 +49,33 @@ function AccountRow({ account, showAgent, archivedAt }: { account: Account; show
   const navigate = useNavigate();
   const agencyMembers = useAccountsStore((s) => s.agencyMembers);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
-  const { items, quotes, effectiveDate, dotNumber } = useAccountWorkflow(account.id);
+  const { items, quotes, followUps, effectiveDate, dotNumber } = useAccountWorkflow(account.id);
+  const { byAccount } = useNoteSummaries();
   const cancelledFor = useCancelledPolicies();
   const { stage } = effectiveAccountStage(account, items, quotes, cancelledFor(account.id));
   const renewalLabel = renewalLabelOn(account, effectiveDate, quotes, todayKey()).on;
   const renewal = nextOpenRenewal(resolveRenewals(account, effectiveDate, quotes))?.renewalDate ?? effectiveDate;
   const sources = useReferralSources();
+  const boundOn = accountBoundDate(account, stage, quotes);
+  const missingDocuments = items.filter((i) => i.type === 'document' && (i.status === 'missing' || i.status === 'requested')).length;
+  // The earliest follow-up still open: scheduled follow-ups, client requests, and markets.
+  const nextFollowUp =
+    [
+      ...followUps.filter((f) => !f.doneAt).map((f) => f.dueDate),
+      ...items.filter((i) => i.status === 'requested' && i.followUpDate).map((i) => i.followUpDate!),
+      ...quotes.filter((q) => q.followUpDate && q.status !== 'declined' && q.status !== 'bound').map((q) => q.followUpDate!),
+    ].sort()[0] ?? null;
+  const markets = quotes.length ? `${quotes.length}${quotes.some((q) => q.status === 'bound') ? ` (${quotes.filter((q) => q.status === 'bound').length} bound)` : ''}` : null;
+  const notes = [...(account.notes ?? []).map((n) => ({ at: n.createdAt, text: n.text })), ...quotes.flatMap((q) => q.notes.map((n) => ({ at: n.createdAt, text: `${q.marketName}: ${n.text}` })))];
+  const latest = notes.sort((a, b) => b.at.localeCompare(a.at))[0];
+  const summary = byAccount[account.id];
+  const stale = !!summary && summary.notesHash !== notesHash(buildNotesText(account.notes, quotes));
+  const collaborators = (account.collaboratorIds ?? []).map((id) => (id === currentUserId ? 'You' : (agencyMembers.find((m) => m.userId === id)?.name ?? 'Team member')));
+  const day = (iso: string) => formatShortDate(toLocalDateKey(new Date(iso)));
   const open = () => navigate(`/accounts/${account.id}`);
   return (
-    <tr className="cursor-pointer hover:bg-[var(--color-ink-50)]" onClick={open} onKeyDown={(e) => e.key === 'Enter' && open()} tabIndex={0} data-testid="accounts-table-row">
-      <td className={`${td} font-semibold text-[var(--color-brand-800)]`}>{account.namedInsured}</td>
+    <tr className="group cursor-pointer hover:bg-[var(--color-ink-50)]" onClick={open} onKeyDown={(e) => e.key === 'Enter' && open()} tabIndex={0} data-testid="accounts-table-row">
+      <td className={`${td} ${sticky} font-semibold text-[var(--color-brand-800)]`}>{account.namedInsured}</td>
       {showAgent && <td className={td}>{agentLabel(account, agencyMembers, currentUserId) ?? 'Unassigned'}</td>}
       <td className={td}>
         <span className="flex flex-wrap items-center gap-1.5">
@@ -64,6 +86,34 @@ function AccountRow({ account, showAgent, archivedAt }: { account: Account; show
       <td className={td}>{account.referralSource ? referralLabel(account.referralSource, sources) : <span className="text-[var(--color-ink-400)]">Not set</span>}</td>
       <td className={`${td} tabular-nums`}>{renewal ? formatShortDate(renewal) : '—'}</td>
       <td className={`${td} tabular-nums`}>{dotNumber || '—'}</td>
+      <td className={td}>{account.state || muted}</td>
+      <td className={`${td} tabular-nums`}>{markets ?? muted}</td>
+      <td className={`${td} tabular-nums`}>{boundOn ? formatShortDate(boundOn) : muted}</td>
+      <td className={`${td} tabular-nums`}>{missingDocuments || muted}</td>
+      <td className={`${td} tabular-nums ${nextFollowUp && nextFollowUp < todayKey() ? 'text-[var(--color-danger-600)]' : ''}`}>{nextFollowUp ? formatShortDate(nextFollowUp) : muted}</td>
+      <td className={`${td} !whitespace-normal`} data-testid="table-notes-summary">
+        {summary ? (
+          <span className="block w-80">
+            <span className={`line-clamp-2 ${stale ? 'text-[var(--color-ink-500)]' : ''}`} title={summary.summary}>{summary.summary}</span>
+            {stale && <span className="text-xs font-medium text-[var(--color-warning-600)]">Notes updated</span>}
+          </span>
+        ) : (
+          muted
+        )}
+      </td>
+      <td className={`${td} !whitespace-normal`}>
+        {latest ? (
+          <span className="block w-72">
+            <span className="line-clamp-2" title={latest.text}>{latest.text}</span>
+            <span className="text-xs text-[var(--color-ink-400)]">{day(latest.at)}</span>
+          </span>
+        ) : (
+          muted
+        )}
+      </td>
+      <td className={td}>{collaborators.length ? collaborators.join(', ') : muted}</td>
+      <td className={`${td} tabular-nums`}>{day(account.createdAt)}</td>
+      <td className={`${td} tabular-nums`}>{day(account.updatedAt)}</td>
       {archivedAt !== undefined && <td className={`${td} tabular-nums`}>{archivedAt ? formatShortDate(toLocalDateKey(new Date(archivedAt))) : '—'}</td>}
     </tr>
   );

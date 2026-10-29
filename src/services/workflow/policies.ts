@@ -354,3 +354,13 @@ export function presetRange(preset: DatePreset, today: Date = new Date()): { fro
       return { from: '', to: '' };
   }
 }
+
+/**
+ * The agent's share of a broker fee (0081): a fixed amount (never more than the fee) or a % of it. The
+ * database works out the exact split, which first takes the partner's amount off the client's first broker fee.
+ */
+export function agentBrokerFeeShareCents(feeCents: number, share: { mode: 'amount' | 'percent'; value: number } | undefined, partnerCents = 0): number | null {
+  if (!share || feeCents <= 0) return null;
+  const rest = Math.max(0, feeCents - partnerCents);
+  return share.mode === 'amount' ? Math.min(Math.round(share.value), rest) : Math.round(rest * share.value);
+}

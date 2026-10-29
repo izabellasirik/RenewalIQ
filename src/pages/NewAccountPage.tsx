@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CircleCheck, Clock, Loader2, Sparkles, TriangleAlert, UploadCloud } from 'lucide-react';
+import { CircleCheck, Clock, FileText, Loader2, Sparkles, TriangleAlert, X } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Dropzone } from '../components/upload/Dropzone';
 import { IdentityResolutionStep, type IdentitySuggestion } from '../components/newSubmission/IdentityResolutionStep';
@@ -12,18 +12,17 @@ import { generateId } from '../utils/id';
 import { inferCategory, inferCategoryFromResults, inferCategoryFromText, inferFileType } from '../utils/documents';
 import { US_STATES } from '../utils/usStates';
 import type { RiskProfile, UploadedDocument } from '../types';
+import type { NewAccountSetup } from '../state/useAccountsStore';
 import { DocumentLinkError } from '../services/ingestion/documentLinks';
-import { NewAccountTypeFields } from '../components/renewals/NewAccountTypeFields';
 import { EMPTY_ACCOUNT_DETAILS, NewAccountDetailsFields, readAccountDetails, type NewAccountDetailsValue } from '../components/newSubmission/NewAccountDetailsFields';
 import { useReferralSources } from '../hooks/useReferralSources';
-import { EMPTY_ACCOUNT_TYPE, readAccountType, type NewAccountTypeValue } from '../components/renewals/renewalForm';
 import { normalizeDateKey } from '../services/workflow/dates';
 import { DuplicateAccountWarning } from '../components/newSubmission/DuplicateAccountWarning';
 import { localAccountCandidates, runDuplicateCheck, unseenMatches, type AccountIdentity, type DuplicateCheckResult } from '../services/accounts/duplicateCheck';
 import { fetchAccountDuplicates } from '../services/supabase/intakeRepo';
 import { isSupabaseConfigured } from '../services/supabase/client';
 
-type Mode = 'choice' | 'manual' | 'processing' | 'confirm' | 'error';
+type Mode = 'manual' | 'processing' | 'confirm' | 'error';
 type DraftDoc = Omit<UploadedDocument, 'accountId'>;
 
 /** The files being read into the new submission, each with where it's at. */
@@ -74,6 +73,24 @@ function identitySuggestions(docs: DraftDoc[], profile: RiskProfile): { nameSugg
   return { nameSuggestions, stateSuggestions };
 }
 
+/** The account's effective date — optional; documents can fill it in, and it can be set on the Risk Profile later. */
+function EffectiveDateField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label htmlFor="new-effective" className="mb-1.5 block text-sm font-medium text-[var(--color-ink-700)]">
+        Effective Date <span className="font-normal text-[var(--color-ink-400)]">(optional)</span>
+      </label>
+      <input
+        id="new-effective"
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-[var(--color-ink-200)] px-3 py-2.5 text-sm text-[var(--color-ink-900)] outline-none focus:border-[var(--color-brand-500)] focus:ring-2 focus:ring-[var(--color-brand-500)]/15"
+      />
+    </div>
+  );
+}
+
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -84,7 +101,7 @@ export function NewAccountPage() {
   const createAccountFromExtraction = useAccountsStore((s) => s.createAccountFromExtraction);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
 
-  const [mode, setMode] = useState<Mode>('choice');
+  const [mode, setMode] = useState<Mode>('manual');
   const [phase, setPhase] = useState('');
   const [draftProfile, setDraftProfile] = useState<RiskProfile | null>(null);
   const [draftDocs, setDraftDocs] = useState<DraftDoc[]>([]);
@@ -94,16 +111,22 @@ export function NewAccountPage() {
   const [namedInsuredInput, setNamedInsuredInput] = useState('');
   const [stateInput, setStateInput] = useState('');
   const [draftFiles, setDraftFiles] = useState<File[]>([]);
-  // New venture or renewal (and a renewal's date) — asked on both ways of creating an account.
-  const [accountType, setAccountType] = useState<NewAccountTypeValue>(EMPTY_ACCOUNT_TYPE);
+  // The effective date (optional) — on both ways of creating an account.
+  const [effectiveInput, setEffectiveInput] = useState('');
   const [typeTouched, setTypeTouched] = useState(false);
-  const setup = readAccountType(accountType);
+  const setup: NewAccountSetup | undefined = effectiveInput ? { effectiveDate: effectiveInput } : undefined;
+  // Documents attached on the form: read into the new account when it's created.
+  const [attached, setAttached] = useState<File[]>([]);
+  // What was typed on the form, applied over what the documents say.
+  const typed = useRef<{ name: string; state: string } | null>(null);
   // Referral source, status and a first note — required on every new submission.
   const [detailsInput, setDetailsInput] = useState<NewAccountDetailsValue>(EMPTY_ACCOUNT_DETAILS);
   const referralSources = useReferralSources();
   const details = readAccountDetails(detailsInput, referralSources);
   const detailsRef = useRef(details);
   detailsRef.current = details;
+  const setupRef = useRef(setup);
+  setupRef.current = setup;
   const applyNewAccountDetails = useAccountsStore((s) => s.applyNewAccountDetails);
 
   // Possible existing accounts (0072): checked as the name is typed, and again right before an account is saved.
@@ -175,7 +198,7 @@ export function NewAccountPage() {
   }
 
   function commitAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
-    const id = createAccountFromExtraction(namedInsured, state, docs, profile, files, undefined, setup ? { setup } : undefined);
+    const id = createAccountFromExtraction(namedInsured, state, docs, profile, files, undefined, setupRef.current ? { setup: setupRef.current } : undefined);
     if (detailsRef.current) applyNewAccountDetails(id, detailsRef.current);
     // Straight to the Risk Profile to review what was extracted.
     navigate(`/accounts/${id}/risk-profile`);
@@ -199,9 +222,11 @@ export function NewAccountPage() {
     setDraftProfile(null);
     setDraftFiles([]);
     setFailures([]);
-    setAccountType(EMPTY_ACCOUNT_TYPE);
+    setEffectiveInput('');
+    setAttached([]);
+    typed.current = null;
     setTypeTouched(false);
-    setMode('choice');
+    setMode('manual');
   }
 
   // Anything unexpected ends on a message with a way back — never on a spinner that never stops.
@@ -298,6 +323,13 @@ export function NewAccountPage() {
     // Something added in the last moment: read it too before deciding.
     if (queue.current.length) return processQueue();
 
+    // The name and state typed on the form win over what the documents say.
+    if (typed.current?.name) d.profile = applyManualEdit({ ...d.profile }, 'business', 'namedInsured', typed.current.name);
+    if (typed.current?.state) d.profile = applyManualEdit({ ...d.profile }, 'business', 'state', typed.current.state);
+    // The effective date the documents read, offered on the confirm step when none was typed.
+    const read = normalizeDateKey((d.profile.business.effectiveDate?.value as string | null | undefined) ?? null);
+    if (read && !setupRef.current) setEffectiveInput(read);
+
     setDraftDocs([...d.docs]);
     setDraftProfile(d.profile);
     setDraftFiles([...d.files]);
@@ -308,8 +340,9 @@ export function NewAccountPage() {
     const identityResolved = !ni.isMissing && !ni.isConflicting && !st.isMissing && !st.isConflicting;
 
     // The referral source, status and note are asked on the confirm step unless already filled in.
-    if (identityResolved && d.failures.length === 0 && detailsRef.current) {
-      finalizeAccount(ni.value as string, st.value as string, d.docs, d.profile, d.files);
+    const stateOk = identityResolved || (!!typed.current && !ni.isMissing && !ni.isConflicting);
+    if (stateOk && d.failures.length === 0 && detailsRef.current) {
+      finalizeAccount(ni.value as string, !st.isMissing && !st.isConflicting ? (st.value as string) : '', d.docs, d.profile, d.files);
     } else {
       setMode('confirm');
     }
@@ -324,7 +357,7 @@ export function NewAccountPage() {
   function handleContinue() {
     if (!draftProfile) return;
     setTypeTouched(true);
-    if (!setup || !details) return;
+    if (!details) return;
     const ni = draftProfile.business.namedInsured;
     const st = draftProfile.business.state;
     if (ni.isMissing || ni.isConflicting) return;
@@ -343,7 +376,16 @@ export function NewAccountPage() {
   function handleManualSubmit(e: FormEvent) {
     e.preventDefault();
     setTypeTouched(true);
-    if (!namedInsuredInput.trim() || !stateInput || !setup || !details) return;
+    if (!details) return;
+    // Documents attached: they're read into the account (the name and state typed here win).
+    if (attached.length) {
+      typed.current = { name: namedInsuredInput.trim(), state: stateInput };
+      const files = attached;
+      setAttached([]);
+      handleFiles(files);
+      return;
+    }
+    if (!namedInsuredInput.trim() || !stateInput) return;
     const name = namedInsuredInput.trim();
     const chosen = details;
     void guardedCreate({ name }, () => {
@@ -400,32 +442,9 @@ export function NewAccountPage() {
   return (
     <PageContainer
       title="New Submission"
-      description="Give RenewalIQ the documents you already have. We'll organize the account for you."
+      description="Add the client, and attach the documents you already have. We'll organize the account for you."
     >
       <div className="mx-auto w-full max-w-xl">
-        {mode === 'choice' && (
-          <div className="flex flex-col gap-4">
-            <Dropzone onFiles={handleFiles} allowLinkPaste={false} />
-            <div className="text-center">
-              <button
-                onClick={() => setMode('manual')}
-                className="text-sm font-medium text-[var(--color-ink-500)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-ink-700)] cursor-pointer"
-              >
-                Start manually instead
-              </button>
-            </div>
-            <div className="mt-2 text-center">
-              <button
-                onClick={handleUseSample}
-                className="inline-flex items-center gap-1.5 text-xs text-[var(--color-ink-400)] hover:text-[var(--color-ink-600)] cursor-pointer"
-              >
-                <Sparkles size={12} />
-                Try demo account — {sampleAccount.namedInsured}
-              </button>
-            </div>
-          </div>
-        )}
-
         {mode === 'manual' && (
           <Card>
             <CardBody className="pt-6">
@@ -458,21 +477,45 @@ export function NewAccountPage() {
                 {!gate && preview && preview.identity.name === namedInsuredInput.trim() && (
                   <DuplicateAccountWarning identity={preview.identity} matches={preview.result.matches} complete={preview.result.complete} currentUserId={currentUserId} memberEmail={memberEmail} />
                 )}
-                <NewAccountTypeFields value={accountType} onChange={setAccountType} showErrors={typeTouched} />
+                <EffectiveDateField value={effectiveInput} onChange={setEffectiveInput} />
                 <NewAccountDetailsFields value={detailsInput} onChange={setDetailsInput} showErrors={typeTouched} />
+                <div data-testid="attach-documents">
+                  <p className="mb-1.5 text-sm font-medium text-[var(--color-ink-700)]">
+                    Documents <span className="font-normal text-[var(--color-ink-400)]">(optional)</span>
+                  </p>
+                  <Dropzone onFiles={(files) => setAttached((all) => [...all, ...files])} allowLinkPaste={false} />
+                  {attached.length > 0 && (
+                    <ul className="mt-2 flex flex-col gap-1 text-sm" data-testid="attached-files">
+                      {attached.map((f, i) => (
+                        <li key={`${f.name}-${i}`} className="flex items-center gap-2">
+                          <FileText size={14} className="shrink-0 text-[var(--color-ink-400)]" aria-hidden />
+                          <span className="min-w-0 text-[var(--color-ink-700)] [overflow-wrap:anywhere]">{f.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setAttached((all) => all.filter((_, j) => j !== i))}
+                            className="ml-auto shrink-0 cursor-pointer rounded p-0.5 text-[var(--color-ink-400)] hover:text-[var(--color-ink-700)]"
+                            aria-label={`Remove ${f.name}`}
+                          >
+                            <X size={14} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-1.5 text-xs text-[var(--color-ink-500)]">We'll read them into the account. With documents, the name and state can come from them.</p>
+                </div>
                 {gatePanel}
-                <Button type="submit" disabled={!namedInsuredInput.trim() || !stateInput || !!gate} className="mt-1">
+                <Button type="submit" disabled={(!attached.length && (!namedInsuredInput.trim() || !stateInput)) || !!gate} className="mt-1">
                   Create Submission
                 </Button>
-
               </form>
 
               <button
-                onClick={() => setMode('choice')}
-                className="mt-4 flex w-full items-center justify-center gap-1.5 text-xs font-medium text-[var(--color-ink-500)] hover:text-[var(--color-ink-700)] cursor-pointer"
+                onClick={handleUseSample}
+                className="mt-4 flex w-full items-center justify-center gap-1.5 text-xs text-[var(--color-ink-400)] hover:text-[var(--color-ink-600)] cursor-pointer"
               >
-                <UploadCloud size={13} />
-                Upload documents instead
+                <Sparkles size={12} />
+                Try demo account — {sampleAccount.namedInsured}
               </button>
             </CardBody>
           </Card>
@@ -555,21 +598,10 @@ export function NewAccountPage() {
 
             <Card>
               <CardBody className="pt-5">
-                <NewAccountTypeFields
-                  value={accountType}
-                  onChange={(v) => {
-                    // Choosing Renewal suggests the effective date read from the documents.
-                    const read = normalizeDateKey((draftProfile.business.effectiveDate?.value as string | null | undefined) ?? null);
-                    setAccountType(v.businessType === 'renewal' && accountType.businessType !== 'renewal' && !v.renewalDate && read ? { ...v, renewalDate: read } : v);
-                  }}
-                  showErrors={typeTouched}
-                />
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardBody className="pt-5">
-                <NewAccountDetailsFields value={detailsInput} onChange={setDetailsInput} showErrors={typeTouched} />
+                <div className="flex flex-col gap-4">
+                  <EffectiveDateField value={effectiveInput} onChange={setEffectiveInput} />
+                  <NewAccountDetailsFields value={detailsInput} onChange={setDetailsInput} showErrors={typeTouched} />
+                </div>
               </CardBody>
             </Card>
 

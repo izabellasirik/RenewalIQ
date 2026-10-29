@@ -3,6 +3,7 @@ import { useAccountsStore } from '../../../state/useAccountsStore';
 import type { MarketQuote, PolicyRecord } from '../../../types';
 import { mergeQuotes } from '../mergeCloud';
 import {
+  agentBrokerFeeShareCents,
   activePolicies,
   checkPolicy,
   filterPolicies,
@@ -348,5 +349,15 @@ describe('dates with the year (Analytics: Bound / Endorsed Date)', () => {
     const { formatDateWithYear } = await import('../dates');
     expect(formatDateWithYear('2026-10-18')).toBe('Oct 18, 2026');
     expect(formatDateWithYear(null)).toBe('—');
+  });
+});
+
+describe('agent broker fee share', () => {
+  it('is a fixed amount (never more than the fee) or a % of what is left after the partner', () => {
+    expect(agentBrokerFeeShareCents(35000, { mode: 'amount', value: 10000 })).toBe(10000);
+    expect(agentBrokerFeeShareCents(5000, { mode: 'amount', value: 10000 })).toBe(5000);
+    expect(agentBrokerFeeShareCents(35000, { mode: 'percent', value: 0.5 }, 5000)).toBe(15000);
+    expect(agentBrokerFeeShareCents(35000, undefined)).toBeNull();
+    expect(agentBrokerFeeShareCents(0, { mode: 'percent', value: 0.5 })).toBeNull();
   });
 });

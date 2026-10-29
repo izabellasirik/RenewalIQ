@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Ban, Undo2, FileCheck2, FilePlus2, FileWarning, Paperclip, Pencil, Plus, Trash2, X } from 'lucide-react';
-import type { MarketQuote, PolicyBusinessType, PolicyEntryKind, PolicyRecord } from '../../types';
+import type { MarketQuote, PolicyEntryKind, PolicyRecord } from '../../types';
 import { Badge, Button, ConfirmDialog, Modal, OverflowMenu } from '../ui';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { useAccountRenewals } from '../../hooks/useAccountRenewals';
 import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCommission';
+import { useBrokerFeeShare } from '../../hooks/useBrokerFeeShare';
 import { formatDateWithYear, formatShortDate } from '../../services/workflow/dates';
 import { cancellationState, reloadPolicyCancellations, usePolicyCancellations } from '../../hooks/usePolicyCancellations';
 import { declineCancellationUndo, rejectCancellation, undoCancellation, type PolicyCancellation } from '../../services/supabase/ledgerRepo';
@@ -171,6 +172,7 @@ function DeletedRow({ item }: { item: PendingRemoval }) {
 }
 
 function EntryItem({ accountId, cancellations, quote, entry: p, commission, record, onEdit, onRemove, onRequestCancellation }: { accountId: string; cancellations: PolicyCancellation[]; quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; record?: AccountCommissionStatus; onEdit: () => void; onRemove: () => void; onRequestCancellation: (record: AccountCommissionStatus) => void }) {
+  const feeShareFor = useBrokerFeeShare(accountId);
   // Cancelled (fully or partly) — shown with its date; undone cancellations no longer count.
   const cancelled = cancellationState(cancellations, p.id);
   const latest = cancelled.all[0];
@@ -293,7 +295,7 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
         <Amount label="Total" cents={policyTotalCents(p)} strong />
         {kind === 'policy' && !!p.brokerFeeCents && <Amount label="Broker fee" cents={p.brokerFeeCents} />}
       </dl>
-      <CommissionLine commission={commission} netCents={p.netPremiumCents} carrier={p.carrier} dateKey={p.boundDate} record={record} />
+      <CommissionLine commission={commission} netCents={p.netPremiumCents} carrier={p.carrier} dateKey={p.boundDate} record={record} feeShareCents={kind === 'policy' ? feeShareFor(p.id, p.brokerFeeCents) : null} />
       {record && record.flags.length > 0 && (
         <p className="mt-0.5 text-[11px] text-[var(--color-warning-600)]" data-field="commission-flags">{record.flags.map((f) => FLAG_LABELS[f] ?? f).join(' · ')}</p>
       )}
@@ -319,14 +321,14 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
  * for the agent and the agency's admins. Once recorded (0064), the frozen amount and its expected payout;
  * before, worked out from the carrier's % and the current split.
  */
-export function CommissionLine({ commission, netCents, carrier, dateKey, record }: { commission: CommissionView; netCents: number; carrier: string; dateKey: string; record?: AccountCommissionStatus }) {
+export function CommissionLine({ commission, netCents, carrier, dateKey, record, feeShareCents = null }: { commission: CommissionView; netCents: number; carrier: string; dateKey: string; record?: AccountCommissionStatus; feeShareCents?: number | null }) {
   if (commission.kind === 'hidden' && !record) return null;
   const base = 'mt-1.5 text-xs';
   if (record && record.agentCents !== null) {
     const payout = record.expectedPayDate ? ` · ${payoutWords(record.expectedPayDate, record.status === 'verified')}` : '';
     return (
       <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
-        Agent commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(record.agentCents)}</strong>
+        Agent commission: <CommissionAmount cents={record.agentCents} feeShareCents={feeShareCents} />
         <span className="text-[var(--color-ink-500)]"> as recorded{payout}</span>
       </p>
     );
@@ -340,13 +342,26 @@ export function CommissionLine({ commission, netCents, carrier, dateKey, record 
     return (
       <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">
         Agent commission: {commission.preview ? 'carrier % not set yet' : 'shown once it’s recorded'}
+        {feeShareCents !== null && <> · broker fee share <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(feeShareCents)}</strong></>}
       </p>
     );
   }
   return (
     <p className={`${base} text-[var(--color-ink-700)]`} data-field="commission">
-      Agent commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(cents)}</strong>
+      Agent commission: <CommissionAmount cents={cents} feeShareCents={feeShareCents} />
     </p>
+  );
+}
+
+/** "$300.00", or with a broker fee share "$300.00 + $150.00 broker fee = $450.00 total". */
+function CommissionAmount({ cents, feeShareCents }: { cents: number; feeShareCents: number | null }) {
+  const strong = 'tabular-nums text-[var(--color-ink-900)]';
+  if (feeShareCents === null) return <strong className={strong}>{formatCents(cents)}</strong>;
+  return (
+    <span data-field="commission-total">
+      <span className="tabular-nums">{formatCents(cents)}</span> + <span className="tabular-nums">{formatCents(feeShareCents)}</span> broker fee ={' '}
+      <strong className={strong}>{formatCents(cents + feeShareCents)}</strong> total
+    </span>
   );
 }
 
@@ -497,6 +512,8 @@ export function EntryForm({
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id, accountPolicyIds: accountPolicies.map((x) => x.policy.id), requirePolicyLink: kind === 'endorsement' && (editing === 'new' || !!editing.forPolicyId) });
+  const feeShareFor = useBrokerFeeShare(accountId);
+  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined) : null;
   const live = (v: string) => {
     const c = parseMoneyCents(v);
     return c === null || Number.isNaN(c) ? 0 : c;
@@ -640,15 +657,6 @@ export function EntryForm({
             </label>
             <input id="policy-carrier" className={inputClass} value={f.carrier} onChange={(e) => set('carrier', e.target.value)} list="market-name-options" />
           </div>
-          {kind === 'policy' && (
-            <div>
-              <label className={labelClass} htmlFor="policy-type">New or renewal</label>
-              <select id="policy-type" className={inputClass} value={f.businessType} onChange={(e) => set('businessType', e.target.value as PolicyBusinessType)}>
-                <option value="new">New business</option>
-                <option value="renewal">Renewal</option>
-              </select>
-            </div>
-          )}
           <div className="sm:col-span-2">
             <label className={labelClass} htmlFor="policy-description">Description</label>
             <input
@@ -740,9 +748,9 @@ export function EntryForm({
           )}
           <div className="sm:col-span-4" data-testid="form-commission">
             {asksCarrierPct ? (
-              <CarrierPctLine commission={commission} netCents={live(f.netPremium)} rate={carrierRate} />
+              <CarrierPctLine commission={commission} netCents={live(f.netPremium)} rate={carrierRate} feeShareCents={formFeeShare} />
             ) : (
-              <CommissionLine commission={commission} netCents={live(f.netPremium)} carrier={f.carrier} dateKey={f.boundDate} />
+              <CommissionLine commission={commission} netCents={live(f.netPremium)} carrier={f.carrier} dateKey={f.boundDate} feeShareCents={formFeeShare} />
             )}
           </div>
         </fieldset>
@@ -825,13 +833,13 @@ export function EntryForm({
 }
 
 /** While the carrier % is typed: just the agent's commission in dollars, e.g. "Agent commission: $300.00". */
-function CarrierPctLine({ commission, netCents, rate }: { commission: CommissionView; netCents: number; rate: number | null }) {
+function CarrierPctLine({ commission, netCents, rate, feeShareCents = null }: { commission: CommissionView; netCents: number; rate: number | null; feeShareCents?: number | null }) {
   const muted = 'text-xs text-[var(--color-ink-500)]';
   if (rate === null) return <p className={muted} data-field="commission">Enter the carrier’s commission % to see the agent commission.</p>;
   if (commission.kind === 'amount')
     return (
       <p className="text-xs text-[var(--color-ink-700)]" data-field="commission">
-        Agent commission: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(agentCommissionCents(netCents, rate, commission.rate) ?? 0)}</strong>
+        Agent commission: <CommissionAmount cents={agentCommissionCents(netCents, rate, commission.rate) ?? 0} feeShareCents={feeShareCents} />
       </p>
     );
   return (

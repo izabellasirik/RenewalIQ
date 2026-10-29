@@ -41,8 +41,9 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
   const steps = useWorkflowStatus(account.id);
   const status = deriveSubmissionStatusLabel(steps);
   const { items, quotes, effectiveDate, dotNumber, actions } = useAccountWorkflow(account.id);
-  // Only something genuinely overdue earns the red flag — otherwise the card stays calm.
-  const needsAttention = actions.now.some((a) => a.overdue);
+  // Red only for what needs working now: a renewal within 7 days (as on Today's Plate). Other overdue
+  // tasks are on Today's Plate without turning every card red.
+  const needsAttention = actions.now.some((a) => a.urgent);
   const cancelledFor = useCancelledPolicies();
   const { stage, manual } = effectiveAccountStage(account, items, quotes, cancelledFor(account.id));
   const renewalLabel = renewalLabelOn(account, effectiveDate, quotes, todayKey()).on;
@@ -179,7 +180,7 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
             )}
             {status.label === 'Extracting Documents' && <Badge tone="warning">Extracting…</Badge>}
             {needsAttention && (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-danger-600)]" title="Something on this account is overdue">
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-[var(--color-danger-600)]" title="A renewal is within 7 days">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--color-danger-500)]" />
                 Action required
               </span>

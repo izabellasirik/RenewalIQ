@@ -418,11 +418,16 @@ export interface NewAccountDetails {
   stage: AccountStage;
 }
 
-/** New venture or renewal, chosen when the account is created. A renewal's date becomes the account's Renewal / effective date. */
+/**
+ * Set when the account is created. New Submission asks only for an (optional) effective date; the older
+ * setup — new venture or renewal, and a renewal's date — is still understood.
+ */
 export interface NewAccountSetup {
-  businessType: AccountBusinessType;
+  businessType?: AccountBusinessType;
   renewalDate?: string;
   leadDays?: number;
+  /** The effective date entered on New Submission (YYYY-MM-DD); goes on the Risk Profile. */
+  effectiveDate?: string;
 }
 
 const renewalClock = () => ({ now: new Date().toISOString(), newId: () => generateId('rnw') });
@@ -451,6 +456,11 @@ function renewalWhen(date: string, leadDays: number, label?: string): string {
 /** Applies a new account's setup: its type, and for a renewal the renewal date (on the Risk Profile) and the main renewal. */
 function applyNewAccountSetup(account: Account, profile: RiskProfile, setup: NewAccountSetup | undefined): { account: Account; profile: RiskProfile; message?: string } {
   if (!setup) return { account, profile };
+  if (!setup.businessType) {
+    if (!setup.effectiveDate) return { account, profile };
+    const withDate = applyManualEdit({ ...profile, business: { ...profile.business } }, 'business', 'effectiveDate', setup.effectiveDate);
+    return { account, profile: withDate, message: `Effective ${formatShortDate(setup.effectiveDate)}.` };
+  }
   if (setup.businessType === 'new_venture' || !setup.renewalDate) return { account: { ...account, businessType: setup.businessType }, profile, message: setup.businessType === 'new_venture' ? 'New venture.' : undefined };
   const leadDays = setup.leadDays ?? DEFAULT_LEAD_DAYS;
   const withDate = applyManualEdit({ ...profile, business: { ...profile.business } }, 'business', 'effectiveDate', setup.renewalDate);
