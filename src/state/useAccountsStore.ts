@@ -341,7 +341,8 @@ interface AccountsState {
   /** Edit one recorded quote (name, premium, quote date); the market's headline premium follows. */
   updateQuoteOption: (accountId: string, quoteId: string, optionId: string, patch: { label?: string; premium?: number | null; receivedAt?: string; sentToClientAt?: string }) => void;
   /** A quote sent to the client today: records the date and schedules a client follow-up 2 business days later. */
-  markQuoteSentToClient: (accountId: string, quoteId: string, optionId: string) => void;
+  /** The date a quote was sent to the client (default today): recorded, with a client follow-up 2 business days later — once. */
+  markQuoteSentToClient: (accountId: string, quoteId: string, optionId: string, date?: string) => void;
   addFollowUp: (accountId: string, input: { subject: string; dueDate: string; notes?: string }) => string;
   updateFollowUp: (accountId: string, followUpId: string, patch: Partial<Pick<FollowUp, 'subject' | 'dueDate' | 'notes'>>) => void;
   completeFollowUp: (accountId: string, followUpId: string) => void;
@@ -2835,11 +2836,11 @@ export const useAccountsStore = create<AccountsState>()(
         trackEvent('quote_updated', { accountId, metadata: { source: 'quote_option' } });
       },
 
-      markQuoteSentToClient: (accountId, quoteId, optionId) => {
+      markQuoteSentToClient: (accountId, quoteId, optionId, date) => {
         const quote = (get().quotes[accountId] ?? []).find((q) => q.id === quoteId);
         const option = quote?.options?.find((o) => o.id === optionId);
         if (!quote || !option || option.sentToClientAt) return;
-        const today = todayKey();
+        const today = date || todayKey();
         const now = new Date().toISOString();
         const what = `${quote.marketName} ${option.label ?? 'quote'}${option.premium ? ` (${money(option.premium)})` : ''}`;
         set((s) => ({
@@ -2851,7 +2852,7 @@ export const useAccountsStore = create<AccountsState>()(
           activityLog: appendEvent(s.activityLog, accountId, 'quote_status_changed', `Sent ${what} to the client${actorSuffix(s.currentUserEmail)}.`),
         }));
         // The client's answer is the next step: a follow-up on Today's Plate.
-        get().addFollowUp(accountId, { subject: `Client: ${what} sent ${formatShortDate(today)}`, dueDate: addBusinessDays(new Date(), 2) });
+        get().addFollowUp(accountId, { subject: `Client: ${what} sent ${formatShortDate(today)}`, dueDate: addBusinessDays(parseDateKey(today) ?? new Date(), 2) });
         trackEvent('quote_updated', { accountId, metadata: { source: 'sent_to_client' } });
       },
 

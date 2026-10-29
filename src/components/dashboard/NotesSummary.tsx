@@ -21,6 +21,8 @@ export function NotesSummary({ account, quotes }: { account: Account; quotes: Ma
   const stale = !!saved && saved.notesHash !== hash;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Two lines on the card; More shows the whole summary.
+  const [expanded, setExpanded] = useState(false);
 
   async function summarize(e: React.MouseEvent) {
     e.stopPropagation();
@@ -56,9 +58,22 @@ export function NotesSummary({ account, quotes }: { account: Account; quotes: Ma
       </div>
       {saved ? (
         <>
-          <p className={`mt-1 line-clamp-3 ${stale ? 'text-[var(--color-ink-500)]' : 'text-[var(--color-ink-900)]'}`} title={saved.summary}>
+          <p className={`mt-1 ${expanded ? '' : 'line-clamp-2'} ${stale ? 'text-[var(--color-ink-500)]' : 'text-[var(--color-ink-900)]'}`} title={saved.summary}>
             {saved.summary}
           </p>
+          {saved.summary.length > 80 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded((v) => !v);
+              }}
+              className="cursor-pointer text-xs font-medium text-[var(--color-brand-700)] hover:underline"
+              aria-expanded={expanded}
+            >
+              {expanded ? 'Less' : 'More'}
+            </button>
+          )}
           <p className="mt-1 text-xs text-[var(--color-ink-400)]">
             Summarized {formatShortDate(toLocalDateKey(new Date(saved.createdAt)))}
             {saved.createdByName ? ` by ${saved.createdByName}` : ''}

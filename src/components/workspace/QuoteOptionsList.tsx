@@ -4,7 +4,7 @@ import { quoteOptionFiles, type MarketQuote, type QuoteAttachment, type QuoteOpt
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { DocumentPreviewModal, type PreviewableFile } from '../upload/DocumentPreviewModal';
 import { loadStoredFile, saveBlobAs } from '../../services/documents/fileAccess';
-import { formatShortDate, normalizeDateKey, parseDateKey } from '../../services/workflow/dates';
+import { formatShortDate, normalizeDateKey, parseDateKey, todayKey } from '../../services/workflow/dates';
 import { Button } from '../ui';
 import { inputClass } from './formStyles';
 import { cn } from '../../utils/cn';
@@ -107,18 +107,23 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-[var(--color-ink-500)]">
           Received {formatShortDate(option.receivedAt)}
           {files.length > 1 && <span>· {files.length} files</span>}
-          {option.sentToClientAt && (
-            <label className="inline-flex items-center gap-1 font-medium text-[var(--color-success-600)]" data-testid="sent-to-client">
-              · <Send size={11} aria-hidden /> Sent to client
-              <input
-                type="date"
-                value={option.sentToClientAt}
-                onChange={(e) => e.target.value && updateQuoteOption(accountId, quote.id, option.id, { sentToClientAt: e.target.value })}
-                className="rounded border border-transparent bg-transparent px-0.5 text-xs font-medium text-[var(--color-success-600)] hover:border-[var(--color-ink-200)]"
-                aria-label="Date sent to the client"
-              />
-            </label>
-          )}
+          {/* The date it went to the client — picked any time (also after the fact). The first date adds a client follow-up. */}
+          <label className={`inline-flex items-center gap-1 font-medium ${option.sentToClientAt ? 'text-[var(--color-success-600)]' : 'text-[var(--color-ink-500)]'}`} data-testid="sent-to-client">
+            · <Send size={11} aria-hidden /> Sent to client
+            <input
+              type="date"
+              value={option.sentToClientAt ?? ''}
+              max={todayKey()}
+              onChange={(e) => {
+                const date = e.target.value;
+                if (!option.sentToClientAt) {
+                  if (date) markSentToClient(accountId, quote.id, option.id, date);
+                } else updateQuoteOption(accountId, quote.id, option.id, { sentToClientAt: date || undefined });
+              }}
+              className="rounded border border-[var(--color-ink-200)] bg-white px-1 py-0.5 text-xs font-medium"
+              aria-label="Date sent to the client"
+            />
+          </label>
         </p>
         {files.length > 0 && (
           <ul className="mt-1 flex flex-col gap-0.5" data-testid="quote-files">
@@ -142,11 +147,6 @@ function OptionRow({ accountId, quote, option, onPreview }: { accountId: string;
         {error && <p className="text-xs text-[var(--color-danger-600)]">{error}</p>}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1">
-        {!option.sentToClientAt && (
-          <Button size="sm" variant="secondary" icon={<Send size={12} />} onClick={() => markSentToClient(accountId, quote.id, option.id)} title="Records today's date and adds a client follow-up in 2 business days">
-            Sent to Client
-          </Button>
-        )}
         <input
           ref={fileRef}
           type="file"

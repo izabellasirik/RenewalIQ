@@ -117,9 +117,9 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
       ];
 
   return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04, duration: 0.25 }}>
+    <motion.div className="h-full" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.04, duration: 0.25 }}>
       <Card
-        className="group relative cursor-pointer transition-shadow hover:[box-shadow:var(--shadow-card-hover)]"
+        className="group relative h-full cursor-pointer transition-shadow hover:[box-shadow:var(--shadow-card-hover)]"
         onClick={() => !isRenaming && navigate(`/accounts/${account.id}`)}
         role="link"
         tabIndex={0}

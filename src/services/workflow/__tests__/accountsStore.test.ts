@@ -292,6 +292,15 @@ describe('editing an existing market', () => {
     expect(store().followUps[id]).toHaveLength(1);
   });
 
+  it('Sent to Client on a chosen date: the follow-up is 2 business days after that date', () => {
+    const id = store().createAccount('ABC Trucking', 'TX');
+    const q = store().addQuote(id, { marketName: 'Canal', status: 'submitted' });
+    const o = store().addQuoteOption(id, q, { label: 'Option A', premium: 18000 });
+    store().markQuoteSentToClient(id, q, o, '2026-10-23'); // a Friday
+    expect(store().quotes[id].find((x) => x.id === q)!.options![0].sentToClientAt).toBe('2026-10-23');
+    expect(store().followUps[id][0].dueDate).toBe('2026-10-27');
+  });
+
   it('a dated note is editable: text changes, its date stays, the edit is recorded', () => {
     const id = store().createAccount('ABC Trucking', 'TX');
     store().setCurrentUserId('u1', 'roman@agency.com');
