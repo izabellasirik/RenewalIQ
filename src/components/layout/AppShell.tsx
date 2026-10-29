@@ -5,11 +5,19 @@ import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { FeedbackWidget } from '../feedback/FeedbackWidget';
 import { TimeSavedPrompt } from '../productAnalytics/TimeSavedPrompt';
+import { readSidebarCollapsed, writeSidebarCollapsed } from './sidebarPreference';
 
 export function AppShell() {
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Desktop: the sidebar can shrink to an icon rail; the choice is remembered in this browser.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+  const toggleSidebar = () =>
+    setSidebarCollapsed((v) => {
+      writeSidebarCollapsed(!v);
+      return !v;
+    });
 
   useEffect(() => {
     mainRef.current?.scrollTo(0, 0);
@@ -17,7 +25,7 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--color-ink-50)]">
-      <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} />
+      <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
       {mobileNavOpen && <div className="fixed inset-0 z-30 bg-[var(--color-ink-950)]/30 md:hidden" onClick={() => setMobileNavOpen(false)} />}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar onOpenNav={() => setMobileNavOpen(true)} />

@@ -1,5 +1,6 @@
+import type { ReactNode } from 'react';
 import { NavLink, useParams } from 'react-router-dom';
-import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart, ShieldAlert } from 'lucide-react';
+import { LayoutGrid, UploadCloud, ClipboardList, FileText, Compass, Search, BarChart3, Link2, Shield, CalendarCheck, Briefcase, Users, Inbox, LineChart, ShieldAlert, ChevronsLeft, ChevronsRight, type LucideIcon } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { isSupabaseConfigured } from '../../services/supabase/client';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -46,7 +47,9 @@ function useIsFounder(): boolean {
 }
 
 const navItemClass =
-  'group flex items-center gap-3 rounded-lg border-l-2 border-transparent px-3 py-2.5 text-sm font-medium transition-colors';
+  'group relative flex items-center gap-3 rounded-lg border-l-2 border-transparent px-3 py-2.5 text-sm font-medium transition-colors';
+const activeClass = 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]';
+const idleClass = 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]';
 
 const NAV_ICONS = {
   upload: UploadCloud,
@@ -57,7 +60,33 @@ const NAV_ICONS = {
   'carrier-appetite': Compass,
 };
 
-export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boolean; onNavigate?: () => void }) {
+/**
+ * One sidebar link. Collapsed (desktop only), just the icon: the name stays for screen readers and shows as a
+ * tooltip on hover or keyboard focus; `extra` (a status dot) sits on the icon's corner.
+ */
+function NavItem({ to, end, icon: Icon, label, collapsed, extra }: { to: string; end?: boolean; icon: LucideIcon; label: string; collapsed: boolean; extra?: ReactNode }) {
+  return (
+    <NavLink to={to} end={end} className={({ isActive }) => cn(navItemClass, isActive ? activeClass : idleClass, collapsed && 'md:justify-center md:px-0')}>
+      <Icon size={17} className="shrink-0" />
+      <span className={cn('min-w-0 flex-1 truncate', collapsed && 'md:sr-only')}>{label}</span>
+      {extra && <span className={cn('flex shrink-0 items-center', collapsed && 'md:absolute md:right-2 md:top-1.5')}>{extra}</span>}
+      {collapsed && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 hidden -translate-y-1/2 whitespace-nowrap rounded-md bg-[var(--color-ink-900)] px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 md:block"
+        >
+          {label}
+        </span>
+      )}
+    </NavLink>
+  );
+}
+
+/**
+ * The left navigation. On desktop it collapses to an icon rail (`collapsed`, toggled by the chevron button);
+ * below md it's an overlay opened from the TopBar menu button, always shown in full.
+ */
+export function Sidebar({ mobileOpen = false, onNavigate, collapsed = false, onToggleCollapsed }: { mobileOpen?: boolean; onNavigate?: () => void; collapsed?: boolean; onToggleCollapsed?: () => void }) {
   const { accountId: routeAccountId } = useParams();
   const activeAccountId = useAccountsStore((s) => s.activeAccountId);
   const accounts = useAccountsStore((s) => s.accounts);
@@ -70,6 +99,8 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
   const isReviewer = useIsReviewer();
   const isFounder = useIsFounder();
   const pendingIntake = useAccountsStore((s) => s.pendingIntakeCount);
+  // The mobile overlay is always the full sidebar.
+  const rail = collapsed && !mobileOpen;
 
   return (
     <aside
@@ -77,213 +108,82 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
         if ((e.target as HTMLElement).closest('a')) onNavigate?.();
       }}
       className={cn(
-        'h-full w-64 shrink-0 flex-col border-r border-[var(--color-ink-100)] bg-white',
+        'h-full w-64 shrink-0 flex-col border-r border-[var(--color-ink-100)] bg-white transition-[width] duration-200 ease-out motion-reduce:transition-none',
+        rail && 'md:w-16',
         // Below md the sidebar is an overlay toggled from the TopBar menu button.
-        mobileOpen ? 'fixed inset-y-0 left-0 z-40 flex shadow-2xl md:static md:shadow-none' : 'hidden md:flex'
+        mobileOpen ? 'fixed inset-y-0 left-0 z-40 flex shadow-2xl md:static md:shadow-none' : 'hidden md:relative md:z-20 md:flex'
       )}
+      data-collapsed={rail ? 'true' : 'false'}
     >
-      <div className="flex items-center gap-2.5 px-5 py-6">
+      <div className={cn('flex items-start justify-between gap-2.5 px-5 py-6', rail && 'md:flex-col md:items-center md:gap-3 md:px-0')}>
         {/* The logo goes home (Accounts). */}
-        <NavLink to="/" aria-label="RenewalIQ — go to Accounts" className="rounded-md focus-visible:outline-2 focus-visible:outline-[var(--color-brand-500)]">
-          <BrandLogo size={30} />
-          <p className="mt-0.5 text-[11px] text-[var(--color-ink-400)]">Agent Workspace</p>
+        <NavLink to="/" aria-label="RenewalIQ — go to Accounts" className="min-w-0 rounded-md focus-visible:outline-2 focus-visible:outline-[var(--color-brand-500)]">
+          {rail ? (
+            <>
+              <span className="md:hidden">
+                <BrandLogo size={30} />
+              </span>
+              <span className="hidden md:block">
+                <BrandLogo size={30} wordmark={false} />
+              </span>
+            </>
+          ) : (
+            <BrandLogo size={30} />
+          )}
+          <p className={cn('mt-0.5 whitespace-nowrap text-[11px] text-[var(--color-ink-400)]', rail && 'md:hidden')}>Agent Workspace</p>
         </NavLink>
+        {onToggleCollapsed && (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label={rail ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!rail}
+            title={rail ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="hidden shrink-0 cursor-pointer rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-50)] hover:text-[var(--color-ink-700)] focus-visible:outline-2 focus-visible:outline-[var(--color-brand-500)] md:block"
+            data-testid="sidebar-toggle"
+          >
+            {rail ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+          </button>
+        )}
       </div>
 
-      <nav className="flex flex-1 flex-col gap-1 px-3">
-        <NavLink
-          to="/"
-          end
-          className={({ isActive }) =>
-            cn(
-              navItemClass,
-              isActive
-                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-            )
-          }
-        >
-          <LayoutGrid size={17} />
-          Accounts
-        </NavLink>
-
-        <NavLink
-          to="/today"
-          end
-          className={({ isActive }) =>
-            cn(
-              navItemClass,
-              isActive
-                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-            )
-          }
-        >
-          <CalendarCheck size={17} />
-          Today's Plate
-        </NavLink>
-
-
-        <NavLink
-          to="/market-finder"
-          className={({ isActive }) =>
-            cn(
-              navItemClass,
-              isActive
-                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-            )
-          }
-        >
-          <Search size={17} />
-          Market Finder
-        </NavLink>
-
-        <NavLink
+      <nav className={cn('flex flex-1 flex-col gap-1 px-3', rail && 'md:px-2')} aria-label="Main">
+        <NavItem to="/" end icon={LayoutGrid} label="Accounts" collapsed={rail} />
+        <NavItem to="/today" end icon={CalendarCheck} label="Today's Plate" collapsed={rail} />
+        <NavItem to="/market-finder" icon={Search} label="Market Finder" collapsed={rail} />
+        <NavItem
           to="/intake-links"
-          className={({ isActive }) =>
-            cn(
-              navItemClass,
-              isActive
-                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-            )
-          }
-        >
-          <Link2 size={17} />
-          Submission Intake
-          {/* Something is waiting in Pending. */}
-          {pendingIntake > 0 && <span className="ml-auto h-2 w-2 rounded-full bg-[var(--color-warning-500)]" title={`${pendingIntake} pending submission${pendingIntake === 1 ? '' : 's'}`} aria-label={`${pendingIntake} pending`} />}
-        </NavLink>
-
-        <NavLink
-          to="/analytics"
-          className={({ isActive }) =>
-            cn(
-              navItemClass,
-              isActive
-                ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-            )
-          }
-        >
-          <BarChart3 size={17} />
-          Analytics
-        </NavLink>
+          icon={Link2}
+          label="Submission Intake"
+          collapsed={rail}
+          // Something is waiting in Pending.
+          extra={pendingIntake > 0 ? <span className="h-2 w-2 rounded-full bg-[var(--color-warning-500)]" title={`${pendingIntake} pending submission${pendingIntake === 1 ? '' : 's'}`} aria-label={`${pendingIntake} pending`} /> : undefined}
+        />
+        <NavItem to="/analytics" icon={BarChart3} label="Analytics" collapsed={rail} />
 
         {/* The founder only — the database's is_founder() decides, and the page's data is refused to anyone else. */}
-        {isFounder && (
-          <NavLink
-            to="/founder-analytics"
-            className={({ isActive }) =>
-              cn(
-                navItemClass,
-                isActive
-                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-              )
-            }
-          >
-            <LineChart size={17} />
-            Founder Analytics
-          </NavLink>
-        )}
+        {isFounder && <NavItem to="/founder-analytics" icon={LineChart} label="Founder Analytics" collapsed={rail} />}
 
         {/* Renewal IQ reviewers (admin_users) only — the database's is_admin() decides, and the /admin pages check it again. */}
-        {isReviewer && (
-          <NavLink
-            to="/admin"
-            className={({ isActive }) =>
-              cn(
-                navItemClass,
-                isActive
-                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-              )
-            }
-          >
-            <Inbox size={17} />
-            Feedback & Updates
-          </NavLink>
-        )}
+        {isReviewer && <NavItem to="/admin" icon={Inbox} label="Feedback & Updates" collapsed={rail} />}
 
-        {canCreateAgency && (
-          <NavLink
-            to="/team"
-            className={({ isActive }) =>
-              cn(
-                navItemClass,
-                isActive
-                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-              )
-            }
-          >
-            <Users size={17} />
-            Set up agency
-          </NavLink>
-        )}
+        {canCreateAgency && <NavItem to="/team" icon={Users} label="Set up agency" collapsed={rail} />}
 
         {/* Agency admins only — the database also only returns the whole team to an admin. */}
-        {isAgencyAdmin && (
-          <NavLink
-            to="/team"
-            className={({ isActive }) =>
-              cn(
-                navItemClass,
-                isActive
-                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-              )
-            }
-          >
-            <Users size={17} />
-            Team and Partners
-          </NavLink>
-        )}
-        {isAgencyAdmin && (
-          <NavLink
-            to="/admin-review"
-            className={({ isActive }) =>
-              cn(
-                navItemClass,
-                isActive
-                  ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                  : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-              )
-            }
-          >
-            <ShieldAlert size={17} />
-            Admin Review
-          </NavLink>
-        )}
+        {isAgencyAdmin && <NavItem to="/team" icon={Users} label="Team and Partners" collapsed={rail} />}
+        {isAgencyAdmin && <NavItem to="/admin-review" icon={ShieldAlert} label="Admin Review" collapsed={rail} />}
 
         {account && (
           <>
-            <p className="mb-1 mt-5 truncate px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">
+            {rail ? (
+              <div className="mx-2 mb-1 mt-4 hidden border-t border-[var(--color-ink-100)] md:block" aria-hidden />
+            ) : null}
+            <p className={cn('mb-1 mt-5 truncate px-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-ink-400)]', rail && 'md:sr-only')}>
               {account.namedInsured}
             </p>
             {steps.map((step) => {
               const Icon = NAV_ICONS[step.key as keyof typeof NAV_ICONS];
-              const link = (
-                <NavLink
-                  key={step.key}
-                  to={step.path}
-                  end={step.hub}
-                  className={({ isActive }) =>
-                    cn(
-                      navItemClass,
-                      isActive
-                        ? 'border-[var(--color-brand-700)] bg-[var(--color-brand-800)]/6 text-[var(--color-brand-800)]'
-                        : 'text-[var(--color-ink-600)] hover:bg-[var(--color-ink-50)]'
-                    )
-                  }
-                >
-                  <Icon size={17} />
-                  <span className="flex-1">{step.label}</span>
-                  {!step.hub && <StepStatusDot status={step.status} />}
-                </NavLink>
-              );
+              const link = <NavItem key={step.key} to={step.path} end={step.hub} icon={Icon} label={step.label} collapsed={rail} extra={!step.hub ? <StepStatusDot status={step.status} /> : undefined} />;
               // The account home, then a divider, then the workflow steps.
               return step.hub ? (
                 <div key={step.key}>
@@ -297,7 +197,6 @@ export function Sidebar({ mobileOpen = false, onNavigate }: { mobileOpen?: boole
           </>
         )}
       </nav>
-
     </aside>
   );
 }
