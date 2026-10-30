@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { RelatedEmailsCard } from '../components/workspace/RelatedEmailsCard';
 import { relatedEmailsShownFor } from '../services/relatedEmails/relatedEmails';
 import { dayKey, trackEvent } from '../services/productAnalytics/trackEvent';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Building2, ClipboardList, Clock, FilePlus2, FileText } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { AccountNotFound } from '../components/layout/AccountNotFound';
@@ -45,6 +45,7 @@ const TABS: WorkspaceTab[] = ['overview', 'checklist', 'quotes', 'notes', 'activ
  */
 export function AccountWorkspacePage() {
   const { accountId = '' } = useParams();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tabParam = params.get('tab') as WorkspaceTab | null;
   const tab: WorkspaceTab = tabParam && TABS.includes(tabParam) ? tabParam : 'overview';
@@ -133,9 +134,14 @@ export function AccountWorkspacePage() {
               <CardBody className="pt-5">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Action required</h3>
-                  <Button size="sm" variant="secondary" icon={<FilePlus2 size={14} />} onClick={() => setAddingDocs(true)}>
-                    Add missing documents
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" icon={<FileText size={14} />} onClick={() => navigate(`/accounts/${accountId}/upload`)} data-testid="generate-application">
+                      Generate Application
+                    </Button>
+                    <Button size="sm" variant="secondary" icon={<FilePlus2 size={14} />} onClick={() => setAddingDocs(true)}>
+                      Add missing documents
+                    </Button>
+                  </div>
                 </div>
                 <ActionList actions={actions.now} emptyText="Nothing needs you right now — every follow-up is scheduled and nothing is waiting to be sent." />
                 {actions.upcoming.length > 0 && (
