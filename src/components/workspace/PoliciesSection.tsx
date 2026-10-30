@@ -800,7 +800,7 @@ export function EntryForm({
             </div>
           )}
           {kind === 'policy' && (
-            <div className="sm:col-span-2" data-testid="policy-referral">
+            <div data-testid="policy-referral">
               <label className={labelClass} htmlFor="policy-referral">
                 Referral partner {asksReferral && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 && <Required />}
               </label>
