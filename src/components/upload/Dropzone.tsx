@@ -51,7 +51,7 @@ export function Dropzone({ onFiles, allowLinkPaste = true }: { onFiles: (files: 
       </div>
       <div>
         <p className="text-sm font-medium text-[var(--color-ink-800)]">
-          Upload submission documents, spreadsheets, PDFs, or photos, or{' '}
+          Upload application documents, spreadsheets, PDFs, or photos, or{' '}
           <span className="text-[var(--color-brand-700)] underline underline-offset-2">browse</span>
         </p>
         <p className="mt-1 text-xs text-[var(--color-ink-500)]">PDF, DOCX, XLSX/XLS, CSV, TXT, JPG, PNG, WEBP — questionnaires, loss runs, vehicle &amp; driver schedules, or photos of any of those</p>
