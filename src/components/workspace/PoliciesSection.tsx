@@ -570,7 +570,7 @@ export function EntryForm({
   const [referralOther, setReferralOther] = useState<OtherReferral | null>(null);
   const others = useOtherReferrals();
   const asksReferral = kind === 'policy' && !account?.referralSource;
-  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined) : undefined;
+  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined, { boundDate: f.boundDate || undefined, referral: asksReferral ? referralChoice : undefined, other: referralOther }) : undefined;
   const live = (v: string) => {
     const c = parseMoneyCents(v);
     return c === null || Number.isNaN(c) ? 0 : c;

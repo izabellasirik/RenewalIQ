@@ -356,6 +356,26 @@ export function presetRange(preset: DatePreset, today: Date = new Date()): { fro
 }
 
 /**
+ * The client's very first policy (0083: the referral partner is paid on it only), ordered as the database does:
+ * by bound date (none last), then when it was added, then id. `candidate`: the policy being entered or edited
+ * (id null: a new one), with the bound date typed in the form.
+ */
+export function isFirstPolicy(policies: Pick<PolicyRecord, 'id' | 'boundDate' | 'createdAt'>[], candidate: { id: string | null; boundDate?: string }): boolean {
+  const id = candidate.id ?? '\uffff';
+  const mine = policies.find((p) => p.id === candidate.id);
+  const all = [...policies.filter((p) => p.id !== candidate.id), { id, boundDate: candidate.boundDate ?? mine?.boundDate ?? '', createdAt: mine?.createdAt ?? new Date().toISOString() }];
+  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  all.sort((a, b) => (!a.boundDate !== !b.boundDate ? (a.boundDate ? -1 : 1) : cmp(a.boundDate, b.boundDate) || cmp(a.createdAt ?? '', b.createdAt ?? '') || cmp(a.id, b.id)));
+  return all[0]?.id === id;
+}
+
+/** What the referral partner takes off a broker fee (never more than the fee), and the part the fee didn't cover. */
+export function referralPartnerSplit(feeCents: number, partnerCents: number): { partnerCents: number; shortfallCents: number } {
+  const p = Math.max(0, partnerCents);
+  return { partnerCents: Math.min(p, Math.max(0, feeCents)), shortfallCents: Math.max(0, p - Math.max(0, feeCents)) };
+}
+
+/**
  * The agent's share of a broker fee (0081): a fixed amount (never more than the fee) or a % of it. The
  * database works out the exact split, which first takes the partner's amount off the client's first broker fee.
  */
