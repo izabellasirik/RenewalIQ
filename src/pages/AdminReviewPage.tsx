@@ -14,6 +14,7 @@ import { reloadOtherReferrals } from '../hooks/useOtherReferrals';
 import { reloadReferralSources } from '../hooks/useReferralSources';
 import { reloadBrokerFeeShares } from '../hooks/useBrokerFeeShare';
 import { centsInput, parseMoneyCents } from '../services/workflow/policies';
+import { useOnDataRefresh } from '../services/appFreshness';
 
 const day = (iso: string | null | undefined) => (iso ? formatShortDate(toLocalDateKey(new Date(iso))) : '—');
 
@@ -42,6 +43,9 @@ export function AdminReviewPage() {
   useEffect(() => {
     if (isAdmin) void load();
   }, [isAdmin, load]);
+  useOnDataRefresh(() => {
+    if (isAdmin) void load();
+  });
   useEffect(() => {
     if (focus && items) document.getElementById(`review-${focus}`)?.scrollIntoView({ block: 'center' });
   }, [focus, items]);

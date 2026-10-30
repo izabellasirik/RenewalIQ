@@ -1,3 +1,4 @@
+import { commitOnBlurOutside, keepFocus } from '../riskProfile/FieldRow';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { BadgeDollarSign, Building2, ChevronDown, ChevronRight, FileQuestion, Pencil, Plus, Send, ShieldCheck, StickyNote, Trash2, XCircle } from 'lucide-react';
 import type { MarketQuote, MissingItem, MissingItemType, QuoteNote, QuoteStatus } from '../../types';
@@ -766,9 +767,14 @@ function QuoteNoteRow({ accountId, quoteId, note }: { accountId: string; quoteId
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(note.text);
   if (editing) {
+    const save = () => {
+      if (text.trim() && text !== note.text) updateQuoteNote(accountId, quoteId, note.id, text);
+      setEditing(false);
+    };
     return (
       <li>
         <form
+          onBlur={commitOnBlurOutside(save)}
           onSubmit={(e) => {
             e.preventDefault();
             updateQuoteNote(accountId, quoteId, note.id, text);
@@ -778,7 +784,7 @@ function QuoteNoteRow({ accountId, quoteId, note }: { accountId: string; quoteId
         >
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} className={inputClass} aria-label="Edit note" autoFocus />
           <div className="flex justify-end gap-2">
-            <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
+            <Button type="button" size="sm" variant="ghost" onMouseDown={keepFocus} onClick={() => setEditing(false)}>
               Cancel
             </Button>
             <Button type="submit" size="sm" disabled={!text.trim()}>

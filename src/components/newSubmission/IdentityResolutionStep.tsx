@@ -1,3 +1,4 @@
+import { commitOnBlurOutside } from '../riskProfile/FieldRow';
 import { useState } from 'react';
 import { CircleCheck, TriangleAlert, CircleHelp } from 'lucide-react';
 import type { FieldValue } from '../../types';
@@ -115,7 +116,7 @@ function IdentityField({
           {inputKind === 'state' ? 'Select state manually' : 'Enter manually'}
         </button>
       ) : (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex items-center gap-2" onBlur={commitOnBlurOutside(submitManual)}>
           {inputKind === 'state' ? (
             <select
               autoFocus

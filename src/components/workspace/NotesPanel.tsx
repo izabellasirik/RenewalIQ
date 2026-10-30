@@ -1,3 +1,4 @@
+import { commitOnBlurOutside, keepFocus } from '../riskProfile/FieldRow';
 import { useState, type FormEvent } from 'react';
 import { Pencil, StickyNote } from 'lucide-react';
 import type { AccountNote } from '../../types';
@@ -70,7 +71,7 @@ function NoteRow({ accountId, note }: { accountId: string; note: AccountNote }) 
   const [text, setText] = useState(note.text);
 
   function save() {
-    if (text.trim()) updateAccountNote(accountId, note.id, text);
+    if (text.trim() && text !== note.text) updateAccountNote(accountId, note.id, text);
     setEditing(false);
   }
 
@@ -101,10 +102,10 @@ function NoteRow({ accountId, note }: { accountId: string; note: AccountNote }) 
         )}
       </div>
       {editing ? (
-        <div className="mt-1.5 flex flex-col gap-2">
+        <div className="mt-1.5 flex flex-col gap-2" onBlur={commitOnBlurOutside(save)}>
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} autoFocus className={inputClass} aria-label="Edit note" />
           <div className="flex justify-end gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+            <Button size="sm" variant="ghost" onMouseDown={keepFocus} onClick={() => setEditing(false)}>
               Cancel
             </Button>
             <Button size="sm" onClick={save} disabled={!text.trim()}>

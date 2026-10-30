@@ -6,6 +6,8 @@ import { TopBar } from './TopBar';
 import { FeedbackWidget } from '../feedback/FeedbackWidget';
 import { TimeSavedPrompt } from '../productAnalytics/TimeSavedPrompt';
 import { readSidebarCollapsed, writeSidebarCollapsed } from './sidebarPreference';
+import { UpdateBar } from './UpdateBar';
+import { nothingSaving, useBackgroundRefresh, useNewVersionAvailable } from '../../services/appFreshness';
 
 export function AppShell() {
   const location = useLocation();
@@ -19,15 +21,26 @@ export function AppShell() {
       return !v;
     });
 
+  useBackgroundRefresh();
+  const updateAvailable = useNewVersionAvailable();
+  const firstPath = useRef(location.pathname);
+
   useEffect(() => {
     mainRef.current?.scrollTo(0, 0);
   }, [location.pathname]);
+
+  // A newer version is out: moving to another page is a safe moment to load it, unless something is still saving.
+  useEffect(() => {
+    if (updateAvailable && location.pathname !== firstPath.current && nothingSaving()) window.location.reload();
+    firstPath.current = location.pathname;
+  }, [location.pathname, updateAvailable]);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--color-ink-50)]">
       <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
       {mobileNavOpen && <div className="fixed inset-0 z-30 bg-[var(--color-ink-950)]/30 md:hidden" onClick={() => setMobileNavOpen(false)} />}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {updateAvailable && <UpdateBar />}
         <TopBar onOpenNav={() => setMobileNavOpen(true)} />
         <main ref={mainRef} className="flex-1 overflow-y-auto scrollbar-thin [overflow-anchor:none]">
           {/* No AnimatePresence/mode="wait" here: combined with StrictMode it caused a delayed phantom

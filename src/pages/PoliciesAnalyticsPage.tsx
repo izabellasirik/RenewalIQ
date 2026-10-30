@@ -22,6 +22,8 @@ import { formatDateWithYear, formatShortDate, toLocalDateKey, todayKey } from '.
 import { useBrokerFeeSplits } from '../hooks/useBrokerFeeShare';
 import { fetchAgentPayments, recordAgentPayments, undoAgentPayment, type AgentPayment, type PaymentItem } from '../services/supabase/agentPaymentsRepo';
 import { addedLate, payStatus, type PayStatus } from '../services/finance/agentPay';
+import { commitOnBlurOutside, keepFocus } from '../components/riskProfile/FieldRow';
+import { useOnDataRefresh } from '../services/appFreshness';
 import {
   DATE_PRESET_LABELS,
   POLICY_DATE_LABELS,
@@ -151,6 +153,7 @@ function PoliciesPanel() {
     if (agencyAccess) void fetchAgentPayments().then((r) => setPayments(r.ok ? r.data : null));
   };
   useEffect(loadPayments, [agencyAccess?.agencyId]);
+  useOnDataRefresh(loadPayments);
   const paymentsByRow = useMemo(() => {
     const m = new Map<string, AgentPayment[]>();
     for (const p of payments ?? []) m.set(`${p.accountId}|${p.rowKey}`, [...(m.get(`${p.accountId}|${p.rowKey}`) ?? []), p]);
@@ -206,6 +209,7 @@ function PoliciesPanel() {
     if (agencyAccess) void fetchEnteredCarrierRates().then((r) => r.ok && setEntered(r.data));
   };
   useEffect(loadEntered, [agencyAccess?.agencyId]);
+  useOnDataRefresh(loadEntered);
   const enteredOf = (r: PolicyRow) => entered.get(`${r.accountId}|${r.policy.id}`);
   const records = useMemo(() => {
     // carrierRate / carrierCents null: recorded without a carrier % (not set yet).
@@ -703,11 +707,11 @@ function DescriptionCell({ text, canEdit, label, onSave }: { text: string; canEd
     );
   }
   const save = () => {
-    onSave(draft);
+    if (draft.trim() !== text.trim()) onSave(draft);
     setDraft(null);
   };
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5" onBlur={commitOnBlurOutside(save)}>
       <textarea
         className={`${inputClass} min-h-[60px] text-xs`}
         value={draft}
@@ -725,7 +729,7 @@ function DescriptionCell({ text, canEdit, label, onSave }: { text: string; canEd
       />
       <div className="flex gap-1.5">
         <Button size="sm" onClick={save}>Save</Button>
-        <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
+        <Button size="sm" variant="ghost" onMouseDown={keepFocus} onClick={() => setDraft(null)}>Cancel</Button>
       </div>
     </div>
   );

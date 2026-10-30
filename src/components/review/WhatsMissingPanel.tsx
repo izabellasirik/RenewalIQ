@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, CircleAlert, FileWarning, TriangleAlert, CircleHelp, Pencil, Check, X, ArrowRight } from 'lucide-react';
 import { Drawer, Badge, ProgressBar, type BadgeTone } from '../ui';
 import { isSubmissionComplete, type CompletenessItem, type SubmissionCompleteness } from '../../services/application';
-import { ValueInput, parseDraft, isValidDraft, singleLineEditKeyDown } from '../riskProfile/FieldRow';
+import { ValueInput, parseDraft, isValidDraft, singleLineEditKeyDown, commitOnBlurOutside, keepFocus } from '../riskProfile/FieldRow';
 import { fieldPathValueType } from '../../utils/fieldLabels';
 import { parseRiskProfilePath } from '../../utils/riskProfilePath';
 import { normalizeCurrencyText } from '../../utils/currency';
@@ -86,7 +86,7 @@ function EditableItem({ item, onGo, onUpdateField, onUpdateCoverage }: { item: C
           )}
           {!isEditing && item.detail && <p className="mt-0.5 text-xs text-[var(--color-ink-500)]">{item.detail}</p>}
           {isEditing && (
-            <div className="mt-1.5">
+            <div className="mt-1.5" onBlur={commitOnBlurOutside(commit)}>
               <ValueInput valueType={valueType} value={draft} onChange={setDraft} autoFocus onKeyDown={singleLineEditKeyDown(commit, cancelEdit)} />
             </div>
           )}
@@ -105,7 +105,7 @@ function EditableItem({ item, onGo, onUpdateField, onUpdateCoverage }: { item: C
               <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
                 <Check size={13} />
               </button>
-              <button onClick={cancelEdit} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+              <button onMouseDown={keepFocus} onClick={cancelEdit} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
                 <X size={13} />
               </button>
             </div>

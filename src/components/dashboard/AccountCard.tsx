@@ -15,6 +15,7 @@ import { StageBadge } from '../workspace/StageBadge';
 import { RenewalBadge } from '../renewals/RenewalLabel';
 import { agentLabel } from '../../services/agency/agentLabel';
 import { NotesSummary } from './NotesSummary';
+import { commitOnBlurOutside, keepFocus } from '../riskProfile/FieldRow';
 
 /** `archivedAt`: in the archived view, when it was archived (shown on the card). */
 export function AccountCard({ account, index, onOpenHistory, archivedAt }: { account: Account; index: number; onOpenHistory: () => void; archivedAt?: string }) {
@@ -54,7 +55,7 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
 
   function commitRename() {
     const trimmed = draftName.trim();
-    if (trimmed) renameAccount(account.id, trimmed);
+    if (trimmed && trimmed !== account.namedInsured) renameAccount(account.id, trimmed);
     setIsRenaming(false);
   }
 
@@ -132,7 +133,7 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               {isRenaming ? (
-                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onBlur={commitOnBlurOutside(commitRename)}>
                   <input
                     autoFocus
                     value={draftName}
@@ -143,7 +144,7 @@ export function AccountCard({ account, index, onOpenHistory, archivedAt }: { acc
                   <button onClick={commitRename} className="shrink-0 rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
                     <Check size={13} />
                   </button>
-                  <button onClick={() => setIsRenaming(false)} className="shrink-0 rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+                  <button onMouseDown={keepFocus} onClick={() => setIsRenaming(false)} className="shrink-0 rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
                     <X size={13} />
                   </button>
                 </div>

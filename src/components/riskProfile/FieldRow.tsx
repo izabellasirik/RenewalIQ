@@ -127,6 +127,22 @@ export function singleLineEditKeyDown(commit: () => void, cancel: () => void) {
   };
 }
 
+/**
+ * Clicking away from an inline editor saves it, the same as Enter: put it on the editor's wrapper. Moving between
+ * the editor's own boxes and buttons doesn't count as leaving; its Cancel button uses `keepFocus` so cancelling
+ * never saves first (Safari doesn't move focus to a clicked button).
+ */
+export function commitOnBlurOutside(commit: () => void) {
+  return (e: React.FocusEvent<HTMLElement>) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && e.currentTarget.contains(next)) return;
+    commit();
+  };
+}
+
+/** On an editor's Cancel button: the click doesn't take focus away first, so it cancels instead of saving. */
+export const keepFocus = (e: React.MouseEvent) => e.preventDefault();
+
 /** Cmd/Ctrl+Enter commits a multiline field; plain Enter stays a normal newline; Escape cancels. */
 export function multilineEditKeyDown(commit: () => void, cancel: () => void) {
   return (e: React.KeyboardEvent) => {
@@ -266,7 +282,13 @@ function ConflictResolver<T>({
           Enter a different value manually
         </button>
       ) : (
-        <div className="flex items-center gap-2">
+        <div
+          className="flex items-center gap-2"
+          onBlur={commitOnBlurOutside(() => {
+            if (!isValidDraft(valueType, manualDraft) || !manualDraft.trim()) return;
+            choose({ type: 'manual', value: parseDraft(valueType, manualDraft) as T });
+          })}
+        >
           <ValueInput
             valueType={valueType}
             value={manualDraft}
@@ -357,7 +379,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
               {!field.isMissing && details && <span className="min-w-0 text-sm text-[var(--color-ink-700)] [overflow-wrap:anywhere]" data-testid="field-details">{details}</span>}
             </div>
           ) : (
-            <div className="mt-1.5 flex items-center gap-2">
+            <div className="mt-1.5 flex items-center gap-2" onBlur={commitOnBlurOutside(commit)}>
               {valueType === 'textarea' ? (
                 <textarea
                   autoFocus
@@ -383,7 +405,7 @@ export function FieldRow<T>({ label, field, valueType, onSave, onResolve, readOn
               <button onClick={commit} className="rounded-md bg-[var(--color-brand-800)] p-1.5 text-white cursor-pointer" aria-label="Save">
                 <Check size={14} />
               </button>
-              <button onClick={cancelEdit} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
+              <button onMouseDown={keepFocus} onClick={cancelEdit} className="rounded-md bg-[var(--color-ink-100)] p-1.5 text-[var(--color-ink-500)] cursor-pointer" aria-label="Cancel">
                 <X size={14} />
               </button>
             </div>
