@@ -214,24 +214,14 @@ function OtherReferralItem({ item, focused, onDone }: { item: AdminReviewItem; f
     <Card>
       <CardBody className={cn('flex flex-col gap-3 pt-4', focused && 'rounded-xl ring-2 ring-[var(--color-brand-500)]/40')} id={`review-${item.id}`} data-testid="review-other">
         <p className="text-sm text-[var(--color-ink-700)]">
-          <span className="font-medium text-[var(--color-ink-900)]">{item.createdByName ?? 'An agent'}</span> chose <span className="font-medium text-[var(--color-ink-900)]">Other</span> as the referral partner for{' '}
-          <button type="button" onClick={() => navigate(`/accounts/${item.account.id}`)} className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline">
+          <button type="button" onClick={() => navigate(`/accounts/${item.account.id}`)} className="cursor-pointer font-semibold text-[var(--color-brand-700)] hover:underline">
             {item.account.name}
-          </button>{' '}
-          on {day(item.createdAt)}.
+          </button>
+          <span className="text-[var(--color-ink-500)]"> · {item.createdByName ?? 'An agent'} · {day(item.createdAt)}</span>
         </p>
-        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-lg border border-[var(--color-ink-100)] bg-[var(--color-ink-50)]/60 px-3 py-2.5 text-sm">
-          <span>
-            <span className="text-[var(--color-ink-500)]">Partner: </span>
-            <span className="font-semibold text-[var(--color-ink-900)]">{now.name}</span>
-          </span>
-          <span>
-            <span className="text-[var(--color-ink-500)]">Amount: </span>
-            <span className="font-semibold tabular-nums text-[var(--color-ink-900)]">{formatCents(now.partnerFeeCents)}</span>
-            <span className="text-[var(--color-ink-500)]"> per client, from the first broker fee</span>
-          </span>
-          <span className="text-xs text-[var(--color-ink-500)]">Already counted in the broker fee split.</span>
-        </div>
+        <p className="text-sm text-[var(--color-ink-700)]">
+          Other partner: <span className="font-semibold text-[var(--color-ink-900)]">{now.name}</span> · <span className="font-semibold tabular-nums text-[var(--color-ink-900)]">{formatCents(now.partnerFeeCents)}</span>
+        </p>
 
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-xs font-medium text-[var(--color-ink-600)]" htmlFor={`fee-${item.id}`}>
@@ -240,7 +230,7 @@ function OtherReferralItem({ item, focused, onDone }: { item: AdminReviewItem; f
           </label>
           {needsShare && (
             <div className="flex flex-col gap-1 text-xs font-medium text-[var(--color-ink-600)]">
-              {item.account.agent || 'The agent'}’s broker fee share (not set yet)
+              {item.account.agent || 'Agent'}’s broker fee share
               <span className="flex gap-1">
                 <select value={share.mode} onChange={(e) => setShare({ mode: e.target.value as 'amount' | 'percent', value: '' })} className={cn(field, 'w-16 px-2')} aria-label="Share type">
                   <option value="amount">$</option>
@@ -254,22 +244,19 @@ function OtherReferralItem({ item, focused, onDone }: { item: AdminReviewItem; f
             {changed ? (
               <Button onClick={() => void decide('change')} disabled={!!busy}>{busy === 'change' ? 'Saving…' : 'Change amount'}</Button>
             ) : (
-              <Button onClick={() => void decide('ok')} disabled={!!busy}>{busy === 'ok' ? 'Saving…' : 'OK'}</Button>
+              <Button onClick={() => void decide('ok')} disabled={!!busy}>{busy === 'ok' ? 'Saving…' : 'Confirm'}</Button>
             )}
             <Button variant="secondary" onClick={() => void decide('add')} disabled={!!busy}>{busy === 'add' ? 'Adding…' : 'Add to partner list'}</Button>
             <Button variant="secondary" onClick={() => void decide('reject')} disabled={!!busy}>{busy === 'reject' ? 'Rejecting…' : 'Reject'}</Button>
           </div>
         </div>
-        <p className="text-xs text-[var(--color-ink-500)]">
-          <strong className="font-medium">OK</strong> keeps it as is. <strong className="font-medium">Add to partner list</strong> makes it a partner agents can pick next time (Team and Partners → Partnerships), at this amount. <strong className="font-medium">Reject</strong> sets the client’s referral back to “not set” and tells the agent to choose again.
-        </p>
         {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
       </CardBody>
     </Card>
   );
 }
 
-const DECIDED_WORDS: Record<string, string> = { archived_new: 'archived', kept_both: 'kept both', ok: 'OK', changed: 'amount changed', added: 'added to the partner list', rejected: 'rejected' };
+const DECIDED_WORDS: Record<string, string> = { archived_new: 'archived', kept_both: 'kept both', ok: 'confirmed', changed: 'amount changed', added: 'added to partners', rejected: 'rejected' };
 
 function UndoItem({ c, onDone }: { c: PolicyCancellation; onDone: () => void }) {
   const accounts = useAccountsStore((s) => s.accounts);

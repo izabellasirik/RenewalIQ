@@ -98,8 +98,8 @@ begin
   select nullif(btrim(s.named_insured), '') into client from public.submissions s where s.id = p_submission_id;
   insert into public.notifications (user_id, type, submission_id, message, actor_name, review_item_id)
   select p.user_id, 'admin_review', case when owner_agency is null then null else p_submission_id end,
-         format('%s chose Other as the referral partner%s: %s, $%s per client. Check it in Admin Review.', coalesce(who, 'An agent'),
-                case when client is null then '' else ' for ' || client end, nm, to_char(p_partner_fee_cents / 100.0, 'FM999,999,990.00')),
+         format('%s added Other partner %s ($%s)%s.', coalesce(who, 'An agent'), nm, to_char(p_partner_fee_cents / 100.0, 'FM999,999,990.00'),
+                case when client is null then '' else ' for ' || client end),
          who, item
     from public.profiles p where p.agency_id = a and p.role = 'admin';
 end $$;
@@ -133,7 +133,7 @@ begin
     if p_partner_fee_cents is null then raise exception 'Enter the new amount.' using errcode = '22023'; end if;
     update public.account_other_referrals set partner_fee_cents = p_partner_fee_cents, set_by = auth.uid(), set_at = now() where submission_id = o.submission_id;
     result := 'changed';
-    msg := format('The referral partner amount for %s (%s) was changed to $%s.', coalesce((select named_insured from public.submissions where id = i.submission_id), 'the account'), o.name, to_char(p_partner_fee_cents / 100.0, 'FM999,999,990.00'));
+    msg := format('%s amount changed to $%s (%s).', o.name, to_char(p_partner_fee_cents / 100.0, 'FM999,999,990.00'), coalesce((select named_insured from public.submissions where id = i.submission_id), 'the account'));
   elsif p_action = 'add' then
     select r.id into rid from public.referral_sources r where r.agency_id = i.agency_id and lower(btrim(r.name)) = lower(btrim(o.name));
     if rid is null then
@@ -142,12 +142,12 @@ begin
     update public.submissions set referral_source = rid::text where id = i.submission_id and organization_id = i.agency_id and referral_source = 'other';
     delete from public.account_other_referrals where submission_id = o.submission_id;
     result := 'added';
-    msg := format('%s was added to the agency''s referral partners.', o.name);
+    msg := format('%s added to referral partners.', o.name);
   elsif p_action = 'reject' then
     update public.submissions set referral_source = null where id = i.submission_id and organization_id = i.agency_id and referral_source = 'other';
     delete from public.account_other_referrals where submission_id = i.submission_id;
     result := 'rejected';
-    msg := format('The referral partner %s for %s wasn''t accepted. Choose the client''s referral partner again.', coalesce(o.name, i.detail ->> 'name'),
+    msg := format('%s rejected for %s. Choose another referral partner.', coalesce(o.name, i.detail ->> 'name'),
                   coalesce((select named_insured from public.submissions where id = i.submission_id), 'the account'));
   else
     raise exception 'Choose ok, change, add or reject.' using errcode = '22023';

@@ -790,7 +790,6 @@ export function EntryForm({
             <div>
               <label className={labelClass} htmlFor="policy-broker-fee">Broker fee ($)</label>
               <input id="policy-broker-fee" inputMode="decimal" className={inputClass} value={f.brokerFee ?? ''} onChange={(e) => set('brokerFee', e.target.value)} placeholder="0.00" />
-              <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">Split: partner (client’s first policy only) → agent → agency.</p>
             </div>
           )}
           {kind === 'policy' && (

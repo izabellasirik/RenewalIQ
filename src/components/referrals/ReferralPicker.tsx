@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useReferralSources } from '../../hooks/useReferralSources';
 import { NO_REFERRAL, OTHER_REFERRAL, type OtherReferral } from '../../services/supabase/partnersRepo';
-import { useAccountsStore } from '../../state/useAccountsStore';
 import { centsInput, formatCents, parseMoneyCents } from '../../services/workflow/policies';
 import { cn } from '../../utils/cn';
 
@@ -41,7 +40,6 @@ export function ReferralPicker({
   ariaLabel?: string;
 }) {
   const sources = useReferralSources();
-  const isAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   const shown = sources.filter((s) => s.active || s.id === value);
   const [typing, setTyping] = useState(false);
   const [name, setName] = useState('');
@@ -118,10 +116,6 @@ export function ReferralPicker({
             Cancel
           </button>
         </div>
-        <p className="text-xs text-[var(--color-ink-500)]">
-          For this client only. The amount comes off the client’s first broker fee; the rest is split between the agent and the agency.
-          {!isAdmin && ' Your admins are notified and can check it in Admin Review.'}
-        </p>
         {error && <p className="text-xs text-[var(--color-danger-600)]">{error}</p>}
       </div>
     );

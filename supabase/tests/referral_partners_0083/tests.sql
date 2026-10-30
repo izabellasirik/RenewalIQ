@@ -49,7 +49,7 @@ select pg_temp.check('O5 nor decide on it', pg_temp.refused($$select public.reso
 reset role;
 select pg_temp.check('O6 one Admin Review item for the account, and every admin notified',
   (select count(*) = 1 from public.admin_review_items where kind = 'other_referral' and status = 'open' and submission_id = 'ro_a' and detail ->> 'name' = 'Lone Star Referrals')
-  and (select count(*) >= 1 from public.notifications n join public.admin_review_items i on i.id = n.review_item_id where i.kind = 'other_referral' and n.user_id = '00000000-0000-0000-0000-00000000000d' and n.message like '%Lone Star Referrals, $50.00%'));
+  and (select count(*) >= 1 from public.notifications n join public.admin_review_items i on i.id = n.review_item_id where i.kind = 'other_referral' and n.user_id = '00000000-0000-0000-0000-00000000000d' and n.message like '% added Other partner Lone Star Referrals ($50.00) for Other Client A (sample).'));
 select id as item_a from public.admin_review_items where kind = 'other_referral' and submission_id = 'ro_a' \gset
 set local role authenticated;
 
@@ -68,7 +68,7 @@ select public.resolve_other_referral(:'item_a', 'change', 4000) \g /dev/null
 select pg_temp.check('O9 changed to $40: the split follows', (select agent_cents = 13000 from public.broker_fee_splits(null, null) where policy_id = 'a1') and (select partner_cents = 4000 from public.broker_fee_splits(null, null) where policy_id = 'a1'));
 select pg_temp.check('O10 decided once only', pg_temp.refused(format($$select public.resolve_other_referral(%L::uuid, 'ok')$$, :'item_a')));
 reset role;
-select pg_temp.check('O11 the agent was told about the change', (select count(*) = 1 from public.notifications where user_id = '00000000-0000-0000-0000-00000000000a' and type = 'referral_update' and message like '%changed to $40.00%'));
+select pg_temp.check('O11 the agent was told about the change', (select count(*) = 1 from public.notifications where user_id = '00000000-0000-0000-0000-00000000000a' and type = 'referral_update' and message = 'Lone Star Referrals amount changed to $40.00 (Other Client A (sample)).'));
 set local role authenticated;
 
 -- 4. The broker fee is less than the partner's amount: the partner gets it all, the rest from the agent commission.
@@ -92,7 +92,7 @@ select pg_temp.check('O14 added: Pal Freight is a listed partner at $50 and the 
 select public.resolve_other_referral((select id from public.admin_review_items() where kind = 'other_referral' and status = 'open' and submission_id = 'ro_c'), 'reject') \g /dev/null
 select pg_temp.check('O15 rejected: the client''s referral is not set again', (select referral_source is null from public.submissions where id = 'ro_c') and (select count(*) = 0 from public.account_other_referrals where submission_id = 'ro_c'));
 reset role;
-select pg_temp.check('O16 the agent was told to choose again', (select count(*) = 1 from public.notifications where user_id = '00000000-0000-0000-0000-00000000000a' and type = 'referral_update' and message like '%Choose the client''s referral partner again%'));
+select pg_temp.check('O16 the agent was told to choose again', (select count(*) = 1 from public.notifications where user_id = '00000000-0000-0000-0000-00000000000a' and type = 'referral_update' and message like '%Choose another referral partner.'));
 set local role authenticated;
 
 -- 7. An admin's own Other doesn't go to review; New Submission's not-yet-saved account is accepted.
