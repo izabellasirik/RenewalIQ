@@ -9,6 +9,9 @@
 --     reject   — its accounts go back to "Referral: not set".
 --   The agent who added it is notified (bell) of the decision.
 -- * Until it's approved, broker fee splits for that client show no partner, agent or agency amounts (pending).
+-- * The partner is paid once per client, and only on the client's VERY FIRST policy (by bound date): when that
+--   policy has no broker fee, the partner gets nothing for that client. (0081 paid on the first policy that had a
+--   broker fee.) The agent and the agency split every broker fee.
 -- Additive; replaces referral_source_names, broker_fee_splits and admin_review_items with versions that return one
 -- more column each. Re-runnable. Rollback: supabase/release/rollback_0083.sql.
 
@@ -198,15 +201,16 @@ as $$
        and coalesce(e.entry ->> 'kind', 'policy') = 'policy' and e.entry ->> 'removedAt' is null
   ),
   ranked as (
-    -- The partner is paid once per client: on the client's first policy with a broker fee.
+    -- The partner is paid once per client, on the client's very first policy only (none if it had no broker fee).
     select f.*, row_number() over (partition by f.sid order by f.bound nulls last, f.entry ->> 'createdAt', f.entry ->> 'id') as nth
-      from fees f where coalesce(f.fee, 0) > 0
+      from fees f
   ),
   split as (
     select r.*, src.name as src_name, coalesce(src.status = 'pending', false) as pending,
            case when r.nth = 1 and src.active is not null then least(coalesce(src.partner_fee_cents, 0), r.fee) else 0 end as partner
       from ranked r
       left join public.referral_sources src on src.id::text = r.referral_source
+     where coalesce(r.fee, 0) > 0
   ),
   shared as (
     select sp.*,

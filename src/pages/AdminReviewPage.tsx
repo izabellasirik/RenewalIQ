@@ -252,7 +252,7 @@ function PartnerItem({ item, focused, onDone }: { item: AdminReviewItem; focused
             })}
             <Button onClick={() => void decide('approve')} disabled={!!busy}>{busy === 'approve' ? 'Approving…' : 'Approve'}</Button>
           </div>
-          <p className="text-xs text-[var(--color-ink-500)]">The partner is paid this amount once per client, from the broker fee. Leave it blank if they get nothing.</p>
+          <p className="text-xs text-[var(--color-ink-500)]">The partner is paid this amount once per client, from the broker fee on the client’s first policy. Leave it blank if they get nothing.</p>
         </div>
 
         {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}

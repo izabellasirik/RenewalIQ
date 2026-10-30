@@ -92,6 +92,19 @@ reset role;
 select pg_temp.check('R16 the agent was told to pick again', (select count(*) = 1 from public.notifications where user_id = '00000000-0000-0000-0000-00000000000a' and type = 'referral_update' and message like '%Choose the client''s referral partner again%'));
 set local role authenticated;
 
+-- 5b. The partner is paid only on the client's very first policy: none when that one had no broker fee.
+select pg_temp.as_user('') \g /dev/null
+reset role;
+insert into public.submissions (id, user_id, organization_id, named_insured, assigned_user_id, referral_source, market_quotes) values
+  ('rr_d', '00000000-0000-0000-0000-00000000000a', pg_temp.agency(), 'Referral Client D (sample)', '00000000-0000-0000-0000-00000000000a', (select v from out where k = 'pal'),
+   jsonb_build_array(jsonb_build_object('id', 'q', 'marketName', 'Sample Mutual', 'status', 'bound', 'policies', jsonb_build_array(pg_temp.pol('d1', '2026-08-01', 0), pg_temp.pol('d2', '2026-09-01', 30000), pg_temp.pol('d3', '2026-10-01', 20000)))));
+set local role authenticated;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d') \g /dev/null
+select pg_temp.check('R15b first policy had no broker fee: the partner gets nothing; agent and agency split every fee',
+  (select bool_and(partner_cents = 0) and count(*) = 2 and sum(agent_cents) = 25000 and sum(agency_cents) = 25000 from public.broker_fee_splits(null, null) where submission_id = 'rr_d'));
+select pg_temp.check('R15c a client whose first policy had a fee: the partner is paid on it, then never again',
+  (select partner_cents = 5000 from public.broker_fee_splits(null, null) where policy_id = 'p1'));
+
 -- 6. Another agency (…0c is an admin of another agency in the test data), and signed out.
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c') \g /dev/null
 insert into out select 'other_agency', public.request_referral_source('Other Agency Pal', null)::text;

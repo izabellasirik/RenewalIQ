@@ -77,7 +77,7 @@ export function BrokerFeesPanel({ admin }: { admin: boolean }) {
             <PeriodPicker period={period} />
           </div>
           <p className="mt-2 text-xs text-[var(--color-ink-500)]">
-            Broker fees on policies bound in this period. {admin ? 'A partner is paid once per client (on the client’s first policy with a broker fee); the agent gets their share of the rest; the agency keeps what’s left.' : 'Your share, as agreed with your agency.'}
+            Broker fees on policies bound in this period. {admin ? 'A partner is paid once per client, from the broker fee on the client’s first policy (nothing if that one had none); the agent gets their share of the rest; the agency keeps what’s left.' : 'Your share, as agreed with your agency.'}
           </p>
         </CardBody>
       </Card>
