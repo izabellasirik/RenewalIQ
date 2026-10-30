@@ -204,8 +204,8 @@ export function NewAccountPage() {
   function commitAccount(namedInsured: string, state: string, docs: DraftDoc[], profile: RiskProfile, files: File[]) {
     const id = createAccountFromExtraction(namedInsured, state, docs, profile, files, undefined, setupRef.current ? { setup: setupRef.current } : undefined);
     if (detailsRef.current) applyNewAccountDetails(id, detailsRef.current);
-    // Straight to the Risk Profile to review what was extracted.
-    navigate(`/accounts/${id}/risk-profile`);
+    // A new account opens on its Workspace.
+    navigate(`/accounts/${id}`);
   }
 
   // Files are read one after another from a queue; more can be added at any time (while others
@@ -395,7 +395,7 @@ export function NewAccountPage() {
     void guardedCreate({ name, ...(dot ? { dotNumber: dot } : {}) }, () => {
       const id = createAccount(name, stateInput, setup);
       applyNewAccountDetails(id, chosen);
-      navigate(`/accounts/${id}/upload`);
+      navigate(`/accounts/${id}`);
     });
   }
 
@@ -434,7 +434,7 @@ export function NewAccountPage() {
 
   function handleUseSample() {
     const id = ensureSampleAccount();
-    navigate(`/accounts/${id}/upload`);
+    navigate(`/accounts/${id}`);
   }
 
   const canContinue =
