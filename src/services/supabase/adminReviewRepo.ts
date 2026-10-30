@@ -15,28 +15,27 @@ export interface ReviewAccount {
   reasons: string[];
 }
 
-/** A referral partner an agent typed in under "Other" (0083), and the accounts that use it. */
-export interface PartnerRequest {
-  sourceId: string;
+/** An agent chose "Other" as a client's referral partner (0083): what they typed, and what's on the account now. */
+export interface OtherReferralReview {
   name: string;
-  requestedBy: string | null;
-  accounts: { id: string; name: string; agent: string; agentId: string | null }[];
-  /** Once decided: the partner it was merged into, and the agreed amount it was approved with. */
-  mergedInto: string | null;
-  partnerFeeCents: number | null;
+  partnerFeeCents: number;
+  /** On the account now (null once it was added to the list or rejected). */
+  current: { name: string; partnerFeeCents: number } | null;
+  /** Once decided: the amount it ended with. */
+  finalFeeCents: number | null;
 }
 
 export interface AdminReviewItem {
   id: string;
-  kind: 'possible_duplicate' | 'new_referral_partner';
+  kind: 'possible_duplicate' | 'other_referral';
   status: 'open' | 'resolved';
   createdAt: string;
   createdByName: string | null;
   account: ReviewAccount;
   related: ReviewAccount[];
-  resolution: 'kept_both' | 'archived_new' | 'approved' | 'merged' | 'rejected' | null;
-  /** new_referral_partner items only. */
-  partner?: PartnerRequest;
+  resolution: 'kept_both' | 'archived_new' | 'ok' | 'changed' | 'added' | 'rejected' | null;
+  /** other_referral items only. */
+  other?: OtherReferralReview;
   resolvedByName: string | null;
   resolvedAt: string | null;
 }
@@ -53,7 +52,7 @@ export async function fetchAdminReviewItems(): Promise<RepoResult<AdminReviewIte
       ok: true,
       data: ((data ?? []) as Record<string, unknown>[]).map((r) => ({
         id: String(r.id),
-        kind: r.kind === 'new_referral_partner' ? 'new_referral_partner' : 'possible_duplicate',
+        kind: r.kind === 'other_referral' ? 'other_referral' : 'possible_duplicate',
         status: r.status === 'resolved' ? 'resolved' : 'open',
         createdAt: String(r.created_at),
         createdByName: (r.created_by_name as string) ?? null,
@@ -69,7 +68,7 @@ export async function fetchAdminReviewItems(): Promise<RepoResult<AdminReviewIte
         resolution: (r.resolution as AdminReviewItem['resolution']) ?? null,
         resolvedByName: (r.resolved_by_name as string) ?? null,
         resolvedAt: (r.resolved_at as string) ?? null,
-        ...(r.kind === 'new_referral_partner' ? { partner: partnerFrom((r.detail as Record<string, unknown>) ?? {}) } : {}),
+        ...(r.kind === 'other_referral' ? { other: otherFrom((r.detail as Record<string, unknown>) ?? {}) } : {}),
       })),
     };
   } catch (err) {
@@ -77,14 +76,13 @@ export async function fetchAdminReviewItems(): Promise<RepoResult<AdminReviewIte
   }
 }
 
-function partnerFrom(d: Record<string, unknown>): PartnerRequest {
+function otherFrom(d: Record<string, unknown>): OtherReferralReview {
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
   return {
-    sourceId: String(d.source_id ?? ''),
     name: String(d.name ?? ''),
-    requestedBy: (d.requested_by as string) ?? null,
-    accounts: ((d.accounts as Record<string, unknown>[]) ?? []).map((a) => ({ id: String(a.id), name: String(a.name ?? ''), agent: String(a.agent ?? ''), agentId: (a.agentId as string) ?? null })),
-    mergedInto: (d.merged_into as string) ?? null,
-    partnerFeeCents: d.partner_fee_cents === null || d.partner_fee_cents === undefined ? null : Number(d.partner_fee_cents),
+    partnerFeeCents: Number(d.partner_fee_cents ?? 0),
+    current: d.current_name ? { name: String(d.current_name), partnerFeeCents: Number(d.current_fee_cents ?? 0) } : null,
+    finalFeeCents: n(d.final_fee_cents),
   };
 }
 

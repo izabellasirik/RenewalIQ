@@ -7,6 +7,8 @@ import type { RepoResult } from './commissionRepo';
  * each agent's broker fee share. broker_fee_splits returns an agent only their own policies and share.
  */
 export const NO_REFERRAL = 'none';
+/** The client's referral partner is one typed on the account ("Other", 0083), not one from the list. */
+export const OTHER_REFERRAL = 'other';
 export const MIGRATION_0081_MESSAGE = 'Partnerships and broker fees need database migration 0081_partners_broker_fees.sql.';
 const NOT_CONFIGURED = { ok: false as const, message: 'Cloud sign-in is not configured in this environment.' };
 const missing = (m: string) => /referral_source|broker_fee|schema cache|PGRST202|does not exist/i.test(m);
@@ -16,10 +18,8 @@ export interface ReferralSourceName {
   id: string;
   name: string;
   active: boolean;
-  /** 'pending': an agent added it under "Other" and an admin hasn't approved it yet (0083). */
-  status: 'approved' | 'pending';
 }
-export const MIGRATION_0083_MESSAGE = 'Adding a new referral partner needs database migration 0083_referral_partner_requests.sql.';
+export const MIGRATION_0083_MESSAGE = 'An "Other" referral partner needs database migration 0083_referral_partners_other.sql.';
 export interface ReferralSource extends ReferralSourceName {
   /** The partner's agreed amount, once per client (null: none). */
   partnerFeeCents: number | null;
@@ -55,7 +55,7 @@ export async function fetchReferralSourceNames(): Promise<RepoResult<ReferralSou
   if (!supabase) return NOT_CONFIGURED;
   const { data, error } = await supabase.rpc('referral_source_names');
   if (error) return fail(error.message);
-  return { ok: true, data: ((data ?? []) as Record<string, unknown>[]).map((r) => ({ id: String(r.id), name: String(r.name), active: r.active !== false, status: r.status === 'pending' ? ('pending' as const) : ('approved' as const) })) };
+  return { ok: true, data: ((data ?? []) as Record<string, unknown>[]).map((r) => ({ id: String(r.id), name: String(r.name), active: r.active !== false })) };
 }
 
 /** Admins: the partners with their agreed amounts. */
@@ -65,7 +65,7 @@ export async function fetchReferralSources(): Promise<RepoResult<ReferralSource[
   if (error) return fail(error.message);
   return {
     ok: true,
-    data: ((data ?? []) as Record<string, unknown>[]).map((r) => ({ id: String(r.id), name: String(r.name), active: r.active !== false, status: r.status === 'pending' ? ('pending' as const) : ('approved' as const), partnerFeeCents: r.partner_fee_cents === null || r.partner_fee_cents === undefined ? null : Number(r.partner_fee_cents) })),
+    data: ((data ?? []) as Record<string, unknown>[]).map((r) => ({ id: String(r.id), name: String(r.name), active: r.active !== false, partnerFeeCents: r.partner_fee_cents === null || r.partner_fee_cents === undefined ? null : Number(r.partner_fee_cents) })),
   };
 }
 
@@ -91,21 +91,34 @@ export async function setAgentBrokerFeeShare(userId: string, share: BrokerFeeSha
   return error ? fail(error.message) : { ok: true, data: undefined };
 }
 
-/**
- * "Other": names a new referral partner (0083). An agent's waits for an admin's approval (admins are notified); an
- * admin's is added straight away; a name the agency already has returns that partner. Returns its id.
- */
-export async function requestReferralSource(name: string, accountId: string | null): Promise<RepoResult<string>> {
-  if (!supabase) return NOT_CONFIGURED;
-  const { data, error } = await supabase.rpc('request_referral_source', { p_name: name, p_submission_id: accountId });
-  if (error) return { ok: false, message: /request_referral_source|PGRST202/i.test(error.message) ? MIGRATION_0083_MESSAGE : error.message };
-  return { ok: true, data: String(data) };
+/** A client's "Other" referral partner (0083): typed on the account, for that client only. */
+export interface OtherReferral {
+  name: string;
+  partnerFeeCents: number;
 }
 
-/** Admins: approve a partner an agent added (with the agreed amount), merge it into an existing one, or reject it. */
-export async function resolveReferralPartner(itemId: string, action: 'approve' | 'merge' | 'reject', options: { partnerFeeCents?: number | null; mergeInto?: string } = {}): Promise<RepoResult<string>> {
+/** Every "Other" partner this user can see, by account id. */
+export async function fetchOtherReferrals(): Promise<RepoResult<Record<string, OtherReferral>>> {
   if (!supabase) return NOT_CONFIGURED;
-  const { data, error } = await supabase.rpc('resolve_referral_partner', { p_id: itemId, p_action: action, p_partner_fee_cents: options.partnerFeeCents ?? null, p_merge_into: options.mergeInto ?? null });
+  const { data, error } = await supabase.from('account_other_referrals').select('submission_id, name, partner_fee_cents');
+  if (error) return { ok: false, message: /account_other_referrals|schema cache|does not exist/i.test(error.message) ? MIGRATION_0083_MESSAGE : error.message, missingMigration: /account_other_referrals|schema cache|does not exist/i.test(error.message) };
+  const out: Record<string, OtherReferral> = {};
+  for (const r of (data ?? []) as Record<string, unknown>[]) out[String(r.submission_id)] = { name: String(r.name), partnerFeeCents: Number(r.partner_fee_cents ?? 0) };
+  return { ok: true, data: out };
+}
+
+/** "Other": the client's partner name and amount. An agent's goes to Admin Review, with a bell to the admins. */
+export async function setOtherReferral(accountId: string, other: OtherReferral): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  const { error } = await supabase.rpc('set_other_referral', { p_submission_id: accountId, p_name: other.name, p_partner_fee_cents: other.partnerFeeCents });
+  if (error) return { ok: false, message: /set_other_referral|PGRST202/i.test(error.message) ? MIGRATION_0083_MESSAGE : error.message };
+  return { ok: true, data: undefined };
+}
+
+/** Admins: an "Other" partner is OK as typed, gets a different amount, is added to the partner list, or is rejected. */
+export async function resolveOtherReferral(itemId: string, action: 'ok' | 'change' | 'add' | 'reject', partnerFeeCents?: number | null): Promise<RepoResult<string>> {
+  if (!supabase) return NOT_CONFIGURED;
+  const { data, error } = await supabase.rpc('resolve_other_referral', { p_id: itemId, p_action: action, p_partner_fee_cents: partnerFeeCents ?? null });
   return error ? { ok: false, message: error.message } : { ok: true, data: String(data) };
 }
 

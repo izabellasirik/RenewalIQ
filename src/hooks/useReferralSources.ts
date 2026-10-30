@@ -35,8 +35,9 @@ export function useReferralSources(): ReferralSourceName[] {
 }
 
 /** "No referral", a source's name, or "Not set" for an account from before referral sources. */
-export function referralLabel(value: string | undefined, sources: ReferralSourceName[]): string {
+export function referralLabel(value: string | undefined, sources: ReferralSourceName[], other?: { name: string } | null): string {
   if (!value) return 'Not set';
   if (value === NO_REFERRAL) return 'No referral';
+  if (value === 'other') return other ? `Other: ${other.name}` : 'Other';
   return sources.find((s) => s.id === value)?.name ?? 'Unknown partner';
 }

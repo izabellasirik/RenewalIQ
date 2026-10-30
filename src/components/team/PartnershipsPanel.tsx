@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Plus } from 'lucide-react';
 import { Button, Card, CardBody, Skeleton } from '../ui';
@@ -112,14 +111,7 @@ function PartnerRow({ partner, onSaved }: { partner: ReferralSource; onSaved: ()
   }
   return (
     <li className="grid grid-cols-1 items-center gap-2 py-2.5 sm:grid-cols-[minmax(0,1fr)_10rem_6rem_6rem] sm:gap-3" data-testid="partner-row">
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <input value={name} onChange={(e) => setName(e.target.value)} className={input} aria-label="Partner name" />
-        {partner.status === 'pending' && (
-          <Link to="/admin-review" className="text-xs font-medium text-[var(--color-warning-600)] hover:underline">
-            Added by an agent, awaiting approval in Admin Review
-          </Link>
-        )}
-      </span>
+      <input value={name} onChange={(e) => setName(e.target.value)} className={input} aria-label="Partner name" />
       <span className="relative">
         <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-[var(--color-ink-400)]">$</span>
         <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="No amount" inputMode="decimal" className={`${input} w-full pl-6 tabular-nums`} aria-label={`Agreed amount for ${partner.name}`} />

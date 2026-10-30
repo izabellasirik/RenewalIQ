@@ -1,3 +1,5 @@
+import { setOtherReferral } from '../supabase/partnersRepo';
+import { reloadOtherReferrals } from '../../hooks/useOtherReferrals';
 import type { ExtractedFieldResult, IntakeSubmission, VehicleEntry } from '../../types';
 import { generateId } from '../../utils/id';
 import { createEmptyRiskProfile, mergeIntoRiskProfile } from '../extraction';
@@ -188,6 +190,8 @@ export async function importIntakeSubmission(submission: IntakeSubmission, detai
   // the cloud. If that save fails, the new account is removed again and the submission stays
   // pending, so the broker can simply retry — never an "Imported" row with nothing behind it.
   const saved = await saveAccountNow(accountId);
+  // "Other" referral partner (0083): saved for this client once the account is.
+  if (saved.ok && details?.other) await setOtherReferral(accountId, details.other).then(() => reloadOtherReferrals());
   if (!saved.ok) {
     // Files are only added after a successful save, so there's nothing in Storage to clean up.
     await deleteAccountPermanently(accountId, { rollbackUnsavedImport: true });

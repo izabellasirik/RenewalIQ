@@ -1,12 +1,14 @@
 import type { AccountStage } from '../../types';
 import { ACCOUNT_STAGE_LABELS, MANUAL_ACCOUNT_STAGES } from '../../types';
-import { NO_REFERRAL, type ReferralSourceName } from '../../services/supabase/partnersRepo';
+import { NO_REFERRAL, OTHER_REFERRAL, type OtherReferral, type ReferralSourceName } from '../../services/supabase/partnersRepo';
 import type { NewAccountDetails } from '../../state/useAccountsStore';
 import { cn } from '../../utils/cn';
 import { ReferralPicker } from '../referrals/ReferralPicker';
 
 export interface NewAccountDetailsValue {
   referralSource: string;
+  /** referralSource 'other': the partner typed for this client. */
+  other?: OtherReferral;
   note: string;
   stage: AccountStage | '';
 }
@@ -15,6 +17,7 @@ export const EMPTY_ACCOUNT_DETAILS: NewAccountDetailsValue = { referralSource: '
 /** The details, once every required one is filled in (otherwise null). */
 export function readAccountDetails(v: NewAccountDetailsValue, sources: ReferralSourceName[]): NewAccountDetails | null {
   if (!v.referralSource || !v.stage || !v.note.trim()) return null;
+  if (v.referralSource === OTHER_REFERRAL) return v.other ? { referralSource: OTHER_REFERRAL, referralLabel: `Other: ${v.other.name}`, other: v.other, note: v.note.trim(), stage: v.stage } : null;
   const label = v.referralSource === NO_REFERRAL ? 'No referral' : sources.find((s) => s.id === v.referralSource)?.name;
   if (!label) return null;
   return { referralSource: v.referralSource, referralLabel: label, note: v.note.trim(), stage: v.stage };
@@ -37,7 +40,8 @@ export function NewAccountDetailsFields({ value, onChange, showErrors }: { value
           <ReferralPicker
             id="new-referral"
             value={value.referralSource}
-            onChange={(v) => onChange({ ...value, referralSource: v })}
+            other={value.other ?? null}
+            onChange={(v, _label, other) => onChange({ ...value, referralSource: v, other })}
             placeholder="Where did the client come from?"
             className={cn(field, err(!value.referralSource))}
           />

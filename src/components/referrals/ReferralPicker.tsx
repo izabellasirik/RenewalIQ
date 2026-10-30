@@ -1,22 +1,26 @@
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { reloadReferralSources, useReferralSources } from '../../hooks/useReferralSources';
-import { NO_REFERRAL, requestReferralSource } from '../../services/supabase/partnersRepo';
+import { useReferralSources } from '../../hooks/useReferralSources';
+import { NO_REFERRAL, OTHER_REFERRAL, type OtherReferral } from '../../services/supabase/partnersRepo';
 import { useAccountsStore } from '../../state/useAccountsStore';
+import { centsInput, formatCents, parseMoneyCents } from '../../services/workflow/policies';
 import { cn } from '../../utils/cn';
 
-const OTHER = '__other__';
+const TYPE_OTHER = '__type_other__';
 
 /**
- * Where the client came from: No referral, a partner from the agency's list, or "Other" to type a new partner's
- * name (0083). An agent's new partner waits for an admin's approval (admins are notified) and can be picked right
- * away; an admin's is added straight away. `accountId`: the account it's for, when it exists already.
+ * Where the client came from: No referral, a partner from the agency's list, or "Other" — the partner's name and the
+ * amount they get, typed for this client only (0083; agents don't add partners to the list). The amount comes off the
+ * client's first broker fee. An agent's Other goes to Admin Review with a bell to the admins.
+ * `other`: the client's current Other partner. `saveOther`: saves it right away (an existing account); without it the
+ * caller saves it with the rest (New Submission, the policy window).
  */
 export function ReferralPicker({
   id,
   value,
+  other = null,
   onChange,
-  accountId = null,
+  saveOther,
   placeholder,
   className,
   inputClassName,
@@ -25,12 +29,13 @@ export function ReferralPicker({
 }: {
   id?: string;
   value: string;
-  onChange: (value: string, label: string) => void;
-  accountId?: string | null;
+  other?: OtherReferral | null;
+  onChange: (value: string, label: string, other?: OtherReferral) => void;
+  saveOther?: (other: OtherReferral) => Promise<{ ok: true } | { ok: false; message: string }>;
   /** The empty first choice, e.g. "Where did the client come from?" or "Not set" (none: no empty choice). */
   placeholder?: string;
   className: string;
-  /** For the name box under "Other" (default: className). */
+  /** For the boxes under "Other" (default: className). */
   inputClassName?: string;
   invalid?: boolean;
   ariaLabel?: string;
@@ -40,24 +45,32 @@ export function ReferralPicker({
   const shown = sources.filter((s) => s.active || s.id === value);
   const [typing, setTyping] = useState(false);
   const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const box = cn(inputClassName ?? className, 'w-full min-w-0');
 
-  async function add() {
-    const trimmed = name.trim();
-    if (!trimmed) return setError('Type the partner’s name.');
-    setBusy(true);
+  function startTyping() {
+    setName(other?.name ?? '');
+    setAmount(other ? centsInput(other.partnerFeeCents) : '');
     setError('');
-    const r = await requestReferralSource(trimmed, accountId);
-    if (!r.ok) {
+    setTyping(true);
+  }
+
+  async function save() {
+    const trimmed = name.trim();
+    const cents = parseMoneyCents(amount);
+    if (!trimmed) return setError('Type the partner’s name.');
+    if (cents === null || Number.isNaN(cents) || cents < 0) return setError('Enter the partner’s amount in dollars, e.g. 50.00 (0 if none).');
+    const next = { name: trimmed, partnerFeeCents: cents };
+    if (saveOther) {
+      setBusy(true);
+      const r = await saveOther(next);
       setBusy(false);
-      return setError(r.message);
+      if (!r.ok) return setError(r.message);
     }
-    await reloadReferralSources();
-    setBusy(false);
     setTyping(false);
-    setName('');
-    onChange(r.data, trimmed);
+    onChange(OTHER_REFERRAL, `Other: ${trimmed}`, next);
   }
 
   if (typing) {
@@ -68,32 +81,47 @@ export function ReferralPicker({
           autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              void add();
-            }
-            if (e.key === 'Escape') setTyping(false);
-          }}
+          onKeyDown={(e) => e.key === 'Escape' && setTyping(false)}
           maxLength={80}
           placeholder="Referral partner’s name"
-          aria-label="New referral partner’s name"
-          className={cn(inputClassName ?? className, 'w-full min-w-0')}
+          aria-label="Referral partner’s name"
+          className={box}
         />
+        <span className="relative">
+          <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-[var(--color-ink-400)]">$</span>
+          <input
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void save();
+              }
+              if (e.key === 'Escape') setTyping(false);
+            }}
+            placeholder="Partner’s amount, e.g. 50.00"
+            aria-label="Partner’s amount in dollars"
+            className={cn(box, 'pl-6 tabular-nums')}
+          />
+        </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => void add()}
+            onClick={() => void save()}
             disabled={busy}
             className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-lg bg-[var(--color-brand-800)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
           >
-            {busy && <Loader2 size={13} className="animate-spin" />} Add
+            {busy && <Loader2 size={13} className="animate-spin" />} Save
           </button>
           <button type="button" onClick={() => setTyping(false)} className="shrink-0 cursor-pointer px-1 text-sm font-medium text-[var(--color-ink-500)] hover:text-[var(--color-ink-800)]">
             Cancel
           </button>
         </div>
-        <p className="text-xs text-[var(--color-ink-500)]">{isAdmin ? 'It’s added to Partnerships; set its agreed amount there.' : 'Your admin will be asked to approve it and set the agreed amount.'}</p>
+        <p className="text-xs text-[var(--color-ink-500)]">
+          For this client only. The amount comes off the client’s first broker fee; the rest is split between the agent and the agency.
+          {!isAdmin && ' Your admins are notified and can check it in Admin Review.'}
+        </p>
         {error && <p className="text-xs text-[var(--color-danger-600)]">{error}</p>}
       </div>
     );
@@ -105,11 +133,8 @@ export function ReferralPicker({
       value={value}
       onChange={(e) => {
         const v = e.target.value;
-        if (v === OTHER) {
-          setError('');
-          return setTyping(true);
-        }
-        if (!v) return;
+        if (v === TYPE_OTHER) return startTyping();
+        if (!v || v === OTHER_REFERRAL) return;
         onChange(v, v === NO_REFERRAL ? 'No referral' : (sources.find((s) => s.id === v)?.name ?? ''));
       }}
       className={cn(className, invalid && 'border-[var(--color-danger-500)]')}
@@ -119,10 +144,11 @@ export function ReferralPicker({
       <option value={NO_REFERRAL}>No referral</option>
       {shown.map((s) => (
         <option key={s.id} value={s.id}>
-          {s.status === 'pending' ? `${s.name} (awaiting approval)` : s.name}
+          {s.name}
         </option>
       ))}
-      <option value={OTHER}>Other: type the name…</option>
+      {value === OTHER_REFERRAL && other && <option value={OTHER_REFERRAL}>{`Other: ${other.name} (${formatCents(other.partnerFeeCents)})`}</option>}
+      <option value={TYPE_OTHER}>{value === OTHER_REFERRAL ? 'Change the Other partner…' : 'Other: type the partner…'}</option>
     </select>
   );
 }

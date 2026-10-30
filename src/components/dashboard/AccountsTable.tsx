@@ -12,6 +12,7 @@ import { agentLabel } from '../../services/agency/agentLabel';
 import { StageBadge } from '../workspace/StageBadge';
 import { RenewalBadge } from '../renewals/RenewalLabel';
 import { referralLabel, useReferralSources } from '../../hooks/useReferralSources';
+import { useOtherReferrals } from '../../hooks/useOtherReferrals';
 import { useNoteSummaries } from '../../hooks/useNoteSummaries';
 import { buildNotesText, notesHash } from '../../services/notes/notesSummary';
 
@@ -80,6 +81,7 @@ function AccountRow({ account, showAgent, archivedAt, expanded, onToggle }: { ac
   const renewalLabel = renewalLabelOn(account, effectiveDate, quotes, todayKey()).on;
   const renewal = nextOpenRenewal(resolveRenewals(account, effectiveDate, quotes))?.renewalDate ?? effectiveDate;
   const sources = useReferralSources();
+  const others = useOtherReferrals();
   const boundOn = accountBoundDate(account, stage, quotes);
   const missingDocuments = items.filter((i) => i.type === 'document' && (i.status === 'missing' || i.status === 'requested')).length;
   // The earliest follow-up still open: scheduled follow-ups, client requests, and markets.
@@ -123,7 +125,7 @@ function AccountRow({ account, showAgent, archivedAt, expanded, onToggle }: { ac
           {renewalLabel && <RenewalBadge />}
         </span>
       </td>
-      <td className={td}>{account.referralSource ? referralLabel(account.referralSource, sources) : <span className="text-[var(--color-ink-400)]">Not set</span>}</td>
+      <td className={td}>{account.referralSource ? referralLabel(account.referralSource, sources, others[account.id]) : <span className="text-[var(--color-ink-400)]">Not set</span>}</td>
       <td className={`${td} tabular-nums`}>{renewal ? formatShortDate(renewal) : '—'}</td>
       <td className={`${td} tabular-nums`}>{dotNumber || '—'}</td>
       <td className={td}>{account.state || muted}</td>

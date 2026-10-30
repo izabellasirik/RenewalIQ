@@ -8,6 +8,8 @@ import { useAgentCommission, type CommissionView } from '../../hooks/useAgentCom
 import { useBrokerFeeShare, type BrokerFeeShareView } from '../../hooks/useBrokerFeeShare';
 import { referralLabel, useReferralSources } from '../../hooks/useReferralSources';
 import { ReferralPicker } from '../referrals/ReferralPicker';
+import { reloadOtherReferrals, useOtherReferrals } from '../../hooks/useOtherReferrals';
+import { OTHER_REFERRAL, setOtherReferral, type OtherReferral } from '../../services/supabase/partnersRepo';
 import { formatDateWithYear, formatShortDate } from '../../services/workflow/dates';
 import { cancellationState, reloadPolicyCancellations, usePolicyCancellations } from '../../hooks/usePolicyCancellations';
 import { declineCancellationUndo, rejectCancellation, undoCancellation, type PolicyCancellation } from '../../services/supabase/ledgerRepo';
@@ -389,7 +391,7 @@ function CommissionAmount({ cents, feeShare }: { cents: number; feeShare?: Broke
         )}{' '}
         = <strong className={strong}>{formatCents(cents + share - shortfall)}</strong> total
       </span>
-      {shortfall > 0 && feeShare && feeShare.kind !== 'none' && feeShare.kind !== 'pending_partner' && (
+      {shortfall > 0 && feeShare && feeShare.kind !== 'none' && (
         <span className="mt-0.5 block text-[var(--color-ink-500)]" data-field="partner-shortfall-note">
           The broker fee ({formatCents(feeShare.feeCents)}) didn’t cover the referral partner’s agreed amount, so the rest ({formatCents(shortfall)}) comes out of the agent commission.
         </span>
@@ -402,16 +404,12 @@ function CommissionAmount({ cents, feeShare }: { cents: number; feeShare?: Broke
 /** Why a policy's broker fee isn't in the agent commission yet (nothing when it is, or when there's none). */
 function BrokerFeeNote({ feeShare }: { feeShare?: BrokerFeeShareView }) {
   const isAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
-  if (!feeShare || (feeShare.kind !== 'no_share' && feeShare.kind !== 'pending_partner')) return null;
+  if (!feeShare || feeShare.kind !== 'no_share') return null;
   const fee = <span className="tabular-nums">{formatCents(feeShare.feeCents)}</span>;
   return (
     <span className="mt-0.5 block text-[var(--color-warning-600)]" data-field="broker-fee-note">
       Broker fee {fee} isn’t included yet:{' '}
-      {feeShare.kind === 'pending_partner'
-        ? `${feeShare.partnerName} is a new referral partner. ${isAdmin ? 'Approve it and set the agreed amount in Admin Review first.' : 'Your admin needs to approve it and set the agreed amount first.'}`
-        : isAdmin
-          ? 'the agent’s broker fee share isn’t set yet. Set it on Team and Partners.'
-          : 'your broker fee share isn’t set yet. Your admin sets it on Team and Partners.'}
+      {isAdmin ? 'the agent’s broker fee share isn’t set yet. Set it on Team and Partners.' : 'your broker fee share isn’t set yet. Your admin sets it on Team and Partners.'}
     </span>
   );
 }
@@ -569,8 +567,10 @@ export function EntryForm({
   const referralSources = useReferralSources();
   const setAccountReferral = useAccountsStore((s) => s.setAccountReferral);
   const [referralChoice, setReferralChoice] = useState('');
+  const [referralOther, setReferralOther] = useState<OtherReferral | null>(null);
+  const others = useOtherReferrals();
   const asksReferral = kind === 'policy' && !account?.referralSource;
-  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined, referralChoice || undefined) : undefined;
+  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined) : undefined;
   const live = (v: string) => {
     const c = parseMoneyCents(v);
     return c === null || Number.isNaN(c) ? 0 : c;
@@ -638,7 +638,15 @@ export function EntryForm({
         return;
       }
     }
-    if (asksReferral && referralChoice) setAccountReferral(accountId, referralChoice, referralLabel(referralChoice, referralSources));
+    if (asksReferral && referralChoice === OTHER_REFERRAL && referralOther) {
+      // "Other": the partner typed for this client (an agent's goes to Admin Review).
+      setSaving(true);
+      const r = await setOtherReferral(accountId, referralOther);
+      setSaving(false);
+      if (!r.ok) return setErrors([`The referral partner couldn’t be saved, so nothing was saved: ${r.message}`]);
+      void reloadOtherReferrals();
+    }
+    if (asksReferral && referralChoice) setAccountReferral(accountId, referralChoice, referralLabel(referralChoice, referralSources, referralOther));
     if (editing === 'new') {
       const id = addPolicy(accountId, quote.id, check.fields, entryId);
       if (id) for (const nf of files) attach(accountId, quote.id, id, nf.file, nf.description);
@@ -791,14 +799,24 @@ export function EntryForm({
                 Referral partner {asksReferral && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 && <Required />}
               </label>
               {asksReferral ? (
-                <ReferralPicker id="policy-referral" value={referralChoice} onChange={(v) => setReferralChoice(v)} accountId={accountId} placeholder="Not set" className={inputClass} />
+                <ReferralPicker
+                  id="policy-referral"
+                  value={referralChoice}
+                  other={referralOther}
+                  onChange={(v, _label, o) => {
+                    setReferralChoice(v);
+                    setReferralOther(o ?? null);
+                  }}
+                  placeholder="Not set"
+                  className={inputClass}
+                />
               ) : (
                 <p className="px-0.5 py-2 text-sm text-[var(--color-ink-800)]">
-                  {referralLabel(account?.referralSource, referralSources)}
-                  {referralSources.find((x) => x.id === account?.referralSource)?.status === 'pending' && <span className="text-[var(--color-warning-600)]"> (awaiting approval)</span>}
+                  {referralLabel(account?.referralSource, referralSources, others[accountId])}
+                  {account?.referralSource === OTHER_REFERRAL && others[accountId] && <span className="text-[var(--color-ink-500)]"> ({formatCents(others[accountId].partnerFeeCents)})</span>}
                 </p>
               )}
-              <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">{asksReferral ? 'Saved on the client: the partner is paid once per client.' : 'For the whole client; change it at the top of the account.'}</p>
+              {!asksReferral && <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">For the whole client; change it at the top of the account.</p>}
             </div>
           )}
           {asksCarrierPct && (

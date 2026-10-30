@@ -88,6 +88,8 @@ import { copyLocalFile, deleteLocalFiles, saveLocalFile } from '../services/docu
 import { inferFileType as inferQuoteFileType } from '../utils/documents';
 import { actionDoneKey, type ActionItem } from '../services/workflow/nextActions';
 import * as requestsRepo from '../services/supabase/documentRequestsRepo';
+import { setOtherReferral, type OtherReferral } from '../services/supabase/partnersRepo';
+import { reloadOtherReferrals } from '../hooks/useOtherReferrals';
 import { detectDocumentSignals } from '../services/requests/documentSignals';
 import { matchRequestUpload, placeUnassignedUpload } from '../services/requests/matchUpload';
 import { isOpenRequest, outstandingRequestItems, type DocumentRequest } from '../types';
@@ -414,6 +416,8 @@ function touchAccount(accounts: Account[], accountId: string): Account[] {
 export interface NewAccountDetails {
   referralSource: string;
   referralLabel: string;
+  /** referralSource 'other' (0083): the partner's name and amount, typed for this client. */
+  other?: OtherReferral;
   note: string;
   stage: AccountStage;
 }
@@ -2413,6 +2417,8 @@ export const useAccountsStore = create<AccountsState>()(
 
       applyNewAccountDetails: (accountId, details) => {
         get().setAccountReferral(accountId, details.referralSource, details.referralLabel);
+        // "Other": saved for this client (the account is saved right after; the database accepts it first).
+        if (details.other && isSupabaseConfigured) void setOtherReferral(accountId, details.other).then(() => reloadOtherReferrals());
         if (details.note.trim()) get().addAccountNote(accountId, details.note);
         // "New" is what the automatic status says for a new account — set by hand only when it's something else.
         if (details.stage !== 'new') get().setAccountStage(accountId, details.stage);

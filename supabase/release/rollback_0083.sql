@@ -1,24 +1,14 @@
--- Rollback of 0083: agents can no longer add referral partners; the 0080 / 0081 versions of the changed functions
--- come back. Partners already added stay in the list (any still awaiting approval show as normal partners with no
--- amount), and decided review items and notifications are kept, so re-running 0083 restores everything.
+-- Rollback of 0083: no more "Other" referral partners, and broker fee splits go back to 0081's (the partner paid on
+-- the client's first policy with a broker fee, at most that fee). Accounts set to Other go back to "not set"; their
+-- names and amounts are kept in account_other_referrals, and decided review items and notifications are kept.
 begin;
-drop function if exists public.request_referral_source(text, text);
-drop function if exists public.resolve_referral_partner(uuid, text, bigint, uuid);
--- Open "new referral partner" items can't be decided without 0083.
-update public.admin_review_items set status = 'resolved', resolution = 'approved', resolved_at = now() where kind = 'new_referral_partner' and status = 'open';
-update public.referral_sources set status = 'approved' where status = 'pending';
-
-drop function if exists public.referral_source_names();
-create or replace function public.referral_source_names()
-returns table (id uuid, name text, active boolean)
-language sql stable security definer set search_path = ''
-as $$
-  select r.id, r.name, r.active from public.referral_sources r
-   where auth.uid() is not null and r.agency_id = public.current_agency_id()
-   order by r.active desc, lower(r.name)
-$$;
-revoke all on function public.referral_source_names() from public, anon;
-grant execute on function public.referral_source_names() to authenticated;
+drop function if exists public.set_other_referral(text, text, bigint);
+drop function if exists public.resolve_other_referral(uuid, text, bigint);
+update public.admin_review_items set status = 'resolved', resolution = 'ok', resolved_at = now() where kind = 'other_referral' and status = 'open';
+update public.submissions set referral_source = null where referral_source = 'other';
+alter table public.submissions drop constraint if exists submissions_referral_source;
+alter table public.submissions add constraint submissions_referral_source
+  check (referral_source is null or referral_source = 'none' or referral_source ~ '^[0-9a-f-]{36}$');
 
 drop function if exists public.broker_fee_splits(date, date);
 create or replace function public.broker_fee_splits(p_from date, p_to date)

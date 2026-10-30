@@ -3,7 +3,6 @@ import { useAccountsStore } from '../state/useAccountsStore';
 import { isSupabaseConfigured } from '../services/supabase/client';
 import { fetchBrokerFeeShares, fetchBrokerFeeSplits, type BrokerFeeShare } from '../services/supabase/partnersRepo';
 import { agentBrokerFeeShareCents } from '../services/workflow/policies';
-import { useReferralSources } from './useReferralSources';
 
 // The broker fee shares this user may see (an admin: everyone's; an agent: their own) and the recorded
 // splits per policy (0081), shared by every policy row. Reloaded after an admin changes a share or decides on
@@ -38,19 +37,17 @@ export type BrokerFeeShareView =
   | { kind: 'amount'; cents: number; feeCents: number; shortfallCents: number }
   /** The agent has no broker fee share yet (an admin sets it on Team and Partners). */
   | { kind: 'no_share'; feeCents: number; shortfallCents: number }
-  /** The client's referral partner was added under "Other" and awaits an admin's approval. */
-  | { kind: 'pending_partner'; feeCents: number; partnerName: string };
+  ;
 
 /**
  * The account agent's share of a policy's broker fee, for the viewers who see the agent commission (the agent and
  * admins): the recorded split once the policy is saved, else worked out from the agent's share. `referral`: the
  * client's referral partner as chosen in the policy form, when it differs from the account's.
  */
-export function useBrokerFeeShare(accountId: string): (policyId: string | null, feeCents: number | undefined, referral?: string) => BrokerFeeShareView {
+export function useBrokerFeeShare(accountId: string): (policyId: string | null, feeCents: number | undefined) => BrokerFeeShareView {
   const me = useAccountsStore((s) => s.currentUserId);
   const account = useAccountsStore((s) => s.accounts.find((a) => a.id === accountId));
   const isAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
-  const sources = useReferralSources();
   const snapshot = useSyncExternalStore(
     (l) => {
       listeners.add(l);
@@ -67,10 +64,8 @@ export function useBrokerFeeShare(accountId: string): (policyId: string | null, 
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [me]);
   const agentId = account?.assignedUserId ?? null;
-  return (policyId, feeCents, referral) => {
+  return (policyId, feeCents) => {
     if (!feeCents || !agentId || (!isAdmin && agentId !== me)) return { kind: 'none' };
-    const partner = sources.find((s) => s.id === (referral ?? account?.referralSource));
-    if (partner?.status === 'pending') return { kind: 'pending_partner', feeCents, partnerName: partner.name };
     const recorded = policyId ? snapshot?.splits[`${accountId}:${policyId}`] : undefined;
     const same = recorded && recorded.feeCents === feeCents && !recorded.pending;
     const shortfallCents = same ? recorded.shortfallCents : 0;
