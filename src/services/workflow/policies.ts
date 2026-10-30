@@ -369,6 +369,15 @@ export function isFirstPolicy(policies: Pick<PolicyRecord, 'id' | 'boundDate' | 
   return all[0]?.id === id;
 }
 
+/**
+ * Who gets a referral fee from a saved policy: its own choice (0085), else — saved before — the client's partner on
+ * the client's very first policy and No referral fee on the others.
+ */
+export function policyReferralChoice(p: Pick<PolicyRecord, 'id' | 'boundDate' | 'createdAt' | 'referralPartner'>, policies: Pick<PolicyRecord, 'id' | 'boundDate' | 'createdAt'>[], accountReferral: string | undefined): string {
+  if (p.referralPartner) return p.referralPartner;
+  return isFirstPolicy(policies, { id: p.id }) ? accountReferral || 'none' : 'none';
+}
+
 /** What the referral partner takes off a broker fee (never more than the fee), and the part the fee didn't cover. */
 export function referralPartnerSplit(feeCents: number, partnerCents: number): { partnerCents: number; shortfallCents: number } {
   const p = Math.max(0, partnerCents);

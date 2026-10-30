@@ -25,6 +25,7 @@ export function ReferralPicker({
   inputClassName,
   invalid,
   ariaLabel,
+  feeLabels,
 }: {
   id?: string;
   value: string;
@@ -38,6 +39,8 @@ export function ReferralPicker({
   inputClassName?: string;
   invalid?: boolean;
   ariaLabel?: string;
+  /** The policy window (0085): each choice with its amount, and "No referral fee — $0". */
+  feeLabels?: boolean;
 }) {
   const sources = useReferralSources();
   const shown = sources.filter((s) => s.active || s.id === value);
@@ -135,13 +138,13 @@ export function ReferralPicker({
       aria-label={ariaLabel}
     >
       {placeholder !== undefined && <option value="">{placeholder}</option>}
-      <option value={NO_REFERRAL}>No referral</option>
+      <option value={NO_REFERRAL}>{feeLabels ? 'No referral fee — $0' : 'No referral'}</option>
       {shown.map((s) => (
         <option key={s.id} value={s.id}>
-          {s.name}
+          {feeLabels && s.partnerFeeCents != null ? `${s.name} — ${formatCents(s.partnerFeeCents)}` : s.name}
         </option>
       ))}
-      {value === OTHER_REFERRAL && other && <option value={OTHER_REFERRAL}>{`Other: ${other.name} (${formatCents(other.partnerFeeCents)})`}</option>}
+      {value === OTHER_REFERRAL && other && <option value={OTHER_REFERRAL}>{feeLabels ? `Other: ${other.name} — ${formatCents(other.partnerFeeCents)}` : `Other: ${other.name} (${formatCents(other.partnerFeeCents)})`}</option>}
       <option value={TYPE_OTHER}>{value === OTHER_REFERRAL ? 'Change the Other partner…' : 'Other: type the partner…'}</option>
     </select>
   );

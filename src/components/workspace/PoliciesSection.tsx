@@ -9,11 +9,11 @@ import { useBrokerFeeShare, type BrokerFeeShareView } from '../../hooks/useBroke
 import { referralLabel, useReferralSources } from '../../hooks/useReferralSources';
 import { ReferralPicker } from '../referrals/ReferralPicker';
 import { reloadOtherReferrals, useOtherReferrals } from '../../hooks/useOtherReferrals';
-import { OTHER_REFERRAL, setOtherReferral, type OtherReferral } from '../../services/supabase/partnersRepo';
+import { NO_REFERRAL, OTHER_REFERRAL, setOtherReferral, type OtherReferral } from '../../services/supabase/partnersRepo';
 import { formatDateWithYear, formatShortDate } from '../../services/workflow/dates';
 import { cancellationState, reloadPolicyCancellations, usePolicyCancellations } from '../../hooks/usePolicyCancellations';
 import { declineCancellationUndo, rejectCancellation, undoCancellation, type PolicyCancellation } from '../../services/supabase/ledgerRepo';
-import { activeEndorsements, activePolicies, agentCommissionCents, centsInput, checkPolicy, formatCents, oneYearAfter, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
+import { activeEndorsements, activePolicies, agentCommissionCents, centsInput, checkPolicy, formatCents, isFirstPolicy, oneYearAfter, parseCarrierPercent, parseMoneyCents, policiesFeatureEnabled, policyRows, policyTotalCents, type PolicyInput } from '../../services/workflow/policies';
 import { enterPolicyCarrierRate, fetchEnteredCarrierRates, policyNumberTaken } from '../../services/supabase/commissionRepo';
 import { isSupabaseConfigured } from '../../services/supabase/client';
 import { generateId } from '../../utils/id';
@@ -562,15 +562,21 @@ export function EntryForm({
   const [saving, setSaving] = useState(false);
   const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id, accountPolicyIds: accountPolicies.map((x) => x.policy.id), requirePolicyLink: kind === 'endorsement' && (editing === 'new' || !!editing.forPolicyId) });
   const feeShareFor = useBrokerFeeShare(accountId);
-  // The client's referral partner, asked here when the account doesn't have one yet (accounts from before referral
-  // partners): it decides who shares the broker fee, so it's required once a broker fee is entered.
+  // Who gets a referral fee from this policy (0085): the client's first policy starts on the client's partner, later
+  // ones (renewals) on No referral fee. Required once a broker fee is entered. An account without a partner yet
+  // (from before referral partners) gets this one.
   const referralSources = useReferralSources();
   const setAccountReferral = useAccountsStore((s) => s.setAccountReferral);
-  const [referralChoice, setReferralChoice] = useState('');
+  const [referralChoice, setReferralChoice] = useState(() => {
+    if (kind !== 'policy') return '';
+    const prior = accountPolicies.map((x) => x.policy);
+    if (editing !== 'new') return editing.referralPartner ?? (isFirstPolicy(prior, { id: editing.id }) ? (account?.referralSource ?? '') : NO_REFERRAL);
+    return prior.length === 0 ? (account?.referralSource ?? '') : NO_REFERRAL;
+  });
   const [referralOther, setReferralOther] = useState<OtherReferral | null>(null);
   const others = useOtherReferrals();
-  const asksReferral = kind === 'policy' && !account?.referralSource;
-  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined, { boundDate: f.boundDate || undefined, referral: asksReferral ? referralChoice : undefined, other: referralOther }) : undefined;
+  const asksReferral = kind === 'policy';
+  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined, { boundDate: f.boundDate || undefined, referral: referralChoice || undefined, other: referralOther }) : undefined;
   const live = (v: string) => {
     const c = parseMoneyCents(v);
     return c === null || Number.isNaN(c) ? 0 : c;
@@ -608,7 +614,7 @@ export function EntryForm({
   async function submit(e?: FormEvent, withoutDocuments = false) {
     e?.preventDefault();
     const pctError = asksCarrierPct && carrierRate === null ? ['Enter the carrier commission % (more than 0, at most 50, e.g. 12).'] : [];
-    const referralError = asksReferral && !referralChoice && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 ? ['Choose the client’s referral partner (it decides who shares the broker fee), or No referral.'] : [];
+    const referralError = asksReferral && !referralChoice && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 ? ['Choose the referral partner, or No referral fee.'] : [];
     if (!check.ok || pctError.length || referralError.length) {
       setErrors([...(check.ok ? [] : check.errors), ...pctError, ...referralError]);
       return;
@@ -646,13 +652,14 @@ export function EntryForm({
       if (!r.ok) return setErrors([`The referral partner couldn’t be saved, so nothing was saved: ${r.message}`]);
       void reloadOtherReferrals();
     }
-    if (asksReferral && referralChoice) setAccountReferral(accountId, referralChoice, referralLabel(referralChoice, referralSources, referralOther));
+    if (asksReferral && referralChoice && !account?.referralSource) setAccountReferral(accountId, referralChoice, referralLabel(referralChoice, referralSources, referralOther));
+    const fields = asksReferral && referralChoice ? { ...check.fields, referralPartner: referralChoice } : check.fields;
     if (editing === 'new') {
-      const id = addPolicy(accountId, quote.id, check.fields, entryId);
+      const id = addPolicy(accountId, quote.id, fields, entryId);
       if (id) for (const nf of files) attach(accountId, quote.id, id, nf.file, nf.description);
       if (id) onSaved?.({ id, date: check.fields.boundDate });
     } else {
-      updatePolicy(accountId, quote.id, editing.id, check.fields);
+      updatePolicy(accountId, quote.id, editing.id, fields);
       for (const a of editing.attachments ?? []) {
         const now = kept.find((x) => x.id === a.id);
         if (!now) detach(accountId, quote.id, editing.id, a.id);
@@ -793,29 +800,22 @@ export function EntryForm({
             </div>
           )}
           {kind === 'policy' && (
-            <div data-testid="policy-referral">
+            <div className="sm:col-span-2" data-testid="policy-referral">
               <label className={labelClass} htmlFor="policy-referral">
                 Referral partner {asksReferral && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 && <Required />}
               </label>
-              {asksReferral ? (
-                <ReferralPicker
-                  id="policy-referral"
-                  value={referralChoice}
-                  other={referralOther}
-                  onChange={(v, _label, o) => {
-                    setReferralChoice(v);
-                    setReferralOther(o ?? null);
-                  }}
-                  placeholder="Not set"
-                  className={inputClass}
-                />
-              ) : (
-                <p className="px-0.5 py-2 text-sm text-[var(--color-ink-800)]">
-                  {referralLabel(account?.referralSource, referralSources, others[accountId])}
-                  {account?.referralSource === OTHER_REFERRAL && others[accountId] && <span className="text-[var(--color-ink-500)]"> ({formatCents(others[accountId].partnerFeeCents)})</span>}
-                </p>
-              )}
-              {!asksReferral && <p className="mt-1 text-[11px] text-[var(--color-ink-500)]">For the whole client; change it at the top of the account.</p>}
+              <ReferralPicker
+                id="policy-referral"
+                value={referralChoice}
+                other={referralOther ?? others[accountId] ?? null}
+                onChange={(v, _label, o) => {
+                  setReferralChoice(v);
+                  if (o) setReferralOther(o);
+                }}
+                placeholder={referralChoice ? undefined : 'Choose…'}
+                className={inputClass}
+                feeLabels
+              />
             </div>
           )}
           {asksCarrierPct && (

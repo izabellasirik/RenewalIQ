@@ -18,6 +18,8 @@ export interface ReferralSourceName {
   id: string;
   name: string;
   active: boolean;
+  /** The partner's agreed amount (0085; undefined before it). */
+  partnerFeeCents?: number | null;
 }
 export const MIGRATION_0083_MESSAGE = 'An "Other" referral partner needs database migration 0083_referral_partners_other.sql.';
 export interface ReferralSource extends ReferralSourceName {
@@ -55,7 +57,7 @@ export async function fetchReferralSourceNames(): Promise<RepoResult<ReferralSou
   if (!supabase) return NOT_CONFIGURED;
   const { data, error } = await supabase.rpc('referral_source_names');
   if (error) return fail(error.message);
-  return { ok: true, data: ((data ?? []) as Record<string, unknown>[]).map((r) => ({ id: String(r.id), name: String(r.name), active: r.active !== false })) };
+  return { ok: true, data: ((data ?? []) as Record<string, unknown>[]).map((r) => ({ id: String(r.id), name: String(r.name), active: r.active !== false, ...('partner_fee_cents' in r ? { partnerFeeCents: r.partner_fee_cents === null ? null : Number(r.partner_fee_cents) } : {}) })) };
 }
 
 /** Admins: the partners with their agreed amounts. */
