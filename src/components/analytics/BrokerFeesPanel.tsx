@@ -183,11 +183,21 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
                   ) : admin ? (
                     <>
                       <td className={num}>{r.partnerCents ? `${formatCents(r.partnerCents)} · ${r.partnerName}` : '—'}</td>
-                      <td className={num}>{r.agentCents ? `${formatCents(r.agentCents)} · ${r.agentName}` : '—'}</td>
+                      <td className={num}>
+                        {r.agentCents ? `${formatCents(r.agentCents)} · ${r.agentName}` : '—'}
+                        {r.partnerShortfallCents > 0 && (
+                          <span className="block text-[11px] text-[var(--color-ink-500)]" title="The broker fee didn’t cover the partner’s agreed amount; the rest comes out of the agent commission.">
+                            − {formatCents(r.partnerShortfallCents)} from {r.agentName ?? 'the agent'}’s commission to the partner
+                          </span>
+                        )}
+                      </td>
                       <td className={`${num} font-semibold`}>{formatCents(r.agencyCents ?? 0)}</td>
                     </>
                   ) : (
-                    <td className={`${num} font-semibold`}>{formatCents(r.agentCents ?? 0)}</td>
+                    <td className={`${num} font-semibold`}>
+                      {formatCents(r.agentCents ?? 0)}
+                      {r.partnerShortfallCents > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">− {formatCents(r.partnerShortfallCents)} from your commission to the referral partner</span>}
+                    </td>
                   )}
                 </tr>
               ))}

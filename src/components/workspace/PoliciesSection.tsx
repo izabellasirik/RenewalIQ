@@ -356,10 +356,16 @@ export function CommissionLine({ commission, netCents, carrier, dateKey, record,
   );
 }
 
-/** "$300.00", or with a broker fee share "$300.00 + $150.00 broker fee = $450.00 total"; when the broker fee can't be added yet, why. */
+/**
+ * "$300.00", or with a broker fee share "$300.00 + $150.00 broker fee = $450.00 total". When the first broker fee
+ * didn't cover the referral partner's agreed amount, the rest comes off ("− $20.00 to the referral partner"), with
+ * a hint saying why; when the broker fee can't be added yet, why.
+ */
 function CommissionAmount({ cents, feeShare }: { cents: number; feeShare?: BrokerFeeShareView }) {
   const strong = 'tabular-nums text-[var(--color-ink-900)]';
-  if (feeShare?.kind !== 'amount') {
+  const share = feeShare?.kind === 'amount' ? feeShare.cents : 0;
+  const shortfall = feeShare && (feeShare.kind === 'amount' || feeShare.kind === 'no_share') ? feeShare.shortfallCents : 0;
+  if (!share && !shortfall) {
     return (
       <>
         <strong className={strong}>{formatCents(cents)}</strong>
@@ -368,10 +374,28 @@ function CommissionAmount({ cents, feeShare }: { cents: number; feeShare?: Broke
     );
   }
   return (
-    <span data-field="commission-total">
-      <span className="tabular-nums">{formatCents(cents)}</span> + <span className="tabular-nums">{formatCents(feeShare.cents)}</span> broker fee ={' '}
-      <strong className={strong}>{formatCents(cents + feeShare.cents)}</strong> total
-    </span>
+    <>
+      <span data-field="commission-total">
+        <span className="tabular-nums">{formatCents(cents)}</span>
+        {share > 0 && (
+          <>
+            {' '}+ <span className="tabular-nums">{formatCents(share)}</span> broker fee
+          </>
+        )}
+        {shortfall > 0 && (
+          <>
+            {' '}− <span className="tabular-nums">{formatCents(shortfall)}</span> to the referral partner
+          </>
+        )}{' '}
+        = <strong className={strong}>{formatCents(cents + share - shortfall)}</strong> total
+      </span>
+      {shortfall > 0 && feeShare && feeShare.kind !== 'none' && feeShare.kind !== 'pending_partner' && (
+        <span className="mt-0.5 block text-[var(--color-ink-500)]" data-field="partner-shortfall-note">
+          The broker fee ({formatCents(feeShare.feeCents)}) didn’t cover the referral partner’s agreed amount, so the rest ({formatCents(shortfall)}) comes out of the agent commission.
+        </span>
+      )}
+      <BrokerFeeNote feeShare={feeShare} />
+    </>
   );
 }
 

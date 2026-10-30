@@ -12,6 +12,8 @@
 -- * The partner is paid once per client, and only on the client's VERY FIRST policy (by bound date): when that
 --   policy has no broker fee, the partner gets nothing for that client. (0081 paid on the first policy that had a
 --   broker fee.) The agent and the agency split every broker fee.
+-- * When that first broker fee is less than the partner's agreed amount, the partner is still owed the full amount:
+--   the rest comes out of the agent commission on that policy (partner_shortfall_cents, shown to the agent too).
 -- Additive; replaces referral_source_names, broker_fee_splits and admin_review_items with versions that return one
 -- more column each. Re-runnable. Rollback: supabase/release/rollback_0083.sql.
 
@@ -186,7 +188,8 @@ grant execute on function public.admin_review_items() to authenticated;
 drop function if exists public.broker_fee_splits(date, date);
 create function public.broker_fee_splits(p_from date, p_to date)
 returns table (submission_id text, client_name text, policy_id text, policy_number text, bound_date date, broker_fee_cents bigint,
-               partner_name text, partner_cents bigint, agent_user_id uuid, agent_name text, agent_cents bigint, agency_cents bigint, partner_pending boolean)
+               partner_name text, partner_cents bigint, agent_user_id uuid, agent_name text, agent_cents bigint, agency_cents bigint, partner_pending boolean,
+               partner_shortfall_cents bigint)
 language sql stable security definer set search_path = ''
 as $$
   with me as (select auth.uid() as uid, public.current_agency_id() as agency, public.is_agency_admin() as admin),
@@ -207,7 +210,8 @@ as $$
   ),
   split as (
     select r.*, src.name as src_name, coalesce(src.status = 'pending', false) as pending,
-           case when r.nth = 1 and src.active is not null then least(coalesce(src.partner_fee_cents, 0), r.fee) else 0 end as partner
+           case when r.nth = 1 and src.active is not null then least(coalesce(src.partner_fee_cents, 0), r.fee) else 0 end as partner,
+           case when r.nth = 1 and src.active is not null then greatest(coalesce(src.partner_fee_cents, 0) - r.fee, 0) else 0 end as shortfall
       from ranked r
       left join public.referral_sources src on src.id::text = r.referral_source
      where coalesce(r.fee, 0) > 0
@@ -223,12 +227,13 @@ as $$
   )
   select x.sid, x.named_insured, x.entry ->> 'id', x.entry ->> 'policyNumber', x.bound, x.fee,
          case when (select admin from me) then x.src_name end,
-         case when (select admin from me) and not x.pending then x.partner end,
+         case when (select admin from me) and not x.pending then x.partner + x.shortfall end,
          x.agent,
          (select coalesce(nullif(btrim(p.display_name), ''), 'Team member') from public.profiles p where p.user_id = x.agent),
          x.agent_share,
          case when (select admin from me) and not x.pending then x.fee - x.partner - x.agent_share end,
-         x.pending
+         x.pending,
+         case when x.pending then null else x.shortfall end
     from shared x
    where x.bound is not null and x.bound between coalesce(p_from, '1900-01-01') and coalesce(p_to, '2999-12-31')
    order by x.bound desc, x.named_insured

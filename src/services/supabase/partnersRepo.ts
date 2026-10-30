@@ -47,6 +47,8 @@ export interface BrokerFeeSplit {
   agencyCents: number | null;
   /** The client's referral partner was added under "Other" and awaits an admin's approval: no amounts yet (0083). */
   partnerPending: boolean;
+  /** The first broker fee didn't cover the partner's agreed amount: the rest, taken from the agent commission (0083). */
+  partnerShortfallCents: number;
 }
 
 export async function fetchReferralSourceNames(): Promise<RepoResult<ReferralSourceName[]>> {
@@ -128,6 +130,7 @@ export async function fetchBrokerFeeSplits(from: string | null, to: string | nul
       agentCents: r.partner_pending === true ? null : Number(r.agent_cents ?? 0),
       agencyCents: n(r.agency_cents),
       partnerPending: r.partner_pending === true,
+      partnerShortfallCents: Number(r.partner_shortfall_cents ?? 0),
     })),
   };
 }

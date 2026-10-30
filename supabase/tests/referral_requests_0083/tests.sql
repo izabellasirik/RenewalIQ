@@ -105,6 +105,19 @@ select pg_temp.check('R15b first policy had no broker fee: the partner gets noth
 select pg_temp.check('R15c a client whose first policy had a fee: the partner is paid on it, then never again',
   (select partner_cents = 5000 from public.broker_fee_splits(null, null) where policy_id = 'p1'));
 
+-- 5c. The first broker fee is less than the partner's amount: the partner still gets it all, the rest from the agent commission.
+reset role;
+insert into public.submissions (id, user_id, organization_id, named_insured, assigned_user_id, referral_source, market_quotes) values
+  ('rr_e', '00000000-0000-0000-0000-00000000000a', pg_temp.agency(), 'Referral Client E (sample)', '00000000-0000-0000-0000-00000000000a', (select v from out where k = 'pal'),
+   jsonb_build_array(jsonb_build_object('id', 'q', 'marketName', 'Sample Mutual', 'status', 'bound', 'policies', jsonb_build_array(pg_temp.pol('e1', '2026-08-01', 3000)))));
+set local role authenticated;
+select pg_temp.check('R15d broker fee $30 < partner $50: partner owed $50, $20 from the agent commission, no agent or agency share of the fee',
+  (select partner_cents = 5000 and partner_shortfall_cents = 2000 and agent_cents = 0 and agency_cents = 0 from public.broker_fee_splits(null, null) where policy_id = 'e1'));
+select pg_temp.check('R15e no shortfall when the fee covers the partner', (select partner_shortfall_cents = 0 from public.broker_fee_splits(null, null) where policy_id = 'p1'));
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a') \g /dev/null
+select pg_temp.check('R15f the agent sees the shortfall (not the partner amount)', (select partner_shortfall_cents = 2000 and partner_cents is null from public.broker_fee_splits(null, null) where policy_id = 'e1'));
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000d') \g /dev/null
+
 -- 6. Another agency (…0c is an admin of another agency in the test data), and signed out.
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c') \g /dev/null
 insert into out select 'other_agency', public.request_referral_source('Other Agency Pal', null)::text;

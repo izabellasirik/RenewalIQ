@@ -8,7 +8,7 @@ import { useReferralSources } from './useReferralSources';
 // The broker fee shares this user may see (an admin: everyone's; an agent: their own) and the recorded
 // splits per policy (0081), shared by every policy row. Reloaded after an admin changes a share or decides on
 // a new partner, and when the tab comes back into view (at most once a minute).
-type State = { userId: string | null; at: number; shares: Record<string, BrokerFeeShare>; splits: Record<string, { feeCents: number; agentCents: number | null; pending: boolean }> } | null;
+type State = { userId: string | null; at: number; shares: Record<string, BrokerFeeShare>; splits: Record<string, { feeCents: number; agentCents: number | null; pending: boolean; shortfallCents: number }> } | null;
 let state: State = null;
 let loadingFor: string | null = null;
 const listeners = new Set<() => void>();
@@ -26,7 +26,7 @@ export async function reloadBrokerFeeShares(userId: string | null = state?.userI
     userId,
     at: Date.now(),
     shares: shares.ok ? shares.data : {},
-    splits: splits.ok ? Object.fromEntries(splits.data.map((s) => [`${s.accountId}:${s.policyId}`, { feeCents: s.brokerFeeCents, agentCents: s.agentCents, pending: s.partnerPending }])) : {},
+    splits: splits.ok ? Object.fromEntries(splits.data.map((s) => [`${s.accountId}:${s.policyId}`, { feeCents: s.brokerFeeCents, agentCents: s.agentCents, pending: s.partnerPending, shortfallCents: s.partnerShortfallCents }])) : {},
   });
 }
 
@@ -34,9 +34,10 @@ export async function reloadBrokerFeeShares(userId: string | null = state?.userI
 export type BrokerFeeShareView =
   /** No broker fee, or not this viewer's to see. */
   | { kind: 'none' }
-  | { kind: 'amount'; cents: number }
+  /** shortfallCents: what the broker fee didn't cover of the referral partner's agreed amount, taken from the agent commission. */
+  | { kind: 'amount'; cents: number; feeCents: number; shortfallCents: number }
   /** The agent has no broker fee share yet (an admin sets it on Team and Partners). */
-  | { kind: 'no_share'; feeCents: number }
+  | { kind: 'no_share'; feeCents: number; shortfallCents: number }
   /** The client's referral partner was added under "Other" and awaits an admin's approval. */
   | { kind: 'pending_partner'; feeCents: number; partnerName: string };
 
@@ -71,8 +72,26 @@ export function useBrokerFeeShare(accountId: string): (policyId: string | null, 
     const partner = sources.find((s) => s.id === (referral ?? account?.referralSource));
     if (partner?.status === 'pending') return { kind: 'pending_partner', feeCents, partnerName: partner.name };
     const recorded = policyId ? snapshot?.splits[`${accountId}:${policyId}`] : undefined;
-    if (recorded && recorded.feeCents === feeCents && !recorded.pending && recorded.agentCents !== null && (recorded.agentCents > 0 || snapshot?.shares[agentId])) return { kind: 'amount', cents: recorded.agentCents };
+    const same = recorded && recorded.feeCents === feeCents && !recorded.pending;
+    const shortfallCents = same ? recorded.shortfallCents : 0;
+    if (same && recorded.agentCents !== null && (recorded.agentCents > 0 || snapshot?.shares[agentId])) return { kind: 'amount', cents: recorded.agentCents, feeCents, shortfallCents };
     const cents = agentBrokerFeeShareCents(feeCents, snapshot?.shares[agentId]);
-    return cents === null ? { kind: 'no_share', feeCents } : { kind: 'amount', cents };
+    return cents === null ? { kind: 'no_share', feeCents, shortfallCents } : { kind: 'amount', cents, feeCents, shortfallCents };
   };
+}
+
+/** Every recorded broker fee split this user may see, by "accountId:policyId" (Analytics → Policies & endorsements). */
+export function useBrokerFeeSplits(): Record<string, { feeCents: number; agentCents: number | null; pending: boolean; shortfallCents: number }> {
+  const me = useAccountsStore((s) => s.currentUserId);
+  const snapshot = useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => state
+  );
+  useEffect(() => {
+    if ((state?.userId ?? null) !== me && loadingFor !== me) void reloadBrokerFeeShares(me);
+  }, [me]);
+  return snapshot?.splits ?? {};
 }

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { BrokerFeesPanel } from '../components/analytics/BrokerFeesPanel';
-import { BarChart3, FileWarning, Paperclip, Pencil, Search } from 'lucide-react';
+import { BarChart3, CheckCircle2, FileWarning, Paperclip, Pencil, Search } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
-import { Badge, Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
+import { Badge, Button, Card, CardBody, EmptyState, Modal, Tabs } from '../components/ui';
 import { IncomeExpensesPanel, ProfitLossPanel } from '../components/analytics/MoneyPanels';
 import { inputClass, labelClass } from '../components/workspace/formStyles';
 import { formatRate } from '../components/workspace/PoliciesSection';
@@ -18,7 +18,10 @@ import { useRememberedView } from '../hooks/useRememberedView';
 import { aDateKey, aString, defined, oneOf } from '../services/preferences/viewPreferences';
 import { policiesReport } from '../services/reports/analyticsReports';
 import { DownloadButtons } from '../components/analytics/DownloadButtons';
-import { formatDateWithYear, formatShortDate } from '../services/workflow/dates';
+import { formatDateWithYear, formatShortDate, toLocalDateKey, todayKey } from '../services/workflow/dates';
+import { useBrokerFeeSplits } from '../hooks/useBrokerFeeShare';
+import { fetchAgentPayments, recordAgentPayments, undoAgentPayment, type AgentPayment, type PaymentItem } from '../services/supabase/agentPaymentsRepo';
+import { addedLate, payStatus, type PayStatus } from '../services/finance/agentPay';
 import {
   DATE_PRESET_LABELS,
   POLICY_DATE_LABELS,
@@ -98,8 +101,11 @@ interface PolicyView {
   to: string;
   agent: string;
   search: string;
+  /** Paid to the agent (0084): all rows, only the ones not (fully) paid, or only the paid ones. */
+  paid: PaidFilter;
 }
-const POLICY_VIEW_DEFAULTS: PolicyView = { type: 'all', date: 'boundDate', from: '', to: '', agent: ALL_AGENTS, search: '' };
+type PaidFilter = 'all' | 'not_paid' | 'paid';
+const POLICY_VIEW_DEFAULTS: PolicyView = { type: 'all', date: 'boundDate', from: '', to: '', agent: ALL_AGENTS, search: '', paid: 'all' };
 const sanitizePolicyView = (saved: Record<string, unknown>): Partial<PolicyView> =>
   defined<PolicyView>({
     type: oneOf<KindFilter>(['all', 'policy', 'endorsement', 'cancellation'])(saved.type),
@@ -108,6 +114,7 @@ const sanitizePolicyView = (saved: Record<string, unknown>): Partial<PolicyView>
     to: aDateKey(saved.to),
     agent: aString(saved.agent),
     search: aString(saved.search),
+    paid: oneOf<PaidFilter>(['all', 'not_paid', 'paid'])(saved.paid),
   });
 const URL_KEYS: Record<string, keyof PolicyView> = { type: 'type', date: 'date', from: 'from', to: 'to', agent: 'agent', q: 'search' };
 
@@ -135,7 +142,21 @@ function PoliciesPanel() {
   const { date: dateField, from, to, search } = view;
   const kind = view.type;
   const agent = isAdmin && (view.agent === ALL_AGENTS || members.some((m) => m.userId === view.agent)) ? view.agent : ALL_AGENTS;
-  const filtersActive = kind !== 'all' || dateField !== 'boundDate' || !!from || !!to || !!agent || !!search;
+  const paidFilter = view.paid;
+  const filtersActive = kind !== 'all' || dateField !== 'boundDate' || !!from || !!to || !!agent || !!search || paidFilter !== 'all';
+
+  // What the agency paid its agents (0084), row by row; null until loaded, and when 0084 isn't there.
+  const [payments, setPayments] = useState<AgentPayment[] | null>(null);
+  const loadPayments = () => {
+    if (agencyAccess) void fetchAgentPayments().then((r) => setPayments(r.ok ? r.data : null));
+  };
+  useEffect(loadPayments, [agencyAccess?.agencyId]);
+  const paymentsByRow = useMemo(() => {
+    const m = new Map<string, AgentPayment[]>();
+    for (const p of payments ?? []) m.set(`${p.accountId}|${p.rowKey}`, [...(m.get(`${p.accountId}|${p.rowKey}`) ?? []), p]);
+    return m;
+  }, [payments]);
+  const splits = useBrokerFeeSplits();
 
   // Commission records (0064): the frozen amounts and status of each policy — the agency's for an admin,
   // the agent's own for an agent. Without them (no 0064, or not recorded yet) the amounts are worked out.
@@ -170,7 +191,7 @@ function PoliciesPanel() {
     }));
     return [...base, ...cancelled];
   }, [accounts, quotes, agencyAccess, isAdmin, me, cancellationRecords]);
-  const rows = useMemo(
+  const baseRows = useMemo(
     () =>
       filterPolicies(all, { dateField, from, to, search })
         .filter((r) => kind === 'all' || (kind === 'cancellation' ? !!r.cancellation : !r.cancellation && entryKind(r.policy) === kind))
@@ -219,13 +240,37 @@ function PoliciesPanel() {
     const rec = recordOf(r);
     return rec && isAdmin ? rec.carrierCents : carrierCommissionCents(r.policy.netPremiumCents, carrierRateOf(r));
   };
+  /** What the agent is owed for a row: commission + broker fee share − referral partner shortfall (0083). */
+  const payOf = (r: PolicyRow): { commission: number; share: number; shortfall: number; total: number } | null => {
+    const c = commissionOf(r);
+    if (c === null) return null;
+    const sp = r.cancellation ? undefined : splits[`${r.accountId}:${r.policy.id}`];
+    const live = sp && !sp.pending && sp.feeCents === (r.policy.brokerFeeCents ?? 0);
+    const share = live ? (sp.agentCents ?? 0) : 0;
+    const shortfall = live ? sp.shortfallCents : 0;
+    return { commission: c, share, shortfall, total: c + share - shortfall };
+  };
+  const statusOf = (r: PolicyRow): PayStatus => payStatus(payOf(r)?.total ?? null, paymentsByRow.get(`${r.accountId}|${r.policy.id}`) ?? []);
+  const payAgentOf = (r: PolicyRow): string | null => recordOf(r)?.agentUserId ?? r.assignedUserId;
+  const rows = useMemo(
+    () => (payments === null || paidFilter === 'all' ? baseRows : baseRows.filter((r) => (paidFilter === 'paid' ? statusOf(r).state === 'paid' : statusOf(r).state === 'not_paid' || statusOf(r).state === 'partly'))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [baseRows, paidFilter, payments, splits, records, rates.rates, carrier.rows]
+  );
+  // Admins: rows ticked to mark paid, by "accountId|rowId".
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const keyOf = (r: PolicyRow) => `${r.accountId}|${r.policy.id}`;
+  const payable = (r: PolicyRow) => isAdmin && payments !== null && !!payAgentOf(r) && (statusOf(r).state === 'not_paid' || statusOf(r).state === 'partly');
+  const selectedRows = rows.filter((r) => selected.has(keyOf(r)) && payable(r));
+  const [paying, setPaying] = useState(false);
+  const [undoing, setUndoing] = useState<{ payment: AgentPayment; label: string } | null>(null);
   /** Why a row has no agent commission. */
   const noCommissionWhy = (r: PolicyRow) =>
     !r.assignedUserId ? 'No agent assigned' : rates.rates[r.assignedUserId] === undefined ? 'No split set' : !isAdmin && !recordOf(r) ? 'Not recorded yet' : 'Carrier % not set';
   const [rateFor, setRateFor] = useState<PolicyRow | null>(null);
   const setDescription = useAccountsStore((s) => s.setPolicyDescription);
   const totals = useMemo(() => {
-    const t = { policies: 0, endorsements: 0, cancellations: 0, net: 0, taxes: 0, fees: 0, carrier: 0, carrierMissing: 0, commission: 0, commissionMissing: 0, proofMissing: 0 };
+    const t = { policies: 0, endorsements: 0, cancellations: 0, net: 0, taxes: 0, fees: 0, carrier: 0, carrierMissing: 0, commission: 0, commissionMissing: 0, proofMissing: 0, due: 0, dueCount: 0, paid: 0 };
     for (const r of rows) {
       if (r.cancellation) t.cancellations++;
       else if (entryKind(r.policy) === 'endorsement') t.endorsements++;
@@ -236,14 +281,22 @@ function PoliciesPanel() {
       const cc = carrierCentsOf(r);
       if (cc === null) t.carrierMissing++;
       else t.carrier += cc;
-      const c = commissionOf(r);
-      if (c === null) t.commissionMissing++;
-      else t.commission += c;
+      const pay = payOf(r);
+      if (pay === null) t.commissionMissing++;
+      else t.commission += pay.total;
+      if (payments !== null) {
+        const st = statusOf(r);
+        t.paid += st.paidCents;
+        if (st.state === 'not_paid' || st.state === 'partly') {
+          t.due += st.dueCents;
+          t.dueCount++;
+        }
+      }
       if (!r.cancellation && !(r.policy.attachments ?? []).length) t.proofMissing++;
     }
     return t;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, rates.rates, carrier.rows, agencyAccess, records]);
+  }, [rows, rates.rates, carrier.rows, agencyAccess, records, payments, splits]);
   const agentName = (id: string | null) => (id ? (members.find((m) => m.userId === id)?.name ?? 'Agent') : '');
   // Whose commission it is: the agent it was recorded for (their current name), else the account's agent.
   const commissionAgentName = (r: PolicyRow) => {
@@ -316,7 +369,17 @@ function PoliciesPanel() {
                 </select>
               </div>
             )}
-            <div className={isAdmin ? 'col-span-2 lg:col-span-6' : 'col-span-2 lg:col-span-1'}>
+            {payments !== null && (
+              <div className="col-span-2 lg:col-span-1">
+                <label className={labelClass} htmlFor="pf-paid">Payment</label>
+                <select id="pf-paid" className={inputClass} value={paidFilter} onChange={(e) => update({ paid: e.target.value as PaidFilter })}>
+                  <option value="all">All</option>
+                  <option value="not_paid">Not paid</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </div>
+            )}
+            <div className={isAdmin ? (payments !== null ? 'col-span-2 lg:col-span-5' : 'col-span-2 lg:col-span-6') : payments !== null ? 'col-span-2 lg:col-span-6' : 'col-span-2 lg:col-span-1'}>
               <label className={labelClass} htmlFor="pf-search">Search</label>
               <div className="relative">
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-ink-400)]" aria-hidden />
@@ -338,6 +401,32 @@ function PoliciesPanel() {
         </CardBody>
       </Card>
 
+      {isAdmin && payments !== null && rows.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-ink-100)] bg-white px-4 py-3 text-sm [box-shadow:var(--shadow-card)]" data-testid="pay-bar">
+          <p className="text-[var(--color-ink-700)]">
+            {totals.dueCount > 0 ? (
+              <>
+                To pay{agent ? ` ${agentName(agent)}` : ''}: <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(totals.due)}</strong> ({totals.dueCount} {totals.dueCount === 1 ? 'row' : 'rows'} not paid in this list)
+              </>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 text-[var(--color-success-600)]"><CheckCircle2 size={14} /> Everything in this list is paid.</span>
+            )}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {totals.dueCount > 0 && (
+              <Button size="sm" variant="secondary" onClick={() => setSelected(selectedRows.length === totals.dueCount ? new Set() : new Set(rows.filter(payable).map(keyOf)))}>
+                {selectedRows.length === totals.dueCount ? 'Clear selection' : 'Select all not paid'}
+              </Button>
+            )}
+            {selectedRows.length > 0 && (
+              <Button size="sm" onClick={() => setPaying(true)} data-testid="mark-paid">
+                Mark {selectedRows.length} paid · {formatCents(selectedRows.reduce((n, r) => n + statusOf(r).dueCents, 0))}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       <Card>
         <CardBody className="pt-2">
           {all.length === 0 ? (
@@ -355,12 +444,14 @@ function PoliciesPanel() {
                   <tr>
                     <th className={th}>Client / policy</th>
                     <th className={th}>Bound / Endorsed Date</th>
+                    <th className={th}>Added on</th>
                     <th className={`${th} ${num}`}>Net</th>
                     <th className={`${th} ${num}`}>Taxes</th>
                     <th className={`${th} ${num}`}>Fees</th>
                     <th className={`${th} ${num}`}>Total</th>
                     {isAdmin && <th className={`${th} ${num} !whitespace-normal`}>Carrier commission</th>}
                     {agencyAccess && <th className={`${th} ${num} !whitespace-normal`}>Agent commission</th>}
+                    {agencyAccess && payments !== null && <th className={th}>Paid to agent</th>}
                     <th className={th}>Description</th>
                     <th className={th}>Documents</th>
                   </tr>
@@ -372,6 +463,7 @@ function PoliciesPanel() {
                         {totals.cancellations > 0 && <> · <span data-total="cancellations">{totals.cancellations}</span> {totals.cancellations === 1 ? 'cancellation' : 'cancellations'}</>}
                       </span>
                     </td>
+                    <td className={totalCell} />
                     <td className={totalCell} />
                     <td className={`${totalCell} ${num}`} data-total="net">{formatCents(totals.net)}</td>
                     <td className={`${totalCell} ${num}`} data-total="taxes">{formatCents(totals.taxes)}</td>
@@ -387,6 +479,12 @@ function PoliciesPanel() {
                       <td className={`${totalCell} ${num}`} data-total="commission">
                         {formatCents(totals.commission)}
                         {totals.commissionMissing > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">{totals.commissionMissing} without an amount yet</span>}
+                      </td>
+                    )}
+                    {agencyAccess && payments !== null && (
+                      <td className={totalCell} data-total="paid">
+                        <span className="tabular-nums">{formatCents(totals.paid)}</span> paid
+                        {totals.dueCount > 0 && <span className="block text-[11px] font-normal text-[var(--color-warning-600)] tabular-nums">{formatCents(totals.due)} not paid</span>}
                       </td>
                     )}
                     <td className={totalCell} />
@@ -420,6 +518,18 @@ function PoliciesPanel() {
                           </span>
                         </td>
                         <td className={`${td} whitespace-nowrap`} data-field="bound">{r.policy.boundDate ? formatDateWithYear(r.policy.boundDate) : '—'}</td>
+                        <td className={`${td} whitespace-nowrap`} data-field="added">
+                          {r.cancellation || !r.policy.createdAt ? (
+                            <span className="text-xs text-[var(--color-ink-400)]">—</span>
+                          ) : addedLate(r.policy.boundDate, r.policy.createdAt, endorsement) ? (
+                            <span className="text-[var(--color-warning-600)]" title={`Entered after its ${endorsement ? 'month' : 'week'} ended`}>
+                              {formatDateWithYear(toLocalDateKey(new Date(r.policy.createdAt)))}
+                              <span className="block text-[11px]">After its {endorsement ? 'month' : 'week'}</span>
+                            </span>
+                          ) : (
+                            formatDateWithYear(toLocalDateKey(new Date(r.policy.createdAt)))
+                          )}
+                        </td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.netPremiumCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.taxesCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.feesCents)}</td>
@@ -431,7 +541,23 @@ function PoliciesPanel() {
                         )}
                         {agencyAccess && (
                           <td className={`${td} ${num}`} data-field="commission">
-                            {c === null ? <span className="text-xs text-[var(--color-ink-400)]">{noCommissionWhy(r)}</span> : <span className="font-semibold">{formatCents(c)}</span>}
+                            {c === null ? (
+                              <span className="text-xs text-[var(--color-ink-400)]">{noCommissionWhy(r)}</span>
+                            ) : (
+                              (() => {
+                                const pay = payOf(r)!;
+                                return (
+                                  <>
+                                    <span className="font-semibold">{formatCents(pay.total)}</span>
+                                    {(pay.share > 0 || pay.shortfall > 0) && (
+                                      <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" data-field="commission-parts" title={pay.shortfall > 0 ? 'The first broker fee didn’t cover the referral partner’s agreed amount, so the rest comes out of the agent commission.' : undefined}>
+                                        {formatCents(pay.commission)} commission{pay.share > 0 ? ` + ${formatCents(pay.share)} broker fee` : ''}{pay.shortfall > 0 ? ` − ${formatCents(pay.shortfall)} to the referral partner` : ''}
+                                      </span>
+                                    )}
+                                  </>
+                                );
+                              })()
+                            )}
                             {isAdmin && commissionAgentName(r) && (
                               <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" data-field="commission-agent">
                                 {commissionAgentName(r)}
@@ -442,6 +568,17 @@ function PoliciesPanel() {
                                 Carrier {formatRate(carrierRateOf(r)!)}
                               </span>
                             )}
+                          </td>
+                        )}
+                        {agencyAccess && payments !== null && (
+                          <td className={`${td} whitespace-nowrap`} data-field="paid">
+                            <PaidCell
+                              status={statusOf(r)}
+                              selectable={payable(r)}
+                              selected={selected.has(keyOf(r))}
+                              onSelect={(on) => setSelected((cur) => { const n = new Set(cur); if (on) n.add(keyOf(r)); else n.delete(keyOf(r)); return n; })}
+                              onUndo={isAdmin ? (p) => setUndoing({ payment: p, label: `${r.insured} ${r.policy.policyNumber ?? ''}`.trim() }) : undefined}
+                            />
                           </td>
                         )}
                         <td className={`${td} min-w-[200px]`} data-field="description">
@@ -474,6 +611,29 @@ function PoliciesPanel() {
             <p className="mt-3 text-xs text-[var(--color-warning-600)]" data-testid="carrier-rates-unavailable">
               {carrier.message} Until then no carrier % is set.
             </p>
+          )}
+          {paying && (
+            <MarkPaidDialog
+              rows={selectedRows.map((r) => ({ row: r, agentId: payAgentOf(r)!, due: statusOf(r).dueCents, pay: payOf(r)!, status: statusOf(r) }))}
+              agentName={agentName}
+              onClose={() => setPaying(false)}
+              onDone={() => {
+                setPaying(false);
+                setSelected(new Set());
+                loadPayments();
+              }}
+            />
+          )}
+          {undoing && (
+            <UndoPaymentDialog
+              payment={undoing.payment}
+              label={undoing.label}
+              onClose={() => setUndoing(null)}
+              onDone={() => {
+                setUndoing(null);
+                loadPayments();
+              }}
+            />
           )}
           {rateFor && <CarrierRateDialog carrier={rateFor.policy.carrier} effectiveFrom={rateFor.policy.boundDate} onClose={() => setRateFor(null)} onSaved={() => void ledger.reload()} />}
         </CardBody>
@@ -568,5 +728,125 @@ function DescriptionCell({ text, canEdit, label, onSave }: { text: string; canEd
         <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
       </div>
     </div>
+  );
+}
+
+/** "Paid Oct 31 · $595.50", "Paid $445.50 · $34.50 not paid yet" or "Not paid" (with a tick box for admins). */
+function PaidCell({ status, selectable, selected, onSelect, onUndo }: { status: PayStatus; selectable: boolean; selected: boolean; onSelect: (on: boolean) => void; onUndo?: (p: AgentPayment) => void }) {
+  const when = status.lastPaidOn ? formatShortDate(status.lastPaidOn) : '';
+  return (
+    <span className="flex items-start gap-2">
+      {selectable && <input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} className="mt-1 cursor-pointer" aria-label="Select to mark paid" />}
+      <span className="flex flex-col text-sm">
+        {status.state === 'paid' ? (
+          <span className="inline-flex items-center gap-1 font-medium text-[var(--color-success-600)]">
+            <CheckCircle2 size={13} /> Paid {when}
+          </span>
+        ) : status.state === 'partly' ? (
+          <>
+            <span className="text-[var(--color-ink-700)]">Paid <span className="tabular-nums">{formatCents(status.paidCents)}</span> {when}</span>
+            <span className="text-[11px] font-medium text-[var(--color-warning-600)] tabular-nums">{formatCents(status.dueCents)} not paid yet (amount changed)</span>
+          </>
+        ) : status.state === 'not_paid' ? (
+          <span className="text-[var(--color-ink-500)]">Not paid</span>
+        ) : (
+          <span className="text-xs text-[var(--color-ink-400)]">—</span>
+        )}
+        {status.state === 'paid' && <span className="text-[11px] text-[var(--color-ink-500)] tabular-nums">{formatCents(status.paidCents)}</span>}
+        {onUndo && status.last && (
+          <button type="button" onClick={() => onUndo(status.last!)} className="w-fit cursor-pointer text-[11px] font-medium text-[var(--color-brand-700)] hover:underline">
+            Undo
+          </button>
+        )}
+      </span>
+    </span>
+  );
+}
+
+type PayLine = { row: PolicyRow; agentId: string; due: number; pay: { commission: number; share: number; shortfall: number; total: number }; status: PayStatus };
+
+/** Admins: mark the ticked rows paid on a date — what's due on each (all of it, or the difference after a change). */
+function MarkPaidDialog({ rows, agentName, onClose, onDone }: { rows: PayLine[]; agentName: (id: string | null) => string; onClose: () => void; onDone: () => void }) {
+  const [paidOn, setPaidOn] = useState(todayKey());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const byAgent = new Map<string, PayLine[]>();
+  for (const l of rows) byAgent.set(l.agentId, [...(byAgent.get(l.agentId) ?? []), l]);
+  async function save() {
+    if (!paidOn) return setError('Choose the date it was paid.');
+    setBusy(true);
+    // Paid in full: the row's parts. A difference after a change: the difference, as commission.
+    const items: PaymentItem[] = rows.map((l) =>
+      l.status.paidCents === 0
+        ? { accountId: l.row.accountId, rowKey: l.row.policy.id, agentUserId: l.agentId, commissionCents: l.pay.commission, brokerFeeCents: l.pay.share, partnerShortfallCents: l.pay.shortfall }
+        : { accountId: l.row.accountId, rowKey: l.row.policy.id, agentUserId: l.agentId, commissionCents: l.due, brokerFeeCents: 0, partnerShortfallCents: 0 }
+    );
+    const r = await recordAgentPayments(paidOn, items);
+    setBusy(false);
+    if (!r.ok) return setError(r.message);
+    onDone();
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Mark ${rows.length} paid`}
+      subtitle="Each row is checked off with this date and the amount paid."
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => void save()} disabled={busy}>{busy ? 'Saving…' : 'Mark paid'}</Button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className={labelClass} htmlFor="paid-on">Paid on</label>
+          <input id="paid-on" type="date" className={`${inputClass} w-48`} value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+        </div>
+        <ul className="flex flex-col gap-1 text-sm" data-testid="pay-summary">
+          {[...byAgent.entries()].map(([id, list]) => (
+            <li key={id} className="flex justify-between gap-3 border-b border-[var(--color-ink-50)] py-1.5">
+              <span>{agentName(id)} <span className="text-[var(--color-ink-500)]">· {list.length} {list.length === 1 ? 'row' : 'rows'}</span></span>
+              <strong className="tabular-nums">{formatCents(list.reduce((n, l) => n + l.due, 0))}</strong>
+            </li>
+          ))}
+        </ul>
+        {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
+      </div>
+    </Modal>
+  );
+}
+
+/** Admins: undo a payment marked by mistake (kept in the history with the reason). */
+function UndoPaymentDialog({ payment, label, onClose, onDone }: { payment: AgentPayment; label: string; onClose: () => void; onDone: () => void }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function save() {
+    if (!reason.trim()) return setError('Say why it’s being undone.');
+    setBusy(true);
+    const r = await undoAgentPayment(payment.id, reason.trim());
+    setBusy(false);
+    if (!r.ok) return setError(r.message);
+    onDone();
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Undo this payment?"
+      subtitle={`${label}: ${formatCents(payment.totalCents)} paid ${formatShortDate(payment.paidOn)}. It shows as not paid again; the undo is kept in the history.`}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Keep it</Button>
+          <Button onClick={() => void save()} disabled={busy}>{busy ? 'Undoing…' : 'Undo payment'}</Button>
+        </div>
+      }
+    >
+      <label className={labelClass} htmlFor="undo-reason">Why</label>
+      <input id="undo-reason" className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Marked the wrong policy" maxLength={500} />
+      {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]">{error}</p>}
+    </Modal>
   );
 }
