@@ -156,8 +156,9 @@ export function gmailThreadUrl(mailbox: string, gmailThreadId: string): string {
   return `https://mail.google.com/mail/?authuser=${encodeURIComponent(mailbox)}#all/${encodeURIComponent(gmailThreadId)}`;
 }
 
-/** For now Related Emails shows on the account Overview only for this login (Gmail connection isn't open to everyone yet). */
-export const RELATED_EMAILS_LOGINS = ['renewaliq@gmail.com'];
+/** The logins that see Related Emails on the account Overview (Gmail connection isn't open to everyone yet). */
+// Turned off for now (was ['renewaliq@gmail.com']): add a login here to show the card again.
+export const RELATED_EMAILS_LOGINS: string[] = [];
 export function relatedEmailsShownFor(email: string | null | undefined): boolean {
   return !!email && RELATED_EMAILS_LOGINS.includes(email.trim().toLowerCase());
 }

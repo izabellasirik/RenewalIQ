@@ -89,10 +89,10 @@ describe('Refresh reports suggestions the database refused (no silent "0 new sug
   });
 });
 
-describe('Related Emails on the Overview is limited to the RenewalIQ login for now', () => {
-  it('shown only for renewaliq@gmail.com (any case/spacing), hidden for everyone else and when signed out', () => {
-    expect(relatedEmailsShownFor('renewaliq@gmail.com')).toBe(true);
-    expect(relatedEmailsShownFor(' RenewalIQ@Gmail.com ')).toBe(true);
+describe('Related Emails on the Overview is turned off for now', () => {
+  it('hidden for everyone, including renewaliq@gmail.com, and when signed out', () => {
+    expect(relatedEmailsShownFor('renewaliq@gmail.com')).toBe(false);
+    expect(relatedEmailsShownFor(' RenewalIQ@Gmail.com ')).toBe(false);
     expect(relatedEmailsShownFor('agent@agency.example')).toBe(false);
     expect(relatedEmailsShownFor('renewaliq@gmail.com.evil.example')).toBe(false);
     expect(relatedEmailsShownFor(null)).toBe(false);
