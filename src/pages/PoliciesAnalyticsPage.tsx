@@ -201,9 +201,8 @@ function PoliciesPanel() {
   const baseRows = useMemo(
     () =>
       filterPolicies(all, { dateField, from, to, search })
-        .filter((r) => kind === 'all' || (kind === 'cancellation' ? !!r.cancellation : !r.cancellation && entryKind(r.policy) === kind))
-        .filter((r) => !agent || r.assignedUserId === agent),
-    [all, dateField, from, to, search, kind, agent]
+        .filter((r) => kind === 'all' || (kind === 'cancellation' ? !!r.cancellation : !r.cancellation && entryKind(r.policy) === kind)),
+    [all, dateField, from, to, search, kind]
   );
   const preset = PRESETS.find((p) => p !== 'all' && presetRange(p).from === from && presetRange(p).to === to) ?? (from || to ? 'custom' : 'all');
   const carrier = useCarrierRates();
@@ -261,10 +260,14 @@ function PoliciesPanel() {
   const statusOf = (r: PolicyRow): PayStatus => payStatus(payOf(r)?.total ?? null, paymentsByRow.get(`${r.accountId}|${r.policy.id}`) ?? []);
 
   const payAgentOf = (r: PolicyRow): string | null => recordOf(r)?.agentUserId ?? r.assignedUserId;
+  // The Agent filter matches the agent shown on the row (the one the commission is recorded for, else the account's).
   const rows = useMemo(
-    () => (payments === null || paidFilter === 'all' ? baseRows : baseRows.filter((r) => (paidFilter === 'paid' ? statusOf(r).state === 'paid' : statusOf(r).state === 'not_paid' || statusOf(r).state === 'partly'))),
+    () =>
+      baseRows
+        .filter((r) => !agent || payAgentOf(r) === agent)
+        .filter((r) => payments === null || paidFilter === 'all' || (paidFilter === 'paid' ? statusOf(r).state === 'paid' : statusOf(r).state === 'not_paid' || statusOf(r).state === 'partly')),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [baseRows, paidFilter, payments, splits, records, rates.rates, carrier.rows]
+    [baseRows, agent, paidFilter, payments, splits, records, rates.rates, carrier.rows]
   );
   // Admins: rows ticked to mark paid, by "accountId|rowId".
   const [selected, setSelected] = useState<Set<string>>(new Set());
