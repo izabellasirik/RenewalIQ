@@ -18,10 +18,10 @@ import { useRememberedView } from '../hooks/useRememberedView';
 import { aDateKey, aString, defined, oneOf } from '../services/preferences/viewPreferences';
 import { policiesReport } from '../services/reports/analyticsReports';
 import { DownloadButtons } from '../components/analytics/DownloadButtons';
-import { formatDateWithYear, formatShortDate, toLocalDateKey, todayKey } from '../services/workflow/dates';
+import { formatDateWithYear, formatShortDate, todayKey } from '../services/workflow/dates';
 import { useBrokerFeeSplits } from '../hooks/useBrokerFeeShare';
 import { fetchAgentPayments, recordAgentPayments, undoAgentPayment, type AgentPayment, type PaymentItem } from '../services/supabase/agentPaymentsRepo';
-import { addedLate, payStatus, type PayStatus } from '../services/finance/agentPay';
+import { payStatus, type PayStatus } from '../services/finance/agentPay';
 import { commitOnBlurOutside, keepFocus } from '../components/riskProfile/FieldRow';
 import { useOnDataRefresh } from '../services/appFreshness';
 import { useAgencyOwners } from '../hooks/useAgencyOwner';
@@ -259,6 +259,14 @@ function PoliciesPanel() {
     return { commission: c, share, shortfall, total: c + share - shortfall };
   };
   const statusOf = (r: PolicyRow): PayStatus => payStatus(payOf(r)?.total ?? null, paymentsByRow.get(`${r.accountId}|${r.policy.id}`) ?? []);
+  // "Paid to agent" as the cell shows it, for the downloads.
+  const paidText = (r: PolicyRow): string => {
+    const st = statusOf(r);
+    const when = st.lastPaidOn ? formatShortDate(st.lastPaidOn) : '';
+    if (st.state === 'paid') return `Paid ${when} (${formatCents(st.paidCents)})`;
+    if (st.state === 'partly') return `Paid ${formatCents(st.paidCents)} ${when}; ${formatCents(st.dueCents)} not paid yet`;
+    return st.state === 'not_paid' ? 'Not paid' : '';
+  };
   const payAgentOf = (r: PolicyRow): string | null => recordOf(r)?.agentUserId ?? r.assignedUserId;
   const rows = useMemo(
     () => (payments === null || paidFilter === 'all' ? baseRows : baseRows.filter((r) => (paidFilter === 'paid' ? statusOf(r).state === 'paid' : statusOf(r).state === 'not_paid' || statusOf(r).state === 'partly'))),
@@ -323,8 +331,9 @@ function PoliciesPanel() {
       withCommission: !!agencyAccess,
       carrierRateOf,
       carrierCentsOf,
-      commissionOf,
-      agentNameOf: (r) => agentName(r.assignedUserId),
+      payOf,
+      agentNameOf: (r) => commissionAgentName(r) || agentName(r.assignedUserId),
+      paidOf: agencyAccess && payments !== null ? paidText : undefined,
       filters: [kind !== 'all' ? `Show: ${kind === 'policy' ? 'Policies' : 'Endorsements'}` : '', agent ? `Agent: ${agentName(agent)}` : '', search ? `Search: “${search}”` : ''].filter(Boolean),
       dateField,
       from,
@@ -457,7 +466,6 @@ function PoliciesPanel() {
                   <tr>
                     <th className={th}>Client / policy</th>
                     <th className={th}>Bound / Endorsed Date</th>
-                    <th className={th}>Added on</th>
                     <th className={`${th} ${num}`}>Net</th>
                     <th className={`${th} ${num}`}>Taxes</th>
                     <th className={`${th} ${num}`}>Fees</th>
@@ -525,7 +533,7 @@ function PoliciesPanel() {
                               <span className="rounded-full bg-[var(--color-danger-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-danger-600)]">Cancellation</span>
                             ) : (
                               <span className={endorsement ? 'rounded-full bg-[var(--color-info-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-info-600)]' : 'rounded-full bg-[var(--color-ink-100)] px-1.5 py-0.5 text-[11px] text-[var(--color-ink-600)]'}>
-                                {endorsement ? 'Endorsement' : r.policy.businessType === 'renewal' ? 'Renewal' : 'New business'}
+                                {endorsement ? 'Endorsement' : 'Policy'}
                               </span>
                             )}
                             {!r.marketBound && <Badge tone="warning">Market no longer Bound</Badge>}
@@ -536,18 +544,6 @@ function PoliciesPanel() {
                           </span>
                         </td>
                         <td className={`${td} whitespace-nowrap`} data-field="bound">{r.policy.boundDate ? formatDateWithYear(r.policy.boundDate) : '—'}</td>
-                        <td className={`${td} whitespace-nowrap`} data-field="added">
-                          {r.cancellation || !r.policy.createdAt ? (
-                            <span className="text-xs text-[var(--color-ink-400)]">—</span>
-                          ) : addedLate(r.policy.boundDate, r.policy.createdAt, endorsement) ? (
-                            <span className="text-[var(--color-warning-600)]" title={`Entered after its ${endorsement ? 'month' : 'week'} ended`}>
-                              {formatDateWithYear(toLocalDateKey(new Date(r.policy.createdAt)))}
-                              <span className="block text-[11px]">After its {endorsement ? 'month' : 'week'}</span>
-                            </span>
-                          ) : (
-                            formatDateWithYear(toLocalDateKey(new Date(r.policy.createdAt)))
-                          )}
-                        </td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.netPremiumCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.taxesCents)}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.feesCents)}</td>

@@ -1,4 +1,3 @@
-import { COVERAGE_LABELS } from '../../types';
 import { entryKind, policyTotalCents, POLICY_DATE_LABELS, type PolicyDateField, type PolicyRow } from '../workflow/policies';
 import { monthLabel, type MoneyEntry, type ProfitLoss } from '../finance/money';
 import type { Cell, Report, ReportColumn } from './report';
@@ -12,12 +11,15 @@ const slug = (s: string) => s.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')
 export interface PoliciesReportOptions {
   /** Admins see the carrier commission (confidential carrier agreements). */
   isAdmin: boolean;
-  /** In an agency: the agent commission column (an agent sees only their own). */
+  /** In an agency: the agent commission columns (an agent sees only their own). */
   withCommission: boolean;
   carrierRateOf: (row: PolicyRow) => number | null;
   carrierCentsOf: (row: PolicyRow) => number | null;
-  commissionOf: (row: PolicyRow) => number | null;
+  /** The agent commission as on screen: commission + broker fee share − referral partner shortfall = total. */
+  payOf: (row: PolicyRow) => { commission: number; share: number; shortfall: number; total: number } | null;
   agentNameOf: (row: PolicyRow) => string;
+  /** "Paid to agent" as on screen ("Paid Oct 23", "Not paid", …); omitted: no column. */
+  paidOf?: (row: PolicyRow) => string;
   /** "Show: Policies", "Agent: …", "Search: …". */
   filters: string[];
   dateField: PolicyDateField;
@@ -25,67 +27,75 @@ export interface PoliciesReportOptions {
   to: string;
 }
 
+/** Policy, Endorsement or Cancellation — as the Client / policy column says. */
+export function policyRowType(r: PolicyRow): string {
+  return r.cancellation ? 'Cancellation' : entryKind(r.policy) === 'endorsement' ? 'Endorsement' : 'Policy';
+}
+
+/** The Policies & endorsements tab as shown: the same columns, in the same order, every value in full. */
 export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Report {
   const columns: ReportColumn[] = [
     { header: 'Client' },
     { header: 'Policy number' },
     { header: 'Type' },
-    { header: 'Description' },
     { header: 'Carrier' },
-    { header: 'Market' },
-    { header: 'Coverage' },
     { header: 'Bound / endorsed', kind: 'date' },
-    { header: 'Effective', kind: 'date' },
-    { header: 'Expires', kind: 'date' },
     { header: 'Net', kind: 'money' },
     { header: 'Taxes', kind: 'money' },
     { header: 'Fees', kind: 'money' },
     { header: 'Total', kind: 'money' },
     ...(o.isAdmin ? [{ header: 'Carrier %' }, { header: 'Carrier commission', kind: 'money' as const }] : []),
-    ...(o.withCommission ? [{ header: 'Agent' }, { header: 'Agent commission', kind: 'money' as const }] : []),
-    { header: 'Documents', kind: 'count' },
+    ...(o.withCommission
+      ? [{ header: 'Agent' }, { header: 'Commission', kind: 'money' as const }, { header: 'Broker fee share', kind: 'money' as const }, { header: 'To referral partner', kind: 'money' as const }, { header: 'Agent commission total', kind: 'money' as const }]
+      : []),
+    ...(o.paidOf ? [{ header: 'Paid to agent' }] : []),
+    { header: 'Description' },
+    { header: 'Documents' },
   ];
-  const t = { net: 0, taxes: 0, fees: 0, carrier: 0, commission: 0, docs: 0 };
+  const t = { net: 0, taxes: 0, fees: 0, carrier: 0, commission: 0, share: 0, shortfall: 0, total: 0, missing: 0 };
   const body: Cell[][] = rows.map((r) => {
     const p = r.policy;
-    const endorsement = entryKind(p) === 'endorsement';
     const carrier = o.carrierCentsOf(r);
     const carrierRate = o.carrierRateOf(r);
-    const commission = o.commissionOf(r);
+    const pay = o.payOf(r);
+    const docs = (p.attachments ?? []).length;
     t.net += p.netPremiumCents;
     t.taxes += p.taxesCents;
     t.fees += p.feesCents;
     t.carrier += carrier ?? 0;
-    t.commission += commission ?? 0;
-    t.docs += (p.attachments ?? []).length;
+    t.commission += pay?.commission ?? 0;
+    t.share += pay?.share ?? 0;
+    t.shortfall += pay?.shortfall ?? 0;
+    t.total += pay?.total ?? 0;
+    if (!r.cancellation && !docs) t.missing++;
     return [
       r.insured,
-      p.policyNumber ?? '',
-      endorsement ? 'Endorsement' : p.businessType === 'renewal' ? 'Renewal' : 'New business',
-      p.description ?? '',
-      p.carrier,
-      r.marketName,
-      p.coverage ? COVERAGE_LABELS[p.coverage] : '',
-      p.boundDate,
-      p.effectiveDate ?? null,
-      p.expirationDate ?? null,
+      p.policyNumber ?? 'Number to come',
+      policyRowType(r),
+      !r.cancellation && p.carrier !== r.marketName ? `${p.carrier} via ${r.marketName}` : p.carrier,
+      p.boundDate || null,
       p.netPremiumCents,
       p.taxesCents,
       p.feesCents,
       policyTotalCents(p),
       ...(o.isAdmin ? [carrierRate === null ? 'Not set' : `${Math.round(carrierRate * 1e6) / 1e4}%`, carrier] : []),
-      ...(o.withCommission ? [o.agentNameOf(r), commission] : []),
-      (p.attachments ?? []).length,
+      ...(o.withCommission ? [o.agentNameOf(r), pay?.commission ?? null, pay ? pay.share : null, pay && pay.shortfall ? -pay.shortfall : null, pay?.total ?? null] : []),
+      ...(o.paidOf ? [o.paidOf(r)] : []),
+      p.description ?? '',
+      r.cancellation ? '' : docs ? String(docs) : 'Missing',
     ];
   });
-  const policies = rows.filter((r) => entryKind(r.policy) === 'policy').length;
+  const policies = rows.filter((r) => !r.cancellation && entryKind(r.policy) === 'policy').length;
+  const endorsements = rows.filter((r) => !r.cancellation && entryKind(r.policy) === 'endorsement').length;
   const totals: Cell[] = [
-    `Total: ${policies} ${policies === 1 ? 'policy' : 'policies'}, ${rows.length - policies} ${rows.length - policies === 1 ? 'endorsement' : 'endorsements'}`,
-    '', '', '', '', '', '', null, null, null,
+    `Total: ${policies} ${policies === 1 ? 'policy' : 'policies'}, ${endorsements} ${endorsements === 1 ? 'endorsement' : 'endorsements'}`,
+    '', '', '', null,
     t.net, t.taxes, t.fees, t.net + t.taxes + t.fees,
     ...(o.isAdmin ? ['', t.carrier] : []),
-    ...(o.withCommission ? ['', t.commission] : []),
-    t.docs,
+    ...(o.withCommission ? ['', t.commission, t.share, t.shortfall ? -t.shortfall : null, t.total] : []),
+    ...(o.paidOf ? [''] : []),
+    '',
+    t.missing ? `${t.missing} missing` : 'None missing',
   ];
   return {
     title: 'Policies & endorsements',
@@ -94,6 +104,54 @@ export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Rep
     rows: body,
     totals,
     fileBase: `policies-and-endorsements-${slug(`${o.from || 'all'}-${o.to || 'all'}`)}-${stamp()}`,
+  };
+}
+
+export interface BrokerFeeReportRow {
+  boundDate: string;
+  clientName: string;
+  policyNumber: string | null;
+  brokerFeeCents: number;
+  partnerName: string | null;
+  partnerCents: number | null;
+  agentName: string | null;
+  agentCents: number | null;
+  agencyCents: number | null;
+  partnerShortfallCents: number;
+}
+
+/** Analytics → Broker fees as shown (admins: partner, agent, agency; an agent: their share). */
+export function brokerFeesReport(rows: BrokerFeeReportRow[], admin: boolean, from: string, to: string, filters: string[]): Report {
+  const columns: ReportColumn[] = [
+    { header: 'Bound', kind: 'date' },
+    { header: 'Client' },
+    { header: 'Policy' },
+    { header: 'Broker fee', kind: 'money' },
+    ...(admin
+      ? [{ header: 'Partner' }, { header: 'To partner', kind: 'money' as const }, { header: 'Agent' }, { header: 'To agent', kind: 'money' as const }, { header: 'From agent commission to partner', kind: 'money' as const }, { header: 'Agency keeps', kind: 'money' as const }]
+      : [{ header: 'Your share', kind: 'money' as const }, { header: 'From your commission to partner', kind: 'money' as const }]),
+  ];
+  const sum = (f: (r: BrokerFeeReportRow) => number) => rows.reduce((n, r) => n + f(r), 0);
+  return {
+    title: 'Broker fees',
+    subtitle: [`Bound date: ${periodText(from, to)}`, ...(filters.length ? [filters.join(' · ')] : []), `${rows.length} ${rows.length === 1 ? 'policy' : 'policies'}`],
+    columns,
+    rows: rows.map((r) => [
+      r.boundDate,
+      r.clientName,
+      r.policyNumber ?? '',
+      r.brokerFeeCents,
+      ...(admin
+        ? [r.partnerName ?? '', r.partnerCents ? r.partnerCents - r.partnerShortfallCents : null, r.agentName ?? '', r.agentCents ?? 0, r.partnerShortfallCents ? -r.partnerShortfallCents : null, r.agencyCents ?? 0]
+        : [r.agentCents ?? 0, r.partnerShortfallCents ? -r.partnerShortfallCents : null]),
+    ]),
+    totals: [
+      'Total', '', '', sum((r) => r.brokerFeeCents),
+      ...(admin
+        ? ['', sum((r) => (r.partnerCents ?? 0) - r.partnerShortfallCents), '', sum((r) => r.agentCents ?? 0), -sum((r) => r.partnerShortfallCents) || null, sum((r) => r.agencyCents ?? 0)]
+        : [sum((r) => r.agentCents ?? 0), -sum((r) => r.partnerShortfallCents) || null]),
+    ],
+    fileBase: `broker-fees-${slug(`${from || 'all'}-${to || 'all'}`)}-${stamp()}`,
   };
 }
 

@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
-import { Card, CardBody, CardHeader } from '../ui';
+import { Button, Card, CardBody, CardHeader } from '../ui';
+import { DownloadButtons } from './DownloadButtons';
+import { brokerFeesReport } from '../../services/reports/analyticsReports';
+import { useRememberedView } from '../../hooks/useRememberedView';
+import { aString } from '../../services/preferences/viewPreferences';
+import { useAccountsStore } from '../../state/useAccountsStore';
+import { inputClass, labelClass } from '../workspace/formStyles';
 import { PeriodPicker, usePeriod } from './MoneyPanels';
 import { fetchBrokerFeeSplits, type BrokerFeeSplit } from '../../services/supabase/partnersRepo';
 import { formatCents } from '../../services/workflow/policies';
@@ -9,6 +16,8 @@ import { formatDateWithYear } from '../../services/workflow/dates';
 const th = 'border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
 const td = 'border-b border-[var(--color-ink-50)] px-3 py-2 text-sm text-[var(--color-ink-800)]';
 const num = `${td} text-right tabular-nums`;
+const FILTERS = { partner: '', agent: '' };
+const sanitizeFilters = (v: Record<string, unknown>) => ({ partner: aString(v.partner), agent: aString(v.agent) });
 
 function Tile({ label, cents, hint }: { label: string; cents: number; hint?: string }) {
   return (
@@ -44,8 +53,18 @@ export function BrokerFeesPanel({ admin }: { admin: boolean }) {
     };
   }, [period.from, period.to]);
 
+  // Partner and Agent filters, remembered for this user; Clear resets them.
+  const [filters, setFilters, clearFilters] = useRememberedView('broker-fees-filters', FILTERS, sanitizeFilters);
+  const partnerNames = useMemo(() => [...new Set((rows ?? []).map((r) => r.partnerName).filter((n): n is string => !!n))].sort(), [rows]);
+  const agentNames = useMemo(() => [...new Set((rows ?? []).map((r) => r.agentName).filter((n): n is string => !!n))].sort(), [rows]);
+  const shown = useMemo(
+    () => (rows ?? []).filter((r) => (!filters.partner || r.partnerName === filters.partner) && (!filters.agent || r.agentName === filters.agent)),
+    [rows, filters.partner, filters.agent]
+  );
+  const filterText = [filters.partner ? `Partner: ${filters.partner}` : '', filters.agent ? `Agent: ${filters.agent}` : ''].filter(Boolean);
+
   const totals = useMemo(() => {
-    const list = rows ?? [];
+    const list = shown;
     const sum = (f: (r: BrokerFeeSplit) => number) => list.reduce((n, r) => n + f(r), 0);
     const group = (key: (r: BrokerFeeSplit) => string | null, cents: (r: BrokerFeeSplit) => number) => {
       const m = new Map<string, { cents: number; count: number }>();
@@ -67,7 +86,7 @@ export function BrokerFeesPanel({ admin }: { admin: boolean }) {
       byPartner: group((r) => r.partnerName, (r) => r.partnerCents ?? 0),
       byAgent: group((r) => r.agentName, (r) => r.agentCents ?? 0),
     };
-  }, [rows]);
+  }, [shown]);
 
   return (
     <div className="flex flex-col gap-4" data-testid="broker-fees">
@@ -76,8 +95,34 @@ export function BrokerFeesPanel({ admin }: { admin: boolean }) {
           <div className="grid grid-cols-2 items-end gap-3 lg:grid-cols-[200px_170px_170px_1fr]">
             <PeriodPicker period={period} />
           </div>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            {admin && (
+              <div>
+                <label className={labelClass} htmlFor="bf-partner">Partner</label>
+                <select id="bf-partner" value={filters.partner} onChange={(e) => setFilters({ partner: e.target.value })} className={`${inputClass} w-48`}>
+                  <option value="">All partners</option>
+                  {partnerNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            )}
+            {admin && (
+              <div>
+                <label className={labelClass} htmlFor="bf-agent">Agent</label>
+                <select id="bf-agent" value={filters.agent} onChange={(e) => setFilters({ agent: e.target.value })} className={`${inputClass} w-48`}>
+                  <option value="">All agents</option>
+                  {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+            )}
+            {(filters.partner || filters.agent) && (
+              <Button size="sm" variant="ghost" onClick={clearFilters}>Clear</Button>
+            )}
+            <div className="ml-auto">
+              <DownloadButtons testId="broker-fees-download" disabled={rows === null} report={() => brokerFeesReport(shown, admin, period.from, period.to, filterText)} />
+            </div>
+          </div>
           <p className="mt-2 text-xs text-[var(--color-ink-500)]">
-            Broker fees on policies bound in this period. {admin ? 'A partner is paid once per client, from the broker fee on the client’s first policy (nothing if that one had none); the agent gets their share of the rest; the agency keeps what’s left.' : 'Your share, as agreed with your agency.'}
+            Broker fees on policies bound in this period. {admin ? 'The referral partner’s amount comes off first, the agent gets their share of the rest, the agency keeps what’s left.' : 'Your share, as agreed with your agency.'}
           </p>
         </CardBody>
       </Card>
@@ -92,7 +137,7 @@ export function BrokerFeesPanel({ admin }: { admin: boolean }) {
       ) : admin ? (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Tile label="Broker fees" cents={totals.fees} hint={`${rows.length} polic${rows.length === 1 ? 'y' : 'ies'}`} />
+            <Tile label="Broker fees" cents={totals.fees} hint={`${shown.length} polic${shown.length === 1 ? 'y' : 'ies'}`} />
             <Tile label="Owed to partners" cents={totals.partners} />
             <Tile label="Owed to agents" cents={totals.agents} />
             <Tile label="Agency keeps" cents={totals.agency} />
@@ -101,14 +146,14 @@ export function BrokerFeesPanel({ admin }: { admin: boolean }) {
             <OwedTable title="Owed to partners" rows={totals.byPartner} countLabel="clients" empty="No partner shares in this period." />
             <OwedTable title="Owed to agents" rows={totals.byAgent} countLabel="policies" empty="No agent shares in this period." />
           </div>
-          <SplitsTable rows={rows} admin />
+          <SplitsTable rows={shown} admin />
         </>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Tile label="Your broker fee share" cents={totals.agents} hint={`${rows.length} polic${rows.length === 1 ? 'y' : 'ies'}`} />
+            <Tile label="Your broker fee share" cents={totals.agents} hint={`${shown.length} polic${shown.length === 1 ? 'y' : 'ies'}`} />
           </div>
-          <SplitsTable rows={rows} admin={false} />
+          <SplitsTable rows={shown} admin={false} />
         </>
       )}
     </div>
@@ -150,6 +195,14 @@ function OwedTable({ title, rows, countLabel, empty }: { title: string; rows: { 
 }
 
 function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }) {
+  // The client opens on Markets & Quotes, at the market that holds the policy.
+  const quotes = useAccountsStore((s) => s.quotes);
+  const policyLink = (r: BrokerFeeSplit) => {
+    const q = (quotes[r.accountId] ?? []).find((x) => (x.policies ?? []).some((p) => p.id === r.policyId));
+    return `/accounts/${r.accountId}?tab=quotes${q ? `&quote=${q.id}` : ''}`;
+  };
+  const sum = (f: (r: BrokerFeeSplit) => number) => rows.reduce((n, r) => n + f(r), 0);
+  const total = 'border-t-2 border-[var(--color-ink-200)] bg-[var(--color-ink-50)] px-3 py-2 text-sm font-semibold text-[var(--color-ink-900)]';
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -173,7 +226,9 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
               {rows.map((r) => (
                 <tr key={`${r.accountId}|${r.policyId}`}>
                   <td className={td}>{formatDateWithYear(r.boundDate)}</td>
-                  <td className={td}>{r.clientName}</td>
+                  <td className={td}>
+                    <Link to={policyLink(r)} className="font-medium text-[var(--color-brand-800)] hover:underline">{r.clientName}</Link>
+                  </td>
                   <td className={td}>{r.policyNumber ?? '—'}</td>
                   <td className={num}>{formatCents(r.brokerFeeCents)}</td>
                   {r.partnerPending ? (
@@ -202,6 +257,36 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr data-testid="broker-fee-totals">
+                <td className={total} colSpan={3}>Total · {rows.length} {rows.length === 1 ? 'policy' : 'policies'}</td>
+                <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.brokerFeeCents))}</td>
+                {admin ? (
+                  <>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.partnerCents ?? 0))}</td>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agencyCents ?? 0))}</td>
+                  </>
+                ) : (
+                  <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
+                )}
+              </tr>
+            </tfoot>
+            <tfoot>
+              <tr data-testid="broker-fee-totals">
+                <td className={total} colSpan={3}>Total · {rows.length} {rows.length === 1 ? 'policy' : 'policies'}</td>
+                <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.brokerFeeCents))}</td>
+                {admin ? (
+                  <>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.partnerCents ?? 0))}</td>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agencyCents ?? 0))}</td>
+                  </>
+                ) : (
+                  <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
+                )}
+              </tr>
+            </tfoot>
           </table>
         )}
       </CardBody>

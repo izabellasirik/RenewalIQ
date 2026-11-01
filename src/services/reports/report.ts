@@ -119,21 +119,64 @@ export async function reportPdf(r: Report): Promise<Blob> {
   doc.setTitle(pdfSafe(r.title));
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const W = 792;
+  // Wide reports use a legal-size landscape page.
+  const W = r.columns.length > 14 ? 1008 : 792;
   const H = 612;
   const M = 36;
-  const size = 8;
-  const rowH = 14;
+  // Wide reports (many columns) use a smaller type so every column fits on the page.
+  const size = r.columns.length > 14 ? 6.5 : 8;
   const cells = [r.columns.map((c) => c.header), ...r.rows.map((row) => r.columns.map((c, i) => pdfSafe(displayCell(c, row[i] ?? null)))), ...(r.totals ? [r.columns.map((c, i) => pdfSafe(displayCell(c, r.totals![i] ?? null)))] : [])];
-  // Column widths from the content, scaled to the page; long text is cut with an ellipsis.
-  const natural = r.columns.map((_, i) => Math.min(220, Math.max(40, ...cells.map((row) => bold.widthOfTextAtSize(row[i] ?? '', size) + 10))));
-  const scale = Math.min(1, (W - 2 * M) / natural.reduce((a, b) => a + b, 0));
-  const widths = natural.map((w) => w * scale);
+  // Column widths from the content. Numbers, dates and short values keep their full width; when the page is too
+  // narrow, only the text columns (client, description, …) get narrower and wrap. Headers wrap word by word.
+  const avail = W - 2 * M;
+  const body = cells.slice(1);
+  const natural = r.columns.map((c, i) => {
+    const cellW = Math.max(0, ...body.map((row) => Math.max(...(row[i] ?? '').split('\n').map((l) => font.widthOfTextAtSize(l, size)))));
+    const headW = Math.max(...c.header.split(' ').map((w) => bold.widthOfTextAtSize(w, size)));
+    return Math.min(c.kind ? 120 : 220, Math.max(34, cellW + 10, headW + 10));
+  });
+  const flexible = r.columns.map((c, i) => !c.kind && natural[i] > 70);
+  const fixedW = natural.reduce((n, w, i) => n + (flexible[i] ? 0 : w), 0);
+  const flexW = natural.reduce((n, w, i) => n + (flexible[i] ? w : 0), 0);
+  let widths = natural;
+  if (fixedW + flexW > avail) {
+    const k = flexW ? Math.max(0, avail - fixedW) / flexW : 0;
+    widths = natural.map((w, i) => (flexible[i] ? Math.max(45, w * k) : w));
+    const total = widths.reduce((a2, b2) => a2 + b2, 0);
+    if (total > avail) widths = widths.map((w) => (w * avail) / total);
+  }
   const fit = (text: string, f: typeof font, width: number) => {
     if (f.widthOfTextAtSize(text, size) <= width) return text;
     let t = text;
     while (t.length > 1 && f.widthOfTextAtSize(`${t}...`, size) > width) t = t.slice(0, -1);
     return `${t}...`;
+  };
+  // Every cell is shown in full: long text wraps onto more lines (a very long word is broken).
+  const lineH = size + 2.5;
+  const wrap = (text: string, f: typeof font, width: number): string[] => {
+    const out: string[] = [];
+    for (const para of text.split('\n')) {
+      let line = '';
+      for (const word of para.split(' ')) {
+        let w = word;
+        while (f.widthOfTextAtSize(w, size) > width && w.length > 1) {
+          let cut = w.length - 1;
+          while (cut > 1 && f.widthOfTextAtSize(w.slice(0, cut), size) > width) cut--;
+          if (line) out.push(line);
+          out.push(w.slice(0, cut));
+          line = '';
+          w = w.slice(cut);
+        }
+        const next = line ? `${line} ${w}` : w;
+        if (f.widthOfTextAtSize(next, size) <= width) line = next;
+        else {
+          if (line) out.push(line);
+          line = w;
+        }
+      }
+      out.push(line);
+    }
+    return out.length ? out : [''];
   };
   const pages: ReturnType<typeof doc.addPage>[] = [];
   let page = doc.addPage([W, H]);
@@ -146,24 +189,27 @@ export async function reportPdf(r: Report): Promise<Blob> {
     y -= 13;
   }
   y -= 6;
+  const heightOf = (row: string[], f: typeof font) => Math.max(...row.map((text, i) => wrap(text, f, widths[i] - 8).length)) * lineH + 4;
   const drawRow = (row: string[], f: typeof font, shade: boolean) => {
-    if (shade) page.drawRectangle({ x: M, y: y - rowH + 3, width: W - 2 * M, height: rowH, color: rgb(0.94, 0.95, 0.97) });
+    const h = heightOf(row, f);
+    if (shade) page.drawRectangle({ x: M, y: y - h, width: W - 2 * M, height: h, color: rgb(0.94, 0.95, 0.97) });
     let x = M;
     row.forEach((text, i) => {
       const width = widths[i] - 8;
-      const t = fit(text, f, width);
       const right = r.columns[i].kind === 'money' || r.columns[i].kind === 'count';
-      const tx = right ? x + widths[i] - 4 - f.widthOfTextAtSize(t, size) : x + 4;
-      page.drawText(t, { x: tx, y: y - rowH + 7, size, font: f, color: rgb(0.12, 0.14, 0.18) });
+      wrap(text, f, width).forEach((t, n) => {
+        const tx = right ? x + widths[i] - 4 - f.widthOfTextAtSize(t, size) : x + 4;
+        page.drawText(t, { x: tx, y: y - size - 1 - n * lineH, size, font: f, color: rgb(0.12, 0.14, 0.18) });
+      });
       x += widths[i];
     });
-    y -= rowH;
+    y -= h;
+    page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.3, color: rgb(0.88, 0.89, 0.91) });
   };
   const header = cells[0];
   drawRow(header, bold, true);
-  const body = cells.slice(1);
   body.forEach((row, n) => {
-    if (y - rowH < M + 14) {
+    if (y - heightOf(row, font) < M + 14) {
       page = doc.addPage([W, H]);
       pages.push(page);
       y = H - M;
