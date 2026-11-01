@@ -456,13 +456,17 @@ function PoliciesPanel() {
                 <thead>
                   <tr>
                     <th className={th}>Client / policy</th>
+                    <th className={th}>Carrier / MGA</th>
                     <th className={th}>Bound / Endorsed Date</th>
                     <th className={`${th} ${num}`}>Net</th>
                     <th className={`${th} ${num}`}>Taxes</th>
                     <th className={`${th} ${num}`}>Fees</th>
                     <th className={`${th} ${num}`}>Total</th>
                     {isAdmin && <th className={`${th} ${num} !whitespace-normal`}>Carrier commission</th>}
+                    {agencyAccess && <th className={th}>Agent</th>}
                     {agencyAccess && <th className={`${th} ${num} !whitespace-normal`}>Agent commission</th>}
+                    {agencyAccess && <th className={`${th} ${num} !whitespace-normal`}>Broker fee</th>}
+                    {agencyAccess && <th className={`${th} ${num} !whitespace-normal`}>Agent commission total</th>}
                     {agencyAccess && payments !== null && <th className={th}>Paid to agent</th>}
                     <th className={th}>Description</th>
                     <th className={th}>Documents</th>
@@ -476,6 +480,7 @@ function PoliciesPanel() {
                       </span>
                     </td>
                     <td className={totalCell} />
+                    <td className={totalCell} />
                     <td className={`${totalCell} ${num}`} data-total="net">{formatCents(totals.net)}</td>
                     <td className={`${totalCell} ${num}`} data-total="taxes">{formatCents(totals.taxes)}</td>
                     <td className={`${totalCell} ${num}`} data-total="fees">{formatCents(totals.fees)}</td>
@@ -486,17 +491,20 @@ function PoliciesPanel() {
                         {totals.carrierMissing > 0 && <span className="block text-[11px] font-normal text-[var(--color-warning-600)]">{totals.carrierMissing} without a carrier %</span>}
                       </td>
                     )}
+                    {agencyAccess && <td className={totalCell} />}
                     {agencyAccess && (
-                      <td className={`${totalCell} ${num}`} data-total="commission">
-                        {formatCents(totals.commission)}
-                        {(totals.share > 0 || totals.shortfall > 0) && (
-                          <span className="block text-[11px] font-normal text-[var(--color-ink-600)]" data-total="commission-breakdown">
-                            {formatCents(totals.commissionOnly)} commission + {formatCents(totals.share)} broker fee{totals.shortfall > 0 ? ` − ${formatCents(totals.shortfall)} partner` : ''}
-                          </span>
-                        )}
+                      <td className={`${totalCell} ${num}`} data-total="commission-only">
+                        {formatCents(totals.commissionOnly)}
                         {totals.commissionMissing > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">{totals.commissionMissing} without an amount yet</span>}
                       </td>
                     )}
+                    {agencyAccess && (
+                      <td className={`${totalCell} ${num}`} data-total="broker-fee">
+                        {formatCents(totals.share)}
+                        {totals.shortfall > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">− {formatCents(totals.shortfall)} to referral partners</span>}
+                      </td>
+                    )}
+                    {agencyAccess && <td className={`${totalCell} ${num}`} data-total="commission">{formatCents(totals.commission)}</td>}
                     {agencyAccess && payments !== null && (
                       <td className={totalCell} data-total="paid">
                         <span className="tabular-nums">{formatCents(totals.paid)}</span> paid
@@ -528,10 +536,10 @@ function PoliciesPanel() {
                             )}
                             {!r.marketBound && <Badge tone="warning">Market no longer Bound</Badge>}
                           </span>
-                          <span className="mt-0.5 block text-xs text-[var(--color-ink-500)]">
-                            {r.policy.carrier}
-                            {!r.cancellation && r.policy.carrier !== r.marketName ? ` via ${r.marketName}` : ''}
-                          </span>
+                        </td>
+                        <td className={`${td} min-w-[140px]`} data-field="carrier-mga">
+                          {r.policy.carrier}
+                          {!r.cancellation && r.policy.carrier !== r.marketName && <span className="block text-xs text-[var(--color-ink-500)]">via {r.marketName}</span>}
                         </td>
                         <td className={`${td} whitespace-nowrap`} data-field="bound">{r.policy.boundDate ? formatDateWithYear(r.policy.boundDate) : '—'}</td>
                         <td className={`${td} ${num}`}>{formatCents(r.policy.netPremiumCents)}</td>
@@ -544,34 +552,33 @@ function PoliciesPanel() {
                           </td>
                         )}
                         {agencyAccess && (
+                          <td className={`${td} whitespace-nowrap`} data-field="commission-agent">
+                            {commissionAgentName(r) || agentName(r.assignedUserId) || <span className="text-xs text-[var(--color-ink-400)]">—</span>}
+                          </td>
+                        )}
+                        {agencyAccess && (
                           <td className={`${td} ${num}`} data-field="commission">
-                            {c === null ? (
-                              <span className="text-xs text-[var(--color-ink-400)]">{noCommissionWhy(r)}</span>
-                            ) : (
-                              (() => {
-                                const pay = payOf(r)!;
-                                return (
-                                  <>
-                                    <span className="font-semibold">{formatCents(pay.total)}</span>
-                                    {(pay.share > 0 || pay.shortfall > 0) && (
-                                      <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" data-field="commission-parts" title={pay.shortfall > 0 ? 'The first broker fee didn’t cover the referral partner’s agreed amount, so the rest comes out of the agent commission.' : undefined}>
-                                        {formatCents(pay.commission)} commission{pay.share > 0 ? ` + ${formatCents(pay.share)} broker fee` : ''}{pay.shortfall > 0 ? ` − ${formatCents(pay.shortfall)} to the referral partner` : ''}
-                                      </span>
-                                    )}
-                                  </>
-                                );
-                              })()
-                            )}
-                            {isAdmin && commissionAgentName(r) && (
-                              <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" data-field="commission-agent">
-                                {commissionAgentName(r)}
-                              </span>
-                            )}
+                            {c === null ? <span className="text-xs text-[var(--color-ink-400)]">{noCommissionWhy(r)}</span> : formatCents(payOf(r)!.commission)}
                             {!isAdmin && carrierRateOf(r) !== null && (
                               <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" data-field="carrier-rate">
                                 Carrier {formatRate(carrierRateOf(r)!)}
                               </span>
                             )}
+                          </td>
+                        )}
+                        {agencyAccess && (
+                          <td className={`${td} ${num}`} data-field="broker-fee">
+                            {c === null ? '' : formatCents(payOf(r)!.share)}
+                            {c !== null && payOf(r)!.shortfall > 0 && (
+                              <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" title="The first broker fee didn’t cover the referral partner’s agreed amount, so the rest comes out of the agent commission.">
+                                − {formatCents(payOf(r)!.shortfall)} to the referral partner
+                              </span>
+                            )}
+                          </td>
+                        )}
+                        {agencyAccess && (
+                          <td className={`${td} ${num} font-semibold`} data-field="commission-total">
+                            {c === null ? '' : formatCents(payOf(r)!.total)}
                           </td>
                         )}
                         {agencyAccess && payments !== null && (
