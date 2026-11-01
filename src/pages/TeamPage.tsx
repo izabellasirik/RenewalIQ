@@ -29,6 +29,8 @@ import {
 import { setAgentCommissionRate } from '../services/supabase/commissionRepo';
 import { useAgentCommissionRates } from '../hooks/useAgentCommission';
 import { formatRate } from '../components/workspace/PoliciesSection';
+import { setAgencyOwner, useAgencyOwner } from '../hooks/useAgencyOwner';
+import { checkIsFounder } from '../services/productAnalytics/founderRepo';
 
 const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
 
@@ -44,6 +46,13 @@ const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
 export function TeamPage() {
   const access = useAccountsStore((s) => s.agencyAccess);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
+  // Agency Owner (0086): shown on the team; only the RenewalIQ founder sets it.
+  const ownerId = useAgencyOwner();
+  const [isFounder, setIsFounder] = useState(false);
+  const [ownerError, setOwnerError] = useState('');
+  useEffect(() => {
+    if (currentUserId) void checkIsFounder().then(setIsFounder);
+  }, [currentUserId]);
   const accounts = useAccountsStore((s) => s.accounts);
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [invites, setInvites] = useState<Invitation[]>([]);
@@ -138,6 +147,26 @@ export function TeamPage() {
             <Skeleton variant="block" className="h-24 w-full" />
           ) : (
             <>
+            {isFounder && access && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-sm" data-testid="agency-owner-setting">
+                <label htmlFor="agency-owner" className="font-medium text-[var(--color-ink-700)]">Agency Owner</label>
+                <select
+                  id="agency-owner"
+                  value={ownerId ?? ''}
+                  onChange={(e) => {
+                    setOwnerError('');
+                    void setAgencyOwner(access.agencyId, e.target.value || null).then((r) => !r.ok && setOwnerError(r.message));
+                  }}
+                  className={`${CONTROL} !w-48 cursor-pointer bg-white text-[var(--color-ink-900)]`}
+                >
+                  <option value="">None</option>
+                  {members.map((m) => (
+                    <option key={m.userId} value={m.userId}>{m.name ?? m.email ?? 'Unnamed'}</option>
+                  ))}
+                </select>
+                {ownerError && <span className="text-xs text-[var(--color-danger-600)]">{ownerError}</span>}
+              </div>
+            )}
             {/* Column names on wide screens; narrower screens label each box instead. */}
             <div className={`hidden gap-x-6 border-b border-[var(--color-ink-100)] pb-2 text-xs font-medium text-[var(--color-ink-500)] xl:grid ${MEMBER_COLS}`} aria-hidden>
               <span>Name</span>
@@ -157,6 +186,7 @@ export function TeamPage() {
                       {m.userId === currentUserId && <span className="font-normal text-[var(--color-ink-400)]"> (you)</span>}
                     </p>
                     {m.jobTitle && <p className="text-xs text-[var(--color-ink-500)]">{m.jobTitle}</p>}
+                    {m.userId === ownerId && <Badge tone="brand" className="mt-1">Agency Owner</Badge>}
                   </div>
                   <div className="col-span-2 min-w-0 text-sm text-[var(--color-ink-600)] sm:col-span-1 xl:col-span-1">
                     {m.email && <p className="truncate">{m.email}</p>}
@@ -265,11 +295,11 @@ const CONTROL = 'inline-flex h-8 w-24 items-center rounded-md border border-[var
 /** An agent's share of the broker fee (0081): a fixed $ or a % of what's left after the partner. Saved on Enter or leaving the box; blank clears it. */
 function BrokerFeeShareInput({ member, share, onSaved }: { member: TeamMember; share?: BrokerFeeShare; onSaved: () => void }) {
   const shownValue = !share ? '' : share.mode === 'percent' ? String(Math.round(share.value * 1e6) / 1e4) : centsInput(share.value) || '0.00';
-  const [mode, setMode] = useState<'amount' | 'percent'>(share?.mode ?? 'amount');
+  const [mode, setMode] = useState<'amount' | 'percent'>(share?.mode ?? 'percent');
   const [value, setValue] = useState<string | null>(null);
   const [state, setState] = useState<{ busy?: boolean; error?: string; ok?: boolean }>({});
   const who = member.name ?? member.email ?? 'team member';
-  useEffect(() => setMode(share?.mode ?? 'amount'), [share?.mode]);
+  useEffect(() => setMode(share?.mode ?? 'percent'), [share?.mode]);
 
   async function save(raw = value ?? shownValue) {
     const text = raw.trim().replace(/[%$]/g, '');

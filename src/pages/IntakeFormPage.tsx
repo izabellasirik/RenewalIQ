@@ -21,6 +21,7 @@ import {
 import { clearIntakeDraft, draftHasContent, loadIntakeDraft, saveIntakeDraft } from '../services/intake/intakeDraft';
 import { errorMessage } from '../services/intake/retry';
 import { BrandLogo } from '../components/branding/Logo';
+import { QUICK_KINDS, QUICK_LABELS, quickAnswers, quickRowFilled, type QuickKind, type QuickRow } from '../services/intake/quickForm';
 import { cn } from '../utils/cn';
 
 const COVERAGE_OPTIONS = Object.keys(COVERAGE_LABELS) as CoverageType[];
@@ -130,6 +131,11 @@ export function IntakeFormPage() {
   const [status, setStatus] = useState<'loading' | 'invalid' | 'load_error' | 'ready' | 'submitting' | 'submitted' | 'partial'>('loading');
   const [link, setLink] = useState<IntakeLink | null>(null);
   const [answers, setAnswers] = useState<IntakeAnswers>(emptyAnswers);
+  // Quick form (default): documents plus whatever information the client picks; Full form: every question.
+  const [mode, setMode] = useState<'quick' | 'full'>('quick');
+  const [quickRows, setQuickRows] = useState<QuickRow[]>([{ id: 'q1', kind: '', label: '', value: '' }]);
+  const [quickNotes, setQuickNotes] = useState('');
+  const setRow = (id: string, patch: Partial<QuickRow>) => setQuickRows((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const [items, setItemsState] = useState<FileItem[]>([]);
   const itemsRef = useRef<FileItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -254,8 +260,9 @@ export function IntakeFormPage() {
     setShowErrors(false);
   }
 
-  const missing = missingRequired(answers);
+  const missing = mode === 'full' ? missingRequired(answers) : {};
   const missingKeys = REQUIRED.filter((r) => missing[r.key]);
+  const sendAnswers = mode === 'quick' ? quickAnswers(answers, quickRows, quickNotes) : answers;
   // Errors show only after a Submit attempt, then update live as fields are filled in.
   const fieldError = (key: RequiredKey) => (showErrors ? (missing[key] ?? null) : null);
 
@@ -286,7 +293,7 @@ export function IntakeFormPage() {
   async function legacySubmit() {
     if (!link) return;
     const files = itemsRef.current.map((i) => i.file).filter((f): f is File => !!f);
-    const res = await submitIntake(link, answers, files);
+    const res = await submitIntake(link, sendAnswers, files);
     if (!res.ok) throw new Error(res.message);
     if (token) clearIntakeDraft(token);
     if (res.data.failedFiles.length > 0) {
@@ -308,6 +315,10 @@ export function IntakeFormPage() {
       first?.querySelector('input')?.focus({ preventScroll: true });
       return;
     }
+    if (mode === 'quick' && itemsRef.current.length === 0 && !quickRows.some(quickRowFilled) && !quickNotes.trim()) {
+      setError('Add a document or some information.');
+      return;
+    }
     const needFile = itemsRef.current.filter((i) => i.state === 'missing');
     if (needFile.length > 0) {
       setError(`Add ${needFile.length === 1 ? 'this file' : 'these files'} again, or remove ${needFile.length === 1 ? 'it' : 'them'}: ${needFile.map((i) => i.name).join(', ')}.`);
@@ -320,7 +331,7 @@ export function IntakeFormPage() {
       setPhase('Saving your answers…');
       let session: IntakeSession;
       try {
-        session = await startIntakeSubmission(token, clientTokenRef.current, answers, itemsRef.current.length);
+        session = await startIntakeSubmission(token, clientTokenRef.current, sendAnswers, itemsRef.current.length);
       } catch (err) {
         if (err instanceof IntakeNotUpgradedError) {
           setPhase('Sending your submission…');
@@ -488,9 +499,20 @@ export function IntakeFormPage() {
           {/* The agency name, never link.label — that's the agent's internal note. */}
           {link?.organizationName ? <span className="font-medium text-[var(--color-ink-700)]">{link.organizationName}</span> : 'your insurance agent'} for review.
         </p>
-        <p className="mt-1 text-sm text-[var(--color-ink-500)]">
-          Tell us a bit about the account and attach whatever documents you already have.
-        </p>
+      </div>
+      <div className="inline-flex w-fit rounded-lg border border-[var(--color-ink-200)] bg-white p-0.5 text-sm" role="tablist" aria-label="Form">
+        {(['quick', 'full'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            role="tab"
+            aria-selected={mode === m}
+            onClick={() => setMode(m)}
+            className={cn('cursor-pointer rounded-md px-3 py-1.5 font-medium', mode === m ? 'bg-[var(--color-brand-800)] text-white' : 'text-[var(--color-ink-600)] hover:text-[var(--color-ink-900)]')}
+          >
+            {m === 'quick' ? 'Quick form' : 'Full form'}
+          </button>
+        ))}
       </div>
 
       {restored && (
@@ -560,6 +582,47 @@ export function IntakeFormPage() {
         )}
 
 
+        {mode === 'quick' && (
+          <div className="flex flex-col gap-3" data-testid="quick-form">
+            <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Information</p>
+            {quickRows.map((r) => (
+              <div key={r.id} className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                <select
+                  value={r.kind}
+                  onChange={(e) => setRow(r.id, { kind: e.target.value as QuickKind })}
+                  className={cn(inputClass, 'cursor-pointer sm:w-44')}
+                  aria-label="Type of information"
+                >
+                  <option value="">Choose…</option>
+                  {QUICK_KINDS.map((k) => (
+                    <option key={k} value={k}>{QUICK_LABELS[k]}</option>
+                  ))}
+                </select>
+                {r.kind === 'other' && (
+                  <input value={r.label} onChange={(e) => setRow(r.id, { label: e.target.value })} placeholder="What is it?" aria-label="What the information is" className={cn(inputClass, 'sm:w-40')} />
+                )}
+                <input value={r.value} onChange={(e) => setRow(r.id, { value: e.target.value })} placeholder={r.kind ? QUICK_LABELS[r.kind] : 'Information'} aria-label="Information" className={cn(inputClass, 'min-w-0 flex-1')} />
+                {quickRows.length > 1 && (
+                  <button type="button" onClick={() => setQuickRows((rows) => rows.filter((x) => x.id !== r.id))} className="self-center rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-100)] cursor-pointer" aria-label="Remove">
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => setQuickRows((rows) => [...rows, { id: `q${Date.now()}`, kind: '', label: '', value: '' }])}
+              className="inline-flex w-fit cursor-pointer items-center gap-1 text-sm font-medium text-[var(--color-brand-700)] hover:underline"
+            >
+              <Plus size={14} /> Add information
+            </button>
+            <Field label="Notes (optional)">
+              <textarea rows={3} className={inputClass} value={quickNotes} onChange={(e) => setQuickNotes(e.target.value)} />
+            </Field>
+          </div>
+        )}
+        {mode === 'full' && (
+          <>
         <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-ink-400)]">Company</p>
         <Field label="Named insured / company name" required id="field-namedInsured" error={fieldError('namedInsured')}>
           <input className={inputClass} value={answers.namedInsured} onChange={(e) => set('namedInsured', e.target.value)} placeholder="e.g. Blue Ridge Logistics LLC" />
@@ -685,6 +748,8 @@ export function IntakeFormPage() {
         <Field label="Additional notes">
           <textarea rows={3} className={inputClass} value={answers.additionalNotes} onChange={(e) => set('additionalNotes', e.target.value)} />
         </Field>
+          </>
+        )}
 
         {error && (
           <p className="text-sm text-[var(--color-danger-600)]" role="alert">

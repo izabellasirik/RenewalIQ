@@ -24,6 +24,7 @@ import { fetchAgentPayments, recordAgentPayments, undoAgentPayment, type AgentPa
 import { addedLate, payStatus, type PayStatus } from '../services/finance/agentPay';
 import { commitOnBlurOutside, keepFocus } from '../components/riskProfile/FieldRow';
 import { useOnDataRefresh } from '../services/appFreshness';
+import { useAgencyOwner } from '../hooks/useAgencyOwner';
 import {
   DATE_PRESET_LABELS,
   POLICY_DATE_LABELS,
@@ -127,6 +128,8 @@ function PoliciesPanel() {
   const members = useAccountsStore((s) => s.agencyMembers);
   const me = useAccountsStore((s) => s.currentUserId);
   const rates = useAgentCommissionRates();
+  // Only the Agency Owner (0086) marks agents paid and undoes a payment.
+  const isOwner = useAgencyOwner() === me && !!me;
   const isAdmin = agencyAccess?.role === 'admin';
   const [view, update, reset] = useRememberedView('analytics-policies', POLICY_VIEW_DEFAULTS, sanitizePolicyView);
   // A link with filters in it (?view=policies&from=…) sets them once; after that they're remembered.
@@ -264,7 +267,7 @@ function PoliciesPanel() {
   // Admins: rows ticked to mark paid, by "accountId|rowId".
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const keyOf = (r: PolicyRow) => `${r.accountId}|${r.policy.id}`;
-  const payable = (r: PolicyRow) => isAdmin && payments !== null && !!payAgentOf(r) && (statusOf(r).state === 'not_paid' || statusOf(r).state === 'partly');
+  const payable = (r: PolicyRow) => isOwner && payments !== null && !!payAgentOf(r) && (statusOf(r).state === 'not_paid' || statusOf(r).state === 'partly');
   const selectedRows = rows.filter((r) => selected.has(keyOf(r)) && payable(r));
   const [paying, setPaying] = useState(false);
   const [undoing, setUndoing] = useState<{ payment: AgentPayment; label: string } | null>(null);
@@ -274,7 +277,7 @@ function PoliciesPanel() {
   const [rateFor, setRateFor] = useState<PolicyRow | null>(null);
   const setDescription = useAccountsStore((s) => s.setPolicyDescription);
   const totals = useMemo(() => {
-    const t = { policies: 0, endorsements: 0, cancellations: 0, net: 0, taxes: 0, fees: 0, carrier: 0, carrierMissing: 0, commission: 0, commissionMissing: 0, proofMissing: 0, due: 0, dueCount: 0, paid: 0 };
+    const t = { policies: 0, endorsements: 0, cancellations: 0, net: 0, taxes: 0, fees: 0, carrier: 0, carrierMissing: 0, commission: 0, commissionOnly: 0, share: 0, shortfall: 0, commissionMissing: 0, proofMissing: 0, due: 0, dueCount: 0, paid: 0 };
     for (const r of rows) {
       if (r.cancellation) t.cancellations++;
       else if (entryKind(r.policy) === 'endorsement') t.endorsements++;
@@ -287,7 +290,12 @@ function PoliciesPanel() {
       else t.carrier += cc;
       const pay = payOf(r);
       if (pay === null) t.commissionMissing++;
-      else t.commission += pay.total;
+      else {
+        t.commission += pay.total;
+        t.commissionOnly += pay.commission;
+        t.share += pay.share;
+        t.shortfall += pay.shortfall;
+      }
       if (payments !== null) {
         const st = statusOf(r);
         t.paid += st.paidCents;
@@ -417,7 +425,7 @@ function PoliciesPanel() {
             )}
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            {totals.dueCount > 0 && (
+            {totals.dueCount > 0 && isOwner && (
               <Button size="sm" variant="secondary" onClick={() => setSelected(selectedRows.length === totals.dueCount ? new Set() : new Set(rows.filter(payable).map(keyOf)))}>
                 {selectedRows.length === totals.dueCount ? 'Clear selection' : 'Select all not paid'}
               </Button>
@@ -482,6 +490,11 @@ function PoliciesPanel() {
                     {agencyAccess && (
                       <td className={`${totalCell} ${num}`} data-total="commission">
                         {formatCents(totals.commission)}
+                        {(totals.share > 0 || totals.shortfall > 0) && (
+                          <span className="block text-[11px] font-normal text-[var(--color-ink-600)]" data-total="commission-breakdown">
+                            {formatCents(totals.commissionOnly)} commission + {formatCents(totals.share)} broker fee{totals.shortfall > 0 ? ` − ${formatCents(totals.shortfall)} partner` : ''}
+                          </span>
+                        )}
                         {totals.commissionMissing > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">{totals.commissionMissing} without an amount yet</span>}
                       </td>
                     )}
@@ -581,7 +594,7 @@ function PoliciesPanel() {
                               selectable={payable(r)}
                               selected={selected.has(keyOf(r))}
                               onSelect={(on) => setSelected((cur) => { const n = new Set(cur); if (on) n.add(keyOf(r)); else n.delete(keyOf(r)); return n; })}
-                              onUndo={isAdmin ? (p) => setUndoing({ payment: p, label: `${r.insured} ${r.policy.policyNumber ?? ''}`.trim() }) : undefined}
+                              onUndo={isOwner ? (p) => setUndoing({ payment: p, label: `${r.insured} ${r.policy.policyNumber ?? ''}`.trim() }) : undefined}
                             />
                           </td>
                         )}
@@ -822,15 +835,13 @@ function MarkPaidDialog({ rows, agentName, onClose, onDone }: { rows: PayLine[];
   );
 }
 
-/** Admins: undo a payment marked by mistake (kept in the history with the reason). */
+/** Undo a payment marked by mistake: just "Are you sure?" (kept in the history as undone). */
 function UndoPaymentDialog({ payment, label, onClose, onDone }: { payment: AgentPayment; label: string; onClose: () => void; onDone: () => void }) {
-  const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   async function save() {
-    if (!reason.trim()) return setError('Say why it’s being undone.');
     setBusy(true);
-    const r = await undoAgentPayment(payment.id, reason.trim());
+    const r = await undoAgentPayment(payment.id, 'Undone');
     setBusy(false);
     if (!r.ok) return setError(r.message);
     onDone();
@@ -839,18 +850,16 @@ function UndoPaymentDialog({ payment, label, onClose, onDone }: { payment: Agent
     <Modal
       open
       onClose={onClose}
-      title="Undo this payment?"
-      subtitle={`${label}: ${formatCents(payment.totalCents)} paid ${formatShortDate(payment.paidOn)}. It shows as not paid again; the undo is kept in the history.`}
+      title="Are you sure?"
+      subtitle={`Undo ${formatCents(payment.totalCents)} paid ${formatShortDate(payment.paidOn)} for ${label}.`}
       footer={
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Keep it</Button>
-          <Button onClick={() => void save()} disabled={busy}>{busy ? 'Undoing…' : 'Undo payment'}</Button>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => void save()} disabled={busy}>{busy ? 'Undoing…' : 'Yes, undo'}</Button>
         </div>
       }
     >
-      <label className={labelClass} htmlFor="undo-reason">Why</label>
-      <input id="undo-reason" className={inputClass} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Marked the wrong policy" maxLength={500} />
-      {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]">{error}</p>}
+      {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
     </Modal>
   );
 }

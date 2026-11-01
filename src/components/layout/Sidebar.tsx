@@ -83,8 +83,9 @@ function NavItem({ to, end, icon: Icon, label, collapsed, extra }: { to: string;
 }
 
 /**
- * The left navigation. On desktop it collapses to an icon rail (`collapsed`, toggled by the chevron button);
- * below md it's an overlay opened from the TopBar menu button, always shown in full.
+ * The left navigation. On desktop, `collapsed` makes it an icon rail that opens over the page while the pointer is
+ * on it; the chevron button keeps it open (or lets it collapse again). Below md it's an overlay opened from the
+ * TopBar menu button, always shown in full.
  */
 export function Sidebar({ mobileOpen = false, onNavigate, collapsed = false, onToggleCollapsed }: { mobileOpen?: boolean; onNavigate?: () => void; collapsed?: boolean; onToggleCollapsed?: () => void }) {
   const { accountId: routeAccountId } = useParams();
@@ -99,11 +100,15 @@ export function Sidebar({ mobileOpen = false, onNavigate, collapsed = false, onT
   const isReviewer = useIsReviewer();
   const isFounder = useIsFounder();
   const pendingIntake = useAccountsStore((s) => s.pendingIntakeCount);
-  // The mobile overlay is always the full sidebar.
-  const rail = collapsed && !mobileOpen;
+  // The mobile overlay is always the full sidebar; a collapsed one opens while hovered.
+  const [hovered, setHovered] = useState(false);
+  const floating = collapsed && !mobileOpen;
+  const rail = floating && !hovered;
 
   return (
     <aside
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('a')) onNavigate?.();
       }}
@@ -111,7 +116,10 @@ export function Sidebar({ mobileOpen = false, onNavigate, collapsed = false, onT
         'h-full w-64 shrink-0 flex-col border-r border-[var(--color-ink-100)] bg-white transition-[width] duration-200 ease-out motion-reduce:transition-none',
         rail && 'md:w-16',
         // Below md the sidebar is an overlay toggled from the TopBar menu button.
-        mobileOpen ? 'fixed inset-y-0 left-0 z-40 flex shadow-2xl md:static md:shadow-none' : 'hidden md:relative md:z-20 md:flex'
+        mobileOpen ? 'fixed inset-y-0 left-0 z-40 flex shadow-2xl md:static md:shadow-none' : 'hidden md:relative md:z-20 md:flex',
+        // Collapsed: it opens over the page (a spacer in AppShell keeps the rail's room).
+        floating && 'md:absolute md:inset-y-0 md:left-0 md:z-30',
+        floating && hovered && 'md:shadow-xl'
       )}
       data-collapsed={rail ? 'true' : 'false'}
     >
@@ -136,13 +144,13 @@ export function Sidebar({ mobileOpen = false, onNavigate, collapsed = false, onT
           <button
             type="button"
             onClick={onToggleCollapsed}
-            aria-label={rail ? 'Expand sidebar' : 'Collapse sidebar'}
-            aria-expanded={!rail}
-            title={rail ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={collapsed ? 'Keep sidebar open' : 'Collapse sidebar'}
+            aria-pressed={!collapsed}
+            title={collapsed ? 'Keep sidebar open' : 'Collapse sidebar'}
             className="hidden shrink-0 cursor-pointer rounded-md p-1.5 text-[var(--color-ink-400)] hover:bg-[var(--color-ink-50)] hover:text-[var(--color-ink-700)] focus-visible:outline-2 focus-visible:outline-[var(--color-brand-500)] md:block"
             data-testid="sidebar-toggle"
           >
-            {rail ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+            {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
           </button>
         )}
       </div>

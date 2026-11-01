@@ -33,7 +33,7 @@ export function PartnershipsPanel() {
   return (
     <div className="flex flex-col gap-4" data-testid="partnerships">
       <p className="text-sm text-[var(--color-ink-600)]">
-        Where clients come from. Agents pick one on every new submission (“No referral” is always offered first). A partner’s agreed amount is paid <span className="font-medium text-[var(--color-ink-800)]">once per client</span>, from the broker fee on the client’s first policy — never from the carrier commission. Only admins see the amounts.
+        Where clients come from. The partner’s amount comes off the broker fee of the policy it’s chosen on.
       </p>
       {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
       <Card>
@@ -84,7 +84,10 @@ function NewPartnerRow({ onSaved }: { onSaved: () => void }) {
     <div className="flex flex-col gap-2">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Partner name, e.g. Safety" className={input} aria-label="New partner name" />
-        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount, e.g. 50.00" inputMode="decimal" className={input} aria-label="Agreed amount per client" />
+        <span className="relative">
+          <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-[var(--color-ink-400)]">$</span>
+          <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="50.00" inputMode="decimal" className={`${input} w-full pl-6 tabular-nums`} aria-label="Agreed amount per client" />
+        </span>
         <Button icon={<Plus size={14} />} onClick={() => void add()} disabled={busy}>
           Add partner
         </Button>

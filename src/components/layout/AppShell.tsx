@@ -36,8 +36,9 @@ export function AppShell() {
   }, [location.pathname, updateAvailable]);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[var(--color-ink-50)]">
+    <div className="relative flex h-screen w-full overflow-hidden bg-[var(--color-ink-50)]">
       <Sidebar mobileOpen={mobileNavOpen} onNavigate={() => setMobileNavOpen(false)} collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
+      {sidebarCollapsed && <div className="hidden w-16 shrink-0 md:block" aria-hidden />}
       {mobileNavOpen && <div className="fixed inset-0 z-30 bg-[var(--color-ink-950)]/30 md:hidden" onClick={() => setMobileNavOpen(false)} />}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {updateAvailable && <UpdateBar />}
