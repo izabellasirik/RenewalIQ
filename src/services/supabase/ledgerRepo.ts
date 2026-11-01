@@ -116,6 +116,9 @@ export interface AccountCommissionStatus {
   flags: string[];
   expectedPayDate: string | null;
   agentCents: number | null;
+  /** The agent and agent % it was recorded with (0088; undefined before it). */
+  agentUserId?: string | null;
+  agentRate?: number | null;
 }
 
 /** Commission status of an account's policies — for its agent and the agency's admins (others get nothing). */
@@ -134,6 +137,7 @@ export async function fetchAccountCommissionStatuses(submissionId: string): Prom
         flags: Array.isArray(r.flags) ? (r.flags as string[]) : [],
         expectedPayDate: (r.expected_pay_date as string) ?? null,
         agentCents: r.agent_cents === null || r.agent_cents === undefined ? null : Number(r.agent_cents),
+        ...('agent_rate' in r ? { agentUserId: (r.agent_user_id as string) ?? null, agentRate: r.agent_rate === null ? null : Number(r.agent_rate) } : {}),
       })),
     };
   } catch (err) {
