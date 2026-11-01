@@ -562,9 +562,6 @@ export function EntryForm({
   const [saving, setSaving] = useState(false);
   const check = checkPolicy(f, { existing, editingId: editing === 'new' ? undefined : editing.id, accountPolicyIds: accountPolicies.map((x) => x.policy.id), requirePolicyLink: kind === 'endorsement' && (editing === 'new' || !!editing.forPolicyId) });
   const feeShareFor = useBrokerFeeShare(accountId);
-  // The client's referral partner is paid once, from the broker fee on the client's very first policy (0087). Shown
-  // here with its amount: the partner on the first policy, "No referral fee" on later ones. Asked here only when the
-  // account has no partner yet (accounts from before referral partners); required once a broker fee is entered.
   // An endorsement's commission uses the agent % its policy was recorded with (0088), not the agent's current one.
   const statuses = useAccountCommissionStatuses(accountId);
   const linked = kind === 'endorsement' && f.forPolicyId ? statuses.byPolicy.get(f.forPolicyId) : undefined;
@@ -572,22 +569,21 @@ export function EntryForm({
     commission.kind === 'amount' && linked?.agentRate != null && commission.rate > 0 && linked.agentUserId === account?.assignedUserId && linked.agentRate !== commission.rate
       ? { ...commission, rate: linked.agentRate, cents: (n, c, d) => { const x = commission.cents(n, c, d); return x === null ? null : Math.round((x * linked.agentRate!) / commission.rate); } }
       : commission;
+  // Who gets a referral fee from this policy (0085): the client's first policy starts on the client's partner, later
+  // ones (renewals) on No referral fee — the dropdown is there to correct it. Required once a broker fee is entered.
+  // An account without a partner yet (from before referral partners) gets the one chosen here.
   const referralSources = useReferralSources();
   const setAccountReferral = useAccountsStore((s) => s.setAccountReferral);
-  const [referralChoice, setReferralChoice] = useState('');
+  const [referralChoice, setReferralChoice] = useState(() => {
+    if (kind !== 'policy') return '';
+    const prior = accountPolicies.map((x) => x.policy);
+    if (editing !== 'new') return editing.referralPartner ?? (isFirstPolicy(prior, { id: editing.id }) ? (account?.referralSource ?? '') : NO_REFERRAL);
+    return prior.length === 0 ? (account?.referralSource ?? '') : NO_REFERRAL;
+  });
   const [referralOther, setReferralOther] = useState<OtherReferral | null>(null);
   const others = useOtherReferrals();
-  const firstPolicy = isFirstPolicy(accountPolicies.map((x) => x.policy), { id: editing === 'new' ? null : editing.id, boundDate: f.boundDate || undefined });
-  const referralShown = (() => {
-    const ref = account?.referralSource;
-    if (!firstPolicy || !ref || ref === NO_REFERRAL) return 'No referral fee ($0)';
-    if (ref === OTHER_REFERRAL) return others[accountId] ? `${others[accountId].name} (${formatCents(others[accountId].partnerFeeCents)})` : 'Other';
-    const src = referralSources.find((x) => x.id === ref);
-    return src ? (src.partnerFeeCents != null ? `${src.name} (${formatCents(src.partnerFeeCents)})` : src.name) : 'Partner';
-  })();
-  // The dropdown shows on the client's first policy (to correct the client's partner) and on accounts without one.
-  const asksReferral = kind === 'policy' && (!account?.referralSource || firstPolicy);
-  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined, { boundDate: f.boundDate || undefined, referral: asksReferral ? referralChoice || undefined : undefined, other: referralOther }) : undefined;
+  const asksReferral = kind === 'policy';
+  const formFeeShare = kind === 'policy' ? feeShareFor(editing === 'new' ? null : editing.id, parseMoneyCents(f.brokerFee ?? '') ?? undefined, { boundDate: f.boundDate || undefined, referral: referralChoice || undefined, other: referralOther }) : undefined;
   const live = (v: string) => {
     const c = parseMoneyCents(v);
     return c === null || Number.isNaN(c) ? 0 : c;
@@ -625,7 +621,7 @@ export function EntryForm({
   async function submit(e?: FormEvent, withoutDocuments = false) {
     e?.preventDefault();
     const pctError = asksCarrierPct && carrierRate === null ? ['Enter the carrier commission % (more than 0, at most 50, e.g. 12).'] : [];
-    const referralError = asksReferral && !referralChoice && !account?.referralSource && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 ? ['Choose the client’s referral partner, or No referral.'] : [];
+    const referralError = asksReferral && !referralChoice && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 ? ['Choose the referral partner, or No referral fee.'] : [];
     if (!check.ok || pctError.length || referralError.length) {
       setErrors([...(check.ok ? [] : check.errors), ...pctError, ...referralError]);
       return;
@@ -663,8 +659,8 @@ export function EntryForm({
       if (!r.ok) return setErrors([`The referral partner couldn’t be saved, so nothing was saved: ${r.message}`]);
       void reloadOtherReferrals();
     }
-    if (asksReferral && referralChoice && referralChoice !== account?.referralSource) setAccountReferral(accountId, referralChoice, referralLabel(referralChoice, referralSources, referralOther));
-    const fields = check.fields;
+    if (asksReferral && referralChoice && !account?.referralSource) setAccountReferral(accountId, referralChoice, referralLabel(referralChoice, referralSources, referralOther));
+    const fields = asksReferral && referralChoice ? { ...check.fields, referralPartner: referralChoice } : check.fields;
     if (editing === 'new') {
       const id = addPolicy(accountId, quote.id, fields, entryId);
       if (id) for (const nf of files) attach(accountId, quote.id, id, nf.file, nf.description);
@@ -815,22 +811,18 @@ export function EntryForm({
               <label className={labelClass} htmlFor="policy-referral">
                 Referral partner {asksReferral && (parseMoneyCents(f.brokerFee ?? '') ?? 0) > 0 && <Required />}
               </label>
-              {asksReferral ? (
-                <ReferralPicker
-                  id="policy-referral"
-                  value={referralChoice || account?.referralSource || ''}
-                  other={referralOther ?? others[accountId] ?? null}
-                  onChange={(v, _label, o) => {
-                    setReferralChoice(v);
-                    setReferralOther(o ?? null);
-                  }}
-                  placeholder={referralChoice || account?.referralSource ? undefined : 'Choose…'}
-                  className={inputClass}
-                  feeLabels
-                />
-              ) : (
-                <p className="truncate px-0.5 py-2 text-sm text-[var(--color-ink-800)]" title={referralShown} data-testid="policy-referral-shown">{referralShown}</p>
-              )}
+              <ReferralPicker
+                id="policy-referral"
+                value={referralChoice}
+                other={referralOther ?? others[accountId] ?? null}
+                onChange={(v, _label, o) => {
+                  setReferralChoice(v);
+                  if (o) setReferralOther(o);
+                }}
+                placeholder={referralChoice ? undefined : 'Choose…'}
+                className={inputClass}
+                feeLabels
+              />
             </div>
           )}
           {asksCarrierPct && (

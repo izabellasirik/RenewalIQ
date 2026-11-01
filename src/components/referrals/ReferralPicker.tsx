@@ -144,8 +144,8 @@ export function ReferralPicker({
           {feeLabels && s.partnerFeeCents != null ? `${s.name} (${formatCents(s.partnerFeeCents)})` : s.name}
         </option>
       ))}
-      {value === OTHER_REFERRAL && other && <option value={OTHER_REFERRAL}>{feeLabels ? `${other.name} (${formatCents(other.partnerFeeCents)})` : `Other: ${other.name} (${formatCents(other.partnerFeeCents)})`}</option>}
-      <option value={TYPE_OTHER}>{value === OTHER_REFERRAL ? 'Change the Other partner…' : 'Other: type the partner…'}</option>
+      {other && <option value={OTHER_REFERRAL}>{feeLabels ? `${other.name} (${formatCents(other.partnerFeeCents)})` : `Other: ${other.name} (${formatCents(other.partnerFeeCents)})`}</option>}
+      <option value={TYPE_OTHER}>{other ? 'Change the Other partner…' : 'Other: type the partner…'}</option>
     </select>
   );
 }

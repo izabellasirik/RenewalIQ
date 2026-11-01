@@ -224,6 +224,12 @@ export interface PolicyRecord {
   feesCents: number;
   /** The agency's broker fee on a policy (not endorsements), split partner → agent → agency (0081). */
   brokerFeeCents?: number;
+  /**
+   * Policies: who gets a referral fee from this policy's broker fee (0085) — a listed partner's id, "other" (the
+   * client's Other partner) or "none" (No referral fee). Unset on policies saved before: the client's partner on
+   * its very first policy only.
+   */
+  referralPartner?: string;
   /** A short description of what was written or changed (e.g. "Added 2023 Freightliner, VIN …"). */
   description?: string;
   /** An endorsement: the policy it changes (PolicyRecord.id on this account). Required for new endorsements. */
