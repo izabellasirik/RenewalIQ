@@ -322,7 +322,7 @@ function PoliciesPanel() {
     policiesReport(rows, {
       isAdmin,
       withCommission: !!agencyAccess,
-      carrierRateOf,
+      carrierCentsOf,
       payOf,
       agentNameOf: (r) => commissionAgentName(r) || agentName(r.assignedUserId),
       filters: [kind !== 'all' ? `Show: ${kind === 'policy' ? 'Policies' : 'Endorsements'}` : '', agent ? `Agent: ${agentName(agent)}` : '', search ? `Search: “${search}”` : ''].filter(Boolean),

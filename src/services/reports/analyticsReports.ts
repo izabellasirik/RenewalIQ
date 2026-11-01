@@ -13,7 +13,7 @@ export interface PoliciesReportOptions {
   isAdmin: boolean;
   /** In an agency: the agent columns (an agent sees only their own). */
   withCommission: boolean;
-  carrierRateOf: (row: PolicyRow) => number | null;
+  carrierCentsOf: (row: PolicyRow) => number | null;
   /** The agent commission as on screen: commission + broker fee share − referral partner shortfall = total. */
   payOf: (row: PolicyRow) => { commission: number; share: number; shortfall: number; total: number } | null;
   agentNameOf: (row: PolicyRow) => string;
@@ -31,7 +31,7 @@ export function policyRowType(r: PolicyRow): string {
 
 /**
  * The Policies & endorsements report: client with its policy number and type under it (as on screen), carrier / MGA,
- * date, net premium, carrier % (admins), agent, broker fee share and the agent commission total.
+ * date, net premium, carrier commission (admins), agent, agent commission, broker fee share and the total.
  */
 export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Report {
   const columns: ReportColumn[] = [
@@ -39,15 +39,17 @@ export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Rep
     { header: 'Carrier / MGA' },
     { header: 'Bound / endorsed', kind: 'date' },
     { header: 'Net premium', kind: 'money' },
-    ...(o.isAdmin ? [{ header: 'Carrier %' }] : []),
-    ...(o.withCommission ? [{ header: 'Agent' }, { header: 'Broker fee share', kind: 'money' as const }, { header: 'Agent commission total', kind: 'money' as const }] : []),
+    ...(o.isAdmin ? [{ header: 'Carrier commission', kind: 'money' as const }] : []),
+    ...(o.withCommission ? [{ header: 'Agent' }, { header: 'Agent commission', kind: 'money' as const }, { header: 'Broker fee share', kind: 'money' as const }, { header: 'Agent commission total', kind: 'money' as const }] : []),
   ];
-  const t = { net: 0, share: 0, total: 0 };
+  const t = { net: 0, carrier: 0, commission: 0, share: 0, total: 0 };
   const body: Cell[][] = rows.map((r) => {
     const p = r.policy;
-    const carrierRate = o.carrierRateOf(r);
+    const carrier = o.carrierCentsOf(r);
     const pay = o.payOf(r);
     t.net += p.netPremiumCents;
+    t.carrier += carrier ?? 0;
+    t.commission += pay?.commission ?? 0;
     t.share += pay?.share ?? 0;
     t.total += pay?.total ?? 0;
     return [
@@ -55,8 +57,8 @@ export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Rep
       !r.cancellation && p.carrier !== r.marketName ? `${p.carrier} via ${r.marketName}` : p.carrier,
       p.boundDate || null,
       p.netPremiumCents,
-      ...(o.isAdmin ? [carrierRate === null ? 'Not set' : `${Math.round(carrierRate * 1e6) / 1e4}%`] : []),
-      ...(o.withCommission ? [o.agentNameOf(r), pay ? pay.share : null, pay?.total ?? null] : []),
+      ...(o.isAdmin ? [carrier] : []),
+      ...(o.withCommission ? [o.agentNameOf(r), pay?.commission ?? null, pay ? pay.share : null, pay?.total ?? null] : []),
     ];
   });
   const policies = rows.filter((r) => !r.cancellation && entryKind(r.policy) === 'policy').length;
@@ -66,8 +68,8 @@ export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Rep
     '',
     null,
     t.net,
-    ...(o.isAdmin ? [''] : []),
-    ...(o.withCommission ? ['', t.share, t.total] : []),
+    ...(o.isAdmin ? [t.carrier] : []),
+    ...(o.withCommission ? ['', t.commission, t.share, t.total] : []),
   ];
   return {
     title: 'Policies & endorsements',
