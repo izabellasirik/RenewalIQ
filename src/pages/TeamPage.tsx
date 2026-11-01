@@ -186,7 +186,6 @@ export function TeamPage() {
                       {m.userId === currentUserId && <span className="font-normal text-[var(--color-ink-400)]"> (you)</span>}
                     </p>
                     {m.jobTitle && <p className="text-xs text-[var(--color-ink-500)]">{m.jobTitle}</p>}
-                    {ownerIds.includes(m.userId) && <Badge tone="brand" className="mt-1">Agency Owner</Badge>}
                   </div>
                   <div className="col-span-2 min-w-0 text-sm text-[var(--color-ink-600)] sm:col-span-1 xl:col-span-1">
                     {m.email && <p className="truncate">{m.email}</p>}
@@ -194,7 +193,10 @@ export function TeamPage() {
                   </div>
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-[var(--color-ink-500)] xl:hidden">Role</span>
-                    {m.userId === currentUserId ? (
+                    {ownerIds.includes(m.userId) ? (
+                      // An Agency Owner (0086) shows as such; the founder changes it with the ticks above.
+                      <span className={`${CONTROL} !w-auto whitespace-nowrap bg-[var(--color-ink-50)] font-medium text-[var(--color-brand-800)]`} data-testid="role-agency-owner">Agency Owner</span>
+                    ) : m.userId === currentUserId ? (
                       // Your own role can't be changed here: shown in the same box shape, not editable.
                       <span className={`${CONTROL} bg-[var(--color-ink-50)] text-[var(--color-ink-700)]`} title="You can't change your own role">{ROLE_LABEL[m.role]}</span>
                     ) : (
