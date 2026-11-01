@@ -1,6 +1,6 @@
 -- 0085: the referral fee chosen on each policy; agents see the partners' amounts. Run against a disposable copy of a
 -- database with 0080, 0081, 0083 and 0085 applied (test users: admin …0d, agent …0a, another agency's admin …0c).
--- Fictional partners, clients and amounts only. One transaction, rolled back. One PASS/FAIL line each.
+-- Superseded by 0087 (run these only before 0087). Fictional partners, clients and amounts only. One transaction, rolled back. One PASS/FAIL line each.
 \set ON_ERROR_STOP 1
 \pset tuples_only on
 \pset format unaligned

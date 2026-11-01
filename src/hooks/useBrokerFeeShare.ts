@@ -43,13 +43,13 @@ export type BrokerFeeShareView =
   | { kind: 'no_share'; feeCents: number; shortfallCents: number }
   ;
 
-/** The policy form's own values: its bound date, and who gets a referral fee from this policy (0085). */
+/** The policy form's own values: its bound date, and the partner chosen in it (an account without one yet). */
 export type BrokerFeeShareForm = { boundDate?: string; referral?: string; other?: OtherReferral | null };
 
 /**
  * The account agent's share of a policy's broker fee, for the viewers who see the agent commission (the agent and
- * admins): the recorded split once the policy is saved, else worked out the way the database does — the referral
- * partner chosen on the policy takes their amount off the broker fee first, and the agent's share is of the rest.
+ * admins): the recorded split once the policy is saved, else worked out the way the database does — on the client's
+ * very first policy the referral partner's amount comes off the broker fee first, and the agent's share is of the rest.
  */
 export function useBrokerFeeShare(accountId: string): (policyId: string | null, feeCents: number | undefined, form?: BrokerFeeShareForm) => BrokerFeeShareView {
   const quotes = useAccountsStore((s) => s.quotes[accountId]);
@@ -84,8 +84,8 @@ export function useBrokerFeeShare(accountId: string): (policyId: string | null, 
     if (recorded && unchanged && recorded.feeCents === feeCents && !recorded.pending && recorded.agentCents !== null && (recorded.agentCents > 0 || snapshot?.shares[agentId]))
       return { kind: 'amount', cents: recorded.agentCents, feeCents, shortfallCents: recorded.shortfallCents };
     // Not saved yet (or changed in the form): worked out the way the database does (0085).
-    const explicit = form?.referral !== undefined || !!saved?.referralPartner;
-    const choice = form?.referral ?? savedChoice ?? (isFirstPolicy(policies, { id: null, boundDate: form?.boundDate }) ? account?.referralSource || NO_REFERRAL : NO_REFERRAL);
+    // The partner is paid on the client's very first policy only (0087).
+    const choice = isFirstPolicy(policies, { id: policyId, boundDate: form?.boundDate }) ? form?.referral || account?.referralSource || NO_REFERRAL : NO_REFERRAL;
     let partner = 0;
     if (choice === OTHER_REFERRAL) {
       const other = form?.other ?? others[accountId];
@@ -96,7 +96,7 @@ export function useBrokerFeeShare(accountId: string): (policyId: string | null, 
       const listed = named && named.partnerFeeCents !== undefined ? { feeCents: named.partnerFeeCents, active: named.active } : snapshot?.partners[choice];
       // The partner's amount isn't known here (before 0085, for an agent): shown once the policy is saved.
       if (!listed) return { kind: 'none' };
-      partner = explicit || listed.active ? (listed.feeCents ?? 0) : 0;
+      partner = listed.active ? (listed.feeCents ?? 0) : 0;
     }
     const split = referralPartnerSplit(feeCents, partner);
     const cents = agentBrokerFeeShareCents(feeCents, snapshot?.shares[agentId], split.partnerCents);
