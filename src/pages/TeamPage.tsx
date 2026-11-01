@@ -29,8 +29,7 @@ import {
 import { setAgentCommissionRate } from '../services/supabase/commissionRepo';
 import { useAgentCommissionRates } from '../hooks/useAgentCommission';
 import { formatRate } from '../components/workspace/PoliciesSection';
-import { setAgencyOwner, useAgencyOwners } from '../hooks/useAgencyOwner';
-import { checkIsFounder } from '../services/productAnalytics/founderRepo';
+import { useAgencyOwners } from '../hooks/useAgencyOwner';
 
 const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
 
@@ -46,13 +45,8 @@ const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
 export function TeamPage() {
   const access = useAccountsStore((s) => s.agencyAccess);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
-  // Agency Owners (0086): shown on the team; only the RenewalIQ founder sets them.
+  // Agency Owners (0086): shown in the Role column; set by the developer in the database, not here.
   const ownerIds = useAgencyOwners();
-  const [isFounder, setIsFounder] = useState(false);
-  const [ownerError, setOwnerError] = useState('');
-  useEffect(() => {
-    if (currentUserId) void checkIsFounder().then(setIsFounder);
-  }, [currentUserId]);
   const accounts = useAccountsStore((s) => s.accounts);
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [invites, setInvites] = useState<Invitation[]>([]);
@@ -147,26 +141,6 @@ export function TeamPage() {
             <Skeleton variant="block" className="h-24 w-full" />
           ) : (
             <>
-            {isFounder && access && (
-              <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-sm" data-testid="agency-owner-setting">
-                <span className="font-medium text-[var(--color-ink-700)]">Agency Owners</span>
-                {members.map((m) => (
-                  <label key={m.userId} className="inline-flex cursor-pointer items-center gap-1.5 text-[var(--color-ink-800)]">
-                    <input
-                      type="checkbox"
-                      checked={ownerIds.includes(m.userId)}
-                      onChange={(e) => {
-                        setOwnerError('');
-                        void setAgencyOwner(access.agencyId, m.userId, e.target.checked).then((r) => !r.ok && setOwnerError(r.message));
-                      }}
-                      className="h-4 w-4 cursor-pointer accent-[var(--color-brand-700)]"
-                    />
-                    {m.name ?? m.email ?? 'Unnamed'}
-                  </label>
-                ))}
-                {ownerError && <span className="text-xs text-[var(--color-danger-600)]">{ownerError}</span>}
-              </div>
-            )}
             {/* Column names on wide screens; narrower screens label each box instead. */}
             <div className={`hidden gap-x-6 border-b border-[var(--color-ink-100)] pb-2 text-xs font-medium text-[var(--color-ink-500)] xl:grid ${MEMBER_COLS}`} aria-hidden>
               <span>Name</span>

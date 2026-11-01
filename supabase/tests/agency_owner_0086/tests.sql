@@ -1,4 +1,4 @@
--- 0086: Agency Owner. Run against a disposable copy with 0043, 0084 and 0086 applied (admin …0d, agent …0a, another
+-- 0086 + 0089: Agency Owner; owners and admins mark agents paid. Run against a disposable copy with 0043, 0084 and 0086 applied (admin …0d, agent …0a, another
 -- agency's admin …0c). Fictional data only. One transaction, rolled back. One PASS/FAIL line each.
 \set ON_ERROR_STOP 1
 \pset tuples_only on
@@ -14,14 +14,14 @@ insert into public.submissions (id, user_id, organization_id, named_insured, ass
 grant usage on schema public to authenticated;
 set local role authenticated;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d') \g /dev/null
-select pg_temp.check('W1 an admin who isn''t the owner can''t mark paid', pg_temp.refused($$select public.record_agent_payments(current_date, '[{"submission_id":"ao_1","row_key":"p1","agent_user_id":"00000000-0000-0000-0000-00000000000a","commission_cents":100}]')$$));
+select pg_temp.check('W1 an admin who isn''t an owner marks paid too (0089)', not pg_temp.refused($$select public.record_agent_payments(current_date, '[{"submission_id":"ao_1","row_key":"p0","agent_user_id":"00000000-0000-0000-0000-00000000000a","commission_cents":100}]')$$));
 select pg_temp.check('W2 an admin can''t make themselves an owner', pg_temp.refused($$select public.set_agency_owner(pg_temp.agency(), '00000000-0000-0000-0000-00000000000d', true)$$));
 reset role;
 insert into public.agency_owners (agency_id, user_id) values (pg_temp.agency(), '00000000-0000-0000-0000-00000000000d');
 set local role authenticated;
 select pg_temp.check('W3 the owner is seen as the owner', public.is_agency_owner());
 select pg_temp.check('W4 the owner marks paid', public.record_agent_payments(current_date, '[{"submission_id":"ao_1","row_key":"p1","agent_user_id":"00000000-0000-0000-0000-00000000000a","commission_cents":100}]') = 1);
-select id as pid from public.agent_payments where submission_id = 'ao_1' \gset
+select id as pid from public.agent_payments where submission_id = 'ao_1' and row_key = 'p1' \gset
 select public.undo_agent_payment(:'pid', 'Undone') \g /dev/null
 select pg_temp.check('W5 the owner undoes a payment', (select undone_at is not null from public.agent_payments where id = :'pid'));
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a') \g /dev/null

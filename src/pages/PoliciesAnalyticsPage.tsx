@@ -128,9 +128,9 @@ function PoliciesPanel() {
   const members = useAccountsStore((s) => s.agencyMembers);
   const me = useAccountsStore((s) => s.currentUserId);
   const rates = useAgentCommissionRates();
-  // Only an Agency Owner (0086) marks agents paid and undoes a payment.
+  // Agency Owners (0086) and admins (0089) mark agents paid and undo a payment.
   const owners = useAgencyOwners();
-  const isOwner = !!me && owners.includes(me);
+  const isOwner = (!!me && owners.includes(me)) || agencyAccess?.role === 'admin';
   const isAdmin = agencyAccess?.role === 'admin';
   const [view, update, reset] = useRememberedView('analytics-policies', POLICY_VIEW_DEFAULTS, sanitizePolicyView);
   // A link with filters in it (?view=policies&from=…) sets them once; after that they're remembered.

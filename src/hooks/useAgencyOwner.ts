@@ -17,15 +17,6 @@ export async function reloadAgencyOwner(agencyId: string): Promise<void> {
   listeners.forEach((l) => l());
 }
 
-/** RenewalIQ founder only: make a member one of the Agency Owners, or not. */
-export async function setAgencyOwner(agencyId: string, userId: string, owner: boolean): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (!supabase) return { ok: false, message: 'Not connected.' };
-  const { error } = await supabase.rpc('set_agency_owner', { p_agency_id: agencyId, p_user_id: userId, p_owner: owner });
-  if (error) return { ok: false, message: error.message };
-  await reloadAgencyOwner(agencyId);
-  return { ok: true };
-}
-
 /** The Agency Owners' user ids (none set, or before 0086: empty). */
 export function useAgencyOwners(): string[] {
   const agencyId = useAccountsStore((s) => s.agencyAccess?.agencyId ?? null);
