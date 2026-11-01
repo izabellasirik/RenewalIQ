@@ -17,6 +17,8 @@ export interface PoliciesReportOptions {
   /** The agent commission as on screen: commission + broker fee share − referral partner shortfall = total. */
   payOf: (row: PolicyRow) => { commission: number; share: number; shortfall: number; total: number } | null;
   agentNameOf: (row: PolicyRow) => string;
+  /** Why a row has no agent commission yet (as the screen says it), e.g. "No split set". */
+  noCommissionWhy?: (row: PolicyRow) => string;
   /** "Show: Policies", "Agent: …", "Search: …". */
   filters: string[];
   dateField: PolicyDateField;
@@ -58,7 +60,7 @@ export function policiesReport(rows: PolicyRow[], o: PoliciesReportOptions): Rep
       p.boundDate || null,
       p.netPremiumCents,
       ...(o.isAdmin ? [carrier] : []),
-      ...(o.withCommission ? [o.agentNameOf(r), pay?.commission ?? null, pay ? pay.share : null, pay?.total ?? null] : []),
+      ...(o.withCommission ? [o.agentNameOf(r), pay ? pay.commission : (o.noCommissionWhy?.(r) ?? null), pay ? pay.share : null, pay?.total ?? null] : []),
     ];
   });
   const policies = rows.filter((r) => !r.cancellation && entryKind(r.policy) === 'policy').length;

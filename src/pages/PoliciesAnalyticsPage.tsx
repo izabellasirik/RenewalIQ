@@ -328,6 +328,7 @@ function PoliciesPanel() {
       carrierCentsOf,
       payOf,
       agentNameOf: (r) => commissionAgentName(r) || agentName(r.assignedUserId),
+      noCommissionWhy,
       filters: [kind !== 'all' ? `Show: ${kind === 'policy' ? 'Policies' : 'Endorsements'}` : '', agent ? `Agent: ${agentName(agent)}` : '', search ? `Search: “${search}”` : ''].filter(Boolean),
       dateField,
       from,
