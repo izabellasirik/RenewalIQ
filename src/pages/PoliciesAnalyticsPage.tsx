@@ -259,14 +259,7 @@ function PoliciesPanel() {
     return { commission: c, share, shortfall, total: c + share - shortfall };
   };
   const statusOf = (r: PolicyRow): PayStatus => payStatus(payOf(r)?.total ?? null, paymentsByRow.get(`${r.accountId}|${r.policy.id}`) ?? []);
-  // "Paid to agent" as the cell shows it, for the downloads.
-  const paidText = (r: PolicyRow): string => {
-    const st = statusOf(r);
-    const when = st.lastPaidOn ? formatShortDate(st.lastPaidOn) : '';
-    if (st.state === 'paid') return `Paid ${when} (${formatCents(st.paidCents)})`;
-    if (st.state === 'partly') return `Paid ${formatCents(st.paidCents)} ${when}; ${formatCents(st.dueCents)} not paid yet`;
-    return st.state === 'not_paid' ? 'Not paid' : '';
-  };
+
   const payAgentOf = (r: PolicyRow): string | null => recordOf(r)?.agentUserId ?? r.assignedUserId;
   const rows = useMemo(
     () => (payments === null || paidFilter === 'all' ? baseRows : baseRows.filter((r) => (paidFilter === 'paid' ? statusOf(r).state === 'paid' : statusOf(r).state === 'not_paid' || statusOf(r).state === 'partly'))),
@@ -330,10 +323,8 @@ function PoliciesPanel() {
       isAdmin,
       withCommission: !!agencyAccess,
       carrierRateOf,
-      carrierCentsOf,
       payOf,
       agentNameOf: (r) => commissionAgentName(r) || agentName(r.assignedUserId),
-      paidOf: agencyAccess && payments !== null ? paidText : undefined,
       filters: [kind !== 'all' ? `Show: ${kind === 'policy' ? 'Policies' : 'Endorsements'}` : '', agent ? `Agent: ${agentName(agent)}` : '', search ? `Search: “${search}”` : ''].filter(Boolean),
       dateField,
       from,
@@ -484,7 +475,6 @@ function PoliciesPanel() {
                         {totals.cancellations > 0 && <> · <span data-total="cancellations">{totals.cancellations}</span> {totals.cancellations === 1 ? 'cancellation' : 'cancellations'}</>}
                       </span>
                     </td>
-                    <td className={totalCell} />
                     <td className={totalCell} />
                     <td className={`${totalCell} ${num}`} data-total="net">{formatCents(totals.net)}</td>
                     <td className={`${totalCell} ${num}`} data-total="taxes">{formatCents(totals.taxes)}</td>

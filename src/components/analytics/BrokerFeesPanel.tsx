@@ -202,7 +202,7 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
     return `/accounts/${r.accountId}?tab=quotes${q ? `&quote=${q.id}` : ''}`;
   };
   const sum = (f: (r: BrokerFeeSplit) => number) => rows.reduce((n, r) => n + f(r), 0);
-  const total = 'border-t-2 border-[var(--color-ink-200)] bg-[var(--color-ink-50)] px-3 py-2 text-sm font-semibold text-[var(--color-ink-900)]';
+  const total = 'border-b-2 border-[var(--color-ink-200)] bg-[var(--color-ink-50)] px-3 py-2 text-sm font-semibold text-[var(--color-ink-900)]';
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -220,6 +220,19 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
                     {h}
                   </th>
                 ))}
+              </tr>
+              <tr data-testid="broker-fee-totals">
+                <td className={total} colSpan={3}>Total · {rows.length} {rows.length === 1 ? 'policy' : 'policies'}</td>
+                <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.brokerFeeCents))}</td>
+                {admin ? (
+                  <>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.partnerCents ?? 0))}</td>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
+                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agencyCents ?? 0))}</td>
+                  </>
+                ) : (
+                  <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -257,36 +270,6 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
                 </tr>
               ))}
             </tbody>
-            <tfoot>
-              <tr data-testid="broker-fee-totals">
-                <td className={total} colSpan={3}>Total · {rows.length} {rows.length === 1 ? 'policy' : 'policies'}</td>
-                <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.brokerFeeCents))}</td>
-                {admin ? (
-                  <>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.partnerCents ?? 0))}</td>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agencyCents ?? 0))}</td>
-                  </>
-                ) : (
-                  <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
-                )}
-              </tr>
-            </tfoot>
-            <tfoot>
-              <tr data-testid="broker-fee-totals">
-                <td className={total} colSpan={3}>Total · {rows.length} {rows.length === 1 ? 'policy' : 'policies'}</td>
-                <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.brokerFeeCents))}</td>
-                {admin ? (
-                  <>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.partnerCents ?? 0))}</td>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agencyCents ?? 0))}</td>
-                  </>
-                ) : (
-                  <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
-                )}
-              </tr>
-            </tfoot>
           </table>
         )}
       </CardBody>

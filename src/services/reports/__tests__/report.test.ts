@@ -63,21 +63,19 @@ describe('policies report = the filtered rows the screen shows', () => {
     marketBound: true,
     assignedUserId: 'agent-a',
   });
-  const base = { carrierRateOf: () => 0.15, carrierCentsOf: (r: PolicyRow) => r.policy.netPremiumCents * 0.15, payOf: (r: PolicyRow) => ({ commission: r.policy.netPremiumCents * 0.03, share: 5000, shortfall: 0, total: r.policy.netPremiumCents * 0.03 + 5000 }), paidOf: () => 'Not paid', agentNameOf: () => 'Agent A', filters: ['Show: Policies'], dateField: 'boundDate' as const, from: '2026-10-01', to: '2026-10-31' };
+  const base = { carrierRateOf: () => 0.15, payOf: (r: PolicyRow) => ({ commission: r.policy.netPremiumCents * 0.03, share: 5000, shortfall: 0, total: r.policy.netPremiumCents * 0.03 + 5000 }), agentNameOf: () => 'Agent A', filters: ['Show: Policies'], dateField: 'boundDate' as const, from: '2026-10-01', to: '2026-10-31' };
 
   it('admins get the carrier columns; agents don’t', () => {
     const admin = policiesReport([row('1', 1_000_000), row('2', 500_000, { kind: 'endorsement' })], { ...base, isAdmin: true, withCommission: true });
-    expect(admin.columns.map((c) => c.header)).toContain('Carrier commission');
+    expect(admin.columns.map((c) => c.header)).toContain('Carrier %');
     expect(admin.rows).toHaveLength(2);
-    expect(admin.rows[0].slice(0, 4)).toEqual(['Sample Haulers', 'SMP-1', 'Policy', 'Sample Mutual']);
-    expect(admin.rows[1][2]).toBe('Endorsement');
-    expect(admin.columns.map((c) => c.header)).toEqual(expect.arrayContaining(['Broker fee share', 'Agent commission total', 'Paid to agent', 'Description', 'Documents']));
-    expect(admin.rows[0]).toContain('Six power units');
+    expect(admin.rows[0].slice(0, 2)).toEqual(['Sample Haulers\nSMP-1 · Policy', 'Sample Mutual']);
+    expect(admin.rows[1][0]).toBe('Sample Haulers\nSMP-2 · Endorsement');
+    expect(admin.columns.map((c) => c.header)).toEqual(['Client / policy', 'Carrier / MGA', 'Bound / endorsed', 'Net premium', 'Carrier %', 'Agent', 'Broker fee share', 'Agent commission total']);
     expect(admin.totals?.[0]).toBe('Total: 1 policy, 1 endorsement');
     expect(admin.subtitle).toContain('Show: Policies');
     const agent = policiesReport([row('1', 1_000_000)], { ...base, isAdmin: false, withCommission: true });
-    expect(agent.columns.map((c) => c.header)).not.toContain('Carrier commission');
-    expect(agent.columns.map((c) => c.header)).not.toContain('Carrier %');
+        expect(agent.columns.map((c) => c.header)).not.toContain('Carrier %');
     expect(reportCsv(agent)).not.toMatch(/15%/);
   });
 });

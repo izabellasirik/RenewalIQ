@@ -86,6 +86,8 @@ export async function reportXlsx(r: Report): Promise<Blob> {
   const add = (cells: Cell[], bold = false) => {
     const row = ws.addRow(r.columns.map((c, i) => value(c, cells[i] ?? null)));
     if (bold) row.font = { bold: true };
+    // A cell with two lines (e.g. client over policy number) shows both.
+    row.alignment = { vertical: 'top', wrapText: true };
   };
   for (const row of r.rows) add(row);
   if (r.totals) add(r.totals, true);
