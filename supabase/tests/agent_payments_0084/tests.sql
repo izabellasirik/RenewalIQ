@@ -20,7 +20,7 @@ select pg_temp.as_user('') \g /dev/null
 insert into public.submissions (id, user_id, organization_id, named_insured, assigned_user_id) values
   ('ap_a', '00000000-0000-0000-0000-00000000000a', pg_temp.agency(), 'Payment Client A (sample)', '00000000-0000-0000-0000-00000000000a');
 -- After 0086 only the Agency Owner records payments: the admin is made the owner here.
-do $$ begin if to_regclass('public.agency_owners') is not null then execute 'insert into public.agency_owners (agency_id, user_id) select agency_id, user_id from public.profiles where user_id = ''00000000-0000-0000-0000-00000000000d'' on conflict (agency_id) do nothing'; end if; end $$;
+do $$ begin if to_regclass('public.agency_owners') is not null then execute 'insert into public.agency_owners (agency_id, user_id) select agency_id, user_id from public.profiles where user_id = ''00000000-0000-0000-0000-00000000000d'' on conflict do nothing'; end if; end $$;
 set local role authenticated;
 
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d') \g /dev/null

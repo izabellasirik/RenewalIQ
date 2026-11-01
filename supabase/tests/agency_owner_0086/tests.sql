@@ -15,7 +15,7 @@ grant usage on schema public to authenticated;
 set local role authenticated;
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000d') \g /dev/null
 select pg_temp.check('W1 an admin who isn''t the owner can''t mark paid', pg_temp.refused($$select public.record_agent_payments(current_date, '[{"submission_id":"ao_1","row_key":"p1","agent_user_id":"00000000-0000-0000-0000-00000000000a","commission_cents":100}]')$$));
-select pg_temp.check('W2 an admin can''t make themselves the owner', pg_temp.refused($$select public.set_agency_owner(pg_temp.agency(), '00000000-0000-0000-0000-00000000000d')$$));
+select pg_temp.check('W2 an admin can''t make themselves an owner', pg_temp.refused($$select public.set_agency_owner(pg_temp.agency(), '00000000-0000-0000-0000-00000000000d', true)$$));
 reset role;
 insert into public.agency_owners (agency_id, user_id) values (pg_temp.agency(), '00000000-0000-0000-0000-00000000000d');
 set local role authenticated;
@@ -26,9 +26,17 @@ select public.undo_agent_payment(:'pid', 'Undone') \g /dev/null
 select pg_temp.check('W5 the owner undoes a payment', (select undone_at is not null from public.agent_payments where id = :'pid'));
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000a') \g /dev/null
 select pg_temp.check('W6 an agent sees who the owner is but isn''t one', not public.is_agency_owner() and (select count(*) = 1 from public.agency_owners));
+reset role;
+insert into public.agency_owners (agency_id, user_id) values (pg_temp.agency(), '00000000-0000-0000-0000-00000000000a');
+set local role authenticated;
+select pg_temp.check('W6b two owners in one agency: the second marks paid too', public.is_agency_owner()
+  and public.record_agent_payments(current_date, '[{"submission_id":"ao_1","row_key":"p3","agent_user_id":"00000000-0000-0000-0000-00000000000a","commission_cents":100}]') = 1);
+reset role;
+delete from public.agency_owners where user_id = '00000000-0000-0000-0000-00000000000a';
+set local role authenticated;
 select pg_temp.check('W7 an agent can''t mark paid', pg_temp.refused($$select public.record_agent_payments(current_date, '[{"submission_id":"ao_1","row_key":"p2","agent_user_id":"00000000-0000-0000-0000-00000000000a","commission_cents":100}]')$$));
 select pg_temp.as_user('00000000-0000-0000-0000-00000000000c') \g /dev/null
 select pg_temp.check('W8 another agency doesn''t see this agency''s owner', (select count(*) = 0 from public.agency_owners where agency_id = pg_temp.agency()));
 reset role;
-select pg_temp.check('W9 signed out can''t call the new functions', not has_function_privilege('anon', 'public.set_agency_owner(uuid,uuid)', 'execute') and not has_function_privilege('anon', 'public.is_agency_owner()', 'execute'));
+select pg_temp.check('W9 signed out can''t call the new functions', not has_function_privilege('anon', 'public.set_agency_owner(uuid,uuid,boolean)', 'execute') and not has_function_privilege('anon', 'public.is_agency_owner()', 'execute'));
 rollback;

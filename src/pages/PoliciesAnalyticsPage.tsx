@@ -24,7 +24,7 @@ import { fetchAgentPayments, recordAgentPayments, undoAgentPayment, type AgentPa
 import { addedLate, payStatus, type PayStatus } from '../services/finance/agentPay';
 import { commitOnBlurOutside, keepFocus } from '../components/riskProfile/FieldRow';
 import { useOnDataRefresh } from '../services/appFreshness';
-import { useAgencyOwner } from '../hooks/useAgencyOwner';
+import { useAgencyOwners } from '../hooks/useAgencyOwner';
 import {
   DATE_PRESET_LABELS,
   POLICY_DATE_LABELS,
@@ -128,8 +128,9 @@ function PoliciesPanel() {
   const members = useAccountsStore((s) => s.agencyMembers);
   const me = useAccountsStore((s) => s.currentUserId);
   const rates = useAgentCommissionRates();
-  // Only the Agency Owner (0086) marks agents paid and undoes a payment.
-  const isOwner = useAgencyOwner() === me && !!me;
+  // Only an Agency Owner (0086) marks agents paid and undoes a payment.
+  const owners = useAgencyOwners();
+  const isOwner = !!me && owners.includes(me);
   const isAdmin = agencyAccess?.role === 'admin';
   const [view, update, reset] = useRememberedView('analytics-policies', POLICY_VIEW_DEFAULTS, sanitizePolicyView);
   // A link with filters in it (?view=policies&from=…) sets them once; after that they're remembered.

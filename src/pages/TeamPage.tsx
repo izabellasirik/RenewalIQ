@@ -29,7 +29,7 @@ import {
 import { setAgentCommissionRate } from '../services/supabase/commissionRepo';
 import { useAgentCommissionRates } from '../hooks/useAgentCommission';
 import { formatRate } from '../components/workspace/PoliciesSection';
-import { setAgencyOwner, useAgencyOwner } from '../hooks/useAgencyOwner';
+import { setAgencyOwner, useAgencyOwners } from '../hooks/useAgencyOwner';
 import { checkIsFounder } from '../services/productAnalytics/founderRepo';
 
 const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
@@ -46,8 +46,8 @@ const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
 export function TeamPage() {
   const access = useAccountsStore((s) => s.agencyAccess);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
-  // Agency Owner (0086): shown on the team; only the RenewalIQ founder sets it.
-  const ownerId = useAgencyOwner();
+  // Agency Owners (0086): shown on the team; only the RenewalIQ founder sets them.
+  const ownerIds = useAgencyOwners();
   const [isFounder, setIsFounder] = useState(false);
   const [ownerError, setOwnerError] = useState('');
   useEffect(() => {
@@ -148,22 +148,22 @@ export function TeamPage() {
           ) : (
             <>
             {isFounder && access && (
-              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-sm" data-testid="agency-owner-setting">
-                <label htmlFor="agency-owner" className="font-medium text-[var(--color-ink-700)]">Agency Owner</label>
-                <select
-                  id="agency-owner"
-                  value={ownerId ?? ''}
-                  onChange={(e) => {
-                    setOwnerError('');
-                    void setAgencyOwner(access.agencyId, e.target.value || null).then((r) => !r.ok && setOwnerError(r.message));
-                  }}
-                  className={`${CONTROL} !w-48 cursor-pointer bg-white text-[var(--color-ink-900)]`}
-                >
-                  <option value="">None</option>
-                  {members.map((m) => (
-                    <option key={m.userId} value={m.userId}>{m.name ?? m.email ?? 'Unnamed'}</option>
-                  ))}
-                </select>
+              <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-[var(--color-ink-50)] px-3 py-2 text-sm" data-testid="agency-owner-setting">
+                <span className="font-medium text-[var(--color-ink-700)]">Agency Owners</span>
+                {members.map((m) => (
+                  <label key={m.userId} className="inline-flex cursor-pointer items-center gap-1.5 text-[var(--color-ink-800)]">
+                    <input
+                      type="checkbox"
+                      checked={ownerIds.includes(m.userId)}
+                      onChange={(e) => {
+                        setOwnerError('');
+                        void setAgencyOwner(access.agencyId, m.userId, e.target.checked).then((r) => !r.ok && setOwnerError(r.message));
+                      }}
+                      className="h-4 w-4 cursor-pointer accent-[var(--color-brand-700)]"
+                    />
+                    {m.name ?? m.email ?? 'Unnamed'}
+                  </label>
+                ))}
                 {ownerError && <span className="text-xs text-[var(--color-danger-600)]">{ownerError}</span>}
               </div>
             )}
@@ -186,7 +186,7 @@ export function TeamPage() {
                       {m.userId === currentUserId && <span className="font-normal text-[var(--color-ink-400)]"> (you)</span>}
                     </p>
                     {m.jobTitle && <p className="text-xs text-[var(--color-ink-500)]">{m.jobTitle}</p>}
-                    {m.userId === ownerId && <Badge tone="brand" className="mt-1">Agency Owner</Badge>}
+                    {ownerIds.includes(m.userId) && <Badge tone="brand" className="mt-1">Agency Owner</Badge>}
                   </div>
                   <div className="col-span-2 min-w-0 text-sm text-[var(--color-ink-600)] sm:col-span-1 xl:col-span-1">
                     {m.email && <p className="truncate">{m.email}</p>}

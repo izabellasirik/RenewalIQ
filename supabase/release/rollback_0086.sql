@@ -49,6 +49,7 @@ revoke all on function public.undo_agent_payment(uuid, text) from public, anon;
 grant execute on function public.undo_agent_payment(uuid, text) to authenticated;
 
 drop function if exists public.set_agency_owner(uuid, uuid);
+drop function if exists public.set_agency_owner(uuid, uuid, boolean);
 drop function if exists public.is_agency_owner();
 drop table if exists public.agency_owners;
 notify pgrst, 'reload schema';

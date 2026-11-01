@@ -1,6 +1,7 @@
 -- 0086 Agency Owner: the agency's owner (e.g. its founder). Set by the RenewalIQ founder (developer) only, on Team and
--- Partners. Only the Agency Owner marks agents paid and undoes a payment (Analytics → Policies & endorsements);
--- admins and agents keep seeing the payments. One owner per agency. Needs 0043 and 0084. Re-runnable.
+-- Partners. Only an Agency Owner marks agents paid and undoes a payment (Analytics → Policies & endorsements);
+-- admins and agents keep seeing the payments. An agency can have more than one owner. Needs 0043 and 0084.
+-- Re-runnable (also over the first version, which allowed one owner per agency).
 -- Rollback: supabase/release/rollback_0086.sql.
 
 do $$
@@ -9,11 +10,21 @@ begin
 end $$;
 
 create table if not exists public.agency_owners (
-  agency_id uuid primary key references public.agencies (id) on delete cascade,
+  agency_id uuid not null references public.agencies (id) on delete cascade,
   user_id uuid not null references auth.users (id) on delete cascade,
   set_by uuid references auth.users (id) on delete set null,
-  set_at timestamptz not null default now()
+  set_at timestamptz not null default now(),
+  primary key (agency_id, user_id)
 );
+-- The first version keyed the table by agency (one owner): key it by agency and person.
+do $$
+begin
+  if (select count(*) from pg_index i join pg_attribute a on a.attrelid = i.indrelid and a.attnum = any (i.indkey)
+       where i.indrelid = 'public.agency_owners'::regclass and i.indisprimary) = 1 then
+    alter table public.agency_owners drop constraint agency_owners_pkey;
+    alter table public.agency_owners add primary key (agency_id, user_id);
+  end if;
+end $$;
 alter table public.agency_owners enable row level security;
 drop policy if exists agency_owners_read on public.agency_owners;
 create policy agency_owners_read on public.agency_owners for select to authenticated using (agency_id = public.current_agency_id());
@@ -30,25 +41,26 @@ $$;
 revoke all on function public.is_agency_owner() from public, anon;
 grant execute on function public.is_agency_owner() to authenticated;
 
--- RenewalIQ founder only: make a member of their agency its Agency Owner (p_user_id null: no owner).
-create or replace function public.set_agency_owner(p_agency_id uuid, p_user_id uuid)
+-- RenewalIQ founder only: make a member of an agency one of its Agency Owners (p_owner true), or not (false).
+drop function if exists public.set_agency_owner(uuid, uuid);
+create or replace function public.set_agency_owner(p_agency_id uuid, p_user_id uuid, p_owner boolean)
 returns void
 language plpgsql security definer set search_path = ''
 as $$
 begin
-  if auth.uid() is null or not public.is_founder() then raise exception 'Only the RenewalIQ founder can set the Agency Owner.' using errcode = '42501'; end if;
-  if p_user_id is null then
-    delete from public.agency_owners where agency_id = p_agency_id;
+  if auth.uid() is null or not public.is_founder() then raise exception 'Only the RenewalIQ founder can set an Agency Owner.' using errcode = '42501'; end if;
+  if not coalesce(p_owner, false) then
+    delete from public.agency_owners where agency_id = p_agency_id and user_id = p_user_id;
     return;
   end if;
   if not exists (select 1 from public.profiles p where p.user_id = p_user_id and p.agency_id = p_agency_id) then
     raise exception 'That person isn''t a member of this agency.' using errcode = '22023';
   end if;
   insert into public.agency_owners (agency_id, user_id, set_by) values (p_agency_id, p_user_id, auth.uid())
-  on conflict (agency_id) do update set user_id = excluded.user_id, set_by = excluded.set_by, set_at = now();
+  on conflict (agency_id, user_id) do nothing;
 end $$;
-revoke all on function public.set_agency_owner(uuid, uuid) from public, anon;
-grant execute on function public.set_agency_owner(uuid, uuid) to authenticated;
+revoke all on function public.set_agency_owner(uuid, uuid, boolean) from public, anon;
+grant execute on function public.set_agency_owner(uuid, uuid, boolean) to authenticated;
 
 -- 0084's payment functions, now for the Agency Owner only.
 create or replace function public.record_agent_payments(p_paid_on date, p_items jsonb)
