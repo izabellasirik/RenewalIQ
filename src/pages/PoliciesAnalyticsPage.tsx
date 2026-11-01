@@ -501,7 +501,7 @@ function PoliciesPanel() {
                     {agencyAccess && (
                       <td className={`${totalCell} ${num}`} data-total="broker-fee">
                         {formatCents(totals.share)}
-                        {totals.shortfall > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">− {formatCents(totals.shortfall)} to referral partners</span>}
+                        {totals.shortfall > 0 && <span className="block whitespace-nowrap text-[11px] font-normal text-[var(--color-warning-600)]">− {formatCents(totals.shortfall)} shortfall</span>}
                       </td>
                     )}
                     {agencyAccess && <td className={`${totalCell} ${num}`} data-total="commission">{formatCents(totals.commission)}</td>}
@@ -570,8 +570,8 @@ function PoliciesPanel() {
                           <td className={`${td} ${num}`} data-field="broker-fee">
                             {c === null ? '' : formatCents(payOf(r)!.share)}
                             {c !== null && payOf(r)!.shortfall > 0 && (
-                              <span className="mt-0.5 block text-[11px] text-[var(--color-ink-500)]" title="The first broker fee didn’t cover the referral partner’s agreed amount, so the rest comes out of the agent commission.">
-                                − {formatCents(payOf(r)!.shortfall)} to the referral partner
+                              <span className="mt-0.5 block whitespace-nowrap text-[11px] text-[var(--color-warning-600)]" title="The broker fee didn’t cover the referral partner’s agreed amount, so the rest comes out of the agent commission.">
+                                − {formatCents(payOf(r)!.shortfall)} shortfall
                               </span>
                             )}
                           </td>
