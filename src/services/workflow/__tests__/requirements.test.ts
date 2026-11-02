@@ -76,9 +76,8 @@ describe('shared checklist requirements', () => {
     const apps = items(accountId).filter((i) => requirementKey(i) === 'application');
     expect(apps).toHaveLength(1);
     expect(carriersFor(apps[0]).sort()).toEqual([progressive, trinity].sort());
-    // The "action required" names both carriers on one row.
-    const req = actionsFor(accountId).now.find((x) => x.itemId === a && x.kind === 'action_required');
-    expect(req?.title).toMatch(/Trinity, Progressive requested Application/);
+    // Not yet asked of the client: no task (it's in the Missing documents list only).
+    expect(actionsFor(accountId).now.find((x) => x.itemId === a)).toBeUndefined();
   });
 
   it("3. two different drivers' MVRs remain separate", () => {

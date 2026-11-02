@@ -118,7 +118,6 @@ function deriveAllAccountActions(input: AccountWorkflowInput, today: string): De
     else if (diff <= UPCOMING_WINDOW_DAYS) upcoming.push({ ...action, overdue: false });
   }
 
-  let unrequestedChecklist = 0;
   const clientGroups = new Map<string, { item: MissingItem; neededBy: string }[]>();
 
   // Items an open client request is chasing are followed up through that request (one task, only
@@ -192,23 +191,9 @@ function deriveAllAccountActions(input: AccountWorkflowInput, today: string): De
       const g = clientGroups.get(key);
       if (g) g.push({ item, neededBy });
       else clientGroups.set(key, [{ item, neededBy }]);
-    } else if (item.status === 'missing') {
-      if (openCarriers.length > 0) {
-        now.push({
-          ...base,
-          id: `carrier-req-${item.id}`,
-          kind: 'action_required',
-          title: `${names(openCarriers)} requested ${item.label}`,
-          detail: 'Not yet requested from the client',
-          overdue: false,
-          tab: 'checklist',
-          itemId: item.id,
-          quoteId: openCarriers[0].id,
-        });
-      } else if (linkedCarriers.length === 0) {
-        unrequestedChecklist++;
-      }
     } else if (item.status === 'received') {
+      // A document not yet asked of the client isn't a task (the broker may have asked outside RenewalIQ):
+      // it shows in the account's Missing documents list only.
       // One "send" action per carrier that asked for it and hasn't been sent it yet.
       for (const quote of openCarriers) {
         if (forwardedAt(item, quote.id)) continue;
@@ -270,18 +255,6 @@ function deriveAllAccountActions(input: AccountWorkflowInput, today: string): De
       dueDate: f.dueDate,
       tab: 'overview',
       followUpId: f.id,
-    });
-  }
-
-  if (unrequestedChecklist > 0) {
-    now.push({
-      ...base,
-      id: `checklist-${account.id}`,
-      kind: 'action_required',
-      title: `${unrequestedChecklist} checklist item${unrequestedChecklist === 1 ? '' : 's'} not yet requested`,
-      detail: 'Request from the client or mark received',
-      overdue: false,
-      tab: 'checklist',
     });
   }
 
