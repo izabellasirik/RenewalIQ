@@ -466,6 +466,7 @@ function PoliciesPanel() {
                     <th className={`${th} ${num}`}>Taxes</th>
                     <th className={`${th} ${num}`}>Fees</th>
                     <th className={`${th} ${num}`}>Total</th>
+                    {isAdmin && <th className={`${th} ${num}`}>Carrier %</th>}
                     {isAdmin && <th className={`${th} ${num} !whitespace-normal`}>Carrier commission</th>}
                     {agencyAccess && <th className={th}>Agent</th>}
                     {agencyAccess && <th className={`${th} ${num} !whitespace-normal`}>Agent commission</th>}
@@ -489,6 +490,7 @@ function PoliciesPanel() {
                     <td className={`${totalCell} ${num}`} data-total="taxes">{formatCents(totals.taxes)}</td>
                     <td className={`${totalCell} ${num}`} data-total="fees">{formatCents(totals.fees)}</td>
                     <td className={`${totalCell} ${num}`} data-total="total">{formatCents(totals.net + totals.taxes + totals.fees)}</td>
+                    {isAdmin && <td className={totalCell} />}
                     {isAdmin && (
                       <td className={`${totalCell} ${num}`} data-total="carrier">
                         {formatCents(totals.carrier)}
@@ -552,7 +554,12 @@ function PoliciesPanel() {
                         <td className={`${td} ${num} font-semibold`}>{formatCents(policyTotalCents(r.policy))}</td>
                         {isAdmin && (
                           <td className={`${td} ${num}`} data-field="carrier">
-                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} canEdit={!r.cancellation && carrier.status === 'ready' && !enteredOf(r) && recordOf(r)?.carrierRateSource !== 'policy_rate'} onChange={() => setRateFor(r)} />
+                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} part="rate" canEdit={!r.cancellation && carrier.status === 'ready' && !enteredOf(r) && recordOf(r)?.carrierRateSource !== 'policy_rate'} onChange={() => setRateFor(r)} />
+                          </td>
+                        )}
+                        {isAdmin && (
+                          <td className={`${td} ${num}`} data-field="carrier-commission">
+                            <CarrierCell row={r} rate={carrierRateOf(r)} cents={carrierCentsOf(r)} part="amount" canEdit={!r.cancellation && carrier.status === 'ready' && !enteredOf(r) && recordOf(r)?.carrierRateSource !== 'policy_rate'} onChange={() => setRateFor(r)} />
                           </td>
                         )}
                         {agencyAccess && (
@@ -681,17 +688,15 @@ function PoliciesPanel() {
 }
 
 /** A row's carrier commission: the % (as recorded, or in force on its bound date) and the amount; admins can set a new rate from here. */
-function CarrierCell({ row, rate, cents, canEdit, onChange }: { row: PolicyRow; rate: number | null; cents: number | null; canEdit: boolean; onChange: () => void }) {
+function CarrierCell({ row, rate, cents, part, canEdit, onChange }: { row: PolicyRow; rate: number | null; cents: number | null; part: 'rate' | 'amount'; canEdit: boolean; onChange: () => void }) {
+  // Two columns: "Carrier %" (with Set rate) and "Carrier commission" (dollars).
+  if (part === 'amount') return cents === null || rate === null ? <span className="text-xs text-[var(--color-ink-400)]">—</span> : <span className="font-semibold tabular-nums" data-field="carrier-amount">{formatCents(cents)}</span>;
   return (
     <div className="flex flex-col items-end">
-      {rate === null || cents === null ? (
+      {rate === null ? (
         <span className="text-xs font-medium text-[var(--color-warning-600)]" data-field="carrier-rate">Not set</span>
       ) : (
-        <>
-          {/* The amount first, in line with the row's other amounts; its % underneath. */}
-          <span className="font-semibold tabular-nums" data-field="carrier-amount">{formatCents(cents)}</span>
-          <span className="mt-0.5 text-[11px] tabular-nums text-[var(--color-ink-500)]" data-field="carrier-rate">{formatRate(rate)}</span>
-        </>
+        <span className="tabular-nums" data-field="carrier-rate">{formatRate(rate)}</span>
       )}
       {canEdit && (
         <button type="button" onClick={onChange} className="cursor-pointer text-[11px] font-medium text-[var(--color-brand-700)] hover:underline" aria-label={`Set carrier commission % for ${row.policy.carrier}`}>
