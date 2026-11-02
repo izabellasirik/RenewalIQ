@@ -115,6 +115,9 @@ export function TeamPage() {
     );
   }
 
+  // Someone who already joined (by this invite or another way) isn't waiting any more.
+  const memberEmails = new Set((members ?? []).map((m) => (m.email ?? '').trim().toLowerCase()).filter(Boolean));
+  const openInvites = invites.filter((inv) => !memberEmails.has(inv.email.trim().toLowerCase()));
   return (
     <PageContainer
       title="Team and Partners"
@@ -206,12 +209,12 @@ export function TeamPage() {
         </CardBody>
       </Card>
 
-      {invites.length > 0 && (
+      {openInvites.length > 0 && (
         <Card>
           <CardBody className="pt-4">
             <h3 className="mb-2 text-sm font-semibold text-[var(--color-ink-900)]">Invitations waiting to be accepted</h3>
             <ul className="divide-y divide-[var(--color-ink-100)]">
-              {invites.map((inv) => (
+              {openInvites.map((inv) => (
                 <li key={inv.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2.5 text-sm">
                   <span className="min-w-0 flex-1 truncate text-[var(--color-ink-800)]">{inv.email}</span>
                   <Badge tone="neutral">{ROLE_LABEL[inv.role]}</Badge>

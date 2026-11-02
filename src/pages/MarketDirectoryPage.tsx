@@ -529,8 +529,17 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
   async function read(file: File) {
     reset();
     if (file.size > 5 * 1024 * 1024) return setError('That file is over 5 MB — a directory is much smaller.');
-    const text = await file.text();
     setFileName(file.name);
+    // Excel: the first sheet, laid out like the template (one row per record).
+    if (/\.xlsx$/i.test(file.name)) {
+      const { parseSpreadsheet } = await import('../services/ingestion/parseSpreadsheet');
+      const doc = await parseSpreadsheet(file);
+      const t = doc.tables?.[0];
+      if (!t) return setError(doc.warnings[0] ?? 'No data found in this spreadsheet.');
+      return setPlan(planImport([t.headers, ...t.rows], existing, BUILT_INS));
+    }
+    if (!/\.(csv|json|txt)$/i.test(file.name)) return setError('Use a CSV or Excel (.xlsx) file laid out like the template.');
+    const text = await file.text();
     setPlan(/\.json$/i.test(file.name) ? planImportJson(text, existing, BUILT_INS) : planImport(parseCsvText(text), existing, BUILT_INS));
   }
 
@@ -571,7 +580,7 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
           </Button>
           <div className="flex gap-2">
             <Button variant="secondary" disabled={!canImport || busy} onClick={() => void run(true)}>Check</Button>
-            <Button disabled={!canImport || !check || busy} onClick={() => void run(false)} data-testid="import-confirm">{busy ? 'Working…' : 'Import'}</Button>
+            <Button disabled={!canImport || busy} onClick={() => void run(false)} data-testid="import-confirm">{busy ? 'Working…' : 'Import'}</Button>
           </div>
         </div>
       }
@@ -594,12 +603,12 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
           data-testid="import-drop"
         >
           <UploadCloud size={22} className="text-[var(--color-ink-400)]" aria-hidden />
-          <p className="text-sm text-[var(--color-ink-700)]">{fileName ? <span className="font-medium">{fileName}</span> : 'Drag and drop the CSV file here'}</p>
+          <p className="text-sm text-[var(--color-ink-700)]">{fileName ? <span className="font-medium">{fileName}</span> : 'Drag and drop the CSV or Excel file here'}</p>
           <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>{fileName ? 'Choose another file' : 'Browse'}</Button>
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,.json,text/csv,application/json"
+            accept=".csv,.xlsx,.json,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             aria-label="Directory file"
             onChange={(e) => {
               if (e.target.files?.[0]) void read(e.target.files[0]);
