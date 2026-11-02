@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Check, Download, ExternalLink, FileUp, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, Check, Download, ExternalLink, FileUp, Pencil, Plus, Search, Trash2, UploadCloud } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, Drawer, EmptyState } from '../components/ui';
 import { Modal } from '../components/ui/Modal';
@@ -513,6 +513,8 @@ const targetLabel = (t: LinkTarget) => `${t.kind === 'built-in' ? 'Built-in' : '
 function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; existing: AgencyCarrier[]; onClose: () => void; onImported: (counts: ImportCounts, fileName: string) => void }) {
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [fileName, setFileName] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [check, setCheck] = useState<ImportCounts | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -575,7 +577,37 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
       }
     >
       <div className="flex flex-col gap-3" data-testid="import-dialog">
-        <input type="file" accept=".csv,.json,text/csv,application/json" aria-label="Directory file" onChange={(e) => e.target.files?.[0] && void read(e.target.files[0])} className="text-sm" />
+        {/* Drag the file in, or Browse. */}
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            const f = e.dataTransfer.files?.[0];
+            if (f) void read(f);
+          }}
+          className={`flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-center ${dragging ? 'border-[var(--color-brand-500)] bg-[var(--color-brand-50)]' : 'border-[var(--color-ink-200)] bg-[var(--color-ink-50)]'}`}
+          data-testid="import-drop"
+        >
+          <UploadCloud size={22} className="text-[var(--color-ink-400)]" aria-hidden />
+          <p className="text-sm text-[var(--color-ink-700)]">{fileName ? <span className="font-medium">{fileName}</span> : 'Drag and drop the CSV file here'}</p>
+          <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>{fileName ? 'Choose another file' : 'Browse'}</Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,.json,text/csv,application/json"
+            aria-label="Directory file"
+            onChange={(e) => {
+              if (e.target.files?.[0]) void read(e.target.files[0]);
+              e.target.value = '';
+            }}
+            className="hidden"
+          />
+        </div>
         <p className="text-xs text-[var(--color-ink-500)]">A CSV from your spreadsheet (download the template) or the same content as JSON. The file is read in your browser; only the reviewed markets and rules are saved, to your agency only.</p>
         {error && <p className="rounded-lg bg-[var(--color-danger-50)] px-3 py-2 text-sm text-[var(--color-danger-700)]">{error}</p>}
         {plan && plan.errors.length > 0 && (
