@@ -18,6 +18,7 @@ import { enterPolicyCarrierRate, fetchEnteredCarrierRates, policyNumberTaken } f
 import { isSupabaseConfigured } from '../../services/supabase/client';
 import { generateId } from '../../utils/id';
 import { useAccountCommissionStatuses } from '../../hooks/useLedger';
+import { reloadEnteredCarrierRates, useEnteredCarrierRates } from '../../hooks/useEnteredCarrierRates';
 import type { AccountCommissionStatus } from '../../services/supabase/ledgerRepo';
 import { FLAG_LABELS, payoutWords } from '../../services/finance/ledger';
 import { CancellationRequestDialog } from '../finance/CancellationRequestDialog';
@@ -177,6 +178,7 @@ function DeletedRow({ item }: { item: PendingRemoval }) {
 
 function EntryItem({ accountId, cancellations, quote, entry: p, commission, record, onEdit, onRemove, onRequestCancellation }: { accountId: string; cancellations: PolicyCancellation[]; quote: MarketQuote; entry: PolicyRecord; commission: CommissionView; record?: AccountCommissionStatus; onEdit: () => void; onRemove: () => void; onRequestCancellation: (record: AccountCommissionStatus) => void }) {
   const feeShareFor = useBrokerFeeShare(accountId);
+  const enteredRates = useEnteredCarrierRates(accountId);
   // Cancelled (fully or partly) — shown with its date; undone cancellations no longer count.
   const cancelled = cancellationState(cancellations, p.id);
   const latest = cancelled.all[0];
@@ -299,7 +301,7 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
         <Amount label="Total" cents={policyTotalCents(p)} strong />
         {kind === 'policy' && !!p.brokerFeeCents && <Amount label="Broker fee" cents={p.brokerFeeCents} />}
       </dl>
-      <CommissionLine commission={commission} netCents={p.netPremiumCents} carrier={p.carrier} dateKey={p.boundDate} record={record} feeShare={kind === 'policy' ? feeShareFor(p.id, p.brokerFeeCents) : undefined} />
+      <CommissionLine commission={commission} netCents={p.netPremiumCents} carrier={p.carrier} dateKey={p.boundDate} record={record} enteredRate={enteredRates.get(p.id)} feeShare={kind === 'policy' ? feeShareFor(p.id, p.brokerFeeCents) : undefined} />
       {record && record.flags.length > 0 && (
         <p className="mt-0.5 text-[11px] text-[var(--color-warning-600)]" data-field="commission-flags">{record.flags.map((f) => FLAG_LABELS[f] ?? f).join(' · ')}</p>
       )}
@@ -325,7 +327,7 @@ function EntryItem({ accountId, cancellations, quote, entry: p, commission, reco
  * for the agent and the agency's admins. Once recorded (0064), the frozen amount and its expected payout;
  * before, worked out from the carrier's % and the current split.
  */
-export function CommissionLine({ commission, netCents, carrier, dateKey, record, feeShare }: { commission: CommissionView; netCents: number; carrier: string; dateKey: string; record?: AccountCommissionStatus; feeShare?: BrokerFeeShareView }) {
+export function CommissionLine({ commission, netCents, carrier, dateKey, record, enteredRate, feeShare }: { commission: CommissionView; netCents: number; carrier: string; dateKey: string; record?: AccountCommissionStatus; enteredRate?: number; feeShare?: BrokerFeeShareView }) {
   if (commission.kind === 'hidden' && !record) return null;
   const base = 'mt-1.5 text-xs';
   if (record && record.agentCents !== null) {
@@ -341,11 +343,12 @@ export function CommissionLine({ commission, netCents, carrier, dateKey, record,
   if (commission.kind === 'no_agent') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: No agent assigned</p>;
   if (commission.kind === 'no_rate') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: no commission % set for {commission.agentName} (an admin sets it on the Team page)</p>;
   if (commission.kind === 'unavailable') return <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">Agent commission: {commission.message}</p>;
-  const cents = commission.cents(netCents, carrier, dateKey);
+  // Not recorded yet: worked out from the carrier % entered on this policy, else the carrier's % (admins).
+  const cents = enteredRate !== undefined ? agentCommissionCents(netCents, enteredRate, commission.rate) : commission.cents(netCents, carrier, dateKey);
   if (cents === null) {
     return (
       <p className={`${base} text-[var(--color-ink-500)]`} data-field="commission">
-        Agent commission: {commission.preview ? 'carrier % not set yet' : 'shown once it’s recorded'}
+        Agent commission: carrier % not set yet
         {feeShare?.kind === 'amount' && <> · broker fee share <strong className="tabular-nums text-[var(--color-ink-900)]">{formatCents(feeShare.cents)}</strong></>}
         <BrokerFeeNote feeShare={feeShare} />
       </p>
@@ -652,6 +655,7 @@ export function EntryForm({
         setErrors([`The carrier % couldn’t be saved, so nothing was saved: ${r.message}`]);
         return;
       }
+      void reloadEnteredCarrierRates(accountId);
       if (r.data === 'locked' && carrierRate !== savedRate) {
         setErrors(['This commission is already settled, so its carrier % can’t change. Nothing was saved.']);
         return;
