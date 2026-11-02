@@ -464,11 +464,12 @@ export function EntryForm({
   const asksCarrierPct = isSupabaseConfigured && !!agencyAccess && !!account?.agencyId && (agencyAccess.role === 'admin' || (!!me && account.assignedUserId === me));
   const [carrierPct, setCarrierPct] = useState('');
   const carrierRate = parseCarrierPercent(carrierPct);
-  // An endorsement starts from its policy's carrier % (0074) until the % is typed by hand.
+  // The % already saved on this policy / endorsement shows when it's opened again; a new endorsement starts from
+  // its policy's % (0074) until the % is typed by hand.
   const [pctTouched, setPctTouched] = useState(false);
   const [policyRates, setPolicyRates] = useState<Map<string, number>>(new Map());
   useEffect(() => {
-    if (!asksCarrierPct || kind !== 'endorsement') return;
+    if (!asksCarrierPct) return;
     let current = true;
     void fetchEnteredCarrierRates(accountId).then((r) => {
       if (current && r.ok) setPolicyRates(new Map([...r.data].map(([key, v]) => [key.slice(accountId.length + 1), v.rate])));
@@ -476,7 +477,7 @@ export function EntryForm({
     return () => {
       current = false;
     };
-  }, [accountId, asksCarrierPct, kind]);
+  }, [accountId, asksCarrierPct]);
   // Saving without any document asks first (see the confirmation below).
   const [confirmNoDocs, setConfirmNoDocs] = useState(false);
   const attachRef = useRef<HTMLInputElement>(null);
@@ -549,7 +550,8 @@ export function EntryForm({
       fees: '',
     };
   });
-  const fromPolicyRate = kind === 'endorsement' && f.forPolicyId ? policyRates.get(f.forPolicyId) : undefined;
+  const savedRate = editing !== 'new' ? policyRates.get(editing.id) : undefined;
+  const fromPolicyRate = savedRate ?? (kind === 'endorsement' && f.forPolicyId ? policyRates.get(f.forPolicyId) : undefined);
   useEffect(() => {
     if (!pctTouched && fromPolicyRate !== undefined) setCarrierPct(String(Math.round(fromPolicyRate * 1e4) / 100));
   }, [fromPolicyRate, pctTouched]);
@@ -648,6 +650,10 @@ export function EntryForm({
       setSaving(false);
       if (!r.ok) {
         setErrors([`The carrier % couldn’t be saved, so nothing was saved: ${r.message}`]);
+        return;
+      }
+      if (r.data === 'locked' && carrierRate !== savedRate) {
+        setErrors(['This commission is already settled, so its carrier % can’t change. Nothing was saved.']);
         return;
       }
     }
