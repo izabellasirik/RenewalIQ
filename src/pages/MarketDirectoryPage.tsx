@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Check, Download, ExternalLink, FileUp, Pencil, Plus, Search, Trash2, UploadCloud } from 'lucide-react';
+import { ArrowLeft, BookOpen, Check, Download, ExternalLink, FileUp, Loader2, Pencil, Plus, Search, Trash2, UploadCloud } from 'lucide-react';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, Drawer, EmptyState } from '../components/ui';
 import { Modal } from '../components/ui/Modal';
@@ -8,6 +8,7 @@ import { AccessStatusBadge, HowToSubmit, RuleSummary } from '../components/appet
 import { useAccountsStore } from '../state/useAccountsStore';
 import type { AgencyCarrier } from '../services/appetite/agencyCarriers';
 import { hasAccessInfo } from '../services/appetite/agencyCarriers';
+import { readMarketListDocument } from '../services/appetite/readMarketList';
 import { archiveCarrierRule, importCarrierDirectory, saveCarrierRule, saveMarketAccess, type ImportCounts, type RuleInput } from '../services/supabase/carriersRepo';
 import {
   IMPORT_TEMPLATE_CSV,
@@ -514,6 +515,8 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [fileName, setFileName] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [fromAi, setFromAi] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [check, setCheck] = useState<ImportCounts | null>(null);
   const [busy, setBusy] = useState(false);
@@ -524,6 +527,7 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
     setFileName('');
     setCheck(null);
     setError(null);
+    setFromAi(false);
   }
 
   async function read(file: File) {
@@ -538,7 +542,16 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
       if (!t) return setError(doc.warnings[0] ?? 'No data found in this spreadsheet.');
       return setPlan(planImport([t.headers, ...t.rows], existing, BUILT_INS));
     }
-    if (!/\.(csv|json|txt)$/i.test(file.name)) return setError('Use a CSV or Excel (.xlsx) file laid out like the template.');
+    // PDF, Word or other documents: read to text here (secrets removed), the markets listed by AI, then the
+    // same review as a spreadsheet. Nothing is saved until Import.
+    if (!/\.(csv|json)$/i.test(file.name)) {
+      setReading(true);
+      const r = await readMarketListDocument(file);
+      setReading(false);
+      if (!r.ok) return setError(r.message);
+      setFromAi(true);
+      return setPlan(planImport(r.rows, existing, BUILT_INS));
+    }
     const text = await file.text();
     setPlan(/\.json$/i.test(file.name) ? planImportJson(text, existing, BUILT_INS) : planImport(parseCsvText(text), existing, BUILT_INS));
   }
@@ -603,12 +616,12 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
           data-testid="import-drop"
         >
           <UploadCloud size={22} className="text-[var(--color-ink-400)]" aria-hidden />
-          <p className="text-sm text-[var(--color-ink-700)]">{fileName ? <span className="font-medium">{fileName}</span> : 'Drag and drop the CSV or Excel file here'}</p>
+          <p className="text-sm text-[var(--color-ink-700)]">{fileName ? <span className="font-medium">{fileName}</span> : 'Drag and drop your market list here: Excel, CSV, PDF or Word'}</p>
           <Button size="sm" variant="secondary" onClick={() => fileRef.current?.click()}>{fileName ? 'Choose another file' : 'Browse'}</Button>
           <input
             ref={fileRef}
             type="file"
-            accept=".csv,.xlsx,.json,text/csv,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            accept=".csv,.xlsx,.json,.pdf,.docx,.doc,.txt,.rtf,.png,.jpg,.jpeg"
             aria-label="Directory file"
             onChange={(e) => {
               if (e.target.files?.[0]) void read(e.target.files[0]);
@@ -617,7 +630,9 @@ function ImportDialog({ open, existing, onClose, onImported }: { open: boolean; 
             className="hidden"
           />
         </div>
-        <p className="text-xs text-[var(--color-ink-500)]">A CSV from your spreadsheet (download the template) or the same content as JSON. The file is read in your browser; only the reviewed markets and rules are saved, to your agency only.</p>
+        <p className="text-xs text-[var(--color-ink-500)]">Excel or CSV laid out like the template, or a PDF or Word market list (read by AI; you check every market before importing). Saved to your agency only.</p>
+        {reading && <p className="flex items-center gap-2 text-sm text-[var(--color-ink-600)]" role="status"><Loader2 size={14} className="animate-spin" /> Reading the file…</p>}
+        {fromAi && plan && <p className="rounded-lg bg-[var(--color-warning-100)] px-3 py-2 text-sm text-[var(--color-ink-800)]" data-testid="import-from-ai">Read by AI from {fileName}. Check the markets below before importing. Passwords, emails and phone numbers were left out.</p>}
         {error && <p className="rounded-lg bg-[var(--color-danger-50)] px-3 py-2 text-sm text-[var(--color-danger-700)]">{error}</p>}
         {plan && plan.errors.length > 0 && (
           <div className="rounded-lg border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-3 py-2 text-sm text-[var(--color-danger-700)]" data-testid="import-errors">

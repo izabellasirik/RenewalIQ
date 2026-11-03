@@ -26,6 +26,7 @@ import { handleRead, type ModelCallResult } from './handler.ts';
 import { restStore, sanitizeContext, userIdFromJwt } from './store.ts';
 import { EMAIL_MAX_TOKENS, EMAIL_PROMPT, EMAIL_TOOL, emailModel, emailUserMessage, validateEmailRequest } from './email.ts';
 import { SUMMARY_MAX_TOKENS, SUMMARY_PROMPT, SUMMARY_TOOL, notesUserMessage, summaryFrom, summaryModel, validateNotesRequest } from './summary.ts';
+import { DIRECTORY_MAX_TOKENS, DIRECTORY_PROMPT, DIRECTORY_TOOL, directoryFrom, directoryModel, directoryUserMessage, validateDirectoryRequest } from './directory.ts';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -330,7 +331,7 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Vision extraction is not configured on this project yet.' }, 503);
   }
 
-  let body: { imageBase64?: string; mimeType?: string; fileName?: string; mode?: string; context?: unknown; emailText?: unknown; notesText?: unknown };
+  let body: { imageBase64?: string; mimeType?: string; fileName?: string; mode?: string; context?: unknown; emailText?: unknown; notesText?: unknown; directoryText?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -395,6 +396,31 @@ Deno.serve(async (req: Request) => {
     if (result.status !== 200 || !('fromCache' in result)) return jsonResponse(result.body, result.status);
     const summary = summaryFrom(result.body);
     return summary ? jsonResponse({ summary, model: result.model, fromCache: result.fromCache }, 200) : jsonResponse({ error: 'The model did not return a summary.' }, 502);
+  }
+
+  if (body.mode === 'market_directory') {
+    // Market Directory → Import of a PDF / Word / text market list: signed-in users only (the app limits it to admins).
+    const userId = userIdFromJwt(req.headers.get('Authorization'));
+    if (!userId) return jsonResponse({ error: 'Sign in to read a market list.' }, 401);
+    const checked = validateDirectoryRequest(body);
+    if (!checked.ok) return jsonResponse({ error: checked.error }, 400);
+    const model = directoryModel((n) => Deno.env.get(n), DEFAULT_MODEL);
+    const result = await handleRead(
+      { operation: 'market_directory', content: checked.text, fileName: null, context: sanitizeContext(body.context), userId },
+      {
+        store,
+        configuredModel: model,
+        callModel: () =>
+          callAnthropic(
+            apiKey,
+            { model, max_tokens: DIRECTORY_MAX_TOKENS, system: DIRECTORY_PROMPT, tools: [DIRECTORY_TOOL], tool_choice: { type: 'tool', name: DIRECTORY_TOOL.name }, messages: [{ role: 'user', content: directoryUserMessage(checked.text) }] },
+            model
+          ),
+      }
+    );
+    if (result.status !== 200 || !('fromCache' in result)) return jsonResponse(result.body, result.status);
+    const markets = directoryFrom(result.body);
+    return markets ? jsonResponse({ markets, model: result.model, fromCache: result.fromCache }, 200) : jsonResponse({ error: 'No markets were found in this file.' }, 502);
   }
 
   const { imageBase64, mimeType, fileName } = body;
