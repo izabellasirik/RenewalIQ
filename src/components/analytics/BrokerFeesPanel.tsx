@@ -224,7 +224,7 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
   const right = `${total} text-right tabular-nums`;
   const amount = (cents: number | null | undefined) => (cents ? formatCents(cents) : <span className="text-[var(--color-ink-400)]">—</span>);
   const heads = admin
-    ? [['Bound'], ['Client'], ['Policy'], ['Broker fee', 'r'], ['Partner'], ['To partner', 'r'], ...(payments !== null ? [['Paid to partner']] : []), ['Agent'], ['To agent', 'r'], ['Agency', 'r']]
+    ? [['Bound'], ['Client'], ['Policy'], ['Broker fee', 'r'], ['Partner', 'r'], ['To partner', 'r'], ...(payments !== null ? [['Paid to partner']] : []), ['Agent', 'r'], ['To agent', 'r'], ['Agency', 'r']]
     : [['Bound'], ['Client'], ['Policy'], ['Broker fee', 'r'], ['Your share', 'r']];
   const paidTotal = payments === null ? 0 : rows.reduce((n, r) => n + (owed(r) ? statusOf(r).paidCents : 0), 0);
   return (
@@ -276,11 +276,15 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
                     <td className={num}>{formatCents(r.brokerFeeCents)}</td>
                     {admin ? (
                       <>
-                        <td className={`${td} whitespace-nowrap`} data-field="partner">{r.partnerName ?? <span className="text-[var(--color-ink-400)]">—</span>}</td>
+                        <td className={`${td} whitespace-nowrap text-right`} data-field="partner">{r.partnerName ?? <span className="text-[var(--color-ink-400)]">—</span>}</td>
                         <td className={num} data-field="to-partner">{r.partnerName ? formatCents(r.partnerCents ?? 0) : amount(null)}</td>
                         {payments !== null && (
                           <td className={`${td} whitespace-nowrap`} data-field="paid-partner">
-                            {st && (
+                            {!r.partnerName ? (
+                              <span className="text-xs text-[var(--color-ink-400)]">No partner</span>
+                            ) : !(owed(r) ?? 0) ? (
+                              <span className="text-xs text-[var(--color-warning-600)]">Amount not set</span>
+                            ) : st && (
                               <span className="flex items-start gap-2">
                                 {payable(r) && (
                                   <input type="checkbox" className="mt-1 cursor-pointer" checked={selected.has(keyOf(r))} aria-label={`Select ${r.clientName} to mark paid to the partner`}
@@ -307,7 +311,7 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
                             )}
                           </td>
                         )}
-                        <td className={td} data-field="agent">
+                        <td className={`${td} text-right`} data-field="agent">
                           {r.agentName ?? <span className="text-[var(--color-ink-400)]">—</span>}
                           {r.partnerShortfallCents > 0 && (
                             <span className="block whitespace-nowrap text-[11px] text-[var(--color-warning-600)]" title="The broker fee didn’t cover the partner’s agreed amount; the rest comes out of the agent commission.">
