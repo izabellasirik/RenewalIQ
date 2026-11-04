@@ -8,7 +8,10 @@ import type { AgentPayment } from '../supabase/agentPaymentsRepo';
  */
 export type PayState = 'paid' | 'partly' | 'not_paid' | 'no_amount';
 
-export interface PayStatus {
+/** A payment as the paid / not paid logic reads it (agent payments 0084, partner payments 0091). */
+export type PaymentLike = Pick<AgentPayment, 'paidOn' | 'createdAt' | 'undoneAt' | 'totalCents'>;
+
+export interface PayStatus<P extends PaymentLike = AgentPayment> {
   state: PayState;
   /** Paid so far (payments not undone). */
   paidCents: number;
@@ -16,10 +19,10 @@ export interface PayStatus {
   dueCents: number;
   /** The latest payment's date, and that payment (to undo it). */
   lastPaidOn: string | null;
-  last: AgentPayment | null;
+  last: P | null;
 }
 
-export function payStatus(amountCents: number | null, payments: AgentPayment[]): PayStatus {
+export function payStatus<P extends PaymentLike = AgentPayment>(amountCents: number | null, payments: P[]): PayStatus<P> {
   const live = payments.filter((p) => !p.undoneAt).sort((a, b) => (a.paidOn === b.paidOn ? a.createdAt.localeCompare(b.createdAt) : a.paidOn.localeCompare(b.paidOn)));
   const paidCents = live.reduce((n, p) => n + p.totalCents, 0);
   const last = live.at(-1) ?? null;

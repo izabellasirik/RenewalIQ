@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
-import { Button, Card, CardBody, CardHeader } from '../ui';
+import { CheckCircle2, Loader2 } from 'lucide-react';
+import { Button, Card, CardBody, CardHeader, Modal } from '../ui';
+import { fetchPartnerPayments, recordPartnerPayments, undoPartnerPayment, type PartnerPayment } from '../../services/supabase/partnerPaymentsRepo';
+import { payStatus } from '../../services/finance/agentPay';
+import { useOnDataRefresh } from '../../services/appFreshness';
 import { DownloadButtons } from './DownloadButtons';
 import { brokerFeesReport } from '../../services/reports/analyticsReports';
 import { useRememberedView } from '../../hooks/useRememberedView';
@@ -11,7 +14,7 @@ import { inputClass, labelClass } from '../workspace/formStyles';
 import { PeriodPicker, usePeriod } from './MoneyPanels';
 import { fetchBrokerFeeSplits, type BrokerFeeSplit } from '../../services/supabase/partnersRepo';
 import { formatCents } from '../../services/workflow/policies';
-import { formatDateWithYear } from '../../services/workflow/dates';
+import { formatDateWithYear, formatShortDate, todayKey } from '../../services/workflow/dates';
 
 const th = 'border-b border-[var(--color-ink-100)] px-3 py-2 text-left text-[11px] font-medium uppercase tracking-wide text-[var(--color-ink-400)]';
 const td = 'border-b border-[var(--color-ink-50)] px-3 py-2 text-sm text-[var(--color-ink-800)]';
@@ -201,12 +204,36 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
     const q = (quotes[r.accountId] ?? []).find((x) => (x.policies ?? []).some((p) => p.id === r.policyId));
     return `/accounts/${r.accountId}?tab=quotes${q ? `&quote=${q.id}` : ''}`;
   };
+  // Paid to partner (0091): owners and admins tick rows and mark them paid on a date.
+  const [payments, setPayments] = useState<PartnerPayment[] | null>(null);
+  const loadPayments = () => {
+    if (admin) void fetchPartnerPayments().then((r) => setPayments(r.ok ? r.data : null));
+  };
+  useEffect(loadPayments, [admin]);
+  useOnDataRefresh(loadPayments);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [paying, setPaying] = useState(false);
+  const [undoing, setUndoing] = useState<PartnerPayment | null>(null);
+  const keyOf = (r: BrokerFeeSplit) => `${r.accountId}|${r.policyId}`;
+  const owed = (r: BrokerFeeSplit) => (r.partnerName ? (r.partnerCents ?? 0) : null);
+  const statusOf = (r: BrokerFeeSplit) => payStatus(owed(r), (payments ?? []).filter((p) => p.accountId === r.accountId && p.policyId === r.policyId));
+  const payable = (r: BrokerFeeSplit) => payments !== null && (owed(r) ?? 0) > 0 && ['not_paid', 'partly'].includes(statusOf(r).state);
+  const chosen = rows.filter((r) => selected.has(keyOf(r)) && payable(r));
   const sum = (f: (r: BrokerFeeSplit) => number) => rows.reduce((n, r) => n + f(r), 0);
   const total = 'border-b-2 border-[var(--color-ink-200)] bg-[var(--color-ink-50)] px-3 py-2 text-sm font-semibold text-[var(--color-ink-900)]';
+  const right = `${total} text-right tabular-nums`;
+  const amount = (cents: number | null | undefined) => (cents ? formatCents(cents) : <span className="text-[var(--color-ink-400)]">—</span>);
+  const heads = admin
+    ? [['Bound'], ['Client'], ['Policy'], ['Broker fee', 'r'], ['Partner'], ['To partner', 'r'], ...(payments !== null ? [['Paid to partner']] : []), ['Agent'], ['To agent', 'r'], ['Agency', 'r']]
+    : [['Bound'], ['Client'], ['Policy'], ['Broker fee', 'r'], ['Your share', 'r']];
+  const paidTotal = payments === null ? 0 : rows.reduce((n, r) => n + (owed(r) ? statusOf(r).paidCents : 0), 0);
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
         <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Policies with a broker fee</h3>
+        {admin && payments !== null && chosen.length > 0 && (
+          <Button size="sm" onClick={() => setPaying(true)} data-testid="mark-partner-paid">Mark {chosen.length} paid to partner</Button>
+        )}
       </CardHeader>
       <CardBody className="overflow-x-auto pt-0">
         {rows.length === 0 ? (
@@ -215,64 +242,168 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
           <table className="min-w-full border-collapse" data-testid="broker-fee-rows">
             <thead>
               <tr>
-                {['Bound', 'Client', 'Policy', 'Broker fee', ...(admin ? ['Partner', 'Agent', 'Agency'] : ['Your share'])].map((h, i) => (
-                  <th key={h} className={i >= 3 ? `${th} text-right` : th}>
-                    {h}
-                  </th>
+                {heads.map(([h, align]) => (
+                  <th key={h} className={align ? `${th} text-right` : th}>{h}</th>
                 ))}
               </tr>
               <tr data-testid="broker-fee-totals">
                 <td className={total} colSpan={3}>Total · {rows.length} {rows.length === 1 ? 'policy' : 'policies'}</td>
-                <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.brokerFeeCents))}</td>
+                <td className={right}>{formatCents(sum((r) => r.brokerFeeCents))}</td>
                 {admin ? (
                   <>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.partnerCents ?? 0))}</td>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
-                    <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agencyCents ?? 0))}</td>
+                    <td className={total} />
+                    <td className={right}>{formatCents(sum((r) => r.partnerCents ?? 0))}</td>
+                    {payments !== null && <td className={`${total} tabular-nums`}>{formatCents(paidTotal)} paid</td>}
+                    <td className={total} />
+                    <td className={right}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
+                    <td className={right}>{formatCents(sum((r) => r.agencyCents ?? 0))}</td>
                   </>
                 ) : (
-                  <td className={`${total} text-right tabular-nums`}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
+                  <td className={right}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
                 )}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={`${r.accountId}|${r.policyId}`}>
-                  <td className={td}>{formatDateWithYear(r.boundDate)}</td>
-                  <td className={td}>
-                    <Link to={policyLink(r)} className="font-medium text-[var(--color-brand-800)] hover:underline">{r.clientName}</Link>
-                  </td>
-                  <td className={td}>{r.policyNumber ?? '—'}</td>
-                  <td className={num}>{formatCents(r.brokerFeeCents)}</td>
-                  {r.partnerPending ? (
-                    <td className={`${num} text-[var(--color-warning-600)]`} colSpan={admin ? 3 : 1}>
-                      Waiting for partner approval
+              {rows.map((r) => {
+                const st = owed(r) ? statusOf(r) : null;
+                return (
+                  <tr key={keyOf(r)}>
+                    <td className={`${td} whitespace-nowrap`}>{formatDateWithYear(r.boundDate)}</td>
+                    <td className={td}>
+                      <Link to={policyLink(r)} className="font-medium text-[var(--color-brand-800)] hover:underline">{r.clientName}</Link>
                     </td>
-                  ) : admin ? (
-                    <>
-                      <td className={num}>{r.partnerCents ? `${formatCents(r.partnerCents)} · ${r.partnerName}` : '—'}</td>
-                      <td className={num}>
-                        {r.agentCents ? `${formatCents(r.agentCents)} · ${r.agentName}` : '—'}
-                        {r.partnerShortfallCents > 0 && (
-                          <span className="block text-[11px] text-[var(--color-ink-500)]" title="The broker fee didn’t cover the partner’s agreed amount; the rest comes out of the agent commission.">
-                            − {formatCents(r.partnerShortfallCents)} from {r.agentName ?? 'the agent'}’s commission to the partner
-                          </span>
+                    <td className={`${td} whitespace-nowrap`}>{r.policyNumber ?? '—'}</td>
+                    <td className={num}>{formatCents(r.brokerFeeCents)}</td>
+                    {admin ? (
+                      <>
+                        <td className={`${td} whitespace-nowrap`} data-field="partner">{r.partnerName ?? <span className="text-[var(--color-ink-400)]">—</span>}</td>
+                        <td className={num} data-field="to-partner">{r.partnerName ? formatCents(r.partnerCents ?? 0) : amount(null)}</td>
+                        {payments !== null && (
+                          <td className={`${td} whitespace-nowrap`} data-field="paid-partner">
+                            {st && (
+                              <span className="flex items-start gap-2">
+                                {payable(r) && (
+                                  <input type="checkbox" className="mt-1 cursor-pointer" checked={selected.has(keyOf(r))} aria-label={`Select ${r.clientName} to mark paid to the partner`}
+                                    onChange={(e) => setSelected((cur) => { const n = new Set(cur); if (e.target.checked) n.add(keyOf(r)); else n.delete(keyOf(r)); return n; })} />
+                                )}
+                                <span className="flex flex-col text-sm">
+                                  {st.state === 'paid' ? (
+                                    <span className="inline-flex items-center gap-1 font-medium text-[var(--color-success-600)]"><CheckCircle2 size={13} /> Paid {st.lastPaidOn ? formatShortDate(st.lastPaidOn) : ''}</span>
+                                  ) : st.state === 'partly' ? (
+                                    <>
+                                      <span>Paid <span className="tabular-nums">{formatCents(st.paidCents)}</span></span>
+                                      <span className="text-[11px] font-medium text-[var(--color-warning-600)] tabular-nums">{formatCents(st.dueCents)} not paid yet</span>
+                                    </>
+                                  ) : st.state === 'not_paid' && (owed(r) ?? 0) > 0 ? (
+                                    <span className="text-[var(--color-ink-500)]">Not paid</span>
+                                  ) : (
+                                    <span className="text-xs text-[var(--color-ink-400)]">—</span>
+                                  )}
+                                  {st.last && (
+                                    <button type="button" onClick={() => setUndoing(st.last)} className="w-fit cursor-pointer text-[11px] font-medium text-[var(--color-brand-700)] hover:underline">Undo</button>
+                                  )}
+                                </span>
+                              </span>
+                            )}
+                          </td>
                         )}
+                        <td className={td} data-field="agent">
+                          {r.agentName ?? <span className="text-[var(--color-ink-400)]">—</span>}
+                          {r.partnerShortfallCents > 0 && (
+                            <span className="block whitespace-nowrap text-[11px] text-[var(--color-warning-600)]" title="The broker fee didn’t cover the partner’s agreed amount; the rest comes out of the agent commission.">
+                              − {formatCents(r.partnerShortfallCents)} shortfall
+                            </span>
+                          )}
+                        </td>
+                        <td className={num} data-field="to-agent">{amount(r.agentCents)}</td>
+                        <td className={`${num} font-semibold`}>{formatCents(r.agencyCents ?? 0)}</td>
+                      </>
+                    ) : (
+                      <td className={`${num} font-semibold`}>
+                        {formatCents(r.agentCents ?? 0)}
+                        {r.partnerShortfallCents > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">− {formatCents(r.partnerShortfallCents)} from your commission to the referral partner</span>}
                       </td>
-                      <td className={`${num} font-semibold`}>{formatCents(r.agencyCents ?? 0)}</td>
-                    </>
-                  ) : (
-                    <td className={`${num} font-semibold`}>
-                      {formatCents(r.agentCents ?? 0)}
-                      {r.partnerShortfallCents > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">− {formatCents(r.partnerShortfallCents)} from your commission to the referral partner</span>}
-                    </td>
-                  )}
-                </tr>
-              ))}
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </CardBody>
+      {paying && (
+        <PartnerPayDialog
+          rows={chosen.map((r) => ({ r, due: statusOf(r).dueCents }))}
+          onClose={() => setPaying(false)}
+          onDone={() => {
+            setPaying(false);
+            setSelected(new Set());
+            loadPayments();
+          }}
+        />
+      )}
+      {undoing && (
+        <Modal
+          open
+          onClose={() => setUndoing(null)}
+          title="Are you sure?"
+          subtitle={`Undo ${formatCents(undoing.totalCents)} paid to ${undoing.partnerName} on ${formatShortDate(undoing.paidOn)}.`}
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setUndoing(null)}>Cancel</Button>
+              <Button onClick={() => void undoPartnerPayment(undoing.id).then(() => { setUndoing(null); loadPayments(); })}>Yes, undo</Button>
+            </div>
+          }
+        >
+          {null}
+        </Modal>
+      )}
     </Card>
+  );
+}
+
+/** Mark the ticked rows paid to their partners on a date. */
+function PartnerPayDialog({ rows, onClose, onDone }: { rows: { r: BrokerFeeSplit; due: number }[]; onClose: () => void; onDone: () => void }) {
+  const [paidOn, setPaidOn] = useState(todayKey());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const byPartner = new Map<string, number>();
+  for (const { r, due } of rows) byPartner.set(r.partnerName ?? 'Partner', (byPartner.get(r.partnerName ?? 'Partner') ?? 0) + due);
+  async function save() {
+    if (!paidOn) return setError('Choose the date it was paid.');
+    setBusy(true);
+    const res = await recordPartnerPayments(paidOn, rows.map(({ r, due }) => ({ accountId: r.accountId, policyId: r.policyId, partnerName: r.partnerName ?? 'Partner', amountCents: due })));
+    setBusy(false);
+    if (!res.ok) return setError(res.message);
+    onDone();
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Mark ${rows.length} paid to partner`}
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => void save()} disabled={busy}>{busy ? 'Saving…' : 'Mark paid'}</Button>
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className={labelClass} htmlFor="partner-paid-on">Paid on</label>
+          <input id="partner-paid-on" type="date" className={`${inputClass} w-48`} value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+        </div>
+        <ul className="flex flex-col gap-1 text-sm">
+          {[...byPartner.entries()].map(([name, cents]) => (
+            <li key={name} className="flex justify-between gap-3 border-b border-[var(--color-ink-50)] py-1.5">
+              <span>{name}</span>
+              <strong className="tabular-nums">{formatCents(cents)}</strong>
+            </li>
+          ))}
+        </ul>
+        {error && <p className="text-sm text-[var(--color-danger-600)]">{error}</p>}
+      </div>
+    </Modal>
   );
 }
