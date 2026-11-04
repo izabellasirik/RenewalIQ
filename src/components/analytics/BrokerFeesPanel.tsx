@@ -222,10 +222,9 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
   const sum = (f: (r: BrokerFeeSplit) => number) => rows.reduce((n, r) => n + f(r), 0);
   const total = 'border-b-2 border-[var(--color-ink-200)] bg-[var(--color-ink-50)] px-3 py-2 text-sm font-semibold text-[var(--color-ink-900)]';
   const right = `${total} text-right tabular-nums`;
-  const amount = (cents: number | null | undefined) => (cents ? formatCents(cents) : <span className="text-[var(--color-ink-400)]">—</span>);
   const heads = admin
-    ? [['Bound'], ['Client'], ['Policy'], ['Broker fee', 'r'], ['Partner', 'r'], ['To partner', 'r'], ...(payments !== null ? [['Paid to partner']] : []), ['Agent', 'r'], ['To agent', 'r'], ['Agency', 'r']]
-    : [['Bound'], ['Client'], ['Policy'], ['Broker fee', 'r'], ['Your share', 'r']];
+    ? [['Bound'], ['Client'], ['Broker fee', 'r'], ['Partner', 'r'], ...(payments !== null ? [['Paid to partner']] : []), ['Agent', 'r'], ['Agency', 'r']]
+    : [['Bound'], ['Client'], ['Broker fee', 'r'], ['Your share', 'r']];
   const paidTotal = payments === null ? 0 : rows.reduce((n, r) => n + (owed(r) ? statusOf(r).paidCents : 0), 0);
   return (
     <Card>
@@ -243,18 +242,16 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
             <thead>
               <tr>
                 {heads.map(([h, align]) => (
-                  <th key={h} className={align ? `${th} text-right` : th}>{h}</th>
+                  <th key={h} className={`${th} whitespace-nowrap ${align ? 'text-right' : ''}`}>{h}</th>
                 ))}
               </tr>
               <tr data-testid="broker-fee-totals">
-                <td className={total} colSpan={3}>Total · {rows.length} {rows.length === 1 ? 'policy' : 'policies'}</td>
+                <td className={total} colSpan={2}>Total · {rows.length} {rows.length === 1 ? 'policy' : 'policies'}</td>
                 <td className={right}>{formatCents(sum((r) => r.brokerFeeCents))}</td>
                 {admin ? (
                   <>
-                    <td className={total} />
                     <td className={right}>{formatCents(sum((r) => r.partnerCents ?? 0))}</td>
-                    {payments !== null && <td className={`${total} tabular-nums`}>{formatCents(paidTotal)} paid</td>}
-                    <td className={total} />
+                    {payments !== null && <td className={`${total} whitespace-nowrap tabular-nums`}>{formatCents(paidTotal)} paid</td>}
                     <td className={right}>{formatCents(sum((r) => r.agentCents ?? 0))}</td>
                     <td className={right}>{formatCents(sum((r) => r.agencyCents ?? 0))}</td>
                   </>
@@ -266,66 +263,68 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
             <tbody>
               {rows.map((r) => {
                 const st = owed(r) ? statusOf(r) : null;
+                const sub = 'mt-0.5 block whitespace-nowrap text-xs font-normal text-[var(--color-ink-500)]';
                 return (
-                  <tr key={keyOf(r)}>
+                  <tr key={keyOf(r)} className="align-top">
                     <td className={`${td} whitespace-nowrap`}>{formatDateWithYear(r.boundDate)}</td>
-                    <td className={td}>
+                    <td className={`${td} whitespace-nowrap`}>
                       <Link to={policyLink(r)} className="font-medium text-[var(--color-brand-800)] hover:underline">{r.clientName}</Link>
+                      <span className={sub}>{r.policyNumber ?? 'Number to come'}</span>
                     </td>
-                    <td className={`${td} whitespace-nowrap`}>{r.policyNumber ?? '—'}</td>
                     <td className={num}>{formatCents(r.brokerFeeCents)}</td>
                     {admin ? (
                       <>
-                        <td className={`${td} whitespace-nowrap text-right`} data-field="partner">{r.partnerName ?? <span className="text-[var(--color-ink-400)]">—</span>}</td>
-                        <td className={num} data-field="to-partner">{r.partnerName ? formatCents(r.partnerCents ?? 0) : amount(null)}</td>
+                        <td className={num} data-field="partner">
+                          {r.partnerName ? (
+                            <>
+                              {formatCents(r.partnerCents ?? 0)}
+                              <span className={sub}>{r.partnerName}</span>
+                            </>
+                          ) : (
+                            <span className="text-[var(--color-ink-400)]">—</span>
+                          )}
+                        </td>
                         {payments !== null && (
                           <td className={`${td} whitespace-nowrap`} data-field="paid-partner">
                             {!r.partnerName ? (
-                              <span className="text-xs text-[var(--color-ink-400)]">No partner</span>
+                              <span className="text-[var(--color-ink-400)]">—</span>
                             ) : !(owed(r) ?? 0) ? (
                               <span className="text-xs text-[var(--color-warning-600)]">Amount not set</span>
-                            ) : st && (
-                              <span className="flex items-start gap-2">
-                                {payable(r) && (
-                                  <input type="checkbox" className="mt-1 cursor-pointer" checked={selected.has(keyOf(r))} aria-label={`Select ${r.clientName} to mark paid to the partner`}
-                                    onChange={(e) => setSelected((cur) => { const n = new Set(cur); if (e.target.checked) n.add(keyOf(r)); else n.delete(keyOf(r)); return n; })} />
-                                )}
-                                <span className="flex flex-col text-sm">
+                            ) : (
+                              st && (
+                                <span className="flex items-center gap-2">
+                                  {payable(r) && (
+                                    <input type="checkbox" className="cursor-pointer" checked={selected.has(keyOf(r))} aria-label={`Select ${r.clientName} to mark paid to the partner`}
+                                      onChange={(e) => setSelected((cur) => { const n = new Set(cur); if (e.target.checked) n.add(keyOf(r)); else n.delete(keyOf(r)); return n; })} />
+                                  )}
                                   {st.state === 'paid' ? (
-                                    <span className="inline-flex items-center gap-1 font-medium text-[var(--color-success-600)]"><CheckCircle2 size={13} /> Paid {st.lastPaidOn ? formatShortDate(st.lastPaidOn) : ''}</span>
+                                    <span className="inline-flex items-center gap-1 text-[var(--color-success-600)]"><CheckCircle2 size={13} /> Paid {st.lastPaidOn ? formatShortDate(st.lastPaidOn) : ''}</span>
                                   ) : st.state === 'partly' ? (
-                                    <>
-                                      <span>Paid <span className="tabular-nums">{formatCents(st.paidCents)}</span></span>
-                                      <span className="text-[11px] font-medium text-[var(--color-warning-600)] tabular-nums">{formatCents(st.dueCents)} not paid yet</span>
-                                    </>
-                                  ) : st.state === 'not_paid' && (owed(r) ?? 0) > 0 ? (
-                                    <span className="text-[var(--color-ink-500)]">Not paid</span>
+                                    <span className="text-[var(--color-warning-600)] tabular-nums">{formatCents(st.dueCents)} not paid</span>
                                   ) : (
-                                    <span className="text-xs text-[var(--color-ink-400)]">—</span>
+                                    <span className="text-[var(--color-ink-500)]">Not paid</span>
                                   )}
                                   {st.last && (
-                                    <button type="button" onClick={() => setUndoing(st.last)} className="w-fit cursor-pointer text-[11px] font-medium text-[var(--color-brand-700)] hover:underline">Undo</button>
+                                    <button type="button" onClick={() => setUndoing(st.last)} className="cursor-pointer text-xs text-[var(--color-brand-700)] hover:underline">Undo</button>
                                   )}
                                 </span>
-                              </span>
+                              )
                             )}
                           </td>
                         )}
-                        <td className={`${td} text-right`} data-field="agent">
-                          {r.agentName ?? <span className="text-[var(--color-ink-400)]">—</span>}
-                          {r.partnerShortfallCents > 0 && (
-                            <span className="block whitespace-nowrap text-[11px] text-[var(--color-warning-600)]" title="The broker fee didn’t cover the partner’s agreed amount; the rest comes out of the agent commission.">
-                              − {formatCents(r.partnerShortfallCents)} shortfall
-                            </span>
-                          )}
+                        <td className={num} data-field="agent">
+                          {r.agentCents ? formatCents(r.agentCents) : formatCents(0)}
+                          <span className={sub}>
+                            {r.agentName ?? 'No agent'}
+                            {r.partnerShortfallCents > 0 && <span className="text-[var(--color-warning-600)]" title="The broker fee didn’t cover the partner’s agreed amount; the rest comes out of the agent commission."> · −{formatCents(r.partnerShortfallCents)} shortfall</span>}
+                          </span>
                         </td>
-                        <td className={num} data-field="to-agent">{amount(r.agentCents)}</td>
-                        <td className={`${num} font-semibold`}>{formatCents(r.agencyCents ?? 0)}</td>
+                        <td className={num}>{formatCents(r.agencyCents ?? 0)}</td>
                       </>
                     ) : (
-                      <td className={`${num} font-semibold`}>
+                      <td className={num}>
                         {formatCents(r.agentCents ?? 0)}
-                        {r.partnerShortfallCents > 0 && <span className="block text-[11px] font-normal text-[var(--color-ink-500)]">− {formatCents(r.partnerShortfallCents)} from your commission to the referral partner</span>}
+                        {r.partnerShortfallCents > 0 && <span className={sub}>−{formatCents(r.partnerShortfallCents)} to the referral partner</span>}
                       </td>
                     )}
                   </tr>
