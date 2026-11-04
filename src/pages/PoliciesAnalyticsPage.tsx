@@ -431,9 +431,15 @@ function PoliciesPanel() {
           </p>
           <div className="flex flex-wrap items-center gap-2">
             {totals.dueCount > 0 && isOwner && (
-              <Button size="sm" variant="secondary" onClick={() => setSelected(selectedRows.length === totals.dueCount ? new Set() : new Set(rows.filter(payable).map(keyOf)))}>
-                {selectedRows.length === totals.dueCount ? 'Clear selection' : 'Select all not paid'}
-              </Button>
+              <>
+                {/* Every row still to pay in this list (e.g. filtered by agent), or clear the ticks. */}
+                <Button size="sm" variant="secondary" onClick={() => setSelected(new Set(rows.filter(payable).map(keyOf)))} disabled={selectedRows.length === rows.filter(payable).length} data-testid="agent-select-all">
+                  Select all not paid
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} disabled={selectedRows.length === 0} data-testid="agent-unselect-all">
+                  Unselect all
+                </Button>
+              </>
             )}
             {selectedRows.length > 0 && (
               <Button size="sm" onClick={() => setPaying(true)} data-testid="mark-paid">

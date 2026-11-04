@@ -218,7 +218,8 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
   const owed = (r: BrokerFeeSplit) => (r.partnerName ? (r.partnerCents ?? 0) : null);
   const statusOf = (r: BrokerFeeSplit) => payStatus(owed(r), (payments ?? []).filter((p) => p.accountId === r.accountId && p.policyId === r.policyId));
   const payable = (r: BrokerFeeSplit) => payments !== null && (owed(r) ?? 0) > 0 && ['not_paid', 'partly'].includes(statusOf(r).state);
-  const chosen = rows.filter((r) => selected.has(keyOf(r)) && payable(r));
+  const payableRows = rows.filter(payable);
+  const chosen = payableRows.filter((r) => selected.has(keyOf(r)));
   const sum = (f: (r: BrokerFeeSplit) => number) => rows.reduce((n, r) => n + f(r), 0);
   const total = 'border-b-2 border-[var(--color-ink-200)] bg-[var(--color-ink-50)] px-3 py-2 text-sm font-semibold text-[var(--color-ink-900)]';
   const right = `${total} text-right tabular-nums`;
@@ -230,8 +231,17 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
     <Card>
       <CardHeader className="flex flex-wrap items-center justify-between gap-2 pb-2">
         <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">Policies with a broker fee</h3>
-        {admin && payments !== null && chosen.length > 0 && (
-          <Button size="sm" onClick={() => setPaying(true)} data-testid="mark-partner-paid">Mark {chosen.length} paid to partner</Button>
+        {admin && payments !== null && payableRows.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Select every row still to pay in this list (e.g. after filtering by agent), or clear the ticks. */}
+            <Button size="sm" variant="secondary" onClick={() => setSelected(new Set(payableRows.map(keyOf)))} disabled={chosen.length === payableRows.length} data-testid="partner-select-all">
+              Select all not paid
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())} disabled={chosen.length === 0} data-testid="partner-unselect-all">
+              Unselect all
+            </Button>
+            {chosen.length > 0 && <Button size="sm" onClick={() => setPaying(true)} data-testid="mark-partner-paid">Mark {chosen.length} paid to partner</Button>}
+          </div>
         )}
       </CardHeader>
       <CardBody className="overflow-x-auto pt-0">
@@ -292,21 +302,23 @@ function SplitsTable({ rows, admin }: { rows: BrokerFeeSplit[]; admin: boolean }
                               <span className="text-xs text-[var(--color-warning-600)]">Amount not set</span>
                             ) : (
                               st && (
-                                <span className="flex items-center gap-2">
+                                <span className="flex items-start gap-2">
                                   {payable(r) && (
-                                    <input type="checkbox" className="cursor-pointer" checked={selected.has(keyOf(r))} aria-label={`Select ${r.clientName} to mark paid to the partner`}
+                                    <input type="checkbox" className="mt-1 cursor-pointer" checked={selected.has(keyOf(r))} aria-label={`Select ${r.clientName} to mark paid to the partner`}
                                       onChange={(e) => setSelected((cur) => { const n = new Set(cur); if (e.target.checked) n.add(keyOf(r)); else n.delete(keyOf(r)); return n; })} />
                                   )}
-                                  {st.state === 'paid' ? (
-                                    <span className="inline-flex items-center gap-1 text-[var(--color-success-600)]"><CheckCircle2 size={13} /> Paid {st.lastPaidOn ? formatShortDate(st.lastPaidOn) : ''}</span>
-                                  ) : st.state === 'partly' ? (
-                                    <span className="text-[var(--color-warning-600)] tabular-nums">{formatCents(st.dueCents)} not paid</span>
-                                  ) : (
-                                    <span className="text-[var(--color-ink-500)]">Not paid</span>
-                                  )}
-                                  {st.last && (
-                                    <button type="button" onClick={() => setUndoing(st.last)} className="cursor-pointer text-xs text-[var(--color-brand-700)] hover:underline">Undo</button>
-                                  )}
+                                  <span className="flex flex-col items-start">
+                                    {st.state === 'paid' ? (
+                                      <span className="inline-flex items-center gap-1 text-[var(--color-success-600)]"><CheckCircle2 size={13} /> Paid {st.lastPaidOn ? formatShortDate(st.lastPaidOn) : ''}</span>
+                                    ) : st.state === 'partly' ? (
+                                      <span className="text-[var(--color-warning-600)] tabular-nums">{formatCents(st.dueCents)} not paid</span>
+                                    ) : (
+                                      <span className="text-[var(--color-ink-500)]">Not paid</span>
+                                    )}
+                                    {st.last && (
+                                      <button type="button" onClick={() => setUndoing(st.last)} className="cursor-pointer text-xs text-[var(--color-brand-700)] hover:underline">Undo</button>
+                                    )}
+                                  </span>
                                 </span>
                               )
                             )}
