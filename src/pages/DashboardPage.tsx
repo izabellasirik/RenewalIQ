@@ -8,6 +8,7 @@ import { AccountsTable } from '../components/dashboard/AccountsTable';
 import { AccountCard } from '../components/dashboard/AccountCard';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
+import { CloudLoadNotice } from '../components/dashboard/CloudLoadNotice';
 import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
 import { effectiveAccountStage } from '../services/workflow/accountStage';
 import { normalizeDateKey, todayKey } from '../services/workflow/dates';
@@ -58,6 +59,7 @@ export function DashboardPage() {
   const canManageArchive = useAccountsStore(selectCanManageArchive);
   const ensureSampleAccount = useAccountsStore((s) => s.ensureSampleAccount);
   const currentUserId = useAccountsStore((s) => s.currentUserId);
+  const cloudLoad = useAccountsStore((s) => s.cloudLoad);
   const cloudAccountIds = useAccountsStore((s) => s.cloudAccountIds);
   const dismissedImportIds = useAccountsStore((s) => s.dismissedImportIds);
 
@@ -223,7 +225,8 @@ export function DashboardPage() {
       }
     >
       {!showArchived && <LocalImportPrompt accounts={localOnlyAccounts} />}
-      {accounts.length === 0 ? (
+      <CloudLoadNotice />
+      {accounts.length === 0 && cloudLoad !== 'idle' ? null : accounts.length === 0 ? (
         <EmptyState
           icon={<Building2 size={28} strokeWidth={1.5} />}
           title="No submissions yet"

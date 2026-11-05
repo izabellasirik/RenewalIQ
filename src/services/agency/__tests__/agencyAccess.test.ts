@@ -13,6 +13,8 @@ const cloud = vi.hoisted(() => ({
   rows: [] as Row[],
   profiles: {} as Record<string, { agencyId: string; role: 'agent' | 'admin'; name: string }>,
   current: null as string | null,
+  /** Loads that fail first (the database busy). */
+  failLoads: 0,
 }));
 
 function visible(r: Row, uid: string): boolean {
@@ -25,7 +27,7 @@ vi.mock('../../supabase/client', () => ({ isSupabaseConfigured: true, supabase: 
 vi.mock('../../supabase/submissionsRepo', async () => {
   const { createEmptyRiskProfile } = await import('../../extraction/emptyRiskProfile');
   return {
-    fetchUserSubmissions: async (uid: string) => ({
+    fetchUserSubmissions: async (uid: string) => cloud.failLoads > 0 && cloud.failLoads-- > 0 ? { ok: false, message: 'Timed out acquiring connection from connection pool.' } : ({
       ok: true,
       data: cloud.rows
         .filter((r) => visible(r, uid))
@@ -106,6 +108,7 @@ beforeEach(() => {
     [OUTSIDER]: { agencyId: 'ag2', role: 'admin', name: 'Outsider' },
   };
   cloud.current = null;
+  cloud.failLoads = 0;
   useAccountsStore.setState({ accounts: [], hiddenAccounts: [], accountOwners: {}, cloudAccountIds: {}, missingItems: {}, quotes: {}, followUps: {}, riskProfiles: {}, documents: {}, activityLog: {}, matchResults: {}, currentUserId: null, currentUserEmail: null, agencyAccess: null, agencyMembers: [] });
 });
 
@@ -199,5 +202,24 @@ describe('agent vs admin account access (client)', () => {
     expect(ids()).toEqual(['acct_l1']);
     await signIn(AGENT_B);
     expect(ids()).toEqual([]);
+  });
+});
+
+describe('sign-in load when the database is busy', () => {
+  it('a failed load says so and tries again on its own until the accounts appear', async () => {
+    vi.useFakeTimers();
+    try {
+      cloud.failLoads = 2;
+      await signIn(ROMAN);
+      expect(store().cloudLoad).toBe('failed');
+      expect(ids()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(3_000); // first retry: still busy
+      expect(store().cloudLoad).toBe('failed');
+      await vi.advanceTimersByTimeAsync(8_000); // second retry: loads
+      expect(store().cloudLoad).toBe('idle');
+      expect(ids()).toEqual(['acct_r1', 'acct_r2']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

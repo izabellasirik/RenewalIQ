@@ -95,6 +95,8 @@ import { matchRequestUpload, placeUnassignedUpload } from '../services/requests/
 import { isOpenRequest, outstandingRequestItems, type DocumentRequest } from '../types';
 
 const MAX_EVENTS_PER_ACCOUNT = 200;
+/** Waits before loading the accounts again after a sign-in load failed (then the Retry button). */
+export const HYDRATE_RETRY_DELAYS_MS = [3_000, 8_000, 20_000, 45_000];
 
 interface AccountsState {
   accounts: Account[];
@@ -151,6 +153,8 @@ interface AccountsState {
   setCollaborators: (accountId: string, userIds: string[]) => Promise<{ ok: true } | { ok: false; message: string }>;
   /** The signed-in user whose cloud accounts have finished loading this session (ephemeral) — until then a cloud account's local copy may be stale. */
   cloudHydratedFor: string | null;
+  /** The sign-in load of the user's accounts: running, or failed (retried automatically, and by Retry). Ephemeral. */
+  cloudLoad: 'idle' | 'loading' | 'failed';
   /** No-op, kept for callers: the checklist is no longer pre-filled — brokers add what they need, and items a market requests come from Markets & Quotes. */
   ensureChecklist: (accountId: string) => void;
   /**
@@ -912,6 +916,9 @@ export const useAccountsStore = create<AccountsState>()(
 
       /** One sign-in load (see hydrateCloudSubmissions). */
       let hydrating: { userId: string; promise: Promise<void> } | null = null;
+      /** Set by hydrateOnce when the accounts couldn't be fetched (database busy, network). */
+      let hydrateFailed = false;
+      let hydrateRetry: { timer: ReturnType<typeof setTimeout>; attempt: number } | null = null;
       async function hydrateOnce(userId: string): Promise<void> {
         const [result, accessRes] = await Promise.all([cloudRepo.fetchUserSubmissions(userId), cloudRepo.fetchAgencyAccess(userId)]);
         if (get().currentUserId !== userId) return; // signed out / switched user mid-fetch
@@ -923,7 +930,10 @@ export const useAccountsStore = create<AccountsState>()(
           const me = accessRes.data.members.find((m) => m.userId === userId);
           if (me && currentActor?.id === userId) currentActor = { id: userId, name: get().myProfile?.fullName || me.name };
         }
-        if (!result.ok) return; // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
+        if (!result.ok) {
+          hydrateFailed = true;
+          return;
+        } // transient fetch failure — leave local state exactly as it was, never clobber it with nothing
         const needsPush: string[] = [];
         set((s) => {
           const cloudIds = new Set(result.data.map((b) => b.account.id));
@@ -1077,6 +1087,7 @@ export const useAccountsStore = create<AccountsState>()(
       agencyAccess: null,
       agencyMembers: [],
       cloudHydratedFor: null,
+      cloudLoad: 'idle',
       dismissedImportIds: {},
       matchResults: {},
       activityLog: {},
@@ -3779,9 +3790,27 @@ export const useAccountsStore = create<AccountsState>()(
         if (!isSupabaseConfigured || !userId) return;
         // Asked for twice at sign-in (the stored session and the sign-in event): one load, not two racing.
         if (hydrating?.userId === userId) return hydrating.promise;
-        const promise = hydrateOnce(userId).finally(() => {
-          if (hydrating?.promise === promise) hydrating = null;
-        });
+        if (hydrateRetry) clearTimeout(hydrateRetry.timer);
+        const attempt = hydrateRetry?.attempt ?? 0;
+        hydrateRetry = null;
+        hydrateFailed = false;
+        set({ cloudLoad: 'loading' });
+        const promise = hydrateOnce(userId)
+          .catch(() => {
+            hydrateFailed = true;
+          })
+          .finally(() => {
+            if (hydrating?.promise === promise) hydrating = null;
+            if (get().currentUserId !== userId) return;
+            if (!hydrateFailed) {
+              set({ cloudLoad: 'idle' });
+              return;
+            }
+            // The database was busy or the network dropped: try again on its own, a little later each time.
+            set({ cloudLoad: 'failed' });
+            const delay = HYDRATE_RETRY_DELAYS_MS[attempt];
+            if (delay !== undefined) hydrateRetry = { attempt: attempt + 1, timer: setTimeout(() => void get().hydrateCloudSubmissions(), delay) };
+          });
         hydrating = { userId, promise };
         return promise;
       },
@@ -3836,6 +3865,7 @@ export const useAccountsStore = create<AccountsState>()(
           agencyMembers: _agencyMembers,
           agencyCarriers: _agencyCarriers,
           cloudHydratedFor: _cloudHydratedFor,
+          cloudLoad: _cloudLoad,
           documentRequests: _documentRequests,
           ...rest
         } = state;

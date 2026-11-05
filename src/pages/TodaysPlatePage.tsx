@@ -5,6 +5,7 @@ import { PageContainer } from '../components/layout/PageContainer';
 import { Button, Card, CardBody, EmptyState, Tabs } from '../components/ui';
 import { ActionList } from '../components/workspace/ActionList';
 import { ACTION_KIND_META } from '../components/workspace/actionMeta';
+import { CloudLoadNotice } from '../components/dashboard/CloudLoadNotice';
 import { useAccountsStore } from '../state/useAccountsStore';
 import { useBrokerSession } from '../hooks/useBrokerSession';
 import { getAccountContacts } from '../services/workflow/contacts';
@@ -107,6 +108,7 @@ export function TodaysPlatePage() {
   // Outdated MVRs / loss runs show up here too, even for accounts not opened today.
   const ensureFreshnessItems = useAccountsStore((s) => s.ensureFreshnessItems);
   const cloudHydratedFor = useAccountsStore((s) => s.cloudHydratedFor);
+  const cloudLoad = useAccountsStore((s) => s.cloudLoad);
   useEffect(() => {
     for (const a of useAccountsStore.getState().accounts) ensureFreshnessItems(a.id);
   }, [cloudHydratedFor, today, ensureFreshnessItems]);
@@ -174,7 +176,8 @@ export function TodaysPlatePage() {
   if (accounts.filter((a) => !a.archived).length === 0) {
     return (
       <PageContainer title="Today's Plate" description={dateLabel}>
-        <EmptyState
+        <CloudLoadNotice />
+        {cloudLoad === 'idle' && <EmptyState
           icon={<Building2 size={28} strokeWidth={1.5} />}
           title="No accounts yet"
           description="Create an account to start tracking missing documents, client and carrier follow-ups, and quotes. Everything you need to do each day will show up here."
@@ -195,7 +198,7 @@ export function TodaysPlatePage() {
               </Button>
             </div>
           }
-        />
+        />}
       </PageContainer>
     );
   }
@@ -210,6 +213,7 @@ export function TodaysPlatePage() {
         </Button>
       }
     >
+      <CloudLoadNotice />
       <div className="flex flex-wrap items-center gap-2" data-testid="plate-filters">
         {byAgent && (
           <select value={broker} onChange={(e) => updatePlate({ broker: e.target.value })} className={filterClass} aria-label="Filter by agent">

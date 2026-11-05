@@ -40,7 +40,19 @@ function useBrokerCloudBootstrap() {
       if (event === 'SIGNED_OUT' && !isPublicLinkPath(router.state.location.pathname)) router.navigate('/login', { replace: true });
     });
 
-    return () => subscription.subscription.unsubscribe();
+    // Accounts that failed to load: try again as soon as the connection or the tab comes back.
+    const retryIfFailed = () => {
+      const st = useAccountsStore.getState();
+      if (st.cloudLoad === 'failed' && st.currentUserId && document.visibilityState === 'visible') void st.hydrateCloudSubmissions();
+    };
+    window.addEventListener('online', retryIfFailed);
+    document.addEventListener('visibilitychange', retryIfFailed);
+
+    return () => {
+      subscription.subscription.unsubscribe();
+      window.removeEventListener('online', retryIfFailed);
+      document.removeEventListener('visibilitychange', retryIfFailed);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

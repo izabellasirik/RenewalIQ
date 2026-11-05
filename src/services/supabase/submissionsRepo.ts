@@ -239,21 +239,47 @@ function normalizeItems(value: unknown, accountId: string): MissingItem[] | unde
  * (0011_agency_roles.sql) decides what comes back — an agent's own accounts, or the whole agency
  * for an admin.
  */
+/** Waits before asking for a page again after an error. */
+const PAGE_RETRY_DELAYS_MS = [700, 2_000];
+/** Tables loaded at once at sign-in — all nine at the same moment could fill the database's connection pool. */
+const TABLES_AT_ONCE = 3;
+
+async function inBatches<T, R>(items: T[], size: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(size, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await run(items[i]);
+    }
+  }));
+  return out;
+}
+
 async function selectAllVisible(table: string, onlySubmissionId?: string) {
   const PAGE = 1000;
   const rows = [];
   for (let from = 0; ; from += PAGE) {
-    let q = supabase!.from(table).select('*');
-    // One account only: its own row, and its child rows (field_alternates hang off field_values ids "<submission>::…").
-    if (onlySubmissionId) {
-      if (table === 'submissions') q = q.eq('id', onlySubmissionId);
-      else if (table === 'field_alternates') q = q.like('field_value_id', `${onlySubmissionId}::%`);
-      else q = q.eq('submission_id', onlySubmissionId);
+    const page = () => {
+      let q = supabase!.from(table).select('*');
+      // One account only: its own row, and its child rows (field_alternates hang off field_values ids "<submission>::…").
+      if (onlySubmissionId) {
+        if (table === 'submissions') q = q.eq('id', onlySubmissionId);
+        else if (table === 'field_alternates') q = q.like('field_value_id', `${onlySubmissionId}::%`);
+        else q = q.eq('submission_id', onlySubmissionId);
+      }
+      // "Matched against N markets" is recomputed on every load and never needed from the cloud —
+      // older versions saved one per account per sign-in, thousands of rows that made loading slow.
+      if (table === 'activity_events') q = q.neq('type', 'matching_run');
+      return q.order('id').range(from, from + PAGE - 1);
+    };
+    let { data, error } = await page();
+    // A busy database (connection pool full) answers with an error now and then: try that page again.
+    for (const wait of PAGE_RETRY_DELAYS_MS) {
+      if (!error) break;
+      await new Promise((r) => setTimeout(r, wait));
+      ({ data, error } = await page());
     }
-    // "Matched against N markets" is recomputed on every load and never needed from the cloud —
-    // older versions saved one per account per sign-in, thousands of rows that made loading slow.
-    if (table === 'activity_events') q = q.neq('type', 'matching_run');
-    const { data, error } = await q.order('id').range(from, from + PAGE - 1);
     if (error) return { data: null, error };
     rows.push(...(data ?? []));
     if (!data || data.length < PAGE) return { data: rows, error: null };
@@ -264,8 +290,10 @@ async function selectAllVisible(table: string, onlySubmissionId?: string) {
 export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: string): Promise<RepoResult<CloudSubmissionBundle[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
-    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await Promise.all(
-      ['submissions', 'field_values', 'field_alternates', 'coverage_lines', 'vehicles', 'drivers', 'losses', 'documents', 'activity_events'].map((t) => selectAllVisible(t, onlySubmissionId))
+    const [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes] = await inBatches(
+      ['submissions', 'field_values', 'field_alternates', 'coverage_lines', 'vehicles', 'drivers', 'losses', 'documents', 'activity_events'],
+      TABLES_AT_ONCE,
+      (t) => selectAllVisible(t, onlySubmissionId)
     );
     const errored = [subsRes, fvRes, faRes, covRes, vehRes, drvRes, lossRes, docRes, actRes].find((r) => r.error);
     if (errored?.error) return fail(errored.error.message);
