@@ -463,6 +463,37 @@ export function recentQuotaRefusal(): string | null {
   return quotaRefusal && Date.now() - quotaRefusal.at < 5 * 60_000 ? quotaRefusal.message : null;
 }
 
+/**
+ * AI reads at once, across the whole app. Dropping many files used to send every document and page
+ * at the same moment; the provider turned some away as busy and those files fell back to OCR.
+ * The rest wait their turn.
+ */
+export const MAX_AI_READS_AT_ONCE = 3;
+/** Waits before trying a busy/failed read again (a daily-limit refusal is never retried). */
+export const AI_RETRY_DELAYS_MS = [3_000, 8_000];
+
+let aiReadsRunning = 0;
+const aiQueue: (() => void)[] = [];
+export async function withAiSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (aiReadsRunning >= MAX_AI_READS_AT_ONCE) await new Promise<void>((resolve) => aiQueue.push(resolve));
+  aiReadsRunning++;
+  try {
+    return await run();
+  } finally {
+    aiReadsRunning--;
+    aiQueue.shift()?.();
+  }
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Busy, timed out or unreachable — worth one more try. Not a daily-limit (429) or a bad request. */
+export function isTransientAiError(error: unknown): boolean {
+  const status = (error as { context?: Response }).context?.status;
+  if (typeof status !== 'number') return true; // network / relay error: no response at all
+  return status === 408 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529 || status === 546;
+}
+
 /** Reads in flight, by file and page: the same page asked for twice at once is one request. */
 const inFlight = new Map<string, Promise<VisionExtractionResult | null>>();
 
@@ -477,21 +508,27 @@ export function extractImageViaVision(imageBase64: string, mimeType: string, fil
   const key = context?.sourceHash ? `${context.sourceHash}:${context.page ?? 0}` : null;
   const pending = key ? inFlight.get(key) : undefined;
   if (pending) return pending;
-  const job = (async () => {
-    try {
-      const { data, error } = await client.functions.invoke('extract-document-vision', {
-        body: { imageBase64, mimeType, fileName, ...(context ? { context } : {}) },
-      });
-      if (error) {
-        await noteQuotaRefusal(error);
+  const job = withAiSlot(async () => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const { data, error } = await client.functions.invoke('extract-document-vision', {
+          body: { imageBase64, mimeType, fileName, ...(context ? { context } : {}) },
+        });
+        if (error) {
+          await noteQuotaRefusal(error);
+          if (attempt < AI_RETRY_DELAYS_MS.length && isTransientAiError(error)) {
+            await wait(AI_RETRY_DELAYS_MS[attempt]);
+            continue;
+          }
+          return null;
+        }
+        if (!data) return null;
+        return validateVisionResponse(data);
+      } catch {
         return null;
       }
-      if (!data) return null;
-      return validateVisionResponse(data);
-    } catch {
-      return null;
     }
-  })();
+  });
   if (key) {
     inFlight.set(key, job);
     void job.finally(() => inFlight.delete(key));
