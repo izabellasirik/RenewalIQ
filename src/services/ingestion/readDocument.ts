@@ -1,4 +1,5 @@
 import type { DocumentCategory, ExtractedFieldResult, ReviewCandidate } from '../../types';
+import { detectMvr } from '../extraction/fieldExtraction/idDocumentPatterns';
 import { extractInsuranceFields, gateExtraction, holdOcrResults, mergeVisionPages, visionToResults, type DocumentClassification } from '../extraction';
 import { fileSha256 } from './aiReadContext';
 import { extractImageViaVision, extractViaVision, isVisionExtractionAvailable, recentQuotaRefusal, type VisionExtractionResult } from './visionExtraction';
@@ -89,6 +90,19 @@ export async function readDocumentFile(file: File, documentId: string, documentN
     raw = { ...raw, warnings: [...raw.warnings, ...notes] };
   } else {
     read = extractInsuranceFields(raw, { ...meta, isImageSource: false });
+    // A driver record (MVR) in a layout the text reader doesn't know: it finds the name and little
+    // else. The AI reads its pages instead (a few pages at most, one small paid call each).
+    if (raw.fileType === 'pdf' && isThinDriverRecord(raw.text, documentName, read)) {
+      const pages = (raw.pages ?? []).map((p) => p.pageNumber).slice(0, MAX_AI_DRIVER_RECORD_PAGES);
+      const aiPages = await readScannedPagesWithAi(source, pages, currentUserId, context);
+      if (aiPages.length) {
+        visionResult = mergeVisionPages(aiPages);
+        if (visionResult) {
+          read = visionToResults(documentId, documentName, visionResult);
+          aiRead = true;
+        }
+      }
+    }
   }
 
   const visionCategory = visionResult?.documentType ?? null;
@@ -113,6 +127,22 @@ export async function readDocumentFile(file: File, documentId: string, documentN
 
 /** Shown on a photo the AI couldn't read: OCR stood in, so everything from it waits for the broker. */
 export const OCR_FALLBACK_NOTICE = 'AI reading wasn’t available for this photo, so it was read by on-device text recognition — everything read from it needs review.';
+
+/** Pages of a driver record (MVR) the AI reads when the text reader found too little. */
+export const MAX_AI_DRIVER_RECORD_PAGES = 4;
+
+const MVR_NAME = /\bmvr\b|driving[\s_-]*record|motor[\s_-]*vehicle[\s_-]*record/i;
+const DRIVER_DETAILS = ['dob', 'licenseState', 'licenseNumber', 'licenseClass', 'cdlOriginalIssueDate', 'expirationDate', 'issueDate'] as const;
+
+/** An MVR whose text read found no driver, or one driver with fewer than three details. */
+export function isThinDriverRecord(text: string, fileName: string, read: ExtractedFieldResult[]): boolean {
+  if (!detectMvr(text) && !MVR_NAME.test(fileName)) return false;
+  const drivers = read.filter((r) => r.fieldPath === 'drivers');
+  if (drivers.length > 1) return false;
+  if (drivers.length === 0) return true;
+  const d = (drivers[0].value ?? {}) as Record<string, unknown>;
+  return DRIVER_DETAILS.filter((k) => d[k] !== undefined && d[k] !== null && d[k] !== '').length < 3;
+}
 
 /** Scanned pages read automatically per document — the rest are listed for the broker, never silently read. */
 export const MAX_AI_SCANNED_PAGES = 25;

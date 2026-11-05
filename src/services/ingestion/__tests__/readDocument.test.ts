@@ -169,3 +169,38 @@ describe('reading order: native text → AI → OCR fallback', () => {
     expect(read.results.find((r) => r.fieldPath === 'business.namedInsured')?.value).toBe('Prairie Line Freight LLC');
   });
 });
+
+describe('driver record (MVR) the text reader barely reads', () => {
+  const MVR_TEXT = 'Motor Vehicle Record\nDriver: Jordan Avery\nReport generated 01/02/2026';
+  const mvrPdf = new File(['%PDF'], 'Jordan Avery - MVR PULL.pdf', { type: 'application/pdf' });
+  const textPdf = (text: string) => ({
+    documentName: 'Jordan Avery - MVR PULL.pdf', fileType: 'pdf' as const, text, warnings: [],
+    pages: [{ pageNumber: 1, text }, { pageNumber: 2, text: '' }], layout: [],
+  });
+
+  it('reads its pages with the AI and uses that reading', async () => {
+    parseFile.mockResolvedValue(textPdf(MVR_TEXT));
+    extractImageViaVision.mockImplementation(async (_b: string, _m: string, _n: string, _u: string, ctx: { page: number }) =>
+      ctx.page === 1 ? vision({ documentType: 'mvr', drivers: [scheduleDriver('Jordan Avery', 'T1000001')] }) : null);
+
+    const read = await readDocumentFile(mvrPdf, 'doc_m', mvrPdf.name, 'user_1');
+
+    expect(extractImageViaVision).toHaveBeenCalledTimes(2);
+    const drivers = [...read.results, ...read.review].filter((r) => r.fieldPath === 'drivers');
+    expect(drivers).toHaveLength(1);
+    expect((drivers[0].value as { licenseState?: string }).licenseState).toBe('TX');
+  });
+
+  it('keeps the text reading when the AI is not available', async () => {
+    parseFile.mockResolvedValue(textPdf(MVR_TEXT));
+    const read = await readDocumentFile(mvrPdf, 'doc_m', mvrPdf.name, null);
+    expect(extractImageViaVision).not.toHaveBeenCalled();
+    expect(read.visionResult).toBeNull();
+  });
+
+  it('a document that is not a driver record is never sent', async () => {
+    parseFile.mockResolvedValue({ ...textPdf(BUSINESS_TEXT), documentName: 'report.pdf' });
+    await readDocumentFile(pdf, 'doc_r', 'report.pdf', 'user_1');
+    expect(extractImageViaVision).not.toHaveBeenCalled();
+  });
+});
