@@ -7,7 +7,7 @@ import { toTransaction } from '../ledger';
 import type { PolicyRecord } from '../../../types';
 
 // Fictional data only.
-const entry = (patch: Partial<MoneyEntry>): MoneyEntry => ({ id: 'e', kind: 'expense', date: '2026-10-01', category: 'Rent', description: '', amountCents: 0, notes: '', createdAt: '', updatedAt: '', ...patch });
+const entry = (patch: Partial<MoneyEntry>): MoneyEntry => ({ id: 'e', kind: 'expense', date: '2026-10-01', category: 'Rent', description: '', amountCents: 0, notes: '', receipts: [], createdAt: '', updatedAt: '', ...patch });
 const row = (policy: Partial<PolicyRecord>, assignedUserId: string | null = 'agent-a'): PolicyRow => ({
   policy: { id: 'p', carrier: 'Sample Mutual', businessType: 'new', boundDate: '2026-10-03', netPremiumCents: 0, taxesCents: 0, feesCents: 0, createdAt: '', updatedAt: '', ...policy },
   accountId: 'a',

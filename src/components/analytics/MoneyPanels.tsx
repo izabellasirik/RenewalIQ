@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Pencil, Plus, Search, Trash2, Wallet } from 'lucide-react';
+import { Paperclip, Pencil, Plus, Search, Trash2, Wallet, X } from 'lucide-react';
 import { Button, Card, CardBody, CardHeader, ConfirmDialog, EmptyState, Modal, OverflowMenu } from '../ui';
 import { inputClass, labelClass } from '../workspace/formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -14,9 +14,12 @@ import { useRememberedView } from '../../hooks/useRememberedView';
 import { aDateKey, aString, defined, oneOf } from '../../services/preferences/viewPreferences';
 import { moneyReport, profitLossReport } from '../../services/reports/analyticsReports';
 import { DownloadButtons } from './DownloadButtons';
+import { receiptUrl } from '../../services/supabase/moneyRepo';
 import {
   EXPENSE_CATEGORIES,
   INCOME_CATEGORIES,
+  MAX_RECEIPTS,
+  MAX_RECEIPT_BYTES,
   checkMoneyEntry,
   monthLabel,
   profitAndLoss,
@@ -25,6 +28,7 @@ import {
   type MoneyFields,
   type MoneyInput,
   type MoneyKind,
+  type MoneyReceipt,
 } from '../../services/finance/money';
 import { cn } from '../../utils/cn';
 
@@ -441,6 +445,11 @@ export function IncomeExpensesPanel() {
                           <td className="min-w-[220px] border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-700)]">
                             {e.description || <span className="text-[var(--color-ink-400)]">—</span>}
                             {e.notes && <span className="mt-0.5 block whitespace-pre-line text-xs text-[var(--color-ink-500)]">{e.notes}</span>}
+                            {e.receipts.length > 0 && (
+                              <span className="mt-1 flex flex-wrap gap-1.5" data-testid="entry-receipts">
+                                {e.receipts.map((r) => <ReceiptLink key={r.path} receipt={r} />)}
+                              </span>
+                            )}
                           </td>
                           <td className={cn('whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold tabular-nums', e.kind === 'income' ? 'text-[var(--color-success-600)]' : 'text-[var(--color-ink-900)]')}>
                             {e.kind === 'income' ? '+' : '−'}
@@ -470,7 +479,7 @@ export function IncomeExpensesPanel() {
           key={typeof editing === 'string' ? editing : editing.id}
           editing={editing}
           onClose={() => setEditing(null)}
-          onSave={(fields, id) => money.save(fields, id)}
+          onSave={(fields, id, files) => money.save(fields, id, files)}
         />
       )}
       <ConfirmDialog
@@ -490,7 +499,34 @@ export function IncomeExpensesPanel() {
   );
 }
 
-function MoneyForm({ editing, onClose, onSave }: { editing: MoneyEntry | MoneyKind; onClose: () => void; onSave: (fields: MoneyFields, id?: string) => Promise<string | null> }) {
+/** A receipt on an entry: opens the file (a short-lived private link) in a new tab. */
+function ReceiptLink({ receipt }: { receipt: MoneyReceipt }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      title={`Open ${receipt.name}`}
+      onClick={async () => {
+        // Opened before the link is ready, so the browser doesn't block it as a pop-up.
+        const tab = window.open('', '_blank');
+        setBusy(true);
+        const url = await receiptUrl(receipt.path);
+        setBusy(false);
+        if (url && tab) tab.location.href = url;
+        else tab?.close();
+      }}
+      className="inline-flex max-w-[220px] cursor-pointer items-center gap-1 rounded-md border border-[var(--color-ink-200)] bg-white px-1.5 py-0.5 text-xs text-[var(--color-brand-700)] hover:bg-[var(--color-ink-50)]"
+    >
+      <Paperclip size={12} className="shrink-0" />
+      <span className="truncate">{receipt.name}</span>
+    </button>
+  );
+}
+
+const fileSize = (bytes?: number) => (bytes === undefined ? '' : bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+
+function MoneyForm({ editing, onClose, onSave }: { editing: MoneyEntry | MoneyKind; onClose: () => void; onSave: (fields: MoneyFields, id: string | undefined, files: { kept: MoneyReceipt[]; added: File[] }) => Promise<string | null> }) {
   const existing = typeof editing === 'string' ? null : editing;
   const [f, setF] = useState<MoneyInput>(() =>
     existing
@@ -499,6 +535,21 @@ function MoneyForm({ editing, onClose, onSave }: { editing: MoneyEntry | MoneyKi
   );
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [kept, setKept] = useState<MoneyReceipt[]>(() => existing?.receipts ?? []);
+  const [added, setAdded] = useState<File[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+  function addFiles(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    const tooBig = files.filter((f) => f.size > MAX_RECEIPT_BYTES);
+    const room = MAX_RECEIPTS - kept.length - added.length;
+    const ok = files.filter((f) => f.size <= MAX_RECEIPT_BYTES).slice(0, Math.max(0, room));
+    const problems = [
+      ...tooBig.map((f) => `${f.name} is larger than 10 MB.`),
+      ...(files.length - tooBig.length > ok.length ? [`Up to ${MAX_RECEIPTS} files per entry.`] : []),
+    ];
+    setErrors(problems);
+    setAdded((cur) => [...cur, ...ok]);
+  }
   const categories = f.kind === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
   const set = <K extends keyof MoneyInput>(k: K, v: MoneyInput[K]) => setF((cur) => ({ ...cur, [k]: v }));
 
@@ -507,7 +558,7 @@ function MoneyForm({ editing, onClose, onSave }: { editing: MoneyEntry | MoneyKi
     const check = checkMoneyEntry(f);
     if (!check.ok) return setErrors(check.errors);
     setSaving(true);
-    const err = await onSave(check.fields, existing?.id);
+    const err = await onSave(check.fields, existing?.id, { kept, added });
     setSaving(false);
     if (err) return setErrors([err]);
     onClose();
@@ -563,6 +614,49 @@ function MoneyForm({ editing, onClose, onSave }: { editing: MoneyEntry | MoneyKi
           <div className="sm:col-span-2">
             <label className={labelClass} htmlFor="money-notes">Notes</label>
             <textarea id="money-notes" rows={2} className={inputClass} value={f.notes} onChange={(e) => set('notes', e.target.value)} />
+          </div>
+          <div className="sm:col-span-2" data-testid="money-receipts">
+            <span className={labelClass}>Receipts (optional)</span>
+            {(kept.length > 0 || added.length > 0) && (
+              <ul className="mb-2 flex flex-col gap-1.5">
+                {kept.map((r) => (
+                  <li key={r.path} className="flex items-center gap-2 rounded-lg border border-[var(--color-ink-200)] px-2.5 py-1.5 text-sm">
+                    <Paperclip size={14} className="shrink-0 text-[var(--color-ink-500)]" />
+                    <span className="min-w-0 flex-1 truncate text-[var(--color-ink-800)]">{r.name}</span>
+                    <span className="text-xs text-[var(--color-ink-500)]">{fileSize(r.size)}</span>
+                    <button type="button" aria-label={`Remove ${r.name}`} onClick={() => setKept((cur) => cur.filter((x) => x.path !== r.path))} className="cursor-pointer rounded p-0.5 text-[var(--color-ink-500)] hover:bg-[var(--color-ink-100)]">
+                      <X size={14} />
+                    </button>
+                  </li>
+                ))}
+                {added.map((file, i) => (
+                  <li key={`${file.name}-${i}`} className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-ink-300)] px-2.5 py-1.5 text-sm">
+                    <Paperclip size={14} className="shrink-0 text-[var(--color-ink-500)]" />
+                    <span className="min-w-0 flex-1 truncate text-[var(--color-ink-800)]">{file.name}</span>
+                    <span className="text-xs text-[var(--color-ink-500)]">{fileSize(file.size)}</span>
+                    <button type="button" aria-label={`Remove ${file.name}`} onClick={() => setAdded((cur) => cur.filter((_, j) => j !== i))} className="cursor-pointer rounded p-0.5 text-[var(--color-ink-500)] hover:bg-[var(--color-ink-100)]">
+                      <X size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {kept.length + added.length < MAX_RECEIPTS && (
+              <Button type="button" variant="secondary" size="sm" icon={<Paperclip size={14} />} onClick={() => fileInput.current?.click()} data-testid="money-attach">
+                Attach file
+              </Button>
+            )}
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              accept="image/*,application/pdf,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.heic"
+              className="hidden"
+              onChange={(e) => {
+                addFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
           </div>
         </div>
       </form>

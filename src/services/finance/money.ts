@@ -25,9 +25,23 @@ export interface MoneyEntry {
   description: string;
   amountCents: number;
   notes: string;
+  /** Files attached to the entry (0092): receipts, invoices, statements. */
+  receipts: MoneyReceipt[];
   createdAt: string;
   updatedAt: string;
 }
+
+/** A file attached to an income or expense, kept in the agency's private receipts folder. */
+export interface MoneyReceipt {
+  /** <agency id>/<folder>/<file> in the agency-receipts bucket. */
+  path: string;
+  name: string;
+  size?: number;
+  type?: string;
+}
+/** At most this many files per entry, each up to MAX_RECEIPT_BYTES (the database and the bucket enforce both). */
+export const MAX_RECEIPTS = 10;
+export const MAX_RECEIPT_BYTES = 10 * 1024 * 1024;
 
 /** Recorded income. Carrier commission on policies isn't one: it's added from the policies themselves. */
 export const INCOME_CATEGORIES = ['Agency fees', 'Contingency / bonus', 'Other income'] as const;
