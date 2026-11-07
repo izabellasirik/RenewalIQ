@@ -1,4 +1,5 @@
-import type { DocumentCategory, UploadedDocument } from '../../types';
+import type { DocumentCategory, MissingItem, UploadedDocument } from '../../types';
+import { detectMvr } from './fieldExtraction/idDocumentPatterns';
 
 /**
  * A driver's license the app couldn't read well enough to rely on. Nothing is ever guessed from an
@@ -23,11 +24,29 @@ interface Assessment {
   readFailed: boolean;
   /** The driver row this document produced (after vision/OCR reconciliation), if any. */
   driver?: Record<string, unknown> & { fieldConfidence?: Partial<Record<string, string>> };
+  /** A driving record (MVR), not a license card: it often has no date of birth or expiration on it, and is never "unclear". */
+  isDriverRecord?: boolean;
+}
+
+const DRIVER_RECORD_NAME = /\bmvr\b|mvr[\s_-]|driving[\s_-]*record|motor[\s_-]*vehicle[\s_-]*record/i;
+/** A driving record (MVR) by its file name or its text — never asked for again as a "clearer license". */
+export function isDriverRecordDocument(fileName: string, text = ''): boolean {
+  return DRIVER_RECORD_NAME.test(fileName) || (!!text && detectMvr(text));
+}
+
+/**
+ * "Clearer driver license" items an earlier version added for MVRs read as licenses — removed while
+ * still untouched (never requested or received).
+ */
+export function isMvrLicenseRequest(item: Pick<MissingItem, 'label' | 'status' | 'notes'>): boolean {
+  if (item.status !== 'missing' || !item.label.startsWith('Clearer driver license')) return false;
+  const doc = item.notes?.match(/^Needed because (.+) could not be read clearly\.$/)?.[1];
+  return !!doc && DRIVER_RECORD_NAME.test(doc);
 }
 
 /** Why a license needs a clearer copy (empty = it read fine, or it isn't a license). */
-export function licenseReadReasons({ category, readFailed, driver }: Assessment): string[] {
-  if (category !== 'driver_license') return [];
+export function licenseReadReasons({ category, readFailed, driver, isDriverRecord }: Assessment): string[] {
+  if (category !== 'driver_license' || isDriverRecord) return [];
   if (readFailed) return ['image quality too low — no text could be read'];
   if (!driver) return ['no driver details could be read from the image'];
   const reasons: string[] = [];

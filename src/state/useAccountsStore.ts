@@ -70,7 +70,7 @@ import { matchAllMarkets } from '../services/appetite';
 import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
 import { fetchAppetiteOverrides } from '../services/appetiteUpdates/appetiteUpdateService';
 import { sampleAppetiteRecords } from '../data/carriers';
-import { licenseReadReasons, licenseWarnings } from '../services/extraction/licenseReadability';
+import { isDriverRecordDocument, isMvrLicenseRequest, licenseReadReasons, licenseWarnings } from '../services/extraction/licenseReadability';
 import { layerAgencyCarriers, type AgencyCarrier } from '../services/appetite/agencyCarriers';
 import { fetchAgencyCarriers } from '../services/supabase/carriersRepo';
 import { trackAccountUpdated, trackEvent, markAccountDemo } from '../services/productAnalytics/trackEvent';
@@ -1286,7 +1286,7 @@ export const useAccountsStore = create<AccountsState>()(
               // A driver's license that couldn't be read well enough: say why (never guess the values)
               // and, below, put "Clearer driver license" on the checklist for the normal client request.
               const licenseDriver = (results.find((r) => r.fieldPath === 'drivers') ?? review.find((r) => r.fieldPath === 'drivers'))?.value as (Record<string, unknown> & { fieldConfidence?: Partial<Record<string, string>> }) | undefined;
-              const licenseReasons = licenseReadReasons({ category: contentCategory ?? doc.category, readFailed, driver: licenseDriver });
+              const licenseReasons = licenseReadReasons({ category: contentCategory ?? doc.category, readFailed, driver: licenseDriver, isDriverRecord: isDriverRecordDocument(doc.name, raw.text) });
               const docWarnings = licenseReasons.length ? [...licenseWarnings(licenseReasons), ...warnings] : warnings;
 
               if (import.meta.env.DEV) {
@@ -1368,7 +1368,7 @@ export const useAccountsStore = create<AccountsState>()(
               // A link that couldn't be opened: say so plainly and keep the URL — nothing is extracted.
               const sourceUrl = err instanceof DocumentLinkError ? err.sourceUrl : undefined;
               // A license photo that couldn't be processed at all still gets the "clearer copy" path.
-              const licenseReasons = sourceUrl ? [] : licenseReadReasons({ category: doc.category, readFailed: true });
+              const licenseReasons = sourceUrl ? [] : licenseReadReasons({ category: doc.category, readFailed: true, isDriverRecord: isDriverRecordDocument(doc.name) });
               set((s) => ({
                 documents: {
                   ...s.documents,
@@ -3404,7 +3404,12 @@ export const useAccountsStore = create<AccountsState>()(
 
       // The checklist starts empty: the broker adds what they need (one by one or from a template), and
       // items a market asks for are added from Markets & Quotes. Nothing is pre-filled any more.
-      ensureChecklist: () => {},
+      // The checklist isn't pre-filled any more; opening an account only drops "Clearer driver license"
+      // items an earlier version added for MVRs read as licenses, while nobody has acted on them.
+      ensureChecklist: (accountId) => {
+        const bogus = (get().missingItems[accountId] ?? []).filter(isMvrLicenseRequest);
+        for (const item of bogus) get().deleteMissingItem(accountId, item.id);
+      },
 
       setCollaborators: async (accountId, userIds) => {
         const s = get();
