@@ -26,6 +26,15 @@ export interface Report {
   totals?: Cell[];
   /** File name without extension. */
   fileBase: string;
+  /** More tables after the first (a summary, a second list): own heading in the PDF and CSV, own sheet in Excel. */
+  parts?: ReportPart[];
+}
+
+export interface ReportPart {
+  title: string;
+  columns: ReportColumn[];
+  rows: Cell[][];
+  totals?: Cell[];
 }
 
 export type ReportFormat = 'csv' | 'xlsx' | 'pdf';
@@ -42,7 +51,8 @@ function plainCell(col: ReportColumn, v: Cell): string {
 
 /** The table as CSV: a header row, the rows, then the totals row. Amounts as plain numbers (negatives with a minus). */
 export function reportCsv(r: Report): string {
-  const lines = [r.columns.map((c) => c.header), ...r.rows.map((row) => r.columns.map((c, i) => plainCell(c, row[i] ?? null))), ...(r.totals ? [r.columns.map((c, i) => plainCell(c, r.totals![i] ?? null))] : [])];
+  const table = (t: Pick<Report, 'columns' | 'rows' | 'totals'>) => [t.columns.map((c) => c.header), ...t.rows.map((row) => t.columns.map((c, i) => plainCell(c, row[i] ?? null))), ...(t.totals ? [t.columns.map((c, i) => plainCell(c, t.totals![i] ?? null))] : [])];
+  const lines = [...table(r), ...(r.parts ?? []).flatMap((p) => [[], [p.title], ...table(p)])];
   return lines.map((l) => l.map(csvCell).join(',')).join('\n') + '\n';
 }
 
@@ -65,7 +75,16 @@ export async function reportXlsx(r: Report): Promise<Blob> {
   const { default: ExcelJS } = await import('exceljs');
   const wb = new ExcelJS.Workbook();
   wb.created = new Date();
-  const ws = wb.addWorksheet(r.title.slice(0, 31).replace(/[\\/?*[\]:]/g, ' '));
+  const sheetNames = new Set<string>();
+  const sheetName = (t: string) => {
+    let n = t.slice(0, 31).replace(/[\\/?*[\]:]/g, ' ');
+    for (let i = 2; sheetNames.has(n); i++) n = `${t.slice(0, 27)} (${i})`;
+    sheetNames.add(n);
+    return n;
+  };
+  for (const part of [{ title: r.title, subtitle: r.subtitle, columns: r.columns, rows: r.rows, totals: r.totals }, ...(r.parts ?? []).map((p) => ({ ...p, subtitle: r.subtitle }))]) addSheet(part);
+  function addSheet(r: { title: string; subtitle: string[]; columns: ReportColumn[]; rows: Cell[][]; totals?: Cell[] }) {
+  const ws = wb.addWorksheet(sheetName(r.title));
   ws.addRow([r.title]).font = { bold: true, size: 14 };
   for (const line of r.subtitle) ws.addRow([line]).font = { color: { argb: 'FF555555' } };
   ws.addRow([]);
@@ -100,6 +119,7 @@ export async function reportXlsx(r: Report): Promise<Blob> {
     const longest = Math.max(c.header.length, ...r.rows.map((row) => displayCell(c, row[i] ?? null).length));
     col.width = Math.min(48, Math.max(10, longest + 2));
   });
+  }
   const buffer = await wb.xlsx.writeBuffer();
   return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
@@ -118,41 +138,25 @@ export function pdfSafe(text: string): string {
 
 /** The table as a landscape PDF: title, filters, a header repeated on every page, totals last, page numbers. */
 export async function reportPdf(full: Report): Promise<Blob> {
-  const keep = full.columns.map((c) => !c.notInPdf);
-  const r: Report = keep.every(Boolean)
-    ? full
-    : { ...full, columns: full.columns.filter((_c, i) => keep[i]), rows: full.rows.map((row) => row.filter((_c, i) => keep[i])), ...(full.totals ? { totals: full.totals.filter((_c, i) => keep[i]) } : {}) };
+  const pdfOnly = <T extends { columns: ReportColumn[]; rows: Cell[][]; totals?: Cell[] }>(t: T): T => {
+    const keep = t.columns.map((c) => !c.notInPdf);
+    return keep.every(Boolean) ? t : { ...t, columns: t.columns.filter((_c, i) => keep[i]), rows: t.rows.map((row) => row.filter((_c, i) => keep[i])), ...(t.totals ? { totals: t.totals.filter((_c, i) => keep[i]) } : {}) };
+  };
+  const r = pdfOnly(full);
+  const tables: (ReportPart & { heading?: string })[] = [{ title: r.title, columns: r.columns, rows: r.rows, totals: r.totals }, ...(full.parts ?? []).map((p) => ({ ...pdfOnly(p), heading: p.title }))];
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
   const doc = await PDFDocument.create();
   doc.setTitle(pdfSafe(r.title));
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   // Wide reports use a legal-size landscape page.
-  const W = r.columns.length > 14 ? 1008 : 792;
+  const widest = Math.max(...tables.map((t) => t.columns.length));
+  const W = widest > 14 ? 1008 : 792;
   const H = 612;
   const M = 36;
   // Wide reports (many columns) use a smaller type so every column fits on the page.
-  const size = r.columns.length > 14 ? 6.5 : 8;
-  const cells = [r.columns.map((c) => c.header), ...r.rows.map((row) => r.columns.map((c, i) => pdfSafe(displayCell(c, row[i] ?? null)))), ...(r.totals ? [r.columns.map((c, i) => pdfSafe(displayCell(c, r.totals![i] ?? null)))] : [])];
-  // Column widths from the content. Numbers, dates and short values keep their full width; when the page is too
-  // narrow, only the text columns (client, description, …) get narrower and wrap. Headers wrap word by word.
+  const size = widest > 14 ? 6.5 : 8;
   const avail = W - 2 * M;
-  const body = cells.slice(1);
-  const natural = r.columns.map((c, i) => {
-    const cellW = Math.max(0, ...body.map((row) => Math.max(...(row[i] ?? '').split('\n').map((l) => font.widthOfTextAtSize(l, size)))));
-    const headW = Math.max(...c.header.split(' ').map((w) => bold.widthOfTextAtSize(w, size)));
-    return Math.min(c.kind ? 120 : 220, Math.max(34, cellW + 10, headW + 10));
-  });
-  const flexible = r.columns.map((c, i) => !c.kind && natural[i] > 70);
-  const fixedW = natural.reduce((n, w, i) => n + (flexible[i] ? 0 : w), 0);
-  const flexW = natural.reduce((n, w, i) => n + (flexible[i] ? w : 0), 0);
-  let widths = natural;
-  if (fixedW + flexW > avail) {
-    const k = flexW ? Math.max(0, avail - fixedW) / flexW : 0;
-    widths = natural.map((w, i) => (flexible[i] ? Math.max(45, w * k) : w));
-    const total = widths.reduce((a2, b2) => a2 + b2, 0);
-    if (total > avail) widths = widths.map((w) => (w * avail) / total);
-  }
   const fit = (text: string, f: typeof font, width: number) => {
     if (f.widthOfTextAtSize(text, size) <= width) return text;
     let t = text;
@@ -197,37 +201,72 @@ export async function reportPdf(full: Report): Promise<Blob> {
     y -= 13;
   }
   y -= 6;
-  const heightOf = (row: string[], f: typeof font) => Math.max(...row.map((text, i) => wrap(text, f, widths[i] - 8).length)) * lineH + 4;
-  const drawRow = (row: string[], f: typeof font, shade: boolean) => {
-    const h = heightOf(row, f);
-    if (shade) page.drawRectangle({ x: M, y: y - h, width: W - 2 * M, height: h, color: rgb(0.94, 0.95, 0.97) });
-    let x = M;
-    row.forEach((text, i) => {
-      const width = widths[i] - 8;
-      const right = r.columns[i].kind === 'money' || r.columns[i].kind === 'count';
-      wrap(text, f, width).forEach((t, n) => {
-        const tx = right ? x + widths[i] - 4 - f.widthOfTextAtSize(t, size) : x + 4;
-        page.drawText(t, { x: tx, y: y - size - 1 - n * lineH, size, font: f, color: rgb(0.12, 0.14, 0.18) });
-      });
-      x += widths[i];
-    });
-    y -= h;
-    page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.3, color: rgb(0.88, 0.89, 0.91) });
+  const newPage = () => {
+    page = doc.addPage([W, H]);
+    pages.push(page);
+    y = H - M;
   };
-  const header = cells[0];
-  drawRow(header, bold, true);
-  body.forEach((row, n) => {
-    if (y - heightOf(row, font) < M + 14) {
-      page = doc.addPage([W, H]);
-      pages.push(page);
-      y = H - M;
-      drawRow(header, bold, true);
+
+  for (const t of tables) {
+    const cells = [t.columns.map((c) => c.header), ...t.rows.map((row) => t.columns.map((c, i) => pdfSafe(displayCell(c, row[i] ?? null)))), ...(t.totals ? [t.columns.map((c, i) => pdfSafe(displayCell(c, t.totals![i] ?? null)))] : [])];
+    // Column widths from the content. Numbers, dates and short values keep their full width; when the page is too
+    // narrow, only the text columns (client, description, …) get narrower and wrap. Headers wrap word by word.
+    const body = cells.slice(1);
+    const natural = t.columns.map((c, i) => {
+      const cellW = Math.max(0, ...body.map((row) => Math.max(...(row[i] ?? '').split('\n').map((l) => font.widthOfTextAtSize(l, size)))));
+      const headW = Math.max(...c.header.split(' ').map((w) => bold.widthOfTextAtSize(w, size)));
+      return Math.min(c.kind ? 120 : 220, Math.max(34, cellW + 10, headW + 10));
+    });
+    const flexible = t.columns.map((c, i) => !c.kind && natural[i] > 70);
+    const fixedW = natural.reduce((n, w, i) => n + (flexible[i] ? 0 : w), 0);
+    const flexW = natural.reduce((n, w, i) => n + (flexible[i] ? w : 0), 0);
+    let widths = natural;
+    if (fixedW + flexW > avail) {
+      const k = flexW ? Math.max(0, avail - fixedW) / flexW : 0;
+      widths = natural.map((w, i) => (flexible[i] ? Math.max(45, w * k) : w));
+      const total = widths.reduce((a2, b2) => a2 + b2, 0);
+      if (total > avail) widths = widths.map((w) => (w * avail) / total);
     }
-    const isTotal = !!r.totals && n === body.length - 1;
-    if (isTotal) page.drawLine({ start: { x: M, y: y + 2 }, end: { x: W - M, y: y + 2 }, thickness: 0.6, color: rgb(0.6, 0.63, 0.68) });
-    drawRow(row, isTotal ? bold : font, false);
-  });
-  if (!body.length) page.drawText('Nothing matches these filters.', { x: M + 4, y: y - 12, size: 9, font, color: rgb(0.4, 0.42, 0.46) });
+    const heightOf = (row: string[], f: typeof font) => Math.max(...row.map((text, i) => wrap(text, f, widths[i] - 8).length)) * lineH + 4;
+    const drawRow = (row: string[], f: typeof font, shade: boolean) => {
+      const h = heightOf(row, f);
+      if (shade) page.drawRectangle({ x: M, y: y - h, width: W - 2 * M, height: h, color: rgb(0.94, 0.95, 0.97) });
+      let x = M;
+      row.forEach((text, i) => {
+        const width = widths[i] - 8;
+        const right = t.columns[i].kind === 'money' || t.columns[i].kind === 'count';
+        wrap(text, f, width).forEach((tx0, n) => {
+          const tx = right ? x + widths[i] - 4 - f.widthOfTextAtSize(tx0, size) : x + 4;
+          page.drawText(tx0, { x: tx, y: y - size - 1 - n * lineH, size, font: f, color: rgb(0.12, 0.14, 0.18) });
+        });
+        x += widths[i];
+      });
+      y -= h;
+      page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.3, color: rgb(0.88, 0.89, 0.91) });
+    };
+    const header = cells[0];
+    if (t.heading) {
+      // A section heading, kept with its header and first row.
+      if (y - 18 - heightOf(header, bold) - (body[0] ? heightOf(body[0], font) : 0) < M + 14) newPage();
+      else y -= 14;
+      page.drawText(pdfSafe(t.heading), { x: M, y: y - 11, size: 11, font: bold, color: rgb(0.1, 0.12, 0.16) });
+      y -= 18;
+    }
+    drawRow(header, bold, true);
+    body.forEach((row, n) => {
+      if (y - heightOf(row, font) < M + 14) {
+        newPage();
+        drawRow(header, bold, true);
+      }
+      const isTotal = !!t.totals && n === body.length - 1;
+      if (isTotal) page.drawLine({ start: { x: M, y: y + 2 }, end: { x: W - M, y: y + 2 }, thickness: 0.6, color: rgb(0.6, 0.63, 0.68) });
+      drawRow(row, isTotal ? bold : font, false);
+    });
+    if (!body.length) {
+      page.drawText('Nothing matches these filters.', { x: M + 4, y: y - 12, size: 9, font, color: rgb(0.4, 0.42, 0.46) });
+      y -= 18;
+    }
+  }
   const made = `Made ${new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}`;
   pages.forEach((p, i) => p.drawText(pdfSafe(`${made} · Page ${i + 1} of ${pages.length}`), { x: M, y: M - 18, size: 7.5, font, color: rgb(0.45, 0.48, 0.52) }));
   const bytes = await doc.save();

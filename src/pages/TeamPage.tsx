@@ -44,6 +44,8 @@ const ROLE_LABEL: Record<TeamRole, string> = { admin: 'Admin', agent: 'Agent' };
  */
 export function TeamPage() {
   const access = useAccountsStore((s) => s.agencyAccess);
+  // The sign-in load finished (so no agency really means none yet).
+  const accessKnown = useAccountsStore((s) => s.cloudHydratedFor === s.currentUserId && s.cloudLoad === 'idle');
   const currentUserId = useAccountsStore((s) => s.currentUserId);
   // Agency Owners (0086): shown in the Role column; set by the developer in the database, not here.
   const ownerIds = useAgencyOwners();
@@ -98,6 +100,13 @@ export function TeamPage() {
     if (res.ok) hydrate();
   }
 
+  if (!access && currentUserId && !accessKnown) {
+    return (
+      <PageContainer title="Team and Partners">
+        <p className="text-sm text-[var(--color-ink-500)]" data-testid="team-loading">Loading your agency…</p>
+      </PageContainer>
+    );
+  }
   if (!access && currentUserId) {
     return (
       <PageContainer title="Set up your agency">

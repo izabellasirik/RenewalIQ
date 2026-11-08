@@ -18,13 +18,16 @@ import {
   endorsementTotals,
   endorsementType,
   endorsementsBy,
+  matchQqAgent,
   mergeReportRows,
+  qqNameKey,
   parseQqReport,
   withRowKeys,
   type CancellationRow,
   type EndorsementRow,
 } from '../../services/reports/qqReports';
-import { addQqReport, deleteQqReport, fetchQqRates, fetchQqReports, setQqRate, type QqReport } from '../../services/supabase/qqReportsRepo';
+import { addQqReport, deleteQqReport, fetchQqAgentLinks, fetchQqRates, fetchQqReports, setQqAgentLink, setQqRate, type QqReport } from '../../services/supabase/qqReportsRepo';
+import type { Report } from '../../services/reports/report';
 import { PeriodPicker, usePeriod } from './MoneyPanels';
 import { cn } from '../../utils/cn';
 
@@ -74,14 +77,16 @@ export function EndorsementReportsPanel() {
   const [removing, setRemoving] = useState<QqReport | null>(null);
   const [shown, setShown] = useState(LIST_STEP);
   const [rates, setRates] = useState<Record<string, number>>({});
+  const [links, setLinks] = useState<Record<string, string>>({});
   const [rateFor, setRateFor] = useState<{ rowKey: string; label: string; rate: number } | null>(null);
   const agentSplits = useAgentCommissionRates();
   const input = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
     const res = await fetchQqReports();
-    const r = await fetchQqRates();
+    const [r, l] = await Promise.all([fetchQqRates(), fetchQqAgentLinks()]);
     if (r.ok) setRates(r.data);
+    if (l.ok) setLinks(l.data);
     if (res.ok) setReports(res.data);
     else {
       setReports([]);
@@ -132,20 +137,23 @@ export function EndorsementReportsPanel() {
   }, [accounts, members]);
 
   const allEndorsements = useMemo(() => withRowKeys(mergeReportRows((reports ?? []).filter((r) => r.kind === 'endorsements').map((r) => r.rows as EndorsementRow[]), endorsementKey)), [reports]);
-  // The agent's split (Team and Partners), matched by name: a QQCatalyst agent with a RenewalIQ account.
-  const splitOf = useMemo(() => {
-    const byName = new Map(members.map((m) => [normName(m.name), m.userId]));
-    return (qqAgent: string): number | null => {
-      const id = byName.get(normName(qqAgent));
-      const rate = id ? agentSplits.rates[id] : undefined;
-      return typeof rate === 'number' ? rate : null;
-    };
-  }, [members, agentSplits.rates]);
+  // The RenewalIQ agent behind a QQCatalyst name (a link an admin set, or matched by name — see matchQqAgent),
+  // shown by their RenewalIQ name, with their split from Team and Partners.
+  const agentIdOf = useCallback((qqAgent: string) => matchQqAgent(qqAgent, members, links), [members, links]);
+  const agentLabel = useCallback((qqAgent: string) => {
+    const id = agentIdOf(qqAgent);
+    return (id && members.find((m) => m.userId === id)?.name) || displayName(qqAgent);
+  }, [agentIdOf, members]);
+  const splitOf = useCallback((qqAgent: string): number | null => {
+    const id = agentIdOf(qqAgent);
+    const rate = id ? agentSplits.rates[id] : undefined;
+    return typeof rate === 'number' ? rate : null;
+  }, [agentIdOf, agentSplits.rates]);
   const rateOf = (rowKey: string) => rates[rowKey] ?? DEFAULT_AGENCY_RATE;
   const allCancellations = useMemo(() => mergeReportRows((reports ?? []).filter((r) => r.kind === 'cancellations').map((r) => r.rows as CancellationRow[]), cancellationKey), [reports]);
-  const agents = useMemo(() => [...new Set([...allEndorsements.map((r) => displayName(r.agent)), ...allCancellations.map((r) => accountAgent(r.insured))].filter(Boolean))].sort(), [allEndorsements, allCancellations, accountAgent]);
+  const agents = useMemo(() => [...new Set([...allEndorsements.map((r) => agentLabel(r.agent)), ...allCancellations.map((r) => accountAgent(r.insured))].filter(Boolean))].sort(), [allEndorsements, allCancellations, accountAgent, agentLabel]);
 
-  const endorsements = allEndorsements.filter((r) => inPeriod(r.date) && (!agent || displayName(r.agent) === agent) && AMOUNT_FILTERS[sign].test(r.amountCents)).sort((a, b) => b.date.localeCompare(a.date));
+  const endorsements = allEndorsements.filter((r) => inPeriod(r.date) && (!agent || agentLabel(r.agent) === agent) && AMOUNT_FILTERS[sign].test(r.amountCents)).sort((a, b) => b.date.localeCompare(a.date));
   const cancellations = allCancellations.filter((r) => inPeriod(r.cancellationDate) && (!agent || accountAgent(r.insured) === agent)).sort((a, b) => b.cancellationDate.localeCompare(a.cancellationDate));
   const totals = endorsementTotals(endorsements);
   const money = (r: (typeof endorsements)[number]) => {
@@ -157,19 +165,41 @@ export function EndorsementReportsPanel() {
   const agencyTotal = endorsements.reduce((n, r) => n + money(r).agencyCents, 0);
   const producerTotal = endorsements.reduce((n, r) => n + (money(r).producerCents ?? 0), 0);
   const agentMoney = (name: string) => {
-    const rows = endorsements.filter((r) => displayName(r.agent) === name);
-    return { agency: rows.reduce((n, r) => n + money(r).agencyCents, 0), producer: rows.some((r) => money(r).producerCents !== null) ? rows.reduce((n, r) => n + (money(r).producerCents ?? 0), 0) : null, split: rows[0] ? splitOf(rows[0].agent) : null };
+    const rows = endorsements.filter((r) => agentLabel(r.agent) === name);
+    return { agency: rows.reduce((n, r) => n + money(r).agencyCents, 0), producer: rows.some((r) => money(r).producerCents !== null) ? rows.reduce((n, r) => n + (money(r).producerCents ?? 0), 0) : null, split: rows[0] ? splitOf(rows[0].agent) : null, linked: rows[0] ? agentIdOf(rows[0].agent) : null, qqNames: [...new Set(rows.map((r) => r.agent))] };
   };
   const report = () =>
     endorsementsReport(
-      endorsements.map((r) => ({ date: r.date, client: r.client, type: endorsementType(r.description, r.amountCents), description: r.description, agent: displayName(r.agent), amountCents: r.amountCents, ...money(r) })),
+      endorsements.map((r) => ({ date: r.date, client: r.client, type: endorsementType(r.description, r.amountCents), description: r.description, agent: agentLabel(r.agent), amountCents: r.amountCents, ...money(r) })),
       period.from,
       period.to,
       [...(agent ? [`Agent: ${agent}`] : []), ...(sign !== 'all' ? [AMOUNT_FILTERS[sign].label] : [])]
     );
-  const byAgent = endorsementsBy(endorsements, (r) => displayName(r.agent));
+  const byAgent = endorsementsBy(endorsements, (r) => agentLabel(r.agent));
   const byType = endorsementsBy(endorsements, (r) => endorsementType(r.description, r.amountCents));
   const early = cancellations.filter((r) => daysInForce(r) <= EARLY_DAYS).length;
+  const filterText = [...(agent ? [`Agent: ${agent}`] : []), ...(sign !== 'all' ? [AMOUNT_FILTERS[sign].label] : [])];
+  /** Everything on the tab, as filtered: by agent, by type, the endorsements and the cancellations. */
+  const fullReport = (): Report => {
+    const list = report();
+    const canc = cancellationsReport(cancellations.map((r) => ({ cancellationDate: r.cancellationDate, insured: r.insured, effectiveDate: r.effectiveDate, days: daysInForce(r), agent: accountAgent(r.insured) })), period.from, period.to, filterText);
+    return {
+      title: 'Endorsement report',
+      subtitle: list.subtitle.slice(0, -1),
+      columns: [{ header: 'Agent' }, { header: 'Endorsements', kind: 'count' }, { header: 'Added', kind: 'money' }, { header: 'Returned', kind: 'money' }, { header: 'Net premium', kind: 'money' }, { header: 'Agency commission', kind: 'money' }, { header: 'Producer commission', kind: 'money' }],
+      rows: byAgent.map(({ key, totals: t }) => {
+        const m = agentMoney(key);
+        return [key, t.count, t.addedCents, t.returnedCents, t.netCents, m.agency, m.producer];
+      }),
+      totals: ['Total', totals.count, totals.addedCents, totals.returnedCents, totals.netCents, agencyTotal, producerTotal],
+      fileBase: list.fileBase.replace(/^endorsements-/, 'endorsement-report-'),
+      parts: [
+        { title: 'By type', columns: [{ header: 'Type' }, { header: 'Count', kind: 'count' }, { header: 'Net premium', kind: 'money' }], rows: byType.map(({ key, totals: t }) => [key, t.count, t.netCents]), totals: ['Total', totals.count, totals.netCents] },
+        { title: `Endorsements (${endorsements.length})`, columns: list.columns, rows: list.rows, totals: list.totals },
+        ...(allCancellations.length ? [{ title: `Cancelled policies (${cancellations.length})`, columns: canc.columns, rows: canc.rows }] : []),
+      ],
+    };
+  };
   const filtersActive = period.changed || !!agent || sign !== 'all';
 
   return (
@@ -240,6 +270,10 @@ export function EndorsementReportsPanel() {
               </select>
             </div>
           </div>
+          <div className="-mt-1 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs text-[var(--color-ink-500)]">The whole tab, as filtered:</span>
+            <DownloadButtons report={fullReport} disabled={endorsements.length === 0 && cancellations.length === 0} testId="qq-full-download" />
+          </div>
           {filtersActive && (
             <button type="button" className="-mt-2 w-fit cursor-pointer text-xs font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => { period.reset(); setAgent(''); setSign('all'); }}>
               Clear filters
@@ -256,8 +290,8 @@ export function EndorsementReportsPanel() {
             <Stat label="Producer commission" value={signed(producerTotal)} note="Agency commission × the agent’s split" />
           </dl>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-            <Card className="lg:col-span-3">
+          <div className="grid grid-cols-1 gap-4">
+            <Card>
               <CardHeader className="pb-3"><div><h3 className="text-sm font-semibold text-[var(--color-ink-900)]">By agent</h3></div></CardHeader>
               <CardBody className="overflow-x-auto p-0">
                 <table className="w-full text-left text-sm" data-testid="qq-by-agent">
@@ -277,7 +311,30 @@ export function EndorsementReportsPanel() {
                       <tr key={key}>
                         <td className={td}>
                           <button type="button" className="cursor-pointer text-left font-medium text-[var(--color-brand-800)] hover:underline" onClick={() => setAgent(key === agent ? '' : key)}>{key}</button>
-                          <span className="block text-[11px] text-[var(--color-ink-400)]">{m.split === null ? 'Split not set in RenewalIQ' : `Split ${pct(m.split)}`}</span>
+                          {m.linked ? (
+                            <span className="block text-[11px] text-[var(--color-ink-400)]">
+                              {m.split === null ? 'Split not set in Team and Partners' : `Split ${pct(m.split)}`}
+                              {m.qqNames.some((n) => displayName(n) !== key) && <> · QQ: {m.qqNames.map(displayName).join(', ')}</>}
+                            </span>
+                          ) : (
+                            <select
+                              aria-label={`RenewalIQ agent for ${key}`}
+                              className="mt-0.5 block max-w-[180px] cursor-pointer rounded border border-[var(--color-ink-200)] bg-white px-1 py-0.5 text-[11px] text-[var(--color-brand-700)]"
+                              value=""
+                              onChange={async (e) => {
+                                if (!agencyId || !e.target.value) return;
+                                const userId = e.target.value;
+                                for (const n of m.qqNames) {
+                                  const res = await setQqAgentLink(agencyId, qqNameKey(n), userId);
+                                  if (!res.ok) return setMessage(res.message);
+                                }
+                                setLinks((cur) => ({ ...cur, ...Object.fromEntries(m.qqNames.map((n) => [qqNameKey(n), userId])) }));
+                              }}
+                            >
+                              <option value="">Link to RenewalIQ agent…</option>
+                              {members.map((mm) => <option key={mm.userId} value={mm.userId}>{mm.name}</option>)}
+                            </select>
+                          )}
                         </td>
                         <td className={cn(td, num)}>{t.count}{t.noChargeCount ? <span className="ml-1 text-xs text-[var(--color-ink-400)]">({t.noChargeCount} at $0)</span> : null}</td>
                         <td className={cn(td, num, 'text-[var(--color-success-600)]')}>{signed(t.addedCents)}</td>
@@ -288,10 +345,21 @@ export function EndorsementReportsPanel() {
                       </tr>
                     ); })}
                   </tbody>
+                  <tfoot className="font-semibold">
+                    <tr>
+                      <td className={td}>Total</td>
+                      <td className={cn(td, num)}>{totals.count}</td>
+                      <td className={cn(td, num, 'text-[var(--color-success-600)]')}>{signed(totals.addedCents)}</td>
+                      <td className={cn(td, num, totals.returnedCents < 0 && 'text-[var(--color-danger-600)]')}>{signed(totals.returnedCents)}</td>
+                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
+                      <td className={cn(td, num)}>{signed(agencyTotal)}</td>
+                      <td className={cn(td, num)}>{signed(producerTotal)}</td>
+                    </tr>
+                  </tfoot>
                 </table>
               </CardBody>
             </Card>
-            <Card className="lg:col-span-2">
+            <Card className="lg:max-w-2xl">
               <CardHeader className="pb-3"><div><h3 className="text-sm font-semibold text-[var(--color-ink-900)]">By type</h3><p className="mt-0.5 text-xs text-[var(--color-ink-500)]">From each endorsement’s description.</p></div></CardHeader>
               <CardBody className="overflow-x-auto p-0">
                 <table className="w-full text-left text-sm" data-testid="qq-by-type">
@@ -311,6 +379,13 @@ export function EndorsementReportsPanel() {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot className="font-semibold">
+                    <tr>
+                      <td className={td}>Total</td>
+                      <td className={cn(td, num)}>{totals.count}</td>
+                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
+                    </tr>
+                  </tfoot>
                 </table>
               </CardBody>
             </Card>
@@ -347,7 +422,7 @@ export function EndorsementReportsPanel() {
                         <td className={cn(td, 'min-w-[220px] max-w-[360px] text-xs text-[var(--color-ink-600)]')}>
                           <span className="line-clamp-3 whitespace-pre-line" title={r.description}>{r.description}</span>
                         </td>
-                        <td className={cn(td, 'whitespace-nowrap text-[var(--color-ink-700)]')}>{displayName(r.agent)}</td>
+                        <td className={cn(td, 'whitespace-nowrap text-[var(--color-ink-700)]')}>{agentLabel(r.agent)}</td>
                         <td className={cn(td, num, 'font-semibold', r.amountCents > 0 ? 'text-[var(--color-success-600)]' : r.amountCents < 0 ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-500)]')}>{signed(r.amountCents)}</td>
                         {(() => {
                           const m = money(r);
@@ -370,6 +445,14 @@ export function EndorsementReportsPanel() {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot className="font-semibold">
+                    <tr>
+                      <td className={td} colSpan={5}>Total ({endorsements.length}{endorsements.length > shown ? `, ${shown} shown` : ''})</td>
+                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
+                      <td className={cn(td, num)}>{signed(agencyTotal)}</td>
+                      <td className={cn(td, num)}>{signed(producerTotal)}</td>
+                    </tr>
+                  </tfoot>
                 </table>
               )}
               {endorsements.length > shown && (
@@ -419,6 +502,11 @@ export function EndorsementReportsPanel() {
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot className="font-semibold">
+                      <tr>
+                        <td className={td} colSpan={5}>Total: {cancellations.length} cancelled {cancellations.length === 1 ? 'policy' : 'policies'}{early ? ` · ${early} within ${EARLY_DAYS} days` : ''}</td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </CardBody>
               </Card>

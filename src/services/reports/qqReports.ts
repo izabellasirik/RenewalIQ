@@ -282,3 +282,32 @@ export function withRowKeys<T extends EndorsementRow>(rows: T[]): (T & { rowKey:
 
 /** premium × rate, rounded to cents (each line rounded, as the statements do). */
 export const commissionCents = (cents: number, rate: number) => Math.round(cents * rate);
+
+// ---------------------------------------------------------------------------
+// Which RenewalIQ agent a QQCatalyst agent name is
+// ---------------------------------------------------------------------------
+
+const nameTokens = (s: string) => s.toLowerCase().replace(/[^\p{L}\s'-]/gu, ' ').split(/\s+/).filter(Boolean);
+/** The key a link is saved under ("DENIS  PAK" and "Denis Pak" are one name). */
+export const qqNameKey = (s: string) => nameTokens(s).join(' ');
+
+/**
+ * The agent a QQCatalyst name belongs to: a link an admin set; else the same name; else the one agent
+ * whose RenewalIQ name is part of it ("Denis" in "DENIS PAK"); else the one agent with that first name.
+ * Null when it isn't clear — an admin links it.
+ */
+export function matchQqAgent(qqName: string, members: { userId: string; name: string }[], links: Record<string, string>): string | null {
+  const key = qqNameKey(qqName);
+  if (!key) return null;
+  if (links[key] && members.some((m) => m.userId === links[key])) return links[key];
+  const tokens = key.split(' ');
+  const exact = members.filter((m) => qqNameKey(m.name) === key);
+  if (exact.length === 1) return exact[0].userId;
+  const within = members.filter((m) => {
+    const t = nameTokens(m.name);
+    return t.length > 0 && t.every((w) => tokens.includes(w));
+  });
+  if (within.length === 1) return within[0].userId;
+  const first = members.filter((m) => nameTokens(m.name)[0] === tokens[0]);
+  return first.length === 1 ? first[0].userId : null;
+}

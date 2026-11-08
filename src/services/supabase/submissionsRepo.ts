@@ -243,6 +243,8 @@ function normalizeItems(value: unknown, accountId: string): MissingItem[] | unde
 const PAGE_RETRY_DELAYS_MS = [700, 2_000];
 /** Tables loaded at once at sign-in — all nine at the same moment could fill the database's connection pool. */
 const TABLES_AT_ONCE = 3;
+/** Pages of one big table asked for at once (after its first page). */
+const PAGES_AT_ONCE = 2;
 
 async function inBatches<T, R>(items: T[], size: number, run: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -258,31 +260,39 @@ async function inBatches<T, R>(items: T[], size: number, run: (item: T) => Promi
 
 async function selectAllVisible(table: string, onlySubmissionId?: string) {
   const PAGE = 1000;
-  const rows = [];
-  for (let from = 0; ; from += PAGE) {
-    const page = () => {
-      let q = supabase!.from(table).select('*');
-      // One account only: its own row, and its child rows (field_alternates hang off field_values ids "<submission>::…").
-      if (onlySubmissionId) {
-        if (table === 'submissions') q = q.eq('id', onlySubmissionId);
-        else if (table === 'field_alternates') q = q.like('field_value_id', `${onlySubmissionId}::%`);
-        else q = q.eq('submission_id', onlySubmissionId);
-      }
-      // "Matched against N markets" is recomputed on every load and never needed from the cloud —
-      // older versions saved one per account per sign-in, thousands of rows that made loading slow.
-      if (table === 'activity_events') q = q.neq('type', 'matching_run');
-      return q.order('id').range(from, from + PAGE - 1);
-    };
-    let { data, error } = await page();
-    // A busy database (connection pool full) answers with an error now and then: try that page again.
-    for (const wait of PAGE_RETRY_DELAYS_MS) {
-      if (!error) break;
-      await new Promise((r) => setTimeout(r, wait));
-      ({ data, error } = await page());
+  const page = (from: number) => {
+    let q = supabase!.from(table).select('*');
+    // One account only: its own row, and its child rows (field_alternates hang off field_values ids "<submission>::…").
+    if (onlySubmissionId) {
+      if (table === 'submissions') q = q.eq('id', onlySubmissionId);
+      else if (table === 'field_alternates') q = q.like('field_value_id', `${onlySubmissionId}::%`);
+      else q = q.eq('submission_id', onlySubmissionId);
     }
-    if (error) return { data: null, error };
-    rows.push(...(data ?? []));
-    if (!data || data.length < PAGE) return { data: rows, error: null };
+    // "Matched against N markets" is recomputed on every load and never needed from the cloud —
+    // older versions saved one per account per sign-in, thousands of rows that made loading slow.
+    if (table === 'activity_events') q = q.neq('type', 'matching_run');
+    return q.order('id').range(from, from + PAGE - 1);
+  };
+  // A busy database (connection pool full) answers with an error now and then: try that page again.
+  const fetchPage = async (from: number) => {
+    let res = await page(from);
+    for (const wait of PAGE_RETRY_DELAYS_MS) {
+      if (!res.error) break;
+      await new Promise((r) => setTimeout(r, wait));
+      res = await page(from);
+    }
+    return res;
+  };
+  const rows = [];
+  // A big table: the next pages are asked for a few at a time instead of one after another.
+  for (let from = 0; ; ) {
+    const wave = await Promise.all(Array.from({ length: from === 0 ? 1 : PAGES_AT_ONCE }, (_, i) => fetchPage(from + i * PAGE)));
+    for (const { data, error } of wave) {
+      if (error) return { data: null, error };
+      rows.push(...(data ?? []));
+      if (!data || data.length < PAGE) return { data: rows, error: null };
+    }
+    from += wave.length * PAGE;
   }
 }
 
@@ -299,6 +309,25 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
     if (errored?.error) return fail(errored.error.message);
 
     if ((subsRes.data ?? []).some((sub) => 'renewal_label' in sub)) projectHasRenewalLabel = true;
+    // Rows grouped by account (and alternates by field) once — not a scan of every table for every
+    // account, which on a large agency took minutes after the data had arrived.
+    const bySub = <R extends { submission_id?: unknown }>(rows: R[] | null) => {
+      const m = new Map<string, R[]>();
+      for (const r of rows ?? []) {
+        const k = r.submission_id as string;
+        const list = m.get(k);
+        if (list) list.push(r);
+        else m.set(k, [r]);
+      }
+      return (id: string) => m.get(id) ?? [];
+    };
+    const fvOf = bySub(fvRes.data), covOf = bySub(covRes.data), vehOf = bySub(vehRes.data), drvOf = bySub(drvRes.data), lossOf = bySub(lossRes.data), docOf = bySub(docRes.data), actOf = bySub(actRes.data);
+    const altsByField = new Map<string, NonNullable<typeof faRes.data>>();
+    for (const a of faRes.data ?? []) {
+      const list = altsByField.get(a.field_value_id);
+      if (list) list.push(a);
+      else altsByField.set(a.field_value_id, [a]);
+    }
     const bundles: CloudSubmissionBundle[] = (subsRes.data ?? []).map((sub) => {
       const account: Account = {
         id: sub.id,
@@ -332,13 +361,13 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         ...(sub.original_assigned_user_id !== undefined ? { originalAssignedUserId: (sub.original_assigned_user_id as string | null) ?? null } : {}),
       };
 
-      const fvRowsForSub = (fvRes.data ?? []).filter((r) => r.submission_id === sub.id);
+      const fvRowsForSub = fvOf(sub.id);
       const business: Record<string, FieldValue<unknown>> = {};
       const transportation: Record<string, FieldValue<unknown>> = {};
       const coverageLimits: Record<string, { currentLimit?: FieldValue<string>; requestedLimit?: FieldValue<string>; deductible?: FieldValue<string> }> = {};
 
       for (const row of fvRowsForSub) {
-        const alts = (faRes.data ?? []).filter((a) => a.field_value_id === row.id);
+        const alts = altsByField.get(row.id) ?? [];
         const fv = fromFieldValueRow(row, alts);
         if (row.section === 'business') business[row.field_key] = fv;
         else if (row.section === 'transportation') transportation[row.field_key] = fv;
@@ -351,8 +380,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
         }
       }
 
-      const coverage = (covRes.data ?? [])
-        .filter((c) => c.submission_id === sub.id)
+      const coverage = covOf(sub.id)
         .map((c) => ({
           type: c.coverage_type as CoverageType,
           ...(Array.isArray((c.details as { sources?: unknown } | null)?.sources) ? { sources: (c.details as { sources: string[] }).sources } : {}),
@@ -363,15 +391,14 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
 
       // Every field — including ones without their own column — comes back via recordRows (0024 `details`).
       // Rows store only the source document's id; put its file name back so "Source" isn't blank.
-      const docNames = new Map<string, string>((docRes.data ?? []).filter((d) => d.submission_id === sub.id).map((d) => [d.id as string, d.name as string]));
+      const docNames = new Map<string, string>(docOf(sub.id).map((d) => [d.id as string, d.name as string]));
       const withDocName = <T extends { source?: { documentId: string; documentName: string } }>(r: T): T =>
         r.source && !r.source.documentName && docNames.has(r.source.documentId) ? { ...r, source: { ...r.source, documentName: docNames.get(r.source.documentId)! } } : r;
-      const vehicles: VehicleEntry[] = (vehRes.data ?? []).filter((v) => v.submission_id === sub.id).map(vehicleFromRow).map(withDocName);
-      const drivers: DriverEntry[] = (drvRes.data ?? []).filter((d) => d.submission_id === sub.id).map(driverFromRow).map(withDocName);
-      const lossHistory: LossEntry[] = (lossRes.data ?? []).filter((l) => l.submission_id === sub.id).map(lossFromRow).map(withDocName);
+      const vehicles: VehicleEntry[] = vehOf(sub.id).map(vehicleFromRow).map(withDocName);
+      const drivers: DriverEntry[] = drvOf(sub.id).map(driverFromRow).map(withDocName);
+      const lossHistory: LossEntry[] = lossOf(sub.id).map(lossFromRow).map(withDocName);
 
-      const documents: UploadedDocument[] = (docRes.data ?? [])
-        .filter((d) => d.submission_id === sub.id)
+      const documents: UploadedDocument[] = docOf(sub.id)
         .map((d) => ({
           id: d.id,
           accountId: sub.id,
@@ -392,8 +419,7 @@ export async function fetchUserSubmissions(_userId: string, onlySubmissionId?: s
           uploadedAt: d.uploaded_at,
         }));
 
-      const activity: ActivityEvent[] = (actRes.data ?? [])
-        .filter((e) => e.submission_id === sub.id)
+      const activity: ActivityEvent[] = actOf(sub.id)
         .map((e) => ({ id: e.id, accountId: sub.id, type: e.type, message: e.message, timestamp: e.occurred_at, actorId: e.user_id ?? undefined, ...(e.actor_name ? { actorName: e.actor_name as string } : {}), ...(e.details && typeof e.details === 'object' ? { details: e.details as ActivityEvent['details'] } : {}) }))
         .sort((a, b) => (a.timestamp < b.timestamp ? -1 : 1));
 

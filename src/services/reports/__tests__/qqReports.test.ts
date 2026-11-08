@@ -110,3 +110,15 @@ describe('commission on endorsements', () => {
     expect(commissionCents(-6584, 0.3)).toBe(-1975);
   });
 });
+
+describe('QQCatalyst agent names → RenewalIQ agents', () => {
+  it('a link, the same name, a name that is part of it, or a unique first name', async () => {
+    const { matchQqAgent, qqNameKey } = await import('../qqReports');
+    const members = [{ userId: 'd', name: 'Denis' }, { userId: 'l', name: 'Leo' }, { userId: 'v', name: 'Vic Example' }, { userId: 'a1', name: 'Ada One' }, { userId: 'a2', name: 'Ada Two' }];
+    expect(matchQqAgent('DENIS PAK', members, {})).toBe('d');
+    expect(matchQqAgent('VIC  EXAMPLE', members, {})).toBe('v');
+    expect(matchQqAgent('Leonid Petrov', members, {})).toBeNull();
+    expect(matchQqAgent('Leonid Petrov', members, { [qqNameKey('LEONID PETROV')]: 'l' })).toBe('l');
+    expect(matchQqAgent('Ada Three', members, {})).toBeNull(); // two Adas: not clear
+  });
+});

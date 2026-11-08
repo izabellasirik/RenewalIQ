@@ -84,3 +84,33 @@ export async function setQqRate(agencyId: string, rowKey: string, rate: number |
     return fail(err as { message?: string }, 'Could not save the rate.');
   }
 }
+
+/** Links an admin set from a QQCatalyst agent name (its key) to a RenewalIQ agent (0094). */
+export async function fetchQqAgentLinks(): Promise<RepoResult<Record<string, string>>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res = await supabase.from('agency_qq_agent_links').select('qq_name, user_id');
+    if (res.error) return { ok: false, message: res.error.message };
+    return { ok: true, data: Object.fromEntries(((res.data ?? []) as { qq_name: string; user_id: string }[]).map((r) => [r.qq_name, r.user_id])) };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+/** Links a QQCatalyst agent name to an agent, or (null) removes the link. */
+export async function setQqAgentLink(agencyId: string, qqName: string, userId: string | null): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res =
+      userId === null
+        ? await supabase.from('agency_qq_agent_links').delete().eq('qq_name', qqName)
+        : await supabase.from('agency_qq_agent_links').upsert({ agency_id: agencyId, qq_name: qqName, user_id: userId }, { onConflict: 'agency_id,qq_name' });
+    if (res.error) {
+      const missing = res.error.code === '42P01' || res.error.code === 'PGRST205' || /agency_qq_agent_links/.test(res.error.message);
+      return { ok: false, message: missing ? 'Linking agents needs database migration 0094_qq_agent_links.sql.' : res.error.message };
+    }
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}

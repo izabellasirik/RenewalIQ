@@ -96,7 +96,9 @@ export function Sidebar({ mobileOpen = false, onNavigate, collapsed = false, onT
   const steps = useWorkflowStatus(account?.id);
   const isAgencyAdmin = useAccountsStore((s) => s.agencyAccess?.role === 'admin');
   // Signed in to the cloud but in no agency: an owner can set one up (brokers join by invitation).
-  const canCreateAgency = useAccountsStore((s) => !!s.currentUserId && !s.agencyAccess && isSupabaseConfigured);
+  // Only once the sign-in load has finished and found no agency — while it's loading, someone already
+  // in an agency must not be offered (and click) "Set up agency".
+  const canCreateAgency = useAccountsStore((s) => !!s.currentUserId && !s.agencyAccess && isSupabaseConfigured && s.cloudHydratedFor === s.currentUserId && s.cloudLoad === 'idle');
   const isReviewer = useIsReviewer();
   const isFounder = useIsFounder();
   const pendingIntake = useAccountsStore((s) => s.pendingIntakeCount);
