@@ -97,36 +97,28 @@ export interface BrokerFeeReportRow {
 }
 
 /** Analytics → Broker fees as shown (admins: partner, agent, agency; an agent: their share). */
+/**
+ * Broker fees. An admin's file (PDF, Excel and CSV alike): bound date, client, policy, partner and what
+ * goes to the partner. An agent's: their share of each broker fee.
+ */
 export function brokerFeesReport(rows: BrokerFeeReportRow[], admin: boolean, from: string, to: string, filters: string[]): Report {
-  const columns: ReportColumn[] = [
-    { header: 'Bound', kind: 'date' },
-    { header: 'Client' },
-    { header: 'Policy' },
-    { header: 'Broker fee', kind: 'money', notInPdf: admin },
-    ...(admin
-      ? [{ header: 'Partner' }, { header: 'To partner', kind: 'money' as const }, { header: 'Agent', notInPdf: true }, { header: 'To agent', kind: 'money' as const, notInPdf: true }, { header: 'From agent commission to partner', kind: 'money' as const, notInPdf: true }, { header: 'Agency keeps', kind: 'money' as const, notInPdf: true }]
-      : [{ header: 'Your share', kind: 'money' as const }, { header: 'From your commission to partner', kind: 'money' as const }]),
-  ];
   const sum = (f: (r: BrokerFeeReportRow) => number) => rows.reduce((n, r) => n + f(r), 0);
+  const toPartner = (r: BrokerFeeReportRow) => (r.partnerCents ? r.partnerCents - r.partnerShortfallCents : null);
+  const columns: ReportColumn[] = admin
+    ? [{ header: 'Bound', kind: 'date' }, { header: 'Client' }, { header: 'Policy' }, { header: 'Partner' }, { header: 'To partner', kind: 'money' }]
+    : [{ header: 'Bound', kind: 'date' }, { header: 'Client' }, { header: 'Policy' }, { header: 'Broker fee', kind: 'money' }, { header: 'Your share', kind: 'money' }, { header: 'From your commission to partner', kind: 'money' }];
   return {
     title: 'Broker fees',
     subtitle: [`Bound date: ${periodText(from, to)}`, ...(filters.length ? [filters.join(' · ')] : []), `${rows.length} ${rows.length === 1 ? 'policy' : 'policies'}`],
     columns,
-    rows: rows.map((r) => [
-      r.boundDate,
-      r.clientName,
-      r.policyNumber ?? '',
-      r.brokerFeeCents,
-      ...(admin
-        ? [r.partnerName ?? '', r.partnerCents ? r.partnerCents - r.partnerShortfallCents : null, r.agentName ?? '', r.agentCents ?? 0, r.partnerShortfallCents ? -r.partnerShortfallCents : null, r.agencyCents ?? 0]
-        : [r.agentCents ?? 0, r.partnerShortfallCents ? -r.partnerShortfallCents : null]),
-    ]),
-    totals: [
-      'Total', '', '', sum((r) => r.brokerFeeCents),
-      ...(admin
-        ? ['', sum((r) => (r.partnerCents ?? 0) - r.partnerShortfallCents), '', sum((r) => r.agentCents ?? 0), -sum((r) => r.partnerShortfallCents) || null, sum((r) => r.agencyCents ?? 0)]
-        : [sum((r) => r.agentCents ?? 0), -sum((r) => r.partnerShortfallCents) || null]),
-    ],
+    rows: rows.map((r) =>
+      admin
+        ? [r.boundDate, r.clientName, r.policyNumber ?? '', r.partnerName ?? '', toPartner(r)]
+        : [r.boundDate, r.clientName, r.policyNumber ?? '', r.brokerFeeCents, r.agentCents ?? 0, r.partnerShortfallCents ? -r.partnerShortfallCents : null]
+    ),
+    totals: admin
+      ? ['Total', '', '', '', sum((r) => toPartner(r) ?? 0)]
+      : ['Total', '', '', sum((r) => r.brokerFeeCents), sum((r) => r.agentCents ?? 0), -sum((r) => r.partnerShortfallCents) || null],
     fileBase: `broker-fees-${slug(`${from || 'all'}-${to || 'all'}`)}-${stamp()}`,
   };
 }

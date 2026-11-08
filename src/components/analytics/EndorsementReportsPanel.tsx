@@ -307,6 +307,15 @@ export function EndorsementReportsPanel() {
                     </tr>
                   </thead>
                   <tbody>
+                    <tr className="bg-[var(--color-ink-50)] font-semibold" data-total-row>
+                      <td className={td}>Total</td>
+                      <td className={cn(td, num)}>{totals.count}</td>
+                      <td className={cn(td, num, 'text-[var(--color-success-600)]')}>{signed(totals.addedCents)}</td>
+                      <td className={cn(td, num, totals.returnedCents < 0 && 'text-[var(--color-danger-600)]')}>{signed(totals.returnedCents)}</td>
+                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
+                      <td className={cn(td, num)}>{signed(agencyTotal)}</td>
+                      <td className={cn(td, num)}>{signed(producerTotal)}</td>
+                    </tr>
                     {byAgent.map(({ key, totals: t }) => { const m = agentMoney(key); return (
                       <tr key={key}>
                         <td className={td}>
@@ -345,17 +354,6 @@ export function EndorsementReportsPanel() {
                       </tr>
                     ); })}
                   </tbody>
-                  <tfoot className="font-semibold">
-                    <tr>
-                      <td className={td}>Total</td>
-                      <td className={cn(td, num)}>{totals.count}</td>
-                      <td className={cn(td, num, 'text-[var(--color-success-600)]')}>{signed(totals.addedCents)}</td>
-                      <td className={cn(td, num, totals.returnedCents < 0 && 'text-[var(--color-danger-600)]')}>{signed(totals.returnedCents)}</td>
-                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
-                      <td className={cn(td, num)}>{signed(agencyTotal)}</td>
-                      <td className={cn(td, num)}>{signed(producerTotal)}</td>
-                    </tr>
-                  </tfoot>
                 </table>
               </CardBody>
             </Card>
@@ -371,6 +369,11 @@ export function EndorsementReportsPanel() {
                     </tr>
                   </thead>
                   <tbody>
+                    <tr className="bg-[var(--color-ink-50)] font-semibold" data-total-row>
+                      <td className={td}>Total</td>
+                      <td className={cn(td, num)}>{totals.count}</td>
+                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
+                    </tr>
                     {byType.map(({ key, totals: t }) => (
                       <tr key={key}>
                         <td className={td}>{key}</td>
@@ -379,13 +382,6 @@ export function EndorsementReportsPanel() {
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="font-semibold">
-                    <tr>
-                      <td className={td}>Total</td>
-                      <td className={cn(td, num)}>{totals.count}</td>
-                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
-                    </tr>
-                  </tfoot>
                 </table>
               </CardBody>
             </Card>
@@ -414,6 +410,12 @@ export function EndorsementReportsPanel() {
                     </tr>
                   </thead>
                   <tbody>
+                    <tr className="bg-[var(--color-ink-50)] font-semibold" data-total-row>
+                      <td className={td} colSpan={5}>Total ({endorsements.length}{endorsements.length > shown ? `, ${shown} shown` : ''})</td>
+                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
+                      <td className={cn(td, num)}>{signed(agencyTotal)}</td>
+                      <td className={cn(td, num)}>{signed(producerTotal)}</td>
+                    </tr>
                     {endorsements.slice(0, shown).map((r, i) => (
                       <tr key={`${endorsementKey(r)}-${i}`} className="align-top">
                         <td className={cn(td, 'whitespace-nowrap text-[var(--color-ink-700)]')}>{formatShortDate(r.date)}</td>
@@ -445,14 +447,6 @@ export function EndorsementReportsPanel() {
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="font-semibold">
-                    <tr>
-                      <td className={td} colSpan={5}>Total ({endorsements.length}{endorsements.length > shown ? `, ${shown} shown` : ''})</td>
-                      <td className={cn(td, num)}>{signed(totals.netCents)}</td>
-                      <td className={cn(td, num)}>{signed(agencyTotal)}</td>
-                      <td className={cn(td, num)}>{signed(producerTotal)}</td>
-                    </tr>
-                  </tfoot>
                 </table>
               )}
               {endorsements.length > shown && (
@@ -502,11 +496,6 @@ export function EndorsementReportsPanel() {
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot className="font-semibold">
-                      <tr>
-                        <td className={td} colSpan={5}>Total: {cancellations.length} cancelled {cancellations.length === 1 ? 'policy' : 'policies'}{early ? ` · ${early} within ${EARLY_DAYS} days` : ''}</td>
-                      </tr>
-                    </tfoot>
                   </table>
                 </CardBody>
               </Card>
