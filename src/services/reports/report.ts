@@ -10,6 +10,8 @@ export type ColumnKind = 'text' | 'money' | 'date' | 'count';
 export interface ReportColumn {
   header: string;
   kind?: ColumnKind;
+  /** Left out of the PDF (kept in CSV and Excel). */
+  notInPdf?: boolean;
 }
 
 /** Money cells are cents; dates are YYYY-MM-DD; null is an empty cell. */
@@ -115,7 +117,11 @@ export function pdfSafe(text: string): string {
 }
 
 /** The table as a landscape PDF: title, filters, a header repeated on every page, totals last, page numbers. */
-export async function reportPdf(r: Report): Promise<Blob> {
+export async function reportPdf(full: Report): Promise<Blob> {
+  const keep = full.columns.map((c) => !c.notInPdf);
+  const r: Report = keep.every(Boolean)
+    ? full
+    : { ...full, columns: full.columns.filter((_c, i) => keep[i]), rows: full.rows.map((row) => row.filter((_c, i) => keep[i])), ...(full.totals ? { totals: full.totals.filter((_c, i) => keep[i]) } : {}) };
   const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
   const doc = await PDFDocument.create();
   doc.setTitle(pdfSafe(r.title));

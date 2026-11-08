@@ -104,7 +104,7 @@ export function brokerFeesReport(rows: BrokerFeeReportRow[], admin: boolean, fro
     { header: 'Policy' },
     { header: 'Broker fee', kind: 'money' },
     ...(admin
-      ? [{ header: 'Partner' }, { header: 'To partner', kind: 'money' as const }, { header: 'Agent' }, { header: 'To agent', kind: 'money' as const }, { header: 'From agent commission to partner', kind: 'money' as const }, { header: 'Agency keeps', kind: 'money' as const }]
+      ? [{ header: 'Partner' }, { header: 'To partner', kind: 'money' as const }, { header: 'Agent', notInPdf: true }, { header: 'To agent', kind: 'money' as const, notInPdf: true }, { header: 'From agent commission to partner', kind: 'money' as const, notInPdf: true }, { header: 'Agency keeps', kind: 'money' as const, notInPdf: true }]
       : [{ header: 'Your share', kind: 'money' as const }, { header: 'From your commission to partner', kind: 'money' as const }]),
   ];
   const sum = (f: (r: BrokerFeeReportRow) => number) => rows.reduce((n, r) => n + f(r), 0);
