@@ -1,3 +1,4 @@
+import { AgencyMarketsNotice } from '../components/appetite/AgencyMarketsNotice';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trackEvent } from '../services/productAnalytics/trackEvent';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -310,6 +311,7 @@ export function MarketFinderPage() {
         and stays put via its own sticky+scroll region, without depending on how long the results
         column gets.
       */}
+      <AgencyMarketsNotice />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[300px_1fr] lg:items-start">
         <div className="lg:col-start-2 lg:row-start-1">
           <div className="flex flex-wrap items-center justify-between gap-3">

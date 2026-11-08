@@ -30,6 +30,7 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           // DBA is genuinely optional for most accounts — a blank value is never a completeness gap
           // (see FieldMapping.neverFlagMissing), so it never appears in What's Missing just because
           // nobody entered one.
+          { targetFieldId: 'legal_entity', targetLabel: 'Legal Entity', riskProfilePath: 'business.legalEntity', required: false, neverFlagMissing: true },
           { targetFieldId: 'dba', targetLabel: 'DBA', riskProfilePath: 'business.dba', required: false, neverFlagMissing: true },
           // One line: street, city, state and ZIP together (fieldMappingEngine composes it from the Risk Profile).
           { targetFieldId: 'address', targetLabel: 'Address', riskProfilePath: 'business.address', required: true },
@@ -54,6 +55,8 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           { targetFieldId: 'commodities_hauled', targetLabel: 'Commodities Hauled', riskProfilePath: 'transportation.commoditiesHauled', required: true },
           { targetFieldId: 'new_venture', targetLabel: 'New Venture', riskProfilePath: 'business.yearsInBusiness', format: formatNewVenture, editable: false },
           { targetFieldId: 'fleet_size', targetLabel: 'Fleet Size', riskProfilePath: 'transportation.fleetSize', required: true },
+          { targetFieldId: 'vehicle_types', targetLabel: 'Vehicle Types', riskProfilePath: 'transportation.vehicleTypes', required: false, neverFlagMissing: true },
+          { targetFieldId: 'driver_count', targetLabel: 'Number of Drivers', riskProfilePath: 'transportation.driverCount', required: false, neverFlagMissing: true },
           { targetFieldId: 'telematics', targetLabel: 'Telematics', riskProfilePath: 'transportation.telematics' },
           { targetFieldId: 'dashcams', targetLabel: 'Dashcams', riskProfilePath: 'transportation.dashcams' },
         ],
@@ -110,6 +113,8 @@ export const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
           { key: 'name', label: 'Driver Name' },
           { key: 'dob', label: 'DOB', format: (e) => ((e as DriverEntry).dob ? formatDateMDY((e as DriverEntry).dob) : '') },
           { key: 'licenseState', label: 'License State' },
+          { key: 'licenseNumber', label: 'License Number' },
+          { key: 'licenseClass', label: 'Class' },
           { key: 'yearsExperience', label: 'Experience', format: (e) => formatExperience(driverExperience(e as DriverEntry)) },
           { key: 'violations', label: 'Violations' },
         ],

@@ -239,8 +239,26 @@ export async function generateApplicationPdf(
   for (const table of plan.tables) {
     // Same rule for itemized sections: drop columns that are empty on every row, and empty rows.
     if (!table.prints) continue;
-    const colWidth = CONTENT_WIDTH / table.columns.length;
-    const usableWidth = colWidth - TABLE_COLUMN_GUTTER;
+    // Column widths from the content: a column is at least as wide as its widest value that must stay
+    // on one line (a VIN, a license number, a date — any single word), and the rest of the page is
+    // shared by how much text each column holds. Equal widths split a 17-character VIN in two.
+    const values = table.rows.map((row) => table.columns.map((col) => printedCellValue(row, col.key)));
+    const minWidths = table.columns.map((col, i) => {
+      const words = values.flatMap((r) => r[i].split(/\s+/)).filter(Boolean);
+      const widest = Math.max(0, ...words.map((w) => font.widthOfTextAtSize(w, TABLE_VALUE_SIZE)), ...col.label.toUpperCase().split(/\s+/).map((w) => bold.widthOfTextAtSize(w, TABLE_LABEL_SIZE)));
+      return widest + TABLE_COLUMN_GUTTER + 1;
+    });
+    const wants = table.columns.map((_col, i) => Math.max(minWidths[i], Math.max(0, ...values.map((r) => font.widthOfTextAtSize(r[i], TABLE_VALUE_SIZE))) + TABLE_COLUMN_GUTTER + 1));
+    const minTotal = minWidths.reduce((a, b) => a + b, 0);
+    const wantTotal = wants.reduce((a, b) => a + b, 0);
+    const colWidths =
+      wantTotal <= CONTENT_WIDTH
+        ? wants.map((w) => w + (CONTENT_WIDTH - wantTotal) / wants.length)
+        : minTotal >= CONTENT_WIDTH
+          ? minWidths.map((w) => (w * CONTENT_WIDTH) / minTotal)
+          : minWidths.map((w, i) => w + ((wants[i] - w) * (CONTENT_WIDTH - minTotal)) / (wantTotal - minTotal));
+    const colX = colWidths.map((_w, i) => MARGIN + colWidths.slice(0, i).reduce((a, b) => a + b, 0));
+    const usable = (i: number) => colWidths[i] - TABLE_COLUMN_GUTTER;
 
     function tableTitle(suffix = '') {
       text(`${table.title.toUpperCase()}${suffix}`, MARGIN, 10, bold, INK_600);
@@ -251,8 +269,8 @@ export async function generateApplicationPdf(
 
     function columnHeaders() {
       table.columns.forEach((col, i) => {
-        const lines = wrapText(bold, col.label.toUpperCase(), TABLE_LABEL_SIZE, usableWidth);
-        drawLines(lines, MARGIN + i * colWidth, y, TABLE_LABEL_SIZE, bold, INK_600, LABEL_LINE_STEP);
+        const lines = wrapText(bold, col.label.toUpperCase(), TABLE_LABEL_SIZE, usable(i));
+        drawLines(lines, colX[i], y, TABLE_LABEL_SIZE, bold, INK_600, LABEL_LINE_STEP);
       });
       y -= 10;
       rule();
@@ -264,7 +282,7 @@ export async function generateApplicationPdf(
 
     function layoutTableRow(rowIndex: number) {
       const row = table.rows[rowIndex];
-      const cellLines = table.columns.map((col) => wrapText(font, printedCellValue(row, col.key), TABLE_VALUE_SIZE, usableWidth));
+      const cellLines = table.columns.map((col, i) => wrapText(font, printedCellValue(row, col.key), TABLE_VALUE_SIZE, usable(i)));
       const lineCount = Math.max(1, ...cellLines.map((l) => l.length));
       const height = lineCount * TABLE_LINE_STEP + TABLE_ROW_BOTTOM_PADDING;
       return { cellLines, height };
@@ -273,7 +291,7 @@ export async function generateApplicationPdf(
     function drawTableRow(laid: ReturnType<typeof layoutTableRow>) {
       const rowTop = y;
       laid.cellLines.forEach((lines, i) => {
-        drawLines(lines, MARGIN + i * colWidth, rowTop, TABLE_VALUE_SIZE, font, INK_900, TABLE_LINE_STEP);
+        drawLines(lines, colX[i], rowTop, TABLE_VALUE_SIZE, font, INK_900, TABLE_LINE_STEP);
       });
       y -= laid.height;
     }

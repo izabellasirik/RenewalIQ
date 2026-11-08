@@ -248,6 +248,8 @@ interface AccountsState {
   loadEffectiveAppetiteRecords: () => Promise<void>;
   /** The agency's own carriers (0023), archived included — what the Carriers admin page edits. Empty outside an agency. */
   agencyCarriers: AgencyCarrier[];
+  /** The agency's own markets couldn't be loaded (database busy, network): Market Finder says so and offers Retry, instead of quietly showing only the built-in markets. Ephemeral. */
+  agencyCarriersFailed: boolean;
   /** Re-reads carrier appetite and re-matches every account that has results, so a carrier change shows everywhere at once. */
   reloadCarrierAppetite: () => Promise<{ ok: boolean; message?: string }>;
   renameAccount: (accountId: string, namedInsured: string) => void;
@@ -914,6 +916,9 @@ export const useAccountsStore = create<AccountsState>()(
         return detectDocumentSignals({ text: read.raw.text, fileName: name, category, results: [...read.results, ...read.review] });
       }
 
+      /** Automatic retries of a failed agency-markets load (then the Retry button). */
+      let carriersRetry = 0;
+      const CARRIERS_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
       /** One sign-in load (see hydrateCloudSubmissions). */
       let hydrating: { userId: string; promise: Promise<void> } | null = null;
       /** Set by hydrateOnce when the accounts couldn't be fetched (database busy, network). */
@@ -922,6 +927,9 @@ export const useAccountsStore = create<AccountsState>()(
       async function hydrateOnce(userId: string): Promise<void> {
         const [result, accessRes] = await Promise.all([cloudRepo.fetchUserSubmissions(userId), cloudRepo.fetchAgencyAccess(userId)]);
         if (get().currentUserId !== userId) return; // signed out / switched user mid-fetch
+        // Who the user is in the agency didn't load: the whole load is tried again (otherwise the
+        // agency's markets and members stay missing for the session).
+        if (!accessRes.ok) hydrateFailed = true;
         if (accessRes.ok) {
           const agencyChanged = get().agencyAccess?.agencyId !== accessRes.data.access?.agencyId;
           set({ agencyAccess: accessRes.data.access, agencyMembers: accessRes.data.members });
@@ -1097,6 +1105,7 @@ export const useAccountsStore = create<AccountsState>()(
       activeAccountId: null,
       effectiveAppetiteRecords: sampleAppetiteRecords,
       agencyCarriers: [],
+      agencyCarriersFailed: false,
 
       createAccount: (namedInsured, state, setup) => {
         const base = ownedByMe(newAccount(namedInsured, state));
@@ -1861,8 +1870,22 @@ export const useAccountsStore = create<AccountsState>()(
         // Built-in carriers → Renewal IQ's approved overrides → the agency's own carrier list.
         const inAgency = !!get().agencyAccess;
         const [result, carriers] = await Promise.all([fetchAppetiteOverrides(), inAgency ? fetchAgencyCarriers() : Promise.resolve(null)]);
+        // The agency's markets didn't load: keep what's in effect (never fall back to the built-in
+        // markets alone, which looked like the agency's markets had been deleted) and try again.
+        if (inAgency && carriers && !carriers.ok) {
+          set({ agencyCarriersFailed: true });
+          if (carriersRetry < CARRIERS_RETRY_DELAYS_MS.length) {
+            const delay = CARRIERS_RETRY_DELAYS_MS[carriersRetry++];
+            setTimeout(() => void get().reloadCarrierAppetite(), delay);
+          }
+          if (get().agencyCarriers.length === 0) return;
+        }
         // Not configured, or a transient fetch failure — keep what's in effect, nothing breaks.
         if (!result.ok && !carriers?.ok) return;
+        if (carriers?.ok) {
+          carriersRetry = 0;
+          set({ agencyCarriersFailed: false });
+        }
         const base = result.ok ? applyOverrides(sampleAppetiteRecords, result.data) : sampleAppetiteRecords;
         const agencyCarriers = carriers?.ok ? carriers.data : inAgency ? get().agencyCarriers : [];
         set({ agencyCarriers, effectiveAppetiteRecords: layerAgencyCarriers(base, agencyCarriers, get().agencyAccess?.agencyName ?? null) });
@@ -3871,6 +3894,7 @@ export const useAccountsStore = create<AccountsState>()(
           agencyCarriers: _agencyCarriers,
           cloudHydratedFor: _cloudHydratedFor,
           cloudLoad: _cloudLoad,
+          agencyCarriersFailed: _agencyCarriersFailed,
           documentRequests: _documentRequests,
           ...rest
         } = state;

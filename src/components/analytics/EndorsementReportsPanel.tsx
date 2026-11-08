@@ -35,6 +35,14 @@ const signed = (cents: number) => (cents > 0 ? `+${formatCents(cents)}` : cents 
 const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(llc|inc|corp|co|ltd)\b/g, '').trim();
 const EARLY_DAYS = 90;
 const LIST_STEP = 50;
+/** Premiums (amounts added), cancellations / returns (negative amounts), or the no-charge ($0) changes. */
+type AmountFilter = 'all' | 'premiums' | 'cancellations' | 'zero';
+const AMOUNT_FILTERS: Record<AmountFilter, { label: string; test: (cents: number) => boolean }> = {
+  all: { label: 'All amounts', test: () => true },
+  premiums: { label: 'Premiums (+)', test: (c) => c > 0 },
+  cancellations: { label: 'Cancellations / returns (−)', test: (c) => c < 0 },
+  zero: { label: 'No charge ($0)', test: (c) => c === 0 },
+};
 const pct = (rate: number) => `${+(rate * 100).toFixed(2)}%`;
 
 function Stat({ label, value, tone, note }: { label: string; value: string; tone?: 'good' | 'bad'; note?: string }) {
@@ -62,6 +70,7 @@ export function EndorsementReportsPanel() {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [agent, setAgent] = useState('');
+  const [sign, setSign] = useState<AmountFilter>('all');
   const [removing, setRemoving] = useState<QqReport | null>(null);
   const [shown, setShown] = useState(LIST_STEP);
   const [rates, setRates] = useState<Record<string, number>>({});
@@ -136,7 +145,7 @@ export function EndorsementReportsPanel() {
   const allCancellations = useMemo(() => mergeReportRows((reports ?? []).filter((r) => r.kind === 'cancellations').map((r) => r.rows as CancellationRow[]), cancellationKey), [reports]);
   const agents = useMemo(() => [...new Set([...allEndorsements.map((r) => displayName(r.agent)), ...allCancellations.map((r) => accountAgent(r.insured))].filter(Boolean))].sort(), [allEndorsements, allCancellations, accountAgent]);
 
-  const endorsements = allEndorsements.filter((r) => inPeriod(r.date) && (!agent || displayName(r.agent) === agent)).sort((a, b) => b.date.localeCompare(a.date));
+  const endorsements = allEndorsements.filter((r) => inPeriod(r.date) && (!agent || displayName(r.agent) === agent) && AMOUNT_FILTERS[sign].test(r.amountCents)).sort((a, b) => b.date.localeCompare(a.date));
   const cancellations = allCancellations.filter((r) => inPeriod(r.cancellationDate) && (!agent || accountAgent(r.insured) === agent)).sort((a, b) => b.cancellationDate.localeCompare(a.cancellationDate));
   const totals = endorsementTotals(endorsements);
   const money = (r: (typeof endorsements)[number]) => {
@@ -156,12 +165,12 @@ export function EndorsementReportsPanel() {
       endorsements.map((r) => ({ date: r.date, client: r.client, type: endorsementType(r.description, r.amountCents), description: r.description, agent: displayName(r.agent), amountCents: r.amountCents, ...money(r) })),
       period.from,
       period.to,
-      agent ? [`Agent: ${agent}`] : []
+      [...(agent ? [`Agent: ${agent}`] : []), ...(sign !== 'all' ? [AMOUNT_FILTERS[sign].label] : [])]
     );
   const byAgent = endorsementsBy(endorsements, (r) => displayName(r.agent));
   const byType = endorsementsBy(endorsements, (r) => endorsementType(r.description, r.amountCents));
   const early = cancellations.filter((r) => daysInForce(r) <= EARLY_DAYS).length;
-  const filtersActive = period.changed || !!agent;
+  const filtersActive = period.changed || !!agent || sign !== 'all';
 
   return (
     <>
@@ -217,16 +226,22 @@ export function EndorsementReportsPanel() {
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
             <PeriodPicker period={period} />
-            <div className="col-span-2">
+            <div>
               <label className={labelClass} htmlFor="qq-agent">Agent</label>
               <select id="qq-agent" className={inputClass} value={agent} onChange={(e) => setAgent(e.target.value)}>
                 <option value="">All agents</option>
                 {agents.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
+            <div>
+              <label className={labelClass} htmlFor="qq-sign">Amount</label>
+              <select id="qq-sign" className={inputClass} value={sign} onChange={(e) => setSign(e.target.value as AmountFilter)}>
+                {(Object.keys(AMOUNT_FILTERS) as AmountFilter[]).map((k) => <option key={k} value={k}>{AMOUNT_FILTERS[k].label}</option>)}
+              </select>
+            </div>
           </div>
           {filtersActive && (
-            <button type="button" className="-mt-2 w-fit cursor-pointer text-xs font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => { period.reset(); setAgent(''); }}>
+            <button type="button" className="-mt-2 w-fit cursor-pointer text-xs font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => { period.reset(); setAgent(''); setSign('all'); }}>
               Clear filters
             </button>
           )}

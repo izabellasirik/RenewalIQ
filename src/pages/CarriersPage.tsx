@@ -1,3 +1,4 @@
+import { AgencyMarketsNotice } from '../components/appetite/AgencyMarketsNotice';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Archive as ArchiveIcon, ArchiveRestore, ArrowLeft, Building2, Pencil, Plus, Search } from 'lucide-react';
 import { Navigate, useNavigate } from 'react-router-dom';
@@ -119,6 +120,7 @@ export function CarriersPage() {
         </>
       }
     >
+      <AgencyMarketsNotice />
       {loadError && <p className="rounded-lg border border-[var(--color-danger-100)] bg-[var(--color-danger-50)] px-3 py-2 text-sm text-[var(--color-danger-700)]">{loadError}</p>}
       {notice && <p className="rounded-lg border border-[var(--color-ink-100)] bg-white px-3 py-2 text-sm text-[var(--color-ink-700)]">{notice}</p>}
       <div className="flex flex-wrap items-end justify-between gap-3">
