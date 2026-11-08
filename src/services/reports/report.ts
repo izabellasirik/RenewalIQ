@@ -254,7 +254,9 @@ export async function reportPdf(full: Report): Promise<Blob> {
     }
     drawRow(header, bold, true);
     body.forEach((row, n) => {
-      if (y - heightOf(row, font) < M + 14) {
+      // The last row before the totals moves to a new page together with them, never leaving the totals alone.
+      const withTotals = !!t.totals && n === body.length - 2 ? heightOf(body[n + 1], bold) + 2 : 0;
+      if (y - heightOf(row, font) - withTotals < M + 14) {
         newPage();
         drawRow(header, bold, true);
       }

@@ -122,3 +122,24 @@ describe('QQCatalyst agent names → RenewalIQ agents', () => {
     expect(matchQqAgent('Ada Three', members, {})).toBeNull(); // two Adas: not clear
   });
 });
+
+describe('cancellation chargebacks', () => {
+  it('match the producer statements to the cent', async () => {
+    const { chargeback } = await import('../qqReports');
+    const row = (effectiveDate: string, cancellationDate: string) => ({ effectiveDate, cancellationDate, insured: 'Sample Freight LLC', expirationDate: null, status: 'Cancelled' });
+    // $5,700, effective Jul 13, cancelled Sep 9: 58 days earned → $4,794.25 back, −$479.43 agency, −$143.83 at a 30% split.
+    expect(chargeback(row('2026-07-13', '2026-09-09'), 570000, 0.1, 0.3)).toEqual({ unearnedDays: 307, unearnedCents: 479425, agencyCents: -47943, producerCents: -14383 });
+    // $4,000, May 9 → Sep 5: 119 days → $2,695.89, −$269.59, −$80.88.
+    expect(chargeback(row('2026-05-09', '2026-09-05'), 400000, 0.1, 0.3)).toEqual({ unearnedDays: 246, unearnedCents: 269589, agencyCents: -26959, producerCents: -8088 });
+    // A full term gives nothing back; an unknown split leaves the producer amount out.
+    expect(chargeback(row('2025-10-16', '2026-10-16'), 400000, 0.1, null)).toEqual({ unearnedDays: 0, unearnedCents: 0, agencyCents: -0, producerCents: null });
+  });
+  it('the premium comes from the one matching policy in RenewalIQ, never a guess', async () => {
+    const { premiumFromPolicies } = await import('../qqReports');
+    const r = { effectiveDate: '2026-07-07', cancellationDate: '2026-10-26', insured: 'PRAIRIE LINE FREIGHT LLC', expirationDate: null, status: 'Cancelled' };
+    const p = (cents: number, extra = {}) => ({ insured: 'Prairie Line Freight, LLC', effectiveDate: '2026-07-07', netPremiumCents: cents, ...extra });
+    expect(premiumFromPolicies(r, [p(570000), p(9900, { endorsement: true })])).toBe(570000);
+    expect(premiumFromPolicies(r, [p(570000), p(320000)])).toBeNull(); // two policies that day
+    expect(premiumFromPolicies(r, [{ ...p(570000), effectiveDate: '2026-07-08' }])).toBeNull();
+  });
+});

@@ -114,3 +114,33 @@ export async function setQqAgentLink(agencyId: string, qqName: string, userId: s
     return { ok: false, message: (err as Error).message };
   }
 }
+
+/** Annual premiums admins entered for cancelled policies (row key → cents, 0095). */
+export async function fetchQqPremiums(): Promise<RepoResult<Record<string, number>>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res = await supabase.from('agency_qq_premiums').select('row_key, premium_cents');
+    if (res.error) return { ok: false, message: res.error.message };
+    return { ok: true, data: Object.fromEntries(((res.data ?? []) as { row_key: string; premium_cents: number | string }[]).map((r) => [r.row_key, Number(r.premium_cents)])) };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+/** Enters or corrects a cancelled policy's premium, or (null) goes back to the one from RenewalIQ. */
+export async function setQqPremium(agencyId: string, rowKey: string, cents: number | null): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res =
+      cents === null
+        ? await supabase.from('agency_qq_premiums').delete().eq('row_key', rowKey)
+        : await supabase.from('agency_qq_premiums').upsert({ agency_id: agencyId, row_key: rowKey, premium_cents: cents }, { onConflict: 'agency_id,row_key' });
+    if (res.error) {
+      const missing = res.error.code === '42P01' || res.error.code === 'PGRST205' || /agency_qq_premiums/.test(res.error.message);
+      return { ok: false, message: missing ? 'Entering premiums needs database migration 0095_qq_cancellation_premiums.sql.' : res.error.message };
+    }
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}

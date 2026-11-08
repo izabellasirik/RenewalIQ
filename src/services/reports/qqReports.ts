@@ -311,3 +311,44 @@ export function matchQqAgent(qqName: string, members: { userId: string; name: st
   const first = members.filter((m) => nameTokens(m.name)[0] === tokens[0]);
   return first.length === 1 ? first[0].userId : null;
 }
+
+// ---------------------------------------------------------------------------
+// Cancellation chargebacks (estimated pro-rata return, as in the producer statements)
+// ---------------------------------------------------------------------------
+
+/** A cancellation's key for its entered premium and its rate (prefixed so it never meets an endorsement's). */
+export const cancellationRowKey = (r: CancellationRow) => `c:${cancellationKey(r)}`;
+
+export interface Chargeback {
+  /** Days of the 365-day term not used: premium × these ÷ 365 goes back to the client. */
+  unearnedDays: number;
+  unearnedCents: number;
+  /** Negative: what the agency gives back. */
+  agencyCents: number;
+  /** Negative: the agent's share of it; null when the agent's split isn't known. */
+  producerCents: number | null;
+}
+
+/**
+ * The statements' rule: 365-day term, the cancellation effective at the start of its date, earned days =
+ * calendar days from the effective date to the cancellation date. Return premium = premium × unearned
+ * days ÷ 365; agency chargeback = return × the agency rate; producer = agency chargeback × split. Each
+ * line rounded to cents.
+ */
+export function chargeback(r: CancellationRow, premiumCents: number, rate: number, split: number | null): Chargeback {
+  const unearnedDays = Math.min(365, Math.max(0, 365 - daysInForce(r)));
+  const unearnedCents = Math.round((premiumCents * unearnedDays) / 365);
+  const agency = Math.round(unearnedCents * rate);
+  return { unearnedDays, unearnedCents, agencyCents: -agency, producerCents: split === null ? null : -Math.round(agency * split) };
+}
+
+/**
+ * The cancelled policy's annual premium from RenewalIQ: the client's one policy (not an endorsement)
+ * starting on that date. Null when there's none — or more than one (APD and liability bound the same
+ * day): the app never guesses, an admin enters it.
+ */
+export function premiumFromPolicies(r: CancellationRow, policies: { insured: string; effectiveDate?: string; netPremiumCents: number; endorsement?: boolean }[]): number | null {
+  const name = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(llc|inc|corp|co|ltd)\b/g, '').trim();
+  const matches = policies.filter((p) => !p.endorsement && p.effectiveDate === r.effectiveDate && name(p.insured) === name(r.insured));
+  return matches.length === 1 ? matches[0].netPremiumCents : null;
+}

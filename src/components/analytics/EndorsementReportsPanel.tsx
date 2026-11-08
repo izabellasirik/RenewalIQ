@@ -11,6 +11,9 @@ import { formatCents } from '../../services/workflow/policies';
 import {
   DEFAULT_AGENCY_RATE,
   cancellationKey,
+  cancellationRowKey,
+  chargeback,
+  premiumFromPolicies,
   commissionCents,
   daysInForce,
   displayName,
@@ -26,7 +29,8 @@ import {
   type CancellationRow,
   type EndorsementRow,
 } from '../../services/reports/qqReports';
-import { addQqReport, deleteQqReport, fetchQqAgentLinks, fetchQqRates, fetchQqReports, setQqAgentLink, setQqRate, type QqReport } from '../../services/supabase/qqReportsRepo';
+import { addQqReport, deleteQqReport, fetchQqAgentLinks, fetchQqPremiums, fetchQqRates, fetchQqReports, setQqAgentLink, setQqPremium, setQqRate, type QqReport } from '../../services/supabase/qqReportsRepo';
+import { centsInput, parseMoneyCents, policyRows } from '../../services/workflow/policies';
 import type { Report } from '../../services/reports/report';
 import { PeriodPicker, usePeriod } from './MoneyPanels';
 import { cn } from '../../utils/cn';
@@ -78,15 +82,19 @@ export function EndorsementReportsPanel() {
   const [shown, setShown] = useState(LIST_STEP);
   const [rates, setRates] = useState<Record<string, number>>({});
   const [links, setLinks] = useState<Record<string, string>>({});
+  const [premiums, setPremiums] = useState<Record<string, number>>({});
+  const [premiumFor, setPremiumFor] = useState<{ rowKey: string; label: string; cents: number | null; fromRenewalIq: number | null } | null>(null);
+  const quotes = useAccountsStore((s) => s.quotes);
   const [rateFor, setRateFor] = useState<{ rowKey: string; label: string; rate: number } | null>(null);
   const agentSplits = useAgentCommissionRates();
   const input = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
     const res = await fetchQqReports();
-    const [r, l] = await Promise.all([fetchQqRates(), fetchQqAgentLinks()]);
+    const [r, l, pr] = await Promise.all([fetchQqRates(), fetchQqAgentLinks(), fetchQqPremiums()]);
     if (r.ok) setRates(r.data);
     if (l.ok) setLinks(l.data);
+    if (pr.ok) setPremiums(pr.data);
     if (res.ok) setReports(res.data);
     else {
       setReports([]);
@@ -135,6 +143,16 @@ export function EndorsementReportsPanel() {
     }
     return (insured: string) => byName.get(normName(insured)) ?? '';
   }, [accounts, members]);
+  // Policies in RenewalIQ (archived clients too): where a cancelled policy's annual premium comes from.
+  const policies = useMemo(
+    () => policyRows(accounts, quotes, { includeArchived: true }).map((r) => ({ insured: r.insured, effectiveDate: r.policy.effectiveDate, netPremiumCents: r.policy.netPremiumCents, endorsement: r.policy.kind === 'endorsement' })),
+    [accounts, quotes]
+  );
+  const splitByName = useCallback((name: string): number | null => {
+    const id = members.find((m) => m.name === name)?.userId;
+    const rate = id ? agentSplits.rates[id] : undefined;
+    return typeof rate === 'number' ? rate : null;
+  }, [members, agentSplits.rates]);
 
   const allEndorsements = useMemo(() => withRowKeys(mergeReportRows((reports ?? []).filter((r) => r.kind === 'endorsements').map((r) => r.rows as EndorsementRow[]), endorsementKey)), [reports]);
   // The RenewalIQ agent behind a QQCatalyst name (a link an admin set, or matched by name — see matchQqAgent),
@@ -178,28 +196,58 @@ export function EndorsementReportsPanel() {
   const byAgent = endorsementsBy(endorsements, (r) => agentLabel(r.agent));
   const byType = endorsementsBy(endorsements, (r) => endorsementType(r.description, r.amountCents));
   const early = cancellations.filter((r) => daysInForce(r) <= EARLY_DAYS).length;
+  /** A cancellation's premium (entered by an admin, else from RenewalIQ) and its estimated chargeback. */
+  const cbOf = (r: CancellationRow) => {
+    const rowKey = cancellationRowKey(r);
+    const fromRenewalIq = premiumFromPolicies(r, policies);
+    const entered = premiums[rowKey];
+    const premiumCents = entered ?? fromRenewalIq;
+    const agentName = accountAgent(r.insured);
+    const rate = rates[rowKey] ?? DEFAULT_AGENCY_RATE;
+    const split = agentName ? splitByName(agentName) : null;
+    return { rowKey, fromRenewalIq, entered: entered !== undefined, premiumCents, agentName, rate, split, cb: premiumCents === null ? null : chargeback(r, premiumCents, rate, split) };
+  };
+  const cbRows = cancellations.map((r) => ({ r, ...cbOf(r) }));
+  const unearnedTotal = cbRows.reduce((n, x) => n + (x.cb?.unearnedCents ?? 0), 0);
+  const agencyCbTotal = cbRows.reduce((n, x) => n + (x.cb?.agencyCents ?? 0), 0);
+  const producerCbTotal = cbRows.reduce((n, x) => n + (x.cb?.producerCents ?? 0), 0);
+  const missingPremiums = cbRows.filter((x) => x.premiumCents === null).length;
+  const producerCbOf = (name: string) => cbRows.filter((x) => x.agentName === name).reduce((n, x) => n + (x.cb?.producerCents ?? 0), 0);
+  // Every agent with endorsements or chargebacks in the period.
+  const agentKeys = [...byAgent.map((a) => a.key), ...[...new Set(cbRows.map((x) => x.agentName).filter((n) => n && !byAgent.some((a) => a.key === n)))]];
   const filterText = [...(agent ? [`Agent: ${agent}`] : []), ...(sign !== 'all' ? [AMOUNT_FILTERS[sign].label] : [])];
   /** Everything on the tab, as filtered: by agent, by type, the endorsements and the cancellations. */
   const fullReport = (): Report => {
     const list = report();
-    const canc = cancellationsReport(cancellations.map((r) => ({ cancellationDate: r.cancellationDate, insured: r.insured, effectiveDate: r.effectiveDate, days: daysInForce(r), agent: accountAgent(r.insured) })), period.from, period.to, filterText);
     return {
       title: 'Endorsement report',
       subtitle: list.subtitle.slice(0, -1),
-      columns: [{ header: 'Agent' }, { header: 'Endorsements', kind: 'count' }, { header: 'Added', kind: 'money' }, { header: 'Returned', kind: 'money' }, { header: 'Net premium', kind: 'money' }, { header: 'Agency commission', kind: 'money' }, { header: 'Producer commission', kind: 'money' }],
-      rows: byAgent.map(({ key, totals: t }) => {
+      columns: [{ header: 'Agent' }, { header: 'Endorsements', kind: 'count' }, { header: 'Added', kind: 'money' }, { header: 'Returned', kind: 'money' }, { header: 'Net premium', kind: 'money' }, { header: 'Agency commission', kind: 'money' }, { header: 'Producer commission', kind: 'money' }, { header: 'Producer chargeback', kind: 'money' }, { header: 'Net producer commission', kind: 'money' }],
+      rows: agentKeys.map((key) => {
+        const t = byAgent.find((a) => a.key === key)?.totals;
         const m = agentMoney(key);
-        return [key, t.count, t.addedCents, t.returnedCents, t.netCents, m.agency, m.producer];
+        const cb = producerCbOf(key);
+        return [key, t?.count ?? 0, t?.addedCents ?? 0, t?.returnedCents ?? 0, t?.netCents ?? 0, m.agency, m.producer, cb || null, m.producer === null && !cb ? null : (m.producer ?? 0) + cb];
       }),
-      totals: ['Total', totals.count, totals.addedCents, totals.returnedCents, totals.netCents, agencyTotal, producerTotal],
+      totals: ['Total', totals.count, totals.addedCents, totals.returnedCents, totals.netCents, agencyTotal, producerTotal, producerCbTotal || null, producerTotal + producerCbTotal],
       fileBase: list.fileBase.replace(/^endorsements-/, 'endorsement-report-'),
       parts: [
         { title: 'By type', columns: [{ header: 'Type' }, { header: 'Count', kind: 'count' }, { header: 'Net premium', kind: 'money' }], rows: byType.map(({ key, totals: t }) => [key, t.count, t.netCents]), totals: ['Total', totals.count, totals.netCents] },
         { title: `Endorsements (${endorsements.length})`, columns: list.columns, rows: list.rows, totals: list.totals },
-        ...(allCancellations.length ? [{ title: `Cancelled policies (${cancellations.length})`, columns: canc.columns, rows: canc.rows }] : []),
+        ...(allCancellations.length ? [cancellationsPart()] : []),
       ],
     };
   };
+  /** The cancellations with their estimated chargebacks, as a table for the files. */
+  const cancellationsPart = () => ({
+    title: `Cancelled policies (${cancellations.length}) — estimated pro-rata return`,
+    columns: [
+      { header: 'Cancelled on', kind: 'date' as const }, { header: 'Client' }, { header: 'Policy start', kind: 'date' as const }, { header: 'Days in force', kind: 'count' as const },
+      { header: 'Annual premium', kind: 'money' as const }, { header: 'Unearned premium', kind: 'money' as const }, { header: 'Agency rate' }, { header: 'Agency chargeback', kind: 'money' as const }, { header: 'Producer chargeback', kind: 'money' as const }, { header: 'Agent' },
+    ],
+    rows: cbRows.map((x) => [x.r.cancellationDate, x.r.insured, x.r.effectiveDate, daysInForce(x.r), x.premiumCents, x.cb?.unearnedCents ?? null, x.cb ? pct(x.rate) : 'premium not entered', x.cb?.agencyCents ?? null, x.cb?.producerCents ?? null, x.agentName]),
+    totals: ['Total', '', '', '', null, unearnedTotal, '', agencyCbTotal, producerCbTotal || null, ''],
+  });
   const filtersActive = period.changed || !!agent || sign !== 'all';
 
   return (
@@ -304,6 +352,8 @@ export function EndorsementReportsPanel() {
                       <th className={cn(th, 'text-right')}>Net</th>
                       <th className={cn(th, 'text-right')}>Agency comm.</th>
                       <th className={cn(th, 'text-right')}>Producer comm.</th>
+                      {allCancellations.length > 0 && <th className={cn(th, 'text-right')}>Producer chargeback</th>}
+                      {allCancellations.length > 0 && <th className={cn(th, 'text-right')}>Net producer</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -315,12 +365,16 @@ export function EndorsementReportsPanel() {
                       <td className={cn(td, num)}>{signed(totals.netCents)}</td>
                       <td className={cn(td, num)}>{signed(agencyTotal)}</td>
                       <td className={cn(td, num)}>{signed(producerTotal)}</td>
+                      {allCancellations.length > 0 && <td className={cn(td, num, producerCbTotal < 0 && 'text-[var(--color-danger-600)]')}>{signed(producerCbTotal)}</td>}
+                      {allCancellations.length > 0 && <td className={cn(td, num)}>{signed(producerTotal + producerCbTotal)}</td>}
                     </tr>
-                    {byAgent.map(({ key, totals: t }) => { const m = agentMoney(key); return (
+                    {agentKeys.map((key) => { const t = byAgent.find((a) => a.key === key)?.totals ?? endorsementTotals([]); const m = agentMoney(key); const cb = producerCbOf(key); return (
                       <tr key={key}>
                         <td className={td}>
                           <button type="button" className="cursor-pointer text-left font-medium text-[var(--color-brand-800)] hover:underline" onClick={() => setAgent(key === agent ? '' : key)}>{key}</button>
-                          {m.linked ? (
+                          {m.qqNames.length === 0 ? (
+                            <span className="block text-[11px] text-[var(--color-ink-400)]">{splitByName(key) === null ? 'Split not set in Team and Partners' : `Split ${pct(splitByName(key)!)}`} · cancellations only</span>
+                          ) : m.linked ? (
                             <span className="block text-[11px] text-[var(--color-ink-400)]">
                               {m.split === null ? 'Split not set in Team and Partners' : `Split ${pct(m.split)}`}
                               {m.qqNames.some((n) => displayName(n) !== key) && <> · QQ: {m.qqNames.map(displayName).join(', ')}</>}
@@ -351,6 +405,8 @@ export function EndorsementReportsPanel() {
                         <td className={cn(td, num, 'font-semibold')}>{signed(t.netCents)}</td>
                         <td className={cn(td, num)}>{signed(m.agency)}</td>
                         <td className={cn(td, num)}>{m.producer === null ? <span className="text-[var(--color-ink-400)]">—</span> : signed(m.producer)}</td>
+                        {allCancellations.length > 0 && <td className={cn(td, num, cb < 0 && 'text-[var(--color-danger-600)]')}>{cb ? signed(cb) : <span className="text-[var(--color-ink-400)]">—</span>}</td>}
+                        {allCancellations.length > 0 && <td className={cn(td, num, 'font-semibold')}>{m.producer === null && !cb ? <span className="text-[var(--color-ink-400)]">—</span> : signed((m.producer ?? 0) + cb)}</td>}
                       </tr>
                     ); })}
                   </tbody>
@@ -462,15 +518,18 @@ export function EndorsementReportsPanel() {
             <p className="text-sm text-[var(--color-ink-500)]">Upload a Cancelled policies report to see cancellations.</p>
           ) : (
             <>
-              <dl className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+              <dl className="grid grid-cols-2 gap-3 lg:grid-cols-5" data-testid="qq-cancel-totals">
                 <Stat label="Cancelled policies" value={String(cancellations.length)} />
                 <Stat label={`Cancelled within ${EARLY_DAYS} days`} value={String(early)} tone={early ? 'bad' : undefined} note="of the policy start" />
+                <Stat label="Unearned premium" value={formatCents(unearnedTotal)} note={missingPremiums ? `${missingPremiums} without a premium yet` : 'what the clients get back'} />
+                <Stat label="Agency chargeback" value={signed(agencyCbTotal)} tone={agencyCbTotal < 0 ? 'bad' : undefined} note={`${pct(DEFAULT_AGENCY_RATE)} of the unearned premium unless set`} />
+                <Stat label="Producer chargeback" value={signed(producerCbTotal)} tone={producerCbTotal < 0 ? 'bad' : undefined} note="from the agents’ commission" />
               </dl>
               <div className="-mb-1 flex justify-end">
                 <DownloadButtons
                   testId="qq-cancel-download"
                   disabled={cancellations.length === 0}
-                  report={() => cancellationsReport(cancellations.map((r) => ({ cancellationDate: r.cancellationDate, insured: r.insured, effectiveDate: r.effectiveDate, days: daysInForce(r), agent: accountAgent(r.insured) })), period.from, period.to, agent ? [`Agent: ${agent}`] : [])}
+                  report={() => ({ ...cancellationsReport([], period.from, period.to, filterText), ...cancellationsPart(), title: 'Cancelled policies — estimated pro-rata return' })}
                 />
               </div>
               <Card>
@@ -482,23 +541,69 @@ export function EndorsementReportsPanel() {
                         <th className={th}>Client</th>
                         <th className={th}>Policy start</th>
                         <th className={cn(th, 'text-right')}>Days in force</th>
+                        <th className={cn(th, 'text-right')}>Annual premium</th>
+                        <th className={cn(th, 'text-right')}>Unearned premium</th>
+                        <th className={cn(th, 'text-right')}>Agency chargeback</th>
+                        <th className={cn(th, 'text-right')}>Producer chargeback</th>
                         <th className={th}>Agent</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {cancellations.map((r, i) => (
-                        <tr key={`${cancellationKey(r)}-${i}`}>
-                          <td className={cn(td, 'whitespace-nowrap')}>{formatShortDate(r.cancellationDate)}</td>
-                          <td className={cn(td, 'text-[var(--color-ink-800)]')}>{r.insured}</td>
-                          <td className={cn(td, 'whitespace-nowrap text-[var(--color-ink-600)]')}>{formatShortDate(r.effectiveDate)}</td>
-                          <td className={cn(td, num, daysInForce(r) <= EARLY_DAYS && 'font-semibold text-[var(--color-danger-600)]')}>{daysInForce(r)}</td>
-                          <td className={cn(td, 'text-[var(--color-ink-700)]')}>{accountAgent(r.insured) || <span className="text-[var(--color-ink-400)]" title="No RenewalIQ account with this name">—</span>}</td>
-                        </tr>
-                      ))}
+                      {cbRows.map((x, i) => {
+                        const r = x.r;
+                        const label = `${r.insured} · started ${formatShortDate(r.effectiveDate)} · cancelled ${formatShortDate(r.cancellationDate)}`;
+                        const edit = () => setPremiumFor({ rowKey: x.rowKey, label, cents: x.premiumCents, fromRenewalIq: x.fromRenewalIq });
+                        return (
+                          <tr key={`${x.rowKey}-${i}`} className="align-top">
+                            <td className={cn(td, 'whitespace-nowrap')}>{formatShortDate(r.cancellationDate)}</td>
+                            <td className={cn(td, 'text-[var(--color-ink-800)]')}>{r.insured}</td>
+                            <td className={cn(td, 'whitespace-nowrap text-[var(--color-ink-600)]')}>{formatShortDate(r.effectiveDate)}</td>
+                            <td className={cn(td, num, daysInForce(r) <= EARLY_DAYS && 'font-semibold text-[var(--color-danger-600)]')}>{daysInForce(r)}</td>
+                            <td className={cn(td, num)} data-testid="qq-premium">
+                              {x.premiumCents === null ? (
+                                <button type="button" onClick={edit} className="cursor-pointer rounded-md border border-[var(--color-ink-200)] bg-white px-2 py-0.5 text-xs font-medium text-[var(--color-brand-700)] hover:bg-[var(--color-ink-50)]">
+                                  Enter premium
+                                </button>
+                              ) : (
+                                <>
+                                  {formatCents(x.premiumCents)}
+                                  <button type="button" onClick={edit} className={cn('mt-0.5 block w-full cursor-pointer text-right text-[11px] hover:underline', x.entered ? 'font-medium text-[var(--color-brand-700)]' : 'text-[var(--color-ink-400)]')}>
+                                    {x.entered ? 'Entered' : 'From RenewalIQ'} · Edit
+                                  </button>
+                                </>
+                              )}
+                              {x.premiumCents === null && <span className="mt-0.5 block text-[11px] text-[var(--color-ink-400)]">{policies.some((p) => !p.endorsement && p.effectiveDate === r.effectiveDate && normName(p.insured) === normName(r.insured)) ? 'more than one policy that day' : 'not in RenewalIQ'}</span>}
+                            </td>
+                            <td className={cn(td, num)}>{x.cb ? formatCents(x.cb.unearnedCents) : <span className="text-[var(--color-ink-400)]">—</span>}</td>
+                            <td className={cn(td, num)}>
+                              {x.cb ? (
+                                <>
+                                  <span className={cn(x.cb.agencyCents < 0 && 'text-[var(--color-danger-600)]')}>{signed(x.cb.agencyCents)}</span>
+                                  <button type="button" onClick={() => setRateFor({ rowKey: x.rowKey, label, rate: x.rate })} className={cn('mt-0.5 block w-full cursor-pointer text-right text-[11px] hover:underline', x.rowKey in rates ? 'font-medium text-[var(--color-brand-700)]' : 'text-[var(--color-ink-400)]')}>
+                                    {pct(x.rate)} · Set rate
+                                  </button>
+                                </>
+                              ) : <span className="text-[var(--color-ink-400)]">—</span>}
+                            </td>
+                            <td className={cn(td, num)}>
+                              {x.cb?.producerCents == null ? <span className="text-[var(--color-ink-400)]">—</span> : (
+                                <>
+                                  <span className={cn(x.cb.producerCents < 0 && 'text-[var(--color-danger-600)]')}>{signed(x.cb.producerCents)}</span>
+                                  <span className="mt-0.5 block text-[11px] text-[var(--color-ink-400)]">split {pct(x.split ?? 0)}</span>
+                                </>
+                              )}
+                            </td>
+                            <td className={cn(td, 'text-[var(--color-ink-700)]')}>{x.agentName || <span className="text-[var(--color-ink-400)]" title="No RenewalIQ account with this name">—</span>}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </CardBody>
               </Card>
+              <p className="text-xs text-[var(--color-ink-500)]">
+                Estimated, as in the producer statements: unearned premium = annual premium × days left ÷ 365; agency chargeback = that × the agency rate; producer chargeback = that × the agent’s split. The carrier’s actual return can differ (short-rate, minimum earned premium).
+              </p>
             </>
           )}
         </>
@@ -507,6 +612,18 @@ export function EndorsementReportsPanel() {
         <EmptyState icon={<FileText size={28} strokeWidth={1.5} />} title="No reports yet" description="Upload a QQCatalyst Endorsements or Cancelled policies report to see it here." />
       )}
 
+      {premiumFor && <PremiumDialog target={premiumFor} onClose={() => setPremiumFor(null)} onSave={async (cents) => {
+        if (!agencyId) return 'Premiums are kept for agencies signed in to the cloud.';
+        const res = await setQqPremium(agencyId, premiumFor.rowKey, cents);
+        if (!res.ok) return res.message;
+        setPremiums((cur) => {
+          const next = { ...cur };
+          if (cents === null) delete next[premiumFor.rowKey];
+          else next[premiumFor.rowKey] = cents;
+          return next;
+        });
+        return null;
+      }} />}
       {rateFor && <RateDialog target={rateFor} onClose={() => setRateFor(null)} onSave={async (rate) => {
         if (!agencyId) return 'Rates are kept for agencies signed in to the cloud.';
         const res = await setQqRate(agencyId, rateFor.rowKey, rate);
@@ -569,6 +686,45 @@ function RateDialog({ target, onClose, onSave }: { target: { label: string; rate
       <p className="mb-3 text-sm text-[var(--color-ink-600)]">{target.label}</p>
       <label className={labelClass} htmlFor="qq-rate">Rate (%)</label>
       <input id="qq-rate" inputMode="decimal" className={inputClass} value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} autoFocus />
+      {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]" role="alert">{error}</p>}
+    </Modal>
+  );
+}
+
+/** Enter or correct a cancelled policy's annual premium (or go back to the one from RenewalIQ). */
+function PremiumDialog({ target, onClose, onSave }: { target: { label: string; cents: number | null; fromRenewalIq: number | null }; onClose: () => void; onSave: (cents: number | null) => Promise<string | null> }) {
+  const [value, setValue] = useState(target.cents === null ? '' : centsInput(target.cents));
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const save = async (cents: number | null) => {
+    setSaving(true);
+    const err = await onSave(cents);
+    setSaving(false);
+    if (err) return setError(err);
+    onClose();
+  };
+  const submit = () => {
+    const cents = parseMoneyCents(value);
+    if (cents === null || Number.isNaN(cents) || cents < 0) return setError('Enter the annual premium, e.g. 5,700.00.');
+    void save(cents);
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Annual premium"
+      footer={
+        <>
+          {target.fromRenewalIq !== null && (
+            <Button variant="secondary" onClick={() => void save(null)} disabled={saving}>Use RenewalIQ’s {formatCents(target.fromRenewalIq)}</Button>
+          )}
+          <Button onClick={submit} disabled={saving}>Save</Button>
+        </>
+      }
+    >
+      <p className="mb-3 text-sm text-[var(--color-ink-600)]">{target.label}</p>
+      <label className={labelClass} htmlFor="qq-premium">Annual policy premium ($)</label>
+      <input id="qq-premium" inputMode="decimal" className={inputClass} value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} placeholder="5,700.00" autoFocus />
       {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]" role="alert">{error}</p>}
     </Modal>
   );
