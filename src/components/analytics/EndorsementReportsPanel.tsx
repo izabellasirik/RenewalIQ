@@ -222,7 +222,7 @@ export function EndorsementReportsPanel() {
     return {
       title: 'Endorsement report',
       subtitle: list.subtitle.slice(0, -1),
-      columns: [{ header: 'Agent' }, { header: 'Endorsements', kind: 'count' }, { header: 'Added', kind: 'money' }, { header: 'Returned', kind: 'money' }, { header: 'Net premium', kind: 'money' }, { header: 'Agency commission', kind: 'money' }, { header: 'Producer commission', kind: 'money' }, { header: 'Producer chargeback', kind: 'money' }, { header: 'Net producer commission', kind: 'money' }],
+      columns: [{ header: 'Agent' }, { header: 'Endorsements', kind: 'count' }, { header: 'Added', kind: 'money' }, { header: 'Returned', kind: 'money' }, { header: 'Net premium', kind: 'money' }, { header: 'Agency commission', kind: 'money' }, { header: 'Agent commission', kind: 'money' }, { header: 'Agent chargeback', kind: 'money' }, { header: 'Net agent commission', kind: 'money' }],
       rows: agentKeys.map((key) => {
         const t = byAgent.find((a) => a.key === key)?.totals;
         const m = agentMoney(key);
@@ -243,7 +243,7 @@ export function EndorsementReportsPanel() {
     title: `Cancelled policies (${cancellations.length}) — estimated pro-rata return`,
     columns: [
       { header: 'Cancelled on', kind: 'date' as const }, { header: 'Client' }, { header: 'Policy start', kind: 'date' as const }, { header: 'Days in force', kind: 'count' as const },
-      { header: 'Annual premium', kind: 'money' as const }, { header: 'Unearned premium', kind: 'money' as const }, { header: 'Agency rate' }, { header: 'Agency chargeback', kind: 'money' as const }, { header: 'Producer chargeback', kind: 'money' as const }, { header: 'Agent' },
+      { header: 'Annual premium', kind: 'money' as const }, { header: 'Unearned premium', kind: 'money' as const }, { header: 'Agency rate' }, { header: 'Agency chargeback', kind: 'money' as const }, { header: 'Agent chargeback', kind: 'money' as const }, { header: 'Agent' },
     ],
     rows: cbRows.map((x) => [x.r.cancellationDate, x.r.insured, x.r.effectiveDate, daysInForce(x.r), x.premiumCents, x.cb?.unearnedCents ?? null, x.cb ? pct(x.rate) : 'premium not entered', x.cb?.agencyCents ?? null, x.cb?.producerCents ?? null, x.agentName]),
     totals: ['Total', '', '', '', null, unearnedTotal, '', agencyCbTotal, producerCbTotal || null, ''],
@@ -335,7 +335,7 @@ export function EndorsementReportsPanel() {
             <Stat label="Premium returned" value={signed(totals.returnedCents)} tone={totals.returnedCents < 0 ? 'bad' : undefined} />
             <Stat label="Net premium" value={signed(totals.netCents)} />
             <Stat label="Agency commission" value={signed(agencyTotal)} note={`${pct(DEFAULT_AGENCY_RATE)} unless set on an endorsement`} />
-            <Stat label="Producer commission" value={signed(producerTotal)} note="Agency commission × the agent’s split" />
+            <Stat label="Agent commission" value={signed(producerTotal)} note="Agency commission × the agent’s split" />
           </dl>
 
           <div className="grid grid-cols-1 gap-4">
@@ -351,9 +351,9 @@ export function EndorsementReportsPanel() {
                       <th className={cn(th, 'text-right')}>Returned</th>
                       <th className={cn(th, 'text-right')}>Net</th>
                       <th className={cn(th, 'text-right')}>Agency comm.</th>
-                      <th className={cn(th, 'text-right')}>Producer comm.</th>
-                      {allCancellations.length > 0 && <th className={cn(th, 'text-right')}>Producer chargeback</th>}
-                      {allCancellations.length > 0 && <th className={cn(th, 'text-right')}>Net producer</th>}
+                      <th className={cn(th, 'text-right')}>Agent comm.</th>
+                      {allCancellations.length > 0 && <th className={cn(th, 'text-right')}>Agent chargeback</th>}
+                      {allCancellations.length > 0 && <th className={cn(th, 'text-right')}>Net agent</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -462,7 +462,7 @@ export function EndorsementReportsPanel() {
                       <th className={th}>Agent</th>
                       <th className={cn(th, 'text-right')}>Premium</th>
                       <th className={cn(th, 'text-right')}>Agency comm.</th>
-                      <th className={cn(th, 'text-right')}>Producer comm.</th>
+                      <th className={cn(th, 'text-right')}>Agent comm.</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -523,7 +523,7 @@ export function EndorsementReportsPanel() {
                 <Stat label={`Cancelled within ${EARLY_DAYS} days`} value={String(early)} tone={early ? 'bad' : undefined} note="of the policy start" />
                 <Stat label="Unearned premium" value={formatCents(unearnedTotal)} note={missingPremiums ? `${missingPremiums} without a premium yet` : 'what the clients get back'} />
                 <Stat label="Agency chargeback" value={signed(agencyCbTotal)} tone={agencyCbTotal < 0 ? 'bad' : undefined} note={`${pct(DEFAULT_AGENCY_RATE)} of the unearned premium unless set`} />
-                <Stat label="Producer chargeback" value={signed(producerCbTotal)} tone={producerCbTotal < 0 ? 'bad' : undefined} note="from the agents’ commission" />
+                <Stat label="Agent chargeback" value={signed(producerCbTotal)} tone={producerCbTotal < 0 ? 'bad' : undefined} note="from the agents’ commission" />
               </dl>
               <div className="-mb-1 flex justify-end">
                 <DownloadButtons
@@ -544,7 +544,7 @@ export function EndorsementReportsPanel() {
                         <th className={cn(th, 'text-right')}>Annual premium</th>
                         <th className={cn(th, 'text-right')}>Unearned premium</th>
                         <th className={cn(th, 'text-right')}>Agency chargeback</th>
-                        <th className={cn(th, 'text-right')}>Producer chargeback</th>
+                        <th className={cn(th, 'text-right')}>Agent chargeback</th>
                         <th className={th}>Agent</th>
                       </tr>
                     </thead>
@@ -602,7 +602,7 @@ export function EndorsementReportsPanel() {
                 </CardBody>
               </Card>
               <p className="text-xs text-[var(--color-ink-500)]">
-                Estimated, as in the producer statements: unearned premium = annual premium × days left ÷ 365; agency chargeback = that × the agency rate; producer chargeback = that × the agent’s split. The carrier’s actual return can differ (short-rate, minimum earned premium).
+                Estimated, as in the agent commission statements: unearned premium = annual premium × days left ÷ 365; agency chargeback = that × the agency rate; agent chargeback = that × the agent’s split. The carrier’s actual return can differ (short-rate, minimum earned premium).
               </p>
             </>
           )}

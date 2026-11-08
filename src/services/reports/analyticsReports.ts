@@ -180,7 +180,7 @@ export function endorsementsReport(rows: EndorsementReportRow[], from: string, t
       { header: 'Endorsement premium', kind: 'money' },
       { header: 'Agency rate' },
       { header: 'Agency commission', kind: 'money' },
-      ...(anyProducer ? [{ header: 'Producer commission', kind: 'money' as const }] : []),
+      ...(anyProducer ? [{ header: 'Agent commission', kind: 'money' as const }] : []),
     ],
     rows: rows.map((r) => [
       r.date, r.client, r.type, r.description.replace(/\n/g, ' '), r.agent, r.amountCents, `${+(r.rate * 100).toFixed(2)}%`, r.agencyCents,
