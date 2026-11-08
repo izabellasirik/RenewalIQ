@@ -102,7 +102,7 @@ export function brokerFeesReport(rows: BrokerFeeReportRow[], admin: boolean, fro
     { header: 'Bound', kind: 'date' },
     { header: 'Client' },
     { header: 'Policy' },
-    { header: 'Broker fee', kind: 'money' },
+    { header: 'Broker fee', kind: 'money', notInPdf: admin },
     ...(admin
       ? [{ header: 'Partner' }, { header: 'To partner', kind: 'money' as const }, { header: 'Agent', notInPdf: true }, { header: 'To agent', kind: 'money' as const, notInPdf: true }, { header: 'From agent commission to partner', kind: 'money' as const, notInPdf: true }, { header: 'Agency keeps', kind: 'money' as const, notInPdf: true }]
       : [{ header: 'Your share', kind: 'money' as const }, { header: 'From your commission to partner', kind: 'money' as const }]),
