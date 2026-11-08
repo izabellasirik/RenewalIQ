@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { BrokerFeesPanel } from '../components/analytics/BrokerFeesPanel';
 import { BarChart3, CheckCircle2, FileWarning, Paperclip, Pencil, Search } from 'lucide-react';
+import { EndorsementReportsPanel } from '../components/analytics/EndorsementReportsPanel';
 import { PageContainer } from '../components/layout/PageContainer';
 import { Badge, Button, Card, CardBody, EmptyState, Modal, Tabs } from '../components/ui';
 import { IncomeExpensesPanel, ProfitLossPanel } from '../components/analytics/MoneyPanels';
@@ -61,7 +62,7 @@ export function PoliciesAnalyticsPage() {
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const isAdmin = agencyAccess?.role === 'admin';
   const [params, setParams] = useSearchParams();
-  const view = isAdmin ? (['pl', 'policies', 'money', 'fees'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : params.get('view') === 'fees' ? 'fees' : 'policies';
+  const view = isAdmin ? (['pl', 'policies', 'money', 'fees', 'reports'].includes(params.get('view') ?? '') ? (params.get('view') as string) : 'pl') : params.get('view') === 'fees' ? 'fees' : 'policies';
   return (
     <PageContainer
       title="Analytics"
@@ -79,6 +80,7 @@ export function PoliciesAnalyticsPage() {
                 { key: 'policies', label: 'Policies & endorsements' },
                 { key: 'money', label: 'Income & expenses' },
                 { key: 'fees', label: 'Broker fees' },
+                { key: 'reports', label: 'Endorsement reports' },
               ]
             : [
                 { key: 'policies', label: 'Policies & endorsements' },
@@ -92,6 +94,7 @@ export function PoliciesAnalyticsPage() {
       {view === 'money' && <IncomeExpensesPanel />}
       {view === 'policies' && <PoliciesPanel />}
       {view === 'fees' && <BrokerFeesPanel admin={isAdmin} />}
+      {view === 'reports' && <EndorsementReportsPanel />}
     </PageContainer>
   );
 }

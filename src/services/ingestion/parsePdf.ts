@@ -39,11 +39,16 @@ export async function parsePdf(file: File, options: ParsePdfOptions = {}): Promi
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
+      // Positions as the page is shown (its rotation applied): a landscape report saved rotated —
+      // QQCatalyst's, many loss runs — otherwise reads column by column instead of row by row.
+      // For an unrotated page this is the same position as before.
+      const viewport = page.getViewport({ scale: 1 });
       const pieces: PdfTextPiece[] = [];
       for (const item of content.items) {
         if (!('str' in item)) continue;
-        const [a, b, , d, x, y] = item.transform as number[];
-        pieces.push({ str: item.str, x, y, width: item.width, height: item.height || Math.hypot(a, b) || Math.abs(d) || 10 });
+        const [a, b, , d] = item.transform as number[];
+        const t = pdfjsLib.Util.transform(viewport.transform, item.transform as number[]) as number[];
+        pieces.push({ str: item.str, x: t[4], y: viewport.height - t[5], width: item.width, height: item.height || Math.hypot(a, b) || Math.abs(d) || 10 });
       }
       const lines = buildLines(pieces, i);
       const text = lines.flatMap(lineTexts).join('\n');
