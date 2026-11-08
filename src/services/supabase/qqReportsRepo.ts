@@ -57,3 +57,30 @@ export async function deleteQqReport(id: string): Promise<RepoResult> {
     return fail(err as { message?: string }, 'Could not delete the report.');
   }
 }
+
+/** Rates admins set on endorsements (row key → rate); the rest use the default. */
+export async function fetchQqRates(): Promise<RepoResult<Record<string, number>>> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res = await supabase.from('agency_qq_rates').select('row_key, rate');
+    if (res.error) return fail(res.error, 'Could not load the rates.');
+    return { ok: true, data: Object.fromEntries(((res.data ?? []) as { row_key: string; rate: number | string }[]).map((r) => [r.row_key, Number(r.rate)])) };
+  } catch (err) {
+    return fail(err as { message?: string }, 'Could not load the rates.');
+  }
+}
+
+/** Sets an endorsement's rate, or (null) goes back to the default. */
+export async function setQqRate(agencyId: string, rowKey: string, rate: number | null): Promise<RepoResult> {
+  if (!supabase) return NOT_CONFIGURED;
+  try {
+    const res =
+      rate === null
+        ? await supabase.from('agency_qq_rates').delete().eq('row_key', rowKey)
+        : await supabase.from('agency_qq_rates').upsert({ agency_id: agencyId, row_key: rowKey, rate }, { onConflict: 'agency_id,row_key' });
+    if (res.error) return fail(res.error, 'Could not save the rate.');
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err as { message?: string }, 'Could not save the rate.');
+  }
+}

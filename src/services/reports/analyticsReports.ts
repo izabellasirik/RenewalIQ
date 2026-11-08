@@ -158,3 +158,54 @@ export function moneyReport(entries: MoneyEntry[], from: string, to: string, fil
     fileBase: `income-and-expenses-${slug(`${from || 'all'}-${to || 'all'}`)}-${stamp()}`,
   };
 }
+
+export interface EndorsementReportRow {
+  date: string;
+  client: string;
+  type: string;
+  description: string;
+  agent: string;
+  amountCents: number;
+  rate: number;
+  agencyCents: number;
+  /** null when the agent's split isn't known. */
+  producerCents: number | null;
+}
+
+/** Analytics → Endorsement reports: exactly the endorsements shown (period and agent filters). */
+export function endorsementsReport(rows: EndorsementReportRow[], from: string, to: string, filters: string[]): Report {
+  const sum = (f: (r: EndorsementReportRow) => number) => rows.reduce((n, r) => n + f(r), 0);
+  const anyProducer = rows.some((r) => r.producerCents !== null);
+  return {
+    title: 'Endorsements',
+    subtitle: [`Effective date: ${periodText(from, to)}`, ...(filters.length ? [filters.join(' · ')] : []), `${rows.length} ${rows.length === 1 ? 'endorsement' : 'endorsements'}`],
+    columns: [
+      { header: 'Date', kind: 'date' },
+      { header: 'Client' },
+      { header: 'Type' },
+      { header: 'Description' },
+      { header: 'Agent' },
+      { header: 'Endorsement premium', kind: 'money' },
+      { header: 'Agency rate' },
+      { header: 'Agency commission', kind: 'money' },
+      ...(anyProducer ? [{ header: 'Producer commission', kind: 'money' as const }] : []),
+    ],
+    rows: rows.map((r) => [
+      r.date, r.client, r.type, r.description.replace(/\n/g, ' '), r.agent, r.amountCents, `${+(r.rate * 100).toFixed(2)}%`, r.agencyCents,
+      ...(anyProducer ? [r.producerCents] : []),
+    ]),
+    totals: ['Total', '', '', '', '', sum((r) => r.amountCents), '', sum((r) => r.agencyCents), ...(anyProducer ? [sum((r) => r.producerCents ?? 0)] : [])],
+    fileBase: `endorsements-${slug(`${from || 'all'}-${to || 'all'}${filters.length ? `-${filters.join('-')}` : ''}`)}-${stamp()}`,
+  };
+}
+
+/** Analytics → Endorsement reports: the cancellations shown. */
+export function cancellationsReport(rows: { cancellationDate: string; insured: string; effectiveDate: string; days: number; agent: string }[], from: string, to: string, filters: string[]): Report {
+  return {
+    title: 'Cancelled policies',
+    subtitle: [`Cancellation date: ${periodText(from, to)}`, ...(filters.length ? [filters.join(' · ')] : []), `${rows.length} ${rows.length === 1 ? 'policy' : 'policies'}`],
+    columns: [{ header: 'Cancelled on', kind: 'date' }, { header: 'Client' }, { header: 'Policy start', kind: 'date' }, { header: 'Days in force', kind: 'count' }, { header: 'Agent' }],
+    rows: rows.map((r) => [r.cancellationDate, r.insured, r.effectiveDate, r.days, r.agent]),
+    fileBase: `cancellations-${slug(`${from || 'all'}-${to || 'all'}${filters.length ? `-${filters.join('-')}` : ''}`)}-${stamp()}`,
+  };
+}

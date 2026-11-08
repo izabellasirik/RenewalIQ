@@ -95,3 +95,18 @@ describe('QQCatalyst Cancelled policies report', () => {
     expect(parseQqReport([line(1, [[36, 'Driver schedule']]), line(1, [[36, 'Name'], [120, 'DOB']])])).toBeNull();
   });
 });
+
+describe('commission on endorsements', () => {
+  it('each row has a stable key (numbered when repeated); agency 10% then the agent split, each rounded', async () => {
+    const { withRowKeys, commissionCents, DEFAULT_AGENCY_RATE } = await import('../qqReports');
+    const row = { amountCents: 185301, date: '2026-09-10', description: 'Add unit (sample)', client: 'Sample Cargo LLC', agent: 'Leo Sample' };
+    const keyed = withRowKeys([row, row, { ...row, amountCents: -65836 }]);
+    expect(keyed[0].rowKey).not.toBe(keyed[1].rowKey);
+    expect(keyed[1].rowKey.endsWith('#2')).toBe(true);
+    // As in the producer statements: $1,853.01 → $185.30 agency → $55.59 at a 30% split; −$658.36 → −$65.84 → −$19.75.
+    expect(commissionCents(185301, DEFAULT_AGENCY_RATE)).toBe(18530);
+    expect(commissionCents(18530, 0.3)).toBe(5559);
+    expect(commissionCents(-65836, DEFAULT_AGENCY_RATE)).toBe(-6584);
+    expect(commissionCents(-6584, 0.3)).toBe(-1975);
+  });
+});

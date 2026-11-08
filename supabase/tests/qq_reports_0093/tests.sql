@@ -43,4 +43,13 @@ select pg_temp.as_user('00000000-0000-0000-0000-00000000000d');
 select pg_temp.check('Q9 nobody else could delete it', (select count(*) = 1 from agency_qq_reports));
 delete from agency_qq_reports where id = (select id from ids where name = 'rep');
 select pg_temp.check('Q10 the admin deletes it', (select count(*) = 0 from agency_qq_reports));
+
+\echo '== rates'
+insert into agency_qq_rates (agency_id, row_key, rate, set_by) values (public.current_agency_id(), 'k1', 0.12, '00000000-0000-0000-0000-00000000000a');
+select pg_temp.check('Q11 an admin sets a rate; who set it is stamped', (select rate = 0.12 and set_by = '00000000-0000-0000-0000-00000000000d' from agency_qq_rates where row_key = 'k1'));
+update agency_qq_rates set rate = 0.08 where row_key = 'k1';
+select pg_temp.check('Q12 the admin changes it', (select rate = 0.08 from agency_qq_rates where row_key = 'k1'));
+select pg_temp.check('Q13 a rate over 100% is refused', pg_temp.refused($$insert into agency_qq_rates (agency_id, row_key, rate) values (public.current_agency_id(), 'k2', 1.5)$$));
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check('Q14 an agent can''t see or set rates', (select count(*) = 0 from agency_qq_rates) and pg_temp.refused($$insert into agency_qq_rates (agency_id, row_key, rate) values (public.current_agency_id(), 'k3', 0.5)$$));
 rollback;

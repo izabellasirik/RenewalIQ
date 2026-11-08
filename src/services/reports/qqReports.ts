@@ -261,3 +261,24 @@ export function mergeReportRows<T>(reports: T[][], key: (r: T) => string): T[] {
   }
   return [...most.values()].flat();
 }
+
+// ---------------------------------------------------------------------------
+// Commission on endorsements (as in the agency's monthly producer statements)
+// ---------------------------------------------------------------------------
+
+/** The agency's commission on an endorsement unless an admin sets another rate for it. */
+export const DEFAULT_AGENCY_RATE = 0.1;
+
+/** Each row's key for its rate: the row itself, numbered when the same row appears more than once. */
+export function withRowKeys<T extends EndorsementRow>(rows: T[]): (T & { rowKey: string })[] {
+  const seen = new Map<string, number>();
+  return rows.map((r) => {
+    const k = endorsementKey(r);
+    const n = (seen.get(k) ?? 0) + 1;
+    seen.set(k, n);
+    return { ...r, rowKey: n === 1 ? k : `${k}#${n}` };
+  });
+}
+
+/** premium × rate, rounded to cents (each line rounded, as the statements do). */
+export const commissionCents = (cents: number, rate: number) => Math.round(cents * rate);

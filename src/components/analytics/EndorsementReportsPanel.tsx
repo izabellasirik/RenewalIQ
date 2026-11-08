@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Trash2, UploadCloud } from 'lucide-react';
-import { Button, Card, CardBody, CardHeader, ConfirmDialog, EmptyState } from '../ui';
+import { Button, Card, CardBody, CardHeader, ConfirmDialog, EmptyState, Modal } from '../ui';
+import { DownloadButtons } from './DownloadButtons';
+import { useAgentCommissionRates } from '../../hooks/useAgentCommission';
+import { cancellationsReport, endorsementsReport } from '../../services/reports/analyticsReports';
 import { inputClass, labelClass } from '../workspace/formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
 import { formatShortDate } from '../../services/workflow/dates';
 import { formatCents } from '../../services/workflow/policies';
 import {
+  DEFAULT_AGENCY_RATE,
   cancellationKey,
+  commissionCents,
   daysInForce,
   displayName,
   endorsementKey,
@@ -15,10 +20,11 @@ import {
   endorsementsBy,
   mergeReportRows,
   parseQqReport,
+  withRowKeys,
   type CancellationRow,
   type EndorsementRow,
 } from '../../services/reports/qqReports';
-import { addQqReport, deleteQqReport, fetchQqReports, type QqReport } from '../../services/supabase/qqReportsRepo';
+import { addQqReport, deleteQqReport, fetchQqRates, fetchQqReports, setQqRate, type QqReport } from '../../services/supabase/qqReportsRepo';
 import { PeriodPicker, usePeriod } from './MoneyPanels';
 import { cn } from '../../utils/cn';
 
@@ -29,6 +35,7 @@ const signed = (cents: number) => (cents > 0 ? `+${formatCents(cents)}` : cents 
 const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\b(llc|inc|corp|co|ltd)\b/g, '').trim();
 const EARLY_DAYS = 90;
 const LIST_STEP = 50;
+const pct = (rate: number) => `${+(rate * 100).toFixed(2)}%`;
 
 function Stat({ label, value, tone, note }: { label: string; value: string; tone?: 'good' | 'bad'; note?: string }) {
   return (
@@ -57,10 +64,15 @@ export function EndorsementReportsPanel() {
   const [agent, setAgent] = useState('');
   const [removing, setRemoving] = useState<QqReport | null>(null);
   const [shown, setShown] = useState(LIST_STEP);
+  const [rates, setRates] = useState<Record<string, number>>({});
+  const [rateFor, setRateFor] = useState<{ rowKey: string; label: string; rate: number } | null>(null);
+  const agentSplits = useAgentCommissionRates();
   const input = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
     const res = await fetchQqReports();
+    const r = await fetchQqRates();
+    if (r.ok) setRates(r.data);
     if (res.ok) setReports(res.data);
     else {
       setReports([]);
@@ -110,13 +122,42 @@ export function EndorsementReportsPanel() {
     return (insured: string) => byName.get(normName(insured)) ?? '';
   }, [accounts, members]);
 
-  const allEndorsements = useMemo(() => mergeReportRows((reports ?? []).filter((r) => r.kind === 'endorsements').map((r) => r.rows as EndorsementRow[]), endorsementKey), [reports]);
+  const allEndorsements = useMemo(() => withRowKeys(mergeReportRows((reports ?? []).filter((r) => r.kind === 'endorsements').map((r) => r.rows as EndorsementRow[]), endorsementKey)), [reports]);
+  // The agent's split (Team and Partners), matched by name: a QQCatalyst agent with a RenewalIQ account.
+  const splitOf = useMemo(() => {
+    const byName = new Map(members.map((m) => [normName(m.name), m.userId]));
+    return (qqAgent: string): number | null => {
+      const id = byName.get(normName(qqAgent));
+      const rate = id ? agentSplits.rates[id] : undefined;
+      return typeof rate === 'number' ? rate : null;
+    };
+  }, [members, agentSplits.rates]);
+  const rateOf = (rowKey: string) => rates[rowKey] ?? DEFAULT_AGENCY_RATE;
   const allCancellations = useMemo(() => mergeReportRows((reports ?? []).filter((r) => r.kind === 'cancellations').map((r) => r.rows as CancellationRow[]), cancellationKey), [reports]);
   const agents = useMemo(() => [...new Set([...allEndorsements.map((r) => displayName(r.agent)), ...allCancellations.map((r) => accountAgent(r.insured))].filter(Boolean))].sort(), [allEndorsements, allCancellations, accountAgent]);
 
   const endorsements = allEndorsements.filter((r) => inPeriod(r.date) && (!agent || displayName(r.agent) === agent)).sort((a, b) => b.date.localeCompare(a.date));
   const cancellations = allCancellations.filter((r) => inPeriod(r.cancellationDate) && (!agent || accountAgent(r.insured) === agent)).sort((a, b) => b.cancellationDate.localeCompare(a.cancellationDate));
   const totals = endorsementTotals(endorsements);
+  const money = (r: (typeof endorsements)[number]) => {
+    const rate = rateOf(r.rowKey);
+    const agencyCents = commissionCents(r.amountCents, rate);
+    const split = splitOf(r.agent);
+    return { rate, agencyCents, split, producerCents: split === null ? null : commissionCents(agencyCents, split) };
+  };
+  const agencyTotal = endorsements.reduce((n, r) => n + money(r).agencyCents, 0);
+  const producerTotal = endorsements.reduce((n, r) => n + (money(r).producerCents ?? 0), 0);
+  const agentMoney = (name: string) => {
+    const rows = endorsements.filter((r) => displayName(r.agent) === name);
+    return { agency: rows.reduce((n, r) => n + money(r).agencyCents, 0), producer: rows.some((r) => money(r).producerCents !== null) ? rows.reduce((n, r) => n + (money(r).producerCents ?? 0), 0) : null, split: rows[0] ? splitOf(rows[0].agent) : null };
+  };
+  const report = () =>
+    endorsementsReport(
+      endorsements.map((r) => ({ date: r.date, client: r.client, type: endorsementType(r.description, r.amountCents), description: r.description, agent: displayName(r.agent), amountCents: r.amountCents, ...money(r) })),
+      period.from,
+      period.to,
+      agent ? [`Agent: ${agent}`] : []
+    );
   const byAgent = endorsementsBy(endorsements, (r) => displayName(r.agent));
   const byType = endorsementsBy(endorsements, (r) => endorsementType(r.description, r.amountCents));
   const early = cancellations.filter((r) => daysInForce(r) <= EARLY_DAYS).length;
@@ -191,12 +232,13 @@ export function EndorsementReportsPanel() {
           )}
 
           <h2 className="mt-2 text-base font-semibold text-[var(--color-ink-900)]">Endorsements</h2>
-          <dl className="grid grid-cols-2 gap-3 lg:grid-cols-5" data-testid="qq-totals">
-            <Stat label="Endorsements" value={String(totals.count)} />
+          <dl className="grid grid-cols-2 gap-3 lg:grid-cols-6" data-testid="qq-totals">
+            <Stat label="Endorsements" value={String(totals.count)} note={totals.noChargeCount ? `${totals.noChargeCount} at $0` : undefined} />
             <Stat label="Premium added" value={signed(totals.addedCents)} tone="good" />
             <Stat label="Premium returned" value={signed(totals.returnedCents)} tone={totals.returnedCents < 0 ? 'bad' : undefined} />
-            <Stat label="Net premium change" value={signed(totals.netCents)} />
-            <Stat label="No-charge changes" value={String(totals.noChargeCount)} note="$0 endorsements" />
+            <Stat label="Net premium" value={signed(totals.netCents)} />
+            <Stat label="Agency commission" value={signed(agencyTotal)} note={`${pct(DEFAULT_AGENCY_RATE)} unless set on an endorsement`} />
+            <Stat label="Producer commission" value={signed(producerTotal)} note="Agency commission × the agent’s split" />
           </dl>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
@@ -211,20 +253,25 @@ export function EndorsementReportsPanel() {
                       <th className={cn(th, 'text-right')}>Added</th>
                       <th className={cn(th, 'text-right')}>Returned</th>
                       <th className={cn(th, 'text-right')}>Net</th>
+                      <th className={cn(th, 'text-right')}>Agency comm.</th>
+                      <th className={cn(th, 'text-right')}>Producer comm.</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {byAgent.map(({ key, totals: t }) => (
+                    {byAgent.map(({ key, totals: t }) => { const m = agentMoney(key); return (
                       <tr key={key}>
                         <td className={td}>
                           <button type="button" className="cursor-pointer text-left font-medium text-[var(--color-brand-800)] hover:underline" onClick={() => setAgent(key === agent ? '' : key)}>{key}</button>
+                          <span className="block text-[11px] text-[var(--color-ink-400)]">{m.split === null ? 'Split not set in RenewalIQ' : `Split ${pct(m.split)}`}</span>
                         </td>
                         <td className={cn(td, num)}>{t.count}{t.noChargeCount ? <span className="ml-1 text-xs text-[var(--color-ink-400)]">({t.noChargeCount} at $0)</span> : null}</td>
                         <td className={cn(td, num, 'text-[var(--color-success-600)]')}>{signed(t.addedCents)}</td>
                         <td className={cn(td, num, t.returnedCents < 0 && 'text-[var(--color-danger-600)]')}>{signed(t.returnedCents)}</td>
                         <td className={cn(td, num, 'font-semibold')}>{signed(t.netCents)}</td>
+                        <td className={cn(td, num)}>{signed(m.agency)}</td>
+                        <td className={cn(td, num)}>{m.producer === null ? <span className="text-[var(--color-ink-400)]">—</span> : signed(m.producer)}</td>
                       </tr>
-                    ))}
+                    ); })}
                   </tbody>
                 </table>
               </CardBody>
@@ -255,7 +302,10 @@ export function EndorsementReportsPanel() {
           </div>
 
           <Card>
-            <CardHeader className="pb-3"><h3 className="text-sm font-semibold text-[var(--color-ink-900)]">All endorsements ({endorsements.length})</h3></CardHeader>
+            <CardHeader className="flex-wrap pb-3">
+              <h3 className="text-sm font-semibold text-[var(--color-ink-900)]">All endorsements ({endorsements.length})</h3>
+              <DownloadButtons report={report} disabled={endorsements.length === 0} testId="qq-download" />
+            </CardHeader>
             <CardBody className="overflow-x-auto p-0">
               {endorsements.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-[var(--color-ink-500)]">No endorsements in this period.</p>
@@ -268,7 +318,9 @@ export function EndorsementReportsPanel() {
                       <th className={th}>Type</th>
                       <th className={th}>Description</th>
                       <th className={th}>Agent</th>
-                      <th className={cn(th, 'text-right')}>Amount</th>
+                      <th className={cn(th, 'text-right')}>Premium</th>
+                      <th className={cn(th, 'text-right')}>Agency comm.</th>
+                      <th className={cn(th, 'text-right')}>Producer comm.</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -282,6 +334,24 @@ export function EndorsementReportsPanel() {
                         </td>
                         <td className={cn(td, 'whitespace-nowrap text-[var(--color-ink-700)]')}>{displayName(r.agent)}</td>
                         <td className={cn(td, num, 'font-semibold', r.amountCents > 0 ? 'text-[var(--color-success-600)]' : r.amountCents < 0 ? 'text-[var(--color-danger-600)]' : 'text-[var(--color-ink-500)]')}>{signed(r.amountCents)}</td>
+                        {(() => {
+                          const m = money(r);
+                          return (
+                            <>
+                              <td className={cn(td, num)} data-testid="qq-agency-comm">
+                                {signed(m.agencyCents)}
+                                <button
+                                  type="button"
+                                  onClick={() => setRateFor({ rowKey: r.rowKey, label: `${r.client} · ${formatShortDate(r.date)} · ${signed(r.amountCents)}`, rate: m.rate })}
+                                  className={cn('mt-0.5 block w-full cursor-pointer text-right text-[11px] hover:underline', r.rowKey in rates ? 'font-medium text-[var(--color-brand-700)]' : 'text-[var(--color-ink-400)]')}
+                                >
+                                  {pct(m.rate)} · Set rate
+                                </button>
+                              </td>
+                              <td className={cn(td, num)}>{m.producerCents === null ? <span className="text-[var(--color-ink-400)]">—</span> : signed(m.producerCents)}</td>
+                            </>
+                          );
+                        })()}
                       </tr>
                     ))}
                   </tbody>
@@ -304,6 +374,13 @@ export function EndorsementReportsPanel() {
                 <Stat label="Cancelled policies" value={String(cancellations.length)} />
                 <Stat label={`Cancelled within ${EARLY_DAYS} days`} value={String(early)} tone={early ? 'bad' : undefined} note="of the policy start" />
               </dl>
+              <div className="-mb-1 flex justify-end">
+                <DownloadButtons
+                  testId="qq-cancel-download"
+                  disabled={cancellations.length === 0}
+                  report={() => cancellationsReport(cancellations.map((r) => ({ cancellationDate: r.cancellationDate, insured: r.insured, effectiveDate: r.effectiveDate, days: daysInForce(r), agent: accountAgent(r.insured) })), period.from, period.to, agent ? [`Agent: ${agent}`] : [])}
+                />
+              </div>
               <Card>
                 <CardBody className="overflow-x-auto p-0">
                   <table className="w-full text-left text-sm" data-testid="qq-cancellations">
@@ -338,6 +415,18 @@ export function EndorsementReportsPanel() {
         <EmptyState icon={<FileText size={28} strokeWidth={1.5} />} title="No reports yet" description="Upload a QQCatalyst Endorsements or Cancelled policies report to see it here." />
       )}
 
+      {rateFor && <RateDialog target={rateFor} onClose={() => setRateFor(null)} onSave={async (rate) => {
+        if (!agencyId) return 'Rates are kept for agencies signed in to the cloud.';
+        const res = await setQqRate(agencyId, rateFor.rowKey, rate);
+        if (!res.ok) return res.message;
+        setRates((cur) => {
+          const next = { ...cur };
+          if (rate === null) delete next[rateFor.rowKey];
+          else next[rateFor.rowKey] = rate;
+          return next;
+        });
+        return null;
+      }} />}
       <ConfirmDialog
         open={!!removing}
         onCancel={() => setRemoving(null)}
@@ -353,5 +442,42 @@ export function EndorsementReportsPanel() {
         confirmLabel="Delete"
       />
     </>
+  );
+}
+
+/** Set the agency commission rate on one endorsement (or go back to the default 10%). */
+function RateDialog({ target, onClose, onSave }: { target: { label: string; rate: number }; onClose: () => void; onSave: (rate: number | null) => Promise<string | null> }) {
+  const [value, setValue] = useState(String(+(target.rate * 100).toFixed(2)));
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const save = async (rate: number | null) => {
+    setSaving(true);
+    const err = await onSave(rate);
+    setSaving(false);
+    if (err) return setError(err);
+    onClose();
+  };
+  const submit = () => {
+    const n = Number(value.replace('%', '').trim());
+    if (!value.trim() || !Number.isFinite(n) || n < 0 || n > 100) return setError('Enter a rate from 0 to 100%.');
+    void save(+(n / 100).toFixed(4));
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Agency commission rate"
+      footer={
+        <>
+          <Button variant="secondary" onClick={() => void save(null)} disabled={saving}>Back to {pct(DEFAULT_AGENCY_RATE)}</Button>
+          <Button onClick={submit} disabled={saving}>Save rate</Button>
+        </>
+      }
+    >
+      <p className="mb-3 text-sm text-[var(--color-ink-600)]">{target.label}</p>
+      <label className={labelClass} htmlFor="qq-rate">Rate (%)</label>
+      <input id="qq-rate" inputMode="decimal" className={inputClass} value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} autoFocus />
+      {error && <p className="mt-2 text-sm text-[var(--color-danger-600)]" role="alert">{error}</p>}
+    </Modal>
   );
 }
