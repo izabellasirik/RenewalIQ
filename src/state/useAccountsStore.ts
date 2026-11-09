@@ -70,7 +70,7 @@ import { matchAllMarkets } from '../services/appetite';
 import { applyOverrides } from '../services/appetite/appetiteFieldKeys';
 import { fetchAppetiteOverrides } from '../services/appetiteUpdates/appetiteUpdateService';
 import { sampleAppetiteRecords } from '../data/carriers';
-import { isDriverRecordDocument, isMvrLicenseRequest, licenseReadReasons, licenseWarnings } from '../services/extraction/licenseReadability';
+import { isAutoLicenseRequest, isDriverRecordDocument, licenseReadReasons, licenseWarnings } from '../services/extraction/licenseReadability';
 import { layerAgencyCarriers, type AgencyCarrier } from '../services/appetite/agencyCarriers';
 import { fetchAgencyCarriers } from '../services/supabase/carriersRepo';
 import { trackAccountUpdated, trackEvent, markAccountDemo } from '../services/productAnalytics/trackEvent';
@@ -841,17 +841,6 @@ export const useAccountsStore = create<AccountsState>()(
         if (attachment.storagePath && isSupabaseConfigured && get().currentUserId) void cloudRepo.deleteDocumentFile(attachment.storagePath);
       }
 
-      /** An unreadable driver license → "Clearer driver license — <who>" on the checklist, saying why, for the normal client request. */
-      function requestClearerLicense(accountId: string, docName: string, reasons: string[], driverName: string | null): void {
-        const who = driverName?.trim() || docName;
-        const [itemId] = get().addMissingItems(accountId, [{ label: `Clearer driver license — ${who}`, type: 'document', newCopyOfReceived: true }]);
-        if (!itemId) return;
-        get().updateMissingItem(accountId, itemId, {
-          instructions: `the copy we have couldn't be read clearly (${reasons.join('; ')}) — please send a clear, well-lit photo of the front`,
-          notes: `Needed because ${docName} could not be read clearly.`,
-        });
-      }
-
       /** The file's SHA-256 on the document (once), so the same file is recognised later. */
       async function noteContentHash(accountId: string, documentId: string, file: Blob) {
         if ((get().documents[accountId] ?? []).find((d) => d.id === documentId)?.contentSha256) return;
@@ -1361,7 +1350,6 @@ export const useAccountsStore = create<AccountsState>()(
                   ),
                 };
               });
-              if (licenseReasons.length) requestClearerLicense(accountId, doc.name, licenseReasons, typeof licenseDriver?.name === 'string' ? licenseDriver.name : null);
               trackEvent('document_processed', { accountId, metadata: { status: readFailed ? 'unreadable' : 'processed' } });
               if (fieldsExtracted > 0) {
                 trackEvent('ai_extraction_completed', { accountId, metadata: { fields: fieldsExtracted, method: visionResult ? 'vision' : 'text' } });
@@ -1387,7 +1375,6 @@ export const useAccountsStore = create<AccountsState>()(
                 },
                 activityLog: appendEvent(s.activityLog, accountId, 'document_processed', sourceUrl ? `Could not access the document linked in ${doc.name}.` : `Could not read ${doc.name}.`),
               }));
-              if (licenseReasons.length) requestClearerLicense(accountId, doc.name, licenseReasons, null);
               syncDocumentToCloud(accountId, doc.id, file);
             });
         });
@@ -3427,10 +3414,10 @@ export const useAccountsStore = create<AccountsState>()(
 
       // The checklist starts empty: the broker adds what they need (one by one or from a template), and
       // items a market asks for are added from Markets & Quotes. Nothing is pre-filled any more.
-      // The checklist isn't pre-filled any more; opening an account only drops "Clearer driver license"
-      // items an earlier version added for MVRs read as licenses, while nobody has acted on them.
+      // The checklist isn't pre-filled any more; opening an account only drops the "Clearer driver
+      // license" items the app used to add on its own, while nobody has acted on them.
       ensureChecklist: (accountId) => {
-        const bogus = (get().missingItems[accountId] ?? []).filter(isMvrLicenseRequest);
+        const bogus = (get().missingItems[accountId] ?? []).filter(isAutoLicenseRequest);
         for (const item of bogus) get().deleteMissingItem(accountId, item.id);
       },
 
@@ -3832,6 +3819,8 @@ export const useAccountsStore = create<AccountsState>()(
             if (get().currentUserId !== userId) return;
             if (!hydrateFailed) {
               set({ cloudLoad: 'idle' });
+              // Checklist items the app used to add on its own, never acted on: gone from every account.
+              for (const [accountId, items] of Object.entries(get().missingItems)) if (items?.some(isAutoLicenseRequest)) get().ensureChecklist(accountId);
               return;
             }
             // The database was busy or the network dropped: try again on its own, a little later each time.

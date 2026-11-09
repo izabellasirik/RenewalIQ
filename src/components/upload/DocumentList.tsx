@@ -97,7 +97,7 @@ export function DocumentList({
                       {licenseReadIssue(doc)!.title}
                     </p>
                     {licenseReadIssue(doc)!.reason && <p className="mt-0.5">Reason: {licenseReadIssue(doc)!.reason}</p>}
-                    <p className="mt-0.5 text-[var(--color-ink-500)]">Nothing was guessed from it. “Clearer driver license” is on the checklist — request it from the client there.</p>
+                    <p className="mt-0.5 text-[var(--color-ink-500)]">Nothing was guessed from it. If you need a clearer copy, add it to the checklist and request it from the client.</p>
                   </div>
                 ) : (
                   doc.warnings &&

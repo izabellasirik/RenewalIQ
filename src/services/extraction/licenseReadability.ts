@@ -35,13 +35,12 @@ export function isDriverRecordDocument(fileName: string, text = ''): boolean {
 }
 
 /**
- * "Clearer driver license" items an earlier version added for MVRs read as licenses — removed while
- * still untouched (never requested or received).
+ * "Clearer driver license" items the app added on its own (they carry its note "Needed because … could
+ * not be read clearly."; one a person adds never does) — removed while nobody has acted on them. The app
+ * no longer adds them: the unreadable license is only flagged on the document.
  */
-export function isMvrLicenseRequest(item: Pick<MissingItem, 'label' | 'status' | 'notes'>): boolean {
-  if (item.status !== 'missing' || !item.label.startsWith('Clearer driver license')) return false;
-  const doc = item.notes?.match(/^Needed because (.+) could not be read clearly\.$/)?.[1];
-  return !!doc && DRIVER_RECORD_NAME.test(doc);
+export function isAutoLicenseRequest(item: Pick<MissingItem, 'label' | 'status' | 'notes'>): boolean {
+  return item.status === 'missing' && item.label.startsWith('Clearer driver license') && /^Needed because .+ could not be read clearly\.$/.test(item.notes ?? '');
 }
 
 /** Why a license needs a clearer copy (empty = it read fine, or it isn't a license). */

@@ -37,11 +37,13 @@ describe('driving records (MVRs) are not licenses', () => {
     expect(licenseReadReasons({ category: 'driver_license', readFailed: false, driver: { name: 'Jordan Avery', licenseNumber: 'T1000001', expirationDate: '2028-01-01' } })).toEqual(['date of birth unreadable']);
   });
 
-  it('old "Clearer driver license" items made from an MVR are recognised; ones acted on or from a real license are kept', async () => {
-    const { isMvrLicenseRequest } = await import('../licenseReadability');
-    const item = (status: 'missing' | 'requested', doc: string) => ({ label: 'Clearer driver license — Jordan Avery', status, notes: `Needed because ${doc} could not be read clearly.` });
-    expect(isMvrLicenseRequest(item('missing', 'Jordan Avery- MVR PULL (3).pdf'))).toBe(true);
-    expect(isMvrLicenseRequest(item('requested', 'Jordan Avery- MVR PULL (3).pdf'))).toBe(false);
-    expect(isMvrLicenseRequest(item('missing', 'license-front.jpg'))).toBe(false);
+  it('"Clearer driver license" items the app added are recognised; ones a person added or that were already requested are kept', async () => {
+    const { isAutoLicenseRequest } = await import('../licenseReadability');
+    const auto = (status: 'missing' | 'requested', doc: string) => ({ label: 'Clearer driver license — Jordan Avery', status, notes: `Needed because ${doc} could not be read clearly.` });
+    expect(isAutoLicenseRequest(auto('missing', 'Jordan Avery- MVR PULL (3).pdf'))).toBe(true);
+    expect(isAutoLicenseRequest(auto('missing', 'license-front.jpg'))).toBe(true);
+    expect(isAutoLicenseRequest(auto('requested', 'license-front.jpg'))).toBe(false);
+    expect(isAutoLicenseRequest({ label: 'Clearer driver license — Jordan Avery', status: 'missing' })).toBe(false);
+    expect(isAutoLicenseRequest({ label: 'Clearer driver license — Jordan Avery', status: 'missing', notes: 'Client said they will send it Monday' })).toBe(false);
   });
 });
