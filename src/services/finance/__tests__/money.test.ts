@@ -128,3 +128,13 @@ describe('profitAndLoss from commission records (0064)', () => {
     expect(pl.premiumNetCents).toBe(1_000_000 + 100_000 - 400_000 + 200_000);
   });
 });
+
+describe('a typo in the year', () => {
+  it('is caught before saving', async () => {
+    const { checkMoneyEntry } = await import('../money');
+    const r = checkMoneyEntry({ kind: 'expense', date: '1909-11-09', category: 'Payroll', description: '', amount: '600', notes: '' });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.errors[0]).toMatch(/Check the year/);
+    expect(checkMoneyEntry({ kind: 'expense', date: '2026-11-09', category: 'Payroll', description: '', amount: '300', notes: '' }).ok).toBe(true);
+  });
+});

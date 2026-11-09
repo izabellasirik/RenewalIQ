@@ -78,6 +78,7 @@ export function checkMoneyEntry(input: MoneyInput): { ok: true; fields: MoneyFie
   const date = normalizeDateKey(input.date.trim() || null);
   if (!input.date.trim()) errors.push('Choose the date.');
   else if (!date) errors.push('The date isn’t a valid date.');
+  else if (date < '2000-01-01' || date > `${new Date().getFullYear() + 2}-12-31`) errors.push(`Check the year — ${date.slice(0, 4)} looks like a typo.`);
   const category = input.category.trim();
   if (!category) errors.push('Choose or type a category.');
   else if (category.length > 80) errors.push('The category is too long.');

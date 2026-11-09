@@ -330,6 +330,8 @@ export function IncomeExpensesPanel() {
   const [editing, setEditing] = useState<MoneyEntry | MoneyKind | null>(null);
   const [removing, setRemoving] = useState<MoneyEntry | null>(null);
   const [error, setError] = useState('');
+  /** A just-saved entry the filters hide — said so, instead of it seeming not to have saved. */
+  const [hiddenSaved, setHiddenSaved] = useState<{ kind: MoneyKind; date: string } | null>(null);
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -407,6 +409,14 @@ export function IncomeExpensesPanel() {
             </div>
           </div>
           {error && <p className="text-sm text-[var(--color-danger-600)]" role="alert">{error}</p>}
+          {hiddenSaved && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="money-saved-hidden">
+              <span>Saved — the {hiddenSaved.kind} dated {formatShortDate(hiddenSaved.date)} isn’t shown because of your filters.</span>
+              <button type="button" className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => { period.reset(); resetFilters(); setHiddenSaved(null); }}>
+                Clear filters
+              </button>
+            </div>
+          )}
 
           <Card>
             <CardBody className="pt-2">
@@ -479,7 +489,14 @@ export function IncomeExpensesPanel() {
           key={typeof editing === 'string' ? editing : editing.id}
           editing={editing}
           onClose={() => setEditing(null)}
-          onSave={(fields, id, files) => money.save(fields, id, files)}
+          onSave={async (fields, id, files) => {
+            const err = await money.save(fields, id, files);
+            if (!err) {
+              const shownNow = (!period.from || fields.date >= period.from) && (!period.to || fields.date <= period.to) && (kind === 'all' || kind === fields.kind) && !search.trim();
+              setHiddenSaved(shownNow ? null : { kind: fields.kind, date: fields.date });
+            }
+            return err;
+          }}
         />
       )}
       <ConfirmDialog
