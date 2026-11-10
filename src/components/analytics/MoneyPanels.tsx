@@ -322,7 +322,7 @@ const sanitizeMoneyView = (saved: Record<string, unknown>) => defined<typeof MON
 export function IncomeExpensesPanel() {
   const period = usePeriod();
   const money = useMoneyEntries(true);
-  const [filters, updateFilters, resetFilters] = useRememberedView('analytics-money', MONEY_VIEW_DEFAULTS, sanitizeMoneyView);
+  const [filters, updateFilters, resetFilters] = useRememberedView('analytics-money-2', MONEY_VIEW_DEFAULTS, sanitizeMoneyView); // -2: everyone's type/search filters reset once (Nov 2026)
   const { kind, search } = filters;
   const setKind = (k: 'all' | MoneyKind) => updateFilters({ kind: k });
   const setSearch = (q: string) => updateFilters({ search: q });
@@ -331,6 +331,8 @@ export function IncomeExpensesPanel() {
   const [removing, setRemoving] = useState<MoneyEntry | null>(null);
   const [error, setError] = useState('');
   /** A just-saved entry the filters hide — said so, instead of it seeming not to have saved. */
+  // Entries with a year far outside today's (e.g. 1909 for 2026): listed whatever the filters, so they can be fixed.
+  const oddDates = money.entries.filter((e) => e.date < '2000-01-01' || e.date > `${new Date().getFullYear() + 2}-12-31`);
   const [hiddenSaved, setHiddenSaved] = useState<{ kind: MoneyKind; date: string } | null>(null);
 
   const shown = useMemo(() => {
@@ -409,6 +411,21 @@ export function IncomeExpensesPanel() {
             </div>
           </div>
           {error && <p className="text-sm text-[var(--color-danger-600)]" role="alert">{error}</p>}
+          {oddDates.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="money-odd-dates">
+              {oddDates.length === 1 ? '1 entry has a date that looks like a typo:' : `${oddDates.length} entries have a date that looks like a typo:`}
+              <ul className="mt-1 flex flex-col gap-0.5">
+                {oddDates.map((e) => (
+                  <li key={e.id}>
+                    {e.category} {formatCents(e.amountCents)} on {formatShortDate(e.date)} —{' '}
+                    <button type="button" className="cursor-pointer font-medium text-[var(--color-brand-700)] hover:underline" onClick={() => setEditing(e)}>
+                      Fix date
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {hiddenSaved && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="money-saved-hidden">
               <span>Saved — the {hiddenSaved.kind} dated {formatShortDate(hiddenSaved.date)} isn’t shown because of your filters.</span>
