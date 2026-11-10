@@ -9,6 +9,7 @@ import { AccountCard } from '../components/dashboard/AccountCard';
 import { HistoryDrawer } from '../components/history/HistoryDrawer';
 import { LocalImportPrompt } from '../components/dashboard/LocalImportPrompt';
 import { CloudLoadNotice } from '../components/dashboard/CloudLoadNotice';
+import { StatusMultiSelect } from '../components/dashboard/StatusMultiSelect';
 import { selectCanManageArchive, useAccountsStore } from '../state/useAccountsStore';
 import { effectiveAccountStage } from '../services/workflow/accountStage';
 import { normalizeDateKey, todayKey } from '../services/workflow/dates';
@@ -22,8 +23,8 @@ import { aBoolean, aString, defined, oneOf } from '../services/preferences/viewP
 
 /** The Accounts filters remembered between visits (per user, on this device). Search and the archived view aren't remembered. */
 interface AccountsView {
-  /** A status, or 'renewal_label': accounts showing the Renewal label (whatever their status). */
-  stage: AccountStage | 'all' | 'renewal_label';
+  /** Statuses shown (any of them), and/or 'renewal_label': accounts showing the Renewal label (whatever their status). Empty = all. */
+  stages: StageChoice[];
   broker: string;
   /** Renewals: being worked now ("due"), or with a renewal date in the next 30 / 60 / 90 days — see accountFilters.ts. */
   renewals: RenewalFilter;
@@ -34,11 +35,16 @@ interface AccountsView {
   /** Cards or a table — each user's choice. */
   layout: 'cards' | 'table';
 }
-const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stage: 'all', broker: ALL_BROKERS, renewals: 'any', bound: 'any', boundFrom: '', boundTo: '', layout: 'cards' };
+type StageChoice = AccountStage | 'renewal_label';
+const STAGE_CHOICES = ['renewal_label', ...ACCOUNT_STAGE_ORDER] as const;
+const ACCOUNTS_VIEW_DEFAULTS: AccountsView = { stages: [], broker: ALL_BROKERS, renewals: 'any', bound: 'any', boundFrom: '', boundTo: '', layout: 'cards' };
 const aDate = (v: unknown): string | undefined => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
 const sanitizeAccountsView = (saved: Record<string, unknown>): Partial<AccountsView> =>
   defined<AccountsView>({
-    stage: oneOf(['all', 'renewal_label', ...ACCOUNT_STAGE_ORDER] as const)(saved.stage),
+    // One status chosen before several could be: kept.
+    stages: Array.isArray(saved.stages)
+      ? (saved.stages.map(oneOf(STAGE_CHOICES)).filter(Boolean) as StageChoice[])
+      : ((s) => (s ? [s] : undefined))(oneOf(STAGE_CHOICES)(saved.stage)),
     broker: aString(saved.broker),
     // The earlier on/off "Renewal within 45 days" / "Upcoming renewals" choice still applies.
     renewals: oneOf(RENEWAL_FILTERS)(saved.renewals) ?? (aBoolean(saved.renewalSoon) ? 'due' : undefined),
@@ -73,8 +79,8 @@ export function DashboardPage() {
   const riskProfiles = useAccountsStore((s) => s.riskProfiles);
   const [search, setSearch] = useState('');
   const [view, updateView] = useRememberedView('accounts', ACCOUNTS_VIEW_DEFAULTS, sanitizeAccountsView);
-  const stageFilter = view.stage;
-  const setStageFilter = (stage: AccountsView['stage']) => updateView({ stage });
+  const stageFilter = view.stages;
+  const setStageFilter = (stages: StageChoice[]) => updateView({ stages });
   const agencyAccess = useAccountsStore((s) => s.agencyAccess);
   const agencyMembers = useAccountsStore((s) => s.agencyMembers);
   // In an agency, "who has this account" is the database assignment (a user id), so an admin filters
@@ -158,7 +164,7 @@ export function DashboardPage() {
     return accounts
       .filter((a) => a.archived === showArchived)
       .filter((a) => a.namedInsured.toLowerCase().includes(search.toLowerCase()))
-      .filter((a) => stageFilter === 'all' || (stageFilter === 'renewal_label' ? renewalLabelOf[a.id] : stageOf[a.id] === stageFilter))
+      .filter((a) => stageFilter.length === 0 || stageFilter.some((s) => (s === 'renewal_label' ? renewalLabelOf[a.id] : stageOf[a.id] === s)))
       // An agent's accounts: assigned to them, or ones they collaborate on (see matchesBroker).
       .filter((a) => matchesBroker(a, brokerFilter, { byAgent }))
       .filter((a) => renewalFilter === 'any' || renewalDates[renewalFilter][a.id] !== undefined)
@@ -182,7 +188,7 @@ export function DashboardPage() {
     for (const a of accounts) if (a.archived === showArchived) counts[stageOf[a.id]] = (counts[stageOf[a.id]] ?? 0) + 1;
     return counts;
   }, [accounts, showArchived, stageOf]);
-  const filtersActive = stageFilter !== 'all' || brokerFilter !== ALL_BROKERS || renewalFilter !== 'any' || boundFilter !== 'any';
+  const filtersActive = stageFilter.length > 0 || brokerFilter !== ALL_BROKERS || renewalFilter !== 'any' || boundFilter !== 'any';
   const clearAll = () => {
     setSearch('');
     // Filters only: Cards / Table stays as chosen.
@@ -263,16 +269,17 @@ export function DashboardPage() {
                 />
               </div>
             )}
-            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as AccountsView['stage'])} className={filterClass} aria-label="Filter by status">
-              <option value="all">All statuses</option>
-              <option value="renewal_label">Renewal ({renewalLabelCount})</option>
-              <option disabled>──────────</option>
-              {ACCOUNT_STAGE_ORDER.map((s) => (
-                <option key={s} value={s}>
-                  {ACCOUNT_STAGE_LABELS[s]} ({stageCounts[s] ?? 0})
-                </option>
-              ))}
-            </select>
+            <StatusMultiSelect
+              className={filterClass}
+              allLabel="All statuses"
+              selected={stageFilter}
+              onChange={(next) => setStageFilter(next as StageChoice[])}
+              options={[
+                { value: 'renewal_label', label: 'Renewal', count: renewalLabelCount },
+                'divider',
+                ...ACCOUNT_STAGE_ORDER.map((s) => ({ value: s, label: ACCOUNT_STAGE_LABELS[s], count: stageCounts[s] ?? 0 })),
+              ]}
+            />
             {showBrokerFilter && (
               <select value={brokerFilter} onChange={(e) => setBrokerFilter(e.target.value)} className={filterClass} aria-label={byAgent ? 'Filter by agent' : 'Filter by assigned agent'}>
                 <option value={ALL_BROKERS}>All agents</option>
