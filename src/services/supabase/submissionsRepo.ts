@@ -243,8 +243,8 @@ function normalizeItems(value: unknown, accountId: string): MissingItem[] | unde
 const PAGE_RETRY_DELAYS_MS = [700, 2_000];
 /** Tables loaded at once at sign-in — all nine at the same moment could fill the database's connection pool. */
 const TABLES_AT_ONCE = 3;
-/** Pages of one big table asked for at once (after its first page). */
-const PAGES_AT_ONCE = 2;
+/** A page that hasn't answered in this long is given up (and tried again). */
+const PAGE_TIMEOUT_MS = 45_000;
 
 async function inBatches<T, R>(items: T[], size: number, run: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -260,7 +260,10 @@ async function inBatches<T, R>(items: T[], size: number, run: (item: T) => Promi
 
 async function selectAllVisible(table: string, onlySubmissionId?: string) {
   const PAGE = 1000;
-  const page = (from: number) => {
+  // Pages by id ("the next 1000 after the last id I got"), not by position: a position-based page
+  // makes the database step over — and check access on — every earlier row first, so the later pages
+  // of a big table got slower and slower until the database cut them off.
+  const page = (afterId: string | null) => {
     let q = supabase!.from(table).select('*');
     // One account only: its own row, and its child rows (field_alternates hang off field_values ids "<submission>::…").
     if (onlySubmissionId) {
@@ -271,28 +274,29 @@ async function selectAllVisible(table: string, onlySubmissionId?: string) {
     // "Matched against N markets" is recomputed on every load and never needed from the cloud —
     // older versions saved one per account per sign-in, thousands of rows that made loading slow.
     if (table === 'activity_events') q = q.neq('type', 'matching_run');
-    return q.order('id').range(from, from + PAGE - 1);
+    if (afterId !== null) q = q.gt('id', afterId);
+    // A request that hangs is given up and tried again, instead of keeping the load waiting forever.
+    q = q.order('id').limit(PAGE);
+    return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? q.abortSignal(AbortSignal.timeout(PAGE_TIMEOUT_MS)) : q;
   };
   // A busy database (connection pool full) answers with an error now and then: try that page again.
-  const fetchPage = async (from: number) => {
-    let res = await page(from);
+  const fetchPage = async (afterId: string | null) => {
+    let res = await page(afterId);
     for (const wait of PAGE_RETRY_DELAYS_MS) {
       if (!res.error) break;
       await new Promise((r) => setTimeout(r, wait));
-      res = await page(from);
+      res = await page(afterId);
     }
     return res;
   };
   const rows = [];
-  // A big table: the next pages are asked for a few at a time instead of one after another.
-  for (let from = 0; ; ) {
-    const wave = await Promise.all(Array.from({ length: from === 0 ? 1 : PAGES_AT_ONCE }, (_, i) => fetchPage(from + i * PAGE)));
-    for (const { data, error } of wave) {
-      if (error) return { data: null, error };
-      rows.push(...(data ?? []));
-      if (!data || data.length < PAGE) return { data: rows, error: null };
-    }
-    from += wave.length * PAGE;
+  for (let afterId: string | null = null; ; ) {
+    const { data, error } = await fetchPage(afterId);
+    if (error) return { data: null, error };
+    const got = data ?? [];
+    rows.push(...got);
+    if (got.length < PAGE) return { data: rows, error: null };
+    afterId = String((got[got.length - 1] as { id: unknown }).id);
   }
 }
 

@@ -26,14 +26,23 @@ const tables: Record<string, Record<string, unknown>[]> = {
   ],
 };
 
+const calls: { table: string; after: string | null }[] = [];
 function query(table: string) {
+  let after: string | null = null;
+  let limit = Infinity;
   const q = {
     select: () => q,
     eq: () => q,
     like: () => q,
     neq: () => q,
     order: () => q,
-    range: (from: number, to: number) => Promise.resolve({ data: (tables[table] ?? []).slice(from, to + 1), error: null }),
+    gt: (_col: string, v: string) => ((after = v), q),
+    limit: (n: number) => ((limit = n), q),
+    abortSignal: () => {
+      calls.push({ table, after });
+      const rows = [...(tables[table] ?? [])].sort((a, b) => String(a.id).localeCompare(String(b.id))).filter((r) => after === null || String(r.id) > after);
+      return Promise.resolve({ data: rows.slice(0, limit), error: null });
+    },
   };
   return q;
 }
@@ -41,6 +50,20 @@ vi.mock('../client', () => ({ isSupabaseConfigured: true, supabase: { from: (t: 
 const { fetchUserSubmissions } = await import('../submissionsRepo');
 
 describe('loading every account at sign-in', () => {
+  it('a big table comes in full, page by page after the last id (never by position)', async () => {
+    const before = tables.activity_events;
+    tables.activity_events = Array.from({ length: 2500 }, (_, i) => ({ id: `e${String(i).padStart(5, '0')}`, submission_id: 's1', type: 'note', message: String(i), occurred_at: '2026-10-01T00:00:00Z' }));
+    calls.length = 0;
+    const res = await fetchUserSubmissions('u1');
+    tables.activity_events = before;
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const ids = res.data[0].activity.map((e) => e.id);
+    expect(ids).toHaveLength(2500);
+    expect(new Set(ids).size).toBe(2500);
+    expect(calls.filter((c) => c.table === 'activity_events').map((c) => c.after)).toEqual([null, 'e00999', 'e01999']);
+  });
+
   it('each account gets exactly its own rows', async () => {
     const res = await fetchUserSubmissions('u1');
     expect(res.ok).toBe(true);
