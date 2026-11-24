@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Paperclip, Pencil, Plus, Search, Trash2, Wallet, X } from 'lucide-react';
+import { FileUp, Paperclip, Pencil, Plus, Search, Trash2, Wallet, X } from 'lucide-react';
+import { ImportStatementDialog } from './ImportStatementDialog';
 import { Button, Card, CardBody, CardHeader, ConfirmDialog, EmptyState, Modal, OverflowMenu } from '../ui';
 import { inputClass, labelClass } from '../workspace/formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -322,6 +323,7 @@ const sanitizeMoneyView = (saved: Record<string, unknown>) => defined<typeof MON
 export function IncomeExpensesPanel() {
   const period = usePeriod();
   const money = useMoneyEntries(true);
+  const [importing, setImporting] = useState(false);
   const [filters, updateFilters, resetFilters] = useRememberedView('analytics-money-2', MONEY_VIEW_DEFAULTS, sanitizeMoneyView); // -2: everyone's type/search filters reset once (Nov 2026)
   const { kind, search } = filters;
   const setKind = (k: 'all' | MoneyKind) => updateFilters({ kind: k });
@@ -402,6 +404,9 @@ export function IncomeExpensesPanel() {
               </div>
             </dl>
             <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" icon={<FileUp size={14} />} onClick={() => setImporting(true)} data-testid="money-import">
+                Import statement
+              </Button>
               <Button variant="secondary" icon={<Plus size={14} />} onClick={() => setEditing('income')}>
                 Add income
               </Button>
@@ -501,6 +506,13 @@ export function IncomeExpensesPanel() {
         </>
       )}
 
+      {importing && (
+        <ImportStatementDialog
+          entries={money.entries}
+          onClose={() => setImporting(false)}
+          onSave={(fields) => money.save(fields, undefined, { kept: [], added: [] })}
+        />
+      )}
       {editing && (
         <MoneyForm
           key={typeof editing === 'string' ? editing : editing.id}
