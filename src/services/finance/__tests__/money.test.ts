@@ -138,3 +138,27 @@ describe('a typo in the year', () => {
     expect(checkMoneyEntry({ kind: 'expense', date: '2026-11-09', category: 'Payroll', description: '', amount: '300', notes: '' }).ok).toBe(true);
   });
 });
+
+describe('a statement imported for a week takes the place of the policies’ amounts', () => {
+  const rows = [
+    row({ id: 'p1', boundDate: '2026-11-17', netPremiumCents: 1_000_000 }), // in the statement's week
+    row({ id: 'p2', boundDate: '2026-11-25', netPremiumCents: 1_000_000 }), // after it
+  ];
+  const carrier = { rateOn: () => 0.1, isSet: () => true };
+  const statement = [
+    entry({ id: 's1', kind: 'income', date: '2026-11-22', category: 'Carrier commission', amountCents: 120_000, coversFrom: '2026-11-16', coversTo: '2026-11-22' }),
+    entry({ id: 's2', kind: 'expense', date: '2026-11-22', category: 'Agent commission', amountCents: 30_000, coversFrom: '2026-11-16', coversTo: '2026-11-22' }),
+  ];
+  const pl = profitAndLoss(statement, rows, { 'agent-a': 0.5 }, '2026-11-01', '2026-11-30', { carrier });
+  it('counts each amount once: the statement for its week, the policies for the other dates', () => {
+    expect(pl.carrierCents).toBe(100_000); // only p2: 10,000 × 10%
+    expect(pl.commissionCents).toBe(50_000);
+    expect(pl.profitCents).toBe(100_000 + 120_000 - 30_000 - 50_000);
+    expect(pl.recordedCarrierEntries).toBe(0);
+  });
+  it('the replaced day keeps its amounts, marked with the statement’s period', () => {
+    const day = pl.byDate.find((d) => d.date === '2026-11-17')!;
+    expect(day).toMatchObject({ carrierCents: 100_000, commissionCents: 50_000, carrierReplacedBy: { from: '2026-11-16', to: '2026-11-22' }, agentReplacedBy: { from: '2026-11-16', to: '2026-11-22' } });
+    expect(pl.byDate.find((d) => d.date === '2026-11-25')!.carrierReplacedBy).toBeNull();
+  });
+});

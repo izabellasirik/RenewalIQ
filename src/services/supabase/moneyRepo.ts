@@ -16,11 +16,14 @@ const fail = (e: { code?: string; message?: string } | unknown, fallback: string
   return { ok: false, message: err?.message ?? fallback };
 };
 
-type Row = { id: string; kind: 'income' | 'expense'; entry_date: string; category: string; description: string; amount_cents: number | string; notes: string; receipts?: unknown; created_at: string; updated_at: string };
+type Row = { id: string; kind: 'income' | 'expense'; entry_date: string; category: string; description: string; amount_cents: number | string; notes: string; receipts?: unknown; covers_from?: string | null; covers_to?: string | null; created_at: string; updated_at: string };
 const BASE_COLUMNS = 'id, kind, entry_date, category, description, amount_cents, notes, created_at, updated_at';
 /** Receipts need 0092; until it's run, entries load and save without them. */
 let receiptsColumn = true;
-const columns = () => (receiptsColumn ? `${BASE_COLUMNS}, receipts` : BASE_COLUMNS);
+/** Statement periods need 0097; until it's run, imports save without them. */
+let coversColumns = true;
+const columns = () => `${BASE_COLUMNS}${receiptsColumn ? ', receipts' : ''}${coversColumns ? ', covers_from, covers_to' : ''}`;
+const missingCovers = (e: { code?: string; message?: string } | null) => !!e && coversColumns && (e.code === '42703' || e.code === 'PGRST204') && /covers_/i.test(e.message ?? '');
 const missingReceipts = (e: { code?: string; message?: string } | null) => !!e && receiptsColumn && (e.code === '42703' || e.code === 'PGRST204') && /receipts/i.test(e.message ?? '');
 export const MIGRATION_0092_MESSAGE = 'Attaching receipts needs database migration 0092_money_receipts.sql.';
 const receiptsOf = (v: unknown): MoneyReceipt[] =>
@@ -36,20 +39,24 @@ const fromRow = (r: Row): MoneyEntry => ({
   amountCents: Number(r.amount_cents),
   notes: r.notes ?? '',
   receipts: receiptsOf(r.receipts),
+  ...(r.covers_from && r.covers_to ? { coversFrom: r.covers_from, coversTo: r.covers_to } : {}),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
 const toRow = (f: MoneyFields, receipts?: MoneyReceipt[]) => ({
   kind: f.kind, entry_date: f.date, category: f.category, description: f.description, amount_cents: f.amountCents, notes: f.notes,
   ...(receipts && receiptsColumn ? { receipts } : {}),
+  // Only when given: editing an imported entry keeps the week it covers.
+  ...(coversColumns && 'coversFrom' in f ? { covers_from: f.coversFrom ?? null, covers_to: f.coversTo ?? null } : {}),
 });
 
 export async function fetchMoneyEntries(): Promise<RepoResult<MoneyEntry[]>> {
   if (!supabase) return NOT_CONFIGURED;
   try {
     let res = await supabase.from('agency_money_entries').select(columns()).order('entry_date', { ascending: false });
-    if (missingReceipts(res.error)) {
-      receiptsColumn = false;
+    for (let i = 0; i < 2 && (missingReceipts(res.error) || missingCovers(res.error)); i++) {
+      if (missingCovers(res.error)) coversColumns = false;
+      else receiptsColumn = false;
       res = await supabase.from('agency_money_entries').select(columns()).order('entry_date', { ascending: false });
     }
     if (res.error) return fail(res.error, 'Could not load income and expenses.');
@@ -63,7 +70,12 @@ export async function addMoneyEntry(agencyId: string, fields: MoneyFields, recei
   if (!supabase) return NOT_CONFIGURED;
   if (receipts?.length && !receiptsColumn) return { ok: false, message: MIGRATION_0092_MESSAGE };
   try {
-    const res = await supabase.from('agency_money_entries').insert({ agency_id: agencyId, ...toRow(fields, receipts) }).select(columns()).single();
+    const insert = () => supabase!.from('agency_money_entries').insert({ agency_id: agencyId, ...toRow(fields, receipts) }).select(columns()).single();
+    let res = await insert();
+    if (missingCovers(res.error)) {
+      coversColumns = false;
+      res = await insert();
+    }
     if (missingReceipts(res.error)) {
       receiptsColumn = false;
       return { ok: false, message: MIGRATION_0092_MESSAGE };
@@ -79,7 +91,12 @@ export async function updateMoneyEntry(id: string, fields: MoneyFields, receipts
   if (!supabase) return NOT_CONFIGURED;
   if (receipts?.length && !receiptsColumn) return { ok: false, message: MIGRATION_0092_MESSAGE };
   try {
-    const res = await supabase.from('agency_money_entries').update(toRow(fields, receipts)).eq('id', id).select(columns()).maybeSingle();
+    const update = () => supabase!.from('agency_money_entries').update(toRow(fields, receipts)).eq('id', id).select(columns()).maybeSingle();
+    let res = await update();
+    if (missingCovers(res.error)) {
+      coversColumns = false;
+      res = await update();
+    }
     if (missingReceipts(res.error)) {
       receiptsColumn = false;
       return { ok: false, message: MIGRATION_0092_MESSAGE };

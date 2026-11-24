@@ -27,6 +27,9 @@ export interface MoneyEntry {
   notes: string;
   /** Files attached to the entry (0092): receipts, invoices, statements. */
   receipts: MoneyReceipt[];
+  /** The dates an imported statement line covers (0097) — carrier / agent commission from a statement counts instead of the policies' on these dates. */
+  coversFrom?: string;
+  coversTo?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,6 +52,18 @@ export const INCOME_CATEGORIES = ['Agency fees', 'Contingency / bonus', 'Other i
 export const CARRIER_COMMISSION_CATEGORY = 'Carrier commission (policies & endorsements)';
 /** Income recorded by hand as carrier commission (the category the form offered before it was added automatically). */
 export const isRecordedCarrierCommission = (e: Pick<MoneyEntry, 'kind' | 'category'>) => e.kind === 'income' && /^\s*carrier\s+commission/i.test(e.category);
+/** Agent commission recorded by hand (e.g. the payouts on an imported statement). */
+export const isRecordedAgentCommission = (e: Pick<MoneyEntry, 'kind' | 'category'>) => e.kind === 'expense' && /^\s*(agent|producer)\s+(commission|payout)/i.test(e.category);
+
+/** The statement periods carrier / agent commission was imported for: on those dates the policies' amounts don't count. */
+export function statementCover(entries: Pick<MoneyEntry, 'kind' | 'category' | 'coversFrom' | 'coversTo'>[]) {
+  const ranges = (pick: (e: Pick<MoneyEntry, 'kind' | 'category'>) => boolean) =>
+    entries.filter((e) => pick(e) && e.coversFrom && e.coversTo).map((e) => ({ from: e.coversFrom!, to: e.coversTo! }));
+  const carrier = ranges(isRecordedCarrierCommission);
+  const agent = ranges(isRecordedAgentCommission);
+  const find = (list: { from: string; to: string }[], date: string) => list.find((r) => date >= r.from && date <= r.to) ?? null;
+  return { carrier: (date: string) => find(carrier, date), agent: (date: string) => find(agent, date) };
+}
 export const EXPENSE_CATEGORIES = [
   'Rent',
   'Payroll',
@@ -71,7 +86,7 @@ export interface MoneyInput {
   notes: string;
 }
 
-export type MoneyFields = Pick<MoneyEntry, 'kind' | 'date' | 'category' | 'description' | 'amountCents' | 'notes'>;
+export type MoneyFields = Pick<MoneyEntry, 'kind' | 'date' | 'category' | 'description' | 'amountCents' | 'notes'> & Partial<Pick<MoneyEntry, 'coversFrom' | 'coversTo'>>;
 
 export function checkMoneyEntry(input: MoneyInput): { ok: true; fields: MoneyFields } | { ok: false; errors: string[] } {
   const errors: string[] = [];
@@ -133,7 +148,7 @@ export interface ProfitLoss {
   /** Income entries in the period recorded by hand as carrier commission — possibly counted twice now. */
   recordedCarrierEntries: number;
   /** Carrier and agent commission from the policies, by date (bound / recorded) — newest first. */
-  byDate: { date: string; carrierCents: number; commissionCents: number; clients: string[] }[];
+  byDate: PolicyDay[];
   expenseCents: number;
   commissionCents: number;
   profitCents: number;
@@ -171,6 +186,16 @@ export interface ProfitLossOptions {
   ledger?: LedgerTransaction[];
 }
 
+/** One date's carrier and agent commission from the policies; replaced when a statement covers the date. */
+export interface PolicyDay {
+  date: string;
+  carrierCents: number;
+  commissionCents: number;
+  clients: string[];
+  carrierReplacedBy: { from: string; to: string } | null;
+  agentReplacedBy: { from: string; to: string } | null;
+}
+
 export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: Record<string, number>, from: string, to: string, opts: ProfitLossOptions = {}): ProfitLoss {
   const carrierLookup = opts.carrier ?? NO_RATES;
   const months = new Map<string, MonthLine>();
@@ -191,7 +216,7 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     t.count++;
     byCat[e.kind].set(e.category, t);
     if (e.kind === 'income') {
-      if (isRecordedCarrierCommission(e)) recordedCarrierEntries++;
+      if (isRecordedCarrierCommission(e) && !e.coversFrom) recordedCarrierEntries++;
       otherIncomeCents += e.amountCents;
       month(e.date).otherIncomeCents += e.amountCents;
     } else {
@@ -207,14 +232,18 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
   let premiumNetCents = 0;
   let estimatedCount = 0;
   let adjustmentCount = 0;
-  const byDate = new Map<string, { date: string; carrierCents: number; commissionCents: number; clients: string[] }>();
-  const add = (date: string, net: number, carrier: number | null, commission: number | null, client = '') => {
+  const cover = statementCover(entries);
+  const byDate = new Map<string, PolicyDay>();
+  const add = (date: string, net: number, carrierIn: number | null, commissionIn: number | null, client = '') => {
     premiumNetCents += net;
-    const day = byDate.get(date) ?? { date, carrierCents: 0, commissionCents: 0, clients: [] };
+    const day = byDate.get(date) ?? { date, carrierCents: 0, commissionCents: 0, clients: [], carrierReplacedBy: cover.carrier(date), agentReplacedBy: cover.agent(date) };
     byDate.set(date, day);
     if (client && !day.clients.includes(client)) day.clients.push(client);
-    day.carrierCents += carrier ?? 0;
-    day.commissionCents += commission ?? 0;
+    day.carrierCents += carrierIn ?? 0;
+    day.commissionCents += commissionIn ?? 0;
+    // A statement imported for this date counts instead (shown as replaced, not added).
+    const carrier = day.carrierReplacedBy ? 0 : carrierIn;
+    const commission = day.agentReplacedBy ? 0 : commissionIn;
     carrierCount++;
     if (carrier === null) carrierNotSetCount++;
     else {

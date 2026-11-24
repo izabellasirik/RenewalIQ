@@ -45,8 +45,9 @@ describe('reading an income & expense statement', () => {
     ]);
     expect(s.skipped).toEqual(['Ada (0 sales) ($0.00)']);
   });
-  it('what Profit & loss already counts from the policies starts unticked, with the reason', () => {
-    expect(s.lines.filter((l) => l.hold).map((l) => l.description)).toEqual(['Carrier commissions earned', 'Ben (2 sales)']);
+  it('carrier commission and agent payouts take the place of the automatic amounts for the week', () => {
+    expect(s.from).toBe('2026-11-16');
+    expect(s.lines.filter((l) => l.replaces).map((l) => l.description)).toEqual(['Carrier commissions earned', 'Ben (2 sales)']);
   });
   it('a line already in Income & expenses is recognised', () => {
     const line = s.lines[3];
@@ -54,15 +55,9 @@ describe('reading an income & expense statement', () => {
     expect(alreadyAdded(line, '2026-11-22', [{ kind: 'expense', date: '2026-11-21', amountCents: 50000, description: 'Casey - weekly base' }])).toBe(false);
   });
   it('other dates: a range across months, or a plain date', () => {
-    expect(parseStatement([['Statement Nov 30 – Dec 6, 2026'], ['EXPENSES'], ['Rent', '$2,500.00']])!.date).toBe('2026-12-06');
+    expect(parseStatement([['Statement Nov 30 – Dec 6, 2026'], ['EXPENSES'], ['Rent', '$2,500.00']])).toMatchObject({ from: '2026-11-30', date: '2026-12-06' });
+    expect(parseStatement([['Statement Dec 28 – Jan 3, 2027'], ['EXPENSES'], ['Rent', '$2,500.00']])).toMatchObject({ from: '2026-12-28', date: '2027-01-03' });
     expect(parseStatement([['Prepared 11/23/2026'], ['INCOME'], ['Agency fees', '250']])!.date).toBe('2026-11-23');
     expect(parseStatement([['Driver schedule'], ['Name', 'DOB']])).toBeNull();
-  });
-});
-
-describe('when commission comes from the statements', () => {
-  it('carrier commission and producer payouts are ordinary lines, ticked like the rest', () => {
-    const s = parseStatement([['Statement November 16–22, 2026'], ['INCOME'], ['Carrier commissions earned', '$1,000.00'], ['EXPENSES - SALES PRODUCERS'], ['Ben (2 sales)', '$300.00']], { commissionFromPolicies: false })!;
-    expect(s.lines.map((l) => [l.category, l.hold ?? null])).toEqual([['Carrier commission', null], ['Agent commission', null]]);
   });
 });

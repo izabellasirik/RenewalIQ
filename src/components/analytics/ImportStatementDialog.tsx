@@ -27,10 +27,12 @@ type Row = ParsedStatement['lines'][number] & { picked: boolean; duplicate: bool
  * Income & expenses → Import statement: an income & expense statement (PDF, Excel, CSV) read into
  * entries, shown first — the admin ticks what to add and can change the date and categories.
  */
-export function ImportStatementDialog({ entries, commissionFromPolicies, onClose, onSave }: { entries: MoneyEntry[]; commissionFromPolicies: boolean; onClose: () => void; onSave: (fields: MoneyFields) => Promise<string | null> }) {
+export function ImportStatementDialog({ entries, onClose, onSave }: { entries: MoneyEntry[]; onClose: () => void; onSave: (fields: MoneyFields) => Promise<string | null> }) {
   const [fileName, setFileName] = useState('');
   const [period, setPeriod] = useState('');
   const [date, setDate] = useState('');
+  /** The period's first day: carrier / agent commission saved for it replaces the policies' amounts on those dates. */
+  const [from, setFrom] = useState('');
   const [rows, setRows] = useState<Row[] | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [message, setMessage] = useState('');
@@ -42,7 +44,7 @@ export function ImportStatementDialog({ entries, commissionFromPolicies, onClose
     setBusy(true);
     setMessage('');
     try {
-      const parsed = parseStatement(await fileLines(file), { commissionFromPolicies });
+      const parsed = parseStatement(await fileLines(file));
       if (!parsed) {
         setRows(null);
         setMessage('No income or expense lines were found in this file. It needs headings like “INCOME” / “EXPENSES” with a description and an amount on each line.');
@@ -52,10 +54,11 @@ export function ImportStatementDialog({ entries, commissionFromPolicies, onClose
       setFileName(file.name);
       setPeriod(parsed.period);
       setDate(d);
+      setFrom(parsed.from ?? d);
       setSkipped(parsed.skipped);
       setRows(parsed.lines.map((l) => {
         const duplicate = !!d && alreadyAdded(l, d, entries);
-        return { ...l, duplicate, picked: !l.hold && !duplicate };
+        return { ...l, duplicate, picked: !duplicate };
       }));
     } catch {
       setMessage('This file couldn’t be read. Try the PDF, or an Excel / CSV export.');
@@ -72,10 +75,14 @@ export function ImportStatementDialog({ entries, commissionFromPolicies, onClose
   async function add() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return setMessage('Choose the date for these entries.');
     if (date < '2000-01-01' || date > `${new Date().getFullYear() + 2}-12-31`) return setMessage(`Check the year — ${date.slice(0, 4)} looks like a typo.`);
+    // The week it covers (the date alone when the statement names no period, or the date was changed to before it).
+    const days = from ? (Date.parse(date) - Date.parse(from)) / 86_400_000 : -1;
+    const covers = days >= 0 && days <= 366 ? { coversFrom: from, coversTo: date } : { coversFrom: date, coversTo: date };
+    const replaces = (category: string, kind: Row['kind']) => (kind === 'income' ? /^\s*carrier\s+commission/i : /^\s*(agent|producer)\s+(commission|payout)/i).test(category);
     setSaving({ done: 0, total: picked.length });
     const failed: string[] = [];
     for (const [i, r] of picked.entries()) {
-      const err = await onSave({ kind: r.kind, date, category: r.category.trim().slice(0, 80) || (r.kind === 'income' ? 'Other income' : 'Other expense'), description: r.description, amountCents: r.amountCents, notes: `Imported from ${fileName}${period ? ` (${period})` : ''}` });
+      const err = await onSave({ kind: r.kind, date, category: r.category.trim().slice(0, 80) || (r.kind === 'income' ? 'Other income' : 'Other expense'), description: r.description, amountCents: r.amountCents, notes: `Imported from ${fileName}${period ? ` (${period})` : ''}`, ...(replaces(r.category, r.kind) ? covers : {}) });
       if (err) failed.push(`${r.description}: ${err}`);
       setSaving({ done: i + 1, total: picked.length });
     }
@@ -173,7 +180,7 @@ export function ImportStatementDialog({ entries, commissionFromPolicies, onClose
                     <td className="border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-800)]">
                       {r.description}
                       {r.duplicate && !r.picked && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">Already added · {formatShortDate(date)}</span>}
-                      {r.hold && !r.duplicate && !r.picked && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">{r.hold}</span>}
+                      {r.replaces && !r.duplicate && r.picked && <span className="mt-1 block w-fit rounded-full bg-[var(--color-brand-50)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-brand-700)]" data-testid="statement-replaces">Replaces automatic · {from && from < date ? `${formatShortDate(from)} – ` : ''}{formatShortDate(date)}</span>}
                     </td>
                     <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold tabular-nums">{formatCents(r.amountCents)}</td>
                   </tr>
