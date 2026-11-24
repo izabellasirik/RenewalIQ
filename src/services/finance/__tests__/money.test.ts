@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CARRIER_COMMISSION_CATEGORY, checkMoneyEntry, monthLabel, profitAndLoss, type MoneyEntry } from '../money';
-import { moneyReport, profitLossReport } from '../../reports/analyticsReports';
+import { moneyReport, reportNotes, profitLossReport } from '../../reports/analyticsReports';
 import { reportCsv } from '../../reports/report';
 import { carrierKey, type PolicyRow } from '../../workflow/policies';
 import { toTransaction } from '../ledger';
@@ -160,5 +160,12 @@ describe('a statement imported for a week takes the place of the policies’ amo
     const day = pl.byDate.find((d) => d.date === '2026-11-17')!;
     expect(day).toMatchObject({ carrierCents: 100_000, commissionCents: 50_000, carrierReplacedBy: { from: '2026-11-16', to: '2026-11-22' }, agentReplacedBy: { from: '2026-11-16', to: '2026-11-22' } });
     expect(pl.byDate.find((d) => d.date === '2026-11-25')!.carrierReplacedBy).toBeNull();
+  });
+});
+
+describe('downloaded reports leave out the import note', () => {
+  it('drops “Imported from …”, keeps other notes', () => {
+    expect(reportNotes('Imported from sample-statement.pdf (November 16-22, 2026)')).toBe('');
+    expect(reportNotes('Paid by card\nImported from x.pdf')).toBe('Paid by card');
   });
 });
