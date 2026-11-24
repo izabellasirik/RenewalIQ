@@ -28,6 +28,9 @@ export interface ParsedStatement {
   skipped: string[];
 }
 
+/** Carrier commission and agent commission: Income & expenses already has them from the policies. */
+export const DUPLICATE = 'Duplicate · already in Policies & endorsements';
+
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 const MONEY = /^\(?-?\$?\s?-?[\d,]+(\.\d{1,2})?\)?$/;
 const clean = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -61,14 +64,14 @@ function categorize(kind: MoneyKind, section: string, description: string): { ca
   const d = description.toLowerCase();
   const s = section.toLowerCase();
   if (kind === 'income') {
-    if (/carrier\s+commission/.test(d)) return { category: 'Carrier commission', hold: 'Profit & loss already adds carrier commission from the policies — adding it here would count it twice.' };
+    if (/carrier\s+commission/.test(d)) return { category: 'Carrier commission', hold: DUPLICATE };
     if (/broker\s+fee/.test(d)) return { category: 'Broker fees' };
     if (/contingen|bonus/.test(d)) return { category: 'Contingency / bonus' };
     return { category: 'Other income' };
   }
   if (/referral|partner/.test(d)) return { category: 'Referral partners' };
   if (/producer|sales|agent|commission/.test(s) || /\(\d+\s+sales?\)/.test(d)) {
-    return { category: 'Agent commission', hold: 'Profit & loss already subtracts agent commission on the policies — tick it only if this payout isn’t that commission.' };
+    return { category: 'Agent commission', hold: DUPLICATE };
   }
   if (/staff|payroll|salar|wage/.test(s) || /\bbase\b|\bdays?\b|salary|payroll/.test(d)) return { category: 'Payroll' };
   if (/rent/.test(d)) return { category: 'Rent' };

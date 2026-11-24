@@ -172,8 +172,8 @@ export function ImportStatementDialog({ entries, onClose, onSave }: { entries: M
                     </td>
                     <td className="border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-800)]">
                       {r.description}
-                      {r.duplicate && <span className="mt-0.5 block text-xs text-[var(--color-ink-500)]">Already in Income & expenses for {formatShortDate(date)}.</span>}
-                      {r.hold && !r.duplicate && <span className="mt-0.5 block text-xs text-amber-700">{r.hold}</span>}
+                      {r.duplicate && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">Already added · {formatShortDate(date)}</span>}
+                      {r.hold && !r.duplicate && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">{r.hold}</span>}
                     </td>
                     <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold tabular-nums">{formatCents(r.amountCents)}</td>
                   </tr>

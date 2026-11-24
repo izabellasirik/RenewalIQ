@@ -345,8 +345,28 @@ export function IncomeExpensesPanel() {
       .filter((e) => !q || [e.category, e.description, e.notes].some((t) => t.toLowerCase().includes(q)))
       .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
   }, [money.entries, period.from, period.to, kind, search]);
-  const income = shown.filter((e) => e.kind === 'income').reduce((s, e) => s + e.amountCents, 0);
-  const expenses = shown.filter((e) => e.kind === 'expense').reduce((s, e) => s + e.amountCents, 0);
+  // Carrier commission and agent commission come from the policies and endorsements (as in Profit &
+  // loss): shown here as two lines nobody types, so this list has all the money and matches Profit & loss.
+  const accounts = useAccountsStore((s) => s.accounts);
+  const quotes = useAccountsStore((s) => s.quotes);
+  const agentRates = useAgentCommissionRates();
+  const policyList = useMemo(() => policyRows(accounts, quotes), [accounts, quotes]);
+  const carrierRates = useCarrierRates();
+  const ledger = useLedger();
+  const fromPolicies = useMemo(
+    () => profitAndLoss([], policyList, agentRates.rates, period.from, period.to, { carrier: { rateOn: carrierRates.rateOn, isSet: carrierRates.isSet }, ledger: ledger.data?.transactions }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [policyList, agentRates.rates, period.from, period.to, carrierRates.rows, ledger.data]
+  );
+  const autoRows = search.trim()
+    ? []
+    : [
+        ...(kind !== 'expense' && fromPolicies.carrierCents ? [{ key: 'carrier', kind: 'income' as const, category: 'Carrier commission', cents: fromPolicies.carrierCents }] : []),
+        ...(kind !== 'income' && fromPolicies.commissionCents ? [{ key: 'agent', kind: 'expense' as const, category: 'Agent commission', cents: fromPolicies.commissionCents }] : []),
+      ];
+  const [, setParams] = useSearchParams();
+  const income = shown.filter((e) => e.kind === 'income').reduce((s, e) => s + e.amountCents, 0) + autoRows.filter((r) => r.kind === 'income').reduce((s, r) => s + r.cents, 0);
+  const expenses = shown.filter((e) => e.kind === 'expense').reduce((s, e) => s + e.amountCents, 0) + autoRows.filter((r) => r.kind === 'expense').reduce((s, r) => s + r.cents, 0);
 
   return (
     <>
@@ -380,7 +400,7 @@ export function IncomeExpensesPanel() {
               testId="money-filters-clear"
             />
             <DownloadButtons
-              report={() => moneyReport(shown, period.from, period.to, [kind !== 'all' ? `Show: ${kind === 'income' ? 'Income' : 'Expenses'}` : '', search ? `Search: “${search}”` : ''].filter(Boolean))}
+              report={() => moneyReport([...shown, ...autoRows.map((r) => ({ id: r.key, kind: r.kind, date: period.to || toLocalDateKey(new Date()), category: r.category, description: 'From Policies & endorsements (added automatically)', amountCents: r.cents, notes: '', receipts: [], createdAt: '', updatedAt: '' }))], period.from, period.to, [kind !== 'all' ? `Show: ${kind === 'income' ? 'Income' : 'Expenses'}` : '', search ? `Search: “${search}”` : ''].filter(Boolean))}
               disabled={!shown.length}
               testId="money-download"
             />
@@ -444,13 +464,13 @@ export function IncomeExpensesPanel() {
             <CardBody className="pt-2">
               {money.status === 'loading' ? (
                 <p className="py-8 text-center text-sm text-[var(--color-ink-500)]">Loading…</p>
-              ) : money.entries.length === 0 ? (
+              ) : money.entries.length === 0 && autoRows.length === 0 ? (
                 <EmptyState
                   icon={<Wallet size={26} strokeWidth={1.5} />}
                   title="No income or expenses recorded yet"
                   description="Record the money coming in (agency fees, contingency bonuses…) and going out (rent, marketing, payroll…). Carrier commission on policies is added to Profit & loss automatically. Only the agency’s admins can see them."
                 />
-              ) : shown.length === 0 ? (
+              ) : shown.length === 0 && autoRows.length === 0 ? (
                 <p className="py-8 text-center text-sm text-[var(--color-ink-500)]">Nothing matches these filters.</p>
               ) : (
                 <div className="overflow-x-auto">
@@ -465,6 +485,28 @@ export function IncomeExpensesPanel() {
                       </tr>
                     </thead>
                     <tbody>
+                      {autoRows.map((r) => (
+                        <tr key={r.key} data-auto={r.key} className="bg-[var(--color-ink-50)]/60">
+                          <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-500)]">This period</td>
+                          <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2">
+                            <span className={cn('mr-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium', r.kind === 'income' ? 'bg-[var(--color-success-100)] text-[var(--color-success-600)]' : 'bg-[var(--color-ink-100)] text-[var(--color-ink-600)]')}>
+                              {r.kind === 'income' ? 'Income' : 'Expense'}
+                            </span>
+                            <span className="text-[var(--color-ink-800)]">{r.category}</span>
+                          </td>
+                          <td className="min-w-[220px] border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-600)]">
+                            <button type="button" onClick={() => setParams(new URLSearchParams({ view: 'policies' }), { replace: true })} className="cursor-pointer text-[var(--color-brand-700)] hover:underline">
+                              From Policies &amp; endorsements
+                            </button>
+                            <span className="mt-0.5 block text-xs text-[var(--color-ink-400)]">Added automatically</span>
+                          </td>
+                          <td className={cn('whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold tabular-nums', r.kind === 'income' ? 'text-[var(--color-success-600)]' : 'text-[var(--color-ink-900)]')}>
+                            {r.kind === 'income' ? '+' : '−'}
+                            {formatCents(r.cents)}
+                          </td>
+                          <td className="w-10 border-b border-[var(--color-ink-50)] px-1 py-1" />
+                        </tr>
+                      ))}
                       {shown.map((e) => (
                         <tr key={e.id} data-entry={e.id} data-kind={e.kind}>
                           <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-700)]">{formatShortDate(e.date)}</td>
