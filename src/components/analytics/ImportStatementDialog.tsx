@@ -27,7 +27,7 @@ type Row = ParsedStatement['lines'][number] & { picked: boolean; duplicate: bool
  * Income & expenses → Import statement: an income & expense statement (PDF, Excel, CSV) read into
  * entries, shown first — the admin ticks what to add and can change the date and categories.
  */
-export function ImportStatementDialog({ entries, onClose, onSave }: { entries: MoneyEntry[]; onClose: () => void; onSave: (fields: MoneyFields) => Promise<string | null> }) {
+export function ImportStatementDialog({ entries, commissionFromPolicies, onClose, onSave }: { entries: MoneyEntry[]; commissionFromPolicies: boolean; onClose: () => void; onSave: (fields: MoneyFields) => Promise<string | null> }) {
   const [fileName, setFileName] = useState('');
   const [period, setPeriod] = useState('');
   const [date, setDate] = useState('');
@@ -42,7 +42,7 @@ export function ImportStatementDialog({ entries, onClose, onSave }: { entries: M
     setBusy(true);
     setMessage('');
     try {
-      const parsed = parseStatement(await fileLines(file));
+      const parsed = parseStatement(await fileLines(file), { commissionFromPolicies });
       if (!parsed) {
         setRows(null);
         setMessage('No income or expense lines were found in this file. It needs headings like “INCOME” / “EXPENSES” with a description and an amount on each line.');
@@ -172,8 +172,8 @@ export function ImportStatementDialog({ entries, onClose, onSave }: { entries: M
                     </td>
                     <td className="border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-800)]">
                       {r.description}
-                      {r.duplicate && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">Already added · {formatShortDate(date)}</span>}
-                      {r.hold && !r.duplicate && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">{r.hold}</span>}
+                      {r.duplicate && !r.picked && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">Already added · {formatShortDate(date)}</span>}
+                      {r.hold && !r.duplicate && !r.picked && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">{r.hold}</span>}
                     </td>
                     <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold tabular-nums">{formatCents(r.amountCents)}</td>
                   </tr>

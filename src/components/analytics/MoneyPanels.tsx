@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FileUp, Paperclip, Pencil, Plus, Search, Trash2, Wallet, X } from 'lucide-react';
 import { ImportStatementDialog } from './ImportStatementDialog';
+import { useCommissionSource } from '../../hooks/useCommissionSource';
 import { Button, Card, CardBody, CardHeader, ConfirmDialog, EmptyState, Modal, OverflowMenu } from '../ui';
 import { inputClass, labelClass } from '../workspace/formStyles';
 import { useAccountsStore } from '../../state/useAccountsStore';
@@ -180,11 +181,18 @@ export function ProfitLossPanel() {
   const rows = useMemo(() => policyRows(accounts, quotes), [accounts, quotes]);
   const carrier = useCarrierRates();
   const ledger = useLedger();
+  const commission = useCommissionSource();
+  const fromStatements = commission.source === 'statements';
   const pl = useMemo(
-    () => profitAndLoss(money.entries, rows, rates.rates, period.from, period.to, { carrier: { rateOn: carrier.rateOn, isSet: carrier.isSet }, ledger: ledger.data?.transactions }),
+    () =>
+      fromStatements
+        ? // Commission comes from the imported statements (Income & expenses), not the policies.
+          profitAndLoss(money.entries, [], rates.rates, period.from, period.to, {})
+        : profitAndLoss(money.entries, rows, rates.rates, period.from, period.to, { carrier: { rateOn: carrier.rateOn, isSet: carrier.isSet }, ledger: ledger.data?.transactions }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [money.entries, rows, rates.rates, period.from, period.to, carrier.rows, ledger.data]
+    [money.entries, rows, rates.rates, period.from, period.to, carrier.rows, ledger.data, fromStatements]
   );
+  const [sourceError, setSourceError] = useState('');
   const [, setParams] = useSearchParams();
 
   return (
@@ -200,12 +208,33 @@ export function ProfitLossPanel() {
           <div className="mt-3">
             <SavedFiltersNote active={period.changed} onClear={period.reset} testId="pl-filters-clear" />
           </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[var(--color-ink-100)] pt-3 text-sm" data-testid="commission-source">
+            <span className="text-[var(--color-ink-600)]">Carrier commission &amp; agent payouts come from:</span>
+            <div className="inline-flex overflow-hidden rounded-lg border border-[var(--color-ink-200)]" role="radiogroup" aria-label="Commission comes from">
+              {(['policies', 'statements'] as const).map((src) => (
+                <button
+                  key={src}
+                  type="button"
+                  role="radio"
+                  aria-checked={commission.source === src}
+                  onClick={async () => setSourceError((await commission.set(src)) ?? '')}
+                  className={cn('cursor-pointer px-3 py-1.5 font-medium', commission.source === src ? 'bg-[var(--color-brand-700)] text-white' : 'bg-white text-[var(--color-ink-700)] hover:bg-[var(--color-ink-50)]', src === 'statements' && 'border-l border-[var(--color-ink-200)]')}
+                >
+                  {src === 'policies' ? 'Policies (automatic)' : 'Statements (imported)'}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-[var(--color-ink-500)]">
+              {fromStatements ? 'From the statements you import in Income & expenses.' : 'Worked out from the policies and endorsements.'}
+            </span>
+            {sourceError && <span className="text-xs text-[var(--color-danger-600)]" role="alert">{sourceError}</span>}
+          </div>
         </CardBody>
       </Card>
 
       {money.status === 'unavailable' && <Unavailable message={money.message} />}
 
-      {pl.recordedCarrierEntries > 0 && (
+      {!fromStatements && pl.recordedCarrierEntries > 0 && (
         <p className="rounded-lg border border-[var(--color-warning-600)]/30 bg-[var(--color-warning-100)] px-3 py-2 text-sm text-[var(--color-ink-700)]" role="status" data-testid="pl-recorded-carrier">
           {pl.recordedCarrierEntries === 1 ? '1 income entry' : `${pl.recordedCarrierEntries} income entries`} in this period {pl.recordedCarrierEntries === 1 ? 'is' : 'are'} recorded as carrier commission. Carrier commission on policies and endorsements is now added automatically, so {pl.recordedCarrierEntries === 1 ? 'it may be' : 'they may be'} counted twice. Check {pl.recordedCarrierEntries === 1 ? 'it' : 'them'} in Income &amp; expenses and remove or re-categorize {pl.recordedCarrierEntries === 1 ? 'it' : 'them'} if so.
         </p>
@@ -353,18 +382,22 @@ export function IncomeExpensesPanel() {
   const policyList = useMemo(() => policyRows(accounts, quotes), [accounts, quotes]);
   const carrierRates = useCarrierRates();
   const ledger = useLedger();
+  const commission = useCommissionSource();
   const fromPolicies = useMemo(
     () => profitAndLoss([], policyList, agentRates.rates, period.from, period.to, { carrier: { rateOn: carrierRates.rateOn, isSet: carrierRates.isSet }, ledger: ledger.data?.transactions }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [policyList, agentRates.rates, period.from, period.to, carrierRates.rows, ledger.data]
   );
-  const autoRows = search.trim()
+  // One line per date (the date the policy was bound, or the commission recorded), each kind.
+  const autoRows = search.trim() || commission.source === 'statements'
     ? []
-    : [
-        ...(kind !== 'expense' && fromPolicies.carrierCents ? [{ key: 'carrier', kind: 'income' as const, category: 'Carrier commission', cents: fromPolicies.carrierCents }] : []),
-        ...(kind !== 'income' && fromPolicies.commissionCents ? [{ key: 'agent', kind: 'expense' as const, category: 'Agent commission', cents: fromPolicies.commissionCents }] : []),
-      ];
+    : fromPolicies.byDate.flatMap((d) => [
+        ...(kind !== 'expense' && d.carrierCents ? [{ key: `carrier-${d.date}`, date: d.date, kind: 'income' as const, category: 'Carrier commission', cents: d.carrierCents, clients: d.clients }] : []),
+        ...(kind !== 'income' && d.commissionCents ? [{ key: `agent-${d.date}`, date: d.date, kind: 'expense' as const, category: 'Agent commission', cents: d.commissionCents, clients: d.clients }] : []),
+      ]);
   const [, setParams] = useSearchParams();
+  // The automatic lines among the entries, newest first.
+  const merged = [...autoRows.map((r) => ({ date: r.date, auto: r, entry: undefined as MoneyEntry | undefined })), ...shown.map((e) => ({ date: e.date, auto: undefined, entry: e }))].sort((x, y) => y.date.localeCompare(x.date) || (x.auto ? -1 : 1) - (y.auto ? -1 : 1));
   const income = shown.filter((e) => e.kind === 'income').reduce((s, e) => s + e.amountCents, 0) + autoRows.filter((r) => r.kind === 'income').reduce((s, r) => s + r.cents, 0);
   const expenses = shown.filter((e) => e.kind === 'expense').reduce((s, e) => s + e.amountCents, 0) + autoRows.filter((r) => r.kind === 'expense').reduce((s, r) => s + r.cents, 0);
 
@@ -400,7 +433,7 @@ export function IncomeExpensesPanel() {
               testId="money-filters-clear"
             />
             <DownloadButtons
-              report={() => moneyReport([...shown, ...autoRows.map((r) => ({ id: r.key, kind: r.kind, date: period.to || toLocalDateKey(new Date()), category: r.category, description: 'From Policies & endorsements (added automatically)', amountCents: r.cents, notes: '', receipts: [], createdAt: '', updatedAt: '' }))], period.from, period.to, [kind !== 'all' ? `Show: ${kind === 'income' ? 'Income' : 'Expenses'}` : '', search ? `Search: “${search}”` : ''].filter(Boolean))}
+              report={() => moneyReport([...shown, ...autoRows.map((r) => ({ id: r.key, kind: r.kind, date: r.date, category: r.category, description: 'From Policies & endorsements (added automatically)', amountCents: r.cents, notes: r.clients.join(', '), receipts: [], createdAt: '', updatedAt: '' }))], period.from, period.to, [kind !== 'all' ? `Show: ${kind === 'income' ? 'Income' : 'Expenses'}` : '', search ? `Search: “${search}”` : ''].filter(Boolean))}
               disabled={!shown.length}
               testId="money-download"
             />
@@ -485,9 +518,10 @@ export function IncomeExpensesPanel() {
                       </tr>
                     </thead>
                     <tbody>
-                      {autoRows.map((r) => (
+                      {merged.map((m) =>
+                        m.auto ? ((r) => (
                         <tr key={r.key} data-auto={r.key} className="bg-[var(--color-ink-50)]/60">
-                          <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-500)]">This period</td>
+                          <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-700)]">{formatShortDate(r.date)}</td>
                           <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2">
                             <span className={cn('mr-2 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium', r.kind === 'income' ? 'bg-[var(--color-success-100)] text-[var(--color-success-600)]' : 'bg-[var(--color-ink-100)] text-[var(--color-ink-600)]')}>
                               {r.kind === 'income' ? 'Income' : 'Expense'}
@@ -498,7 +532,7 @@ export function IncomeExpensesPanel() {
                             <button type="button" onClick={() => setParams(new URLSearchParams({ view: 'policies' }), { replace: true })} className="cursor-pointer text-[var(--color-brand-700)] hover:underline">
                               From Policies &amp; endorsements
                             </button>
-                            <span className="mt-0.5 block text-xs text-[var(--color-ink-400)]">Added automatically</span>
+                            <span className="mt-0.5 block text-xs text-[var(--color-ink-400)]">Added automatically · {r.clients.slice(0, 2).join(', ')}{r.clients.length > 2 ? ` +${r.clients.length - 2} more` : ''}</span>
                           </td>
                           <td className={cn('whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold tabular-nums', r.kind === 'income' ? 'text-[var(--color-success-600)]' : 'text-[var(--color-ink-900)]')}>
                             {r.kind === 'income' ? '+' : '−'}
@@ -506,8 +540,7 @@ export function IncomeExpensesPanel() {
                           </td>
                           <td className="w-10 border-b border-[var(--color-ink-50)] px-1 py-1" />
                         </tr>
-                      ))}
-                      {shown.map((e) => (
+                      ))(m.auto) : ((e) => (
                         <tr key={e.id} data-entry={e.id} data-kind={e.kind}>
                           <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-700)]">{formatShortDate(e.date)}</td>
                           <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2">
@@ -538,7 +571,8 @@ export function IncomeExpensesPanel() {
                             />
                           </td>
                         </tr>
-                      ))}
+))(m.entry!)
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -551,6 +585,7 @@ export function IncomeExpensesPanel() {
       {importing && (
         <ImportStatementDialog
           entries={money.entries}
+          commissionFromPolicies={commission.source !== 'statements'}
           onClose={() => setImporting(false)}
           onSave={(fields) => money.save(fields, undefined, { kept: [], added: [] })}
         />

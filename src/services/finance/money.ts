@@ -132,6 +132,8 @@ export interface ProfitLoss {
   adjustmentCount: number;
   /** Income entries in the period recorded by hand as carrier commission — possibly counted twice now. */
   recordedCarrierEntries: number;
+  /** Carrier and agent commission from the policies, by date (bound / recorded) — newest first. */
+  byDate: { date: string; carrierCents: number; commissionCents: number; clients: string[] }[];
   expenseCents: number;
   commissionCents: number;
   profitCents: number;
@@ -205,8 +207,14 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
   let premiumNetCents = 0;
   let estimatedCount = 0;
   let adjustmentCount = 0;
-  const add = (date: string, net: number, carrier: number | null, commission: number | null) => {
+  const byDate = new Map<string, { date: string; carrierCents: number; commissionCents: number; clients: string[] }>();
+  const add = (date: string, net: number, carrier: number | null, commission: number | null, client = '') => {
     premiumNetCents += net;
+    const day = byDate.get(date) ?? { date, carrierCents: 0, commissionCents: 0, clients: [] };
+    byDate.set(date, day);
+    if (client && !day.clients.includes(client)) day.clients.push(client);
+    day.carrierCents += carrier ?? 0;
+    day.commissionCents += commission ?? 0;
     carrierCount++;
     if (carrier === null) carrierNotSetCount++;
     else {
@@ -227,7 +235,7 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
       if (t.policyId) recorded.add(`${t.submissionId}|${t.policyId}`);
       if (t.verificationStatus === 'void' || t.replacedBy || !inRange(t.eventDate, from, to)) continue;
       if (t.kind === 'cancellation' || t.kind === 'correction') adjustmentCount++;
-      add(t.eventDate, t.netCents, t.reviewFlags.includes('no_carrier_rate') ? null : t.carrierCents, t.agentCents);
+      add(t.eventDate, t.netCents, t.reviewFlags.includes('no_carrier_rate') ? null : t.carrierCents, t.agentCents, t.clientName);
     }
   }
   for (const r of rows) {
@@ -235,7 +243,7 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     if (!d || !inRange(d, from, to)) continue;
     if (ledger && recorded.has(`${r.accountId}|${r.policy.id}`)) continue;
     if (ledger) estimatedCount++;
-    add(d, r.policy.netPremiumCents, rowCarrierCents(r, carrierLookup), rowCommissionCents(r, rates, carrierLookup));
+    add(d, r.policy.netPremiumCents, rowCarrierCents(r, carrierLookup), rowCommissionCents(r, rates, carrierLookup), r.insured);
   }
   if (carrierCount) byCat.income.set(CARRIER_COMMISSION_CATEGORY, { category: CARRIER_COMMISSION_CATEGORY, cents: carrierCents, count: carrierCount });
   const list = (m: Map<string, CategoryTotal>) => [...m.values()].sort((a, b) => b.cents - a.cents || a.category.localeCompare(b.category));
@@ -255,6 +263,7 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     estimatedCount,
     adjustmentCount,
     recordedCarrierEntries,
+    byDate: [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date)),
     expenseCents,
     commissionCents,
     profitCents: incomeCents - expenseCents - commissionCents,

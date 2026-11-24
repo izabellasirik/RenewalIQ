@@ -81,7 +81,7 @@ function categorize(kind: MoneyKind, section: string, description: string): { ca
 }
 
 /** Reads a statement from its lines of text (each line's cells, left to right). Null when it isn't one. */
-export function parseStatement(lines: string[][]): ParsedStatement | null {
+export function parseStatement(lines: string[][], { commissionFromPolicies = true }: { commissionFromPolicies?: boolean } = {}): ParsedStatement | null {
   const all = lines.map((cells) => clean(cells.join(' ')));
   const { date, period } = statementDate(all.slice(0, 6).join(' ') || all.join(' '));
   let kind: MoneyKind | null = null;
@@ -108,7 +108,9 @@ export function parseStatement(lines: string[][]): ParsedStatement | null {
       skipped.push(`${description} ($0.00)`);
       continue;
     }
-    const { category, hold } = categorize(kind, section, description);
+    const { category, hold: dup } = categorize(kind, section, description);
+    // With commission taken from the statements (not the policies), these lines are the real ones.
+    const hold = commissionFromPolicies ? dup : undefined;
     out.push({ key: `${i}`, kind, category, description: description.slice(0, 300), amountCents: Math.abs(amount), section, ...(hold ? { hold } : {}) });
   }
   return out.length ? { date, period, lines: out, skipped } : null;

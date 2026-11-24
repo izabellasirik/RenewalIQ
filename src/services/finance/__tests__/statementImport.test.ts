@@ -59,3 +59,10 @@ describe('reading an income & expense statement', () => {
     expect(parseStatement([['Driver schedule'], ['Name', 'DOB']])).toBeNull();
   });
 });
+
+describe('when commission comes from the statements', () => {
+  it('carrier commission and producer payouts are ordinary lines, ticked like the rest', () => {
+    const s = parseStatement([['Statement November 16–22, 2026'], ['INCOME'], ['Carrier commissions earned', '$1,000.00'], ['EXPENSES - SALES PRODUCERS'], ['Ben (2 sales)', '$300.00']], { commissionFromPolicies: false })!;
+    expect(s.lines.map((l) => [l.category, l.hold ?? null])).toEqual([['Carrier commission', null], ['Agent commission', null]]);
+  });
+});
