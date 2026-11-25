@@ -140,13 +140,15 @@ export function profitLossReport(pl: ProfitLoss, from: string, to: string): Repo
 /** Notes as printed: without the "Imported from <file>" line the statement import adds. */
 export const reportNotes = (notes: string) => notes.replace(/^Imported from .*$/gm, '').replace(/\n{2,}/g, '\n').trim();
 
+const usd = (cents: number) => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export function moneyReport(entries: MoneyEntry[], from: string, to: string, filters: string[]): Report {
   const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
   const income = sorted.filter((e) => e.kind === 'income').reduce((s, e) => s + e.amountCents, 0);
   const expenses = sorted.filter((e) => e.kind === 'expense').reduce((s, e) => s + e.amountCents, 0);
   return {
     title: 'Income & expenses',
-    subtitle: [`Period: ${periodText(from, to)}`, ...(filters.length ? [filters.join(' · ')] : []), `Income ${(income / 100).toFixed(2)} · Expenses ${(expenses / 100).toFixed(2)} (expenses are negative below)`],
+    subtitle: [`Period: ${periodText(from, to)}`, ...(filters.length ? [filters.join(' · ')] : []), `Income ${usd(income)} · Expenses ${usd(expenses)} (expenses are negative below)`],
     columns: [{ header: 'Date', kind: 'date' }, { header: 'Type' }, { header: 'Category' }, { header: 'Description' }, { header: 'Amount', kind: 'money' }, { header: 'Notes' }],
     rows: sorted.map((e) => [e.date, e.kind === 'income' ? 'Income' : 'Expense', e.category, e.description, e.kind === 'income' ? e.amountCents : -e.amountCents, reportNotes(e.notes)]),
     totals: ['Net', '', '', '', income - expenses, ''],

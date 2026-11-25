@@ -151,8 +151,11 @@ describe('a statement imported for a week takes the place of the policies’ amo
   ];
   const pl = profitAndLoss(statement, rows, { 'agent-a': 0.5 }, '2026-11-01', '2026-11-30', { carrier });
   it('counts each amount once: the statement for its week, the policies for the other dates', () => {
-    expect(pl.carrierCents).toBe(100_000); // only p2: 10,000 × 10%
-    expect(pl.commissionCents).toBe(50_000);
+    // p2: 10,000 × 10% = 1,000 (agent 500) + the statement's 1,200 (agent 300), in the commission columns
+    expect(pl.carrierCents).toBe(220_000);
+    expect(pl.commissionCents).toBe(80_000);
+    expect(pl.otherIncomeCents).toBe(0);
+    expect(pl.expenseCents).toBe(0);
     expect(pl.profitCents).toBe(100_000 + 120_000 - 30_000 - 50_000);
     expect(pl.recordedCarrierEntries).toBe(0);
   });

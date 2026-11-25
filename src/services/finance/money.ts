@@ -209,8 +209,14 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
   let otherIncomeCents = 0;
   let expenseCents = 0;
   let recordedCarrierEntries = 0;
+  // Carrier commission / agent payouts from an imported statement: in those columns, not other income / expenses.
+  const fromStatements: { date: string; carrier: number; agent: number }[] = [];
   for (const e of entries) {
     if (!inRange(e.date, from, to)) continue;
+    if (e.coversFrom && (isRecordedCarrierCommission(e) || isRecordedAgentCommission(e))) {
+      fromStatements.push({ date: e.date, carrier: e.kind === 'income' ? e.amountCents : 0, agent: e.kind === 'expense' ? e.amountCents : 0 });
+      continue;
+    }
     const t = byCat[e.kind].get(e.category) ?? { category: e.category, cents: 0, count: 0 };
     t.cents += e.amountCents;
     t.count++;
@@ -273,6 +279,13 @@ export function profitAndLoss(entries: MoneyEntry[], rows: PolicyRow[], rates: R
     if (ledger && recorded.has(`${r.accountId}|${r.policy.id}`)) continue;
     if (ledger) estimatedCount++;
     add(d, r.policy.netPremiumCents, rowCarrierCents(r, carrierLookup), rowCommissionCents(r, rates, carrierLookup), r.insured);
+  }
+  for (const st of fromStatements) {
+    carrierCents += st.carrier;
+    month(st.date).carrierCents += st.carrier;
+    commissionCents += st.agent;
+    month(st.date).commissionCents += st.agent;
+    if (st.carrier) carrierCount++;
   }
   if (carrierCount) byCat.income.set(CARRIER_COMMISSION_CATEGORY, { category: CARRIER_COMMISSION_CATEGORY, cents: carrierCents, count: carrierCount });
   const list = (m: Map<string, CategoryTotal>) => [...m.values()].sort((a, b) => b.cents - a.cents || a.category.localeCompare(b.category));

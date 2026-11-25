@@ -18,7 +18,7 @@ export function Modal({
   subtitle?: string;
   children: ReactNode;
   footer?: ReactNode;
-  size?: 'md' | 'lg';
+  size?: 'md' | 'lg' | 'xl';
 }) {
   return (
     <AnimatePresence>
@@ -27,7 +27,7 @@ export function Modal({
           <motion.div className="fixed inset-0 z-40 bg-[var(--color-ink-950)]/40" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} />
           <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
             <motion.div
-              className={`pointer-events-auto flex max-h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-2xl ${size === 'lg' ? 'max-w-2xl' : 'max-w-lg'}`}
+              className={`pointer-events-auto flex max-h-full w-full flex-col overflow-hidden rounded-xl bg-white shadow-2xl ${size === 'xl' ? 'max-w-4xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-lg'}`}
               initial={{ opacity: 0, scale: 0.97, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.97, y: 8 }}
