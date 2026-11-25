@@ -83,3 +83,15 @@ export function describeDue(dateKey: string, today = todayKey()): string {
   if (diff === 1) return 'Follow-up due tomorrow';
   return `Follow-up ${formatShortDate(dateKey)}`;
 }
+
+/** "Nov 16–22" in one month, "Nov 30–Dec 6" across two, one date when they're the same. */
+export function formatDateRange(from: string, to: string): string {
+  const a = formatShortDate(from);
+  const b = formatShortDate(to);
+  if (from === to) return a;
+  if (from.slice(0, 7) === to.slice(0, 7)) {
+    const sameMonth = /^(\w+) (\d+)(.*)$/.exec(b);
+    if (sameMonth && a.startsWith(`${sameMonth[1]} `)) return `${a.replace(/, \d{4}$/, '')}–${sameMonth[2]}${sameMonth[3]}`;
+  }
+  return `${a.replace(/, \d{4}$/, from.slice(0, 4) === to.slice(0, 4) ? '' : '$&')}–${b}`;
+}

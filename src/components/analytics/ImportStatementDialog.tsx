@@ -5,7 +5,7 @@ import { inputClass, labelClass } from '../workspace/formStyles';
 import { alreadyAdded, parseStatement, type ParsedStatement } from '../../services/finance/statementImport';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES, type MoneyEntry, type MoneyFields } from '../../services/finance/money';
 import { formatCents } from '../../services/workflow/policies';
-import { formatShortDate } from '../../services/workflow/dates';
+import { formatDateRange, formatShortDate } from '../../services/workflow/dates';
 import { cn } from '../../utils/cn';
 
 /** The lines of a file as cells: a PDF's lines of text, a spreadsheet's rows (header row included) — or why it can't be read. */
@@ -191,7 +191,7 @@ export function ImportStatementDialog({ entries, onClose, onSave }: { entries: M
                     <td className="border-b border-[var(--color-ink-50)] px-3 py-2 text-[var(--color-ink-800)]">
                       {r.description}
                       {r.duplicate && !r.picked && <span className="mt-1 inline-block rounded-full bg-[var(--color-ink-100)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-ink-600)]">Already added · {formatShortDate(date)}</span>}
-                      {r.replaces && !r.duplicate && r.picked && <span className="mt-1 block w-fit rounded-full bg-[var(--color-brand-50)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-brand-700)]" data-testid="statement-replaces">Replaces automatic · {from && from < date ? `${formatShortDate(from)} – ` : ''}{formatShortDate(date)}</span>}
+                      {r.replaces && !r.duplicate && r.picked && <span className="mt-1 block w-fit rounded-full bg-[var(--color-brand-50)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-brand-700)]" data-testid="statement-replaces">Used instead of the policy amount · {formatDateRange(from && from < date ? from : date, date)}</span>}
                     </td>
                     <td className="whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold tabular-nums">{formatCents(r.amountCents)}</td>
                   </tr>

@@ -9,7 +9,7 @@ import { useAgentCommissionRates } from '../../hooks/useAgentCommission';
 import { useMoneyEntries } from '../../hooks/useMoneyEntries';
 import { useCarrierRates } from '../../hooks/useCarrierRates';
 import { useLedger } from '../../hooks/useLedger';
-import { formatShortDate, toLocalDateKey } from '../../services/workflow/dates';
+import { formatDateRange, formatShortDate, toLocalDateKey } from '../../services/workflow/dates';
 import { centsInput, formatCents, policyRows } from '../../services/workflow/policies';
 import { useRememberedView } from '../../hooks/useRememberedView';
 import { aDateKey, aString, defined, oneOf } from '../../services/preferences/viewPreferences';
@@ -505,7 +505,7 @@ export function IncomeExpensesPanel() {
                               From Policies &amp; endorsements
                             </button>
                             <span className="mt-0.5 block text-xs text-[var(--color-ink-400)]">
-                              {r.replacedBy ? `Replaced by statement (${formatShortDate(r.replacedBy.from)} – ${formatShortDate(r.replacedBy.to)}) · not counted` : `Added automatically · ${r.clients.slice(0, 2).join(', ')}${r.clients.length > 2 ? ` +${r.clients.length - 2} more` : ''}`}
+                              {r.replacedBy ? `Not counted · statement used for ${formatDateRange(r.replacedBy.from, r.replacedBy.to)}` : `Added automatically · ${r.clients.slice(0, 2).join(', ')}${r.clients.length > 2 ? ` +${r.clients.length - 2} more` : ''}`}
                             </span>
                           </td>
                           <td className={cn('whitespace-nowrap border-b border-[var(--color-ink-50)] px-3 py-2 text-right font-semibold tabular-nums', r.replacedBy ? 'text-[var(--color-ink-400)] line-through' : r.kind === 'income' ? 'text-[var(--color-success-600)]' : 'text-[var(--color-ink-900)]')}>
