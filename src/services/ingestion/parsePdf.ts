@@ -1,3 +1,5 @@
+// Safari can't `for await` a stream, which pdf.js does for a page's text — added first.
+import './streamIteration';
 // Legacy build: same API, plus polyfills for JS features newer than current Safari / older Chromium.
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfjsWorker from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';

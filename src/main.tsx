@@ -1,3 +1,5 @@
+// Safari can't `for await` a stream (pdf.js reads page text that way): add it before anything runs.
+import './services/ingestion/streamIteration'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource/inter/latin-400.css'
