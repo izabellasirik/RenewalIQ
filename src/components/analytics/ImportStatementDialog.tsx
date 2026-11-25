@@ -8,17 +8,27 @@ import { formatCents } from '../../services/workflow/policies';
 import { formatShortDate } from '../../services/workflow/dates';
 import { cn } from '../../utils/cn';
 
-/** The lines of a file as cells: a PDF's lines of text, a spreadsheet's rows (header row included). */
-async function fileLines(file: File): Promise<string[][]> {
-  if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
+/** The lines of a file as cells: a PDF's lines of text, a spreadsheet's rows (header row included) — or why it can't be read. */
+async function fileLines(file: File): Promise<{ lines: string[][]; problem?: string }> {
+  const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
+  if (!isPdf && (/^image\//.test(file.type) || /\.(jpe?g|png|heic|heif|gif|webp)$/i.test(file.name))) {
+    return { lines: [], problem: `“${file.name}” is a photo or screenshot — it can’t be read yet. Use the statement’s PDF, Excel or CSV file.` };
+  }
+  if (!/\.(pdf|xlsx|xls|csv)$/i.test(file.name) && !isPdf && !/sheet|excel|csv/i.test(file.type)) {
+    return { lines: [], problem: `“${file.name}” isn’t a PDF, Excel or CSV file.` };
+  }
+  if (isPdf) {
     const { parsePdf } = await import('../../services/ingestion/parsePdf');
-    const raw = await parsePdf(file);
-    return (raw.layout ?? []).map((l) => l.cells.map((c) => c.text));
+    const raw = await parsePdf(file, { ocrScannedPages: false });
+    const lines = (raw.layout ?? []).map((l) => l.cells.map((c) => c.text));
+    if (lines.length) return { lines };
+    if (raw.scannedPages?.length) return { lines, problem: `“${file.name}” is a scan (a picture of the page, no text in it), so it can’t be read. Use the PDF the statement was saved as.` };
+    return { lines, problem: `“${file.name}” couldn’t be opened on this device${raw.warnings[0] ? ` (${raw.warnings[0].replace(/^Could not read this PDF: /, '').replace(/\.+$/, '')})` : ''}. Try it on a computer, or use the Excel / CSV file.` };
   }
   const { parseFile } = await import('../../services/ingestion/parseFile');
   const raw = await parseFile(file);
-  if (raw.tables?.length) return raw.tables.flatMap((t) => [[t.sheetName ?? ''], t.headers, ...t.rows]).map((r) => r.map((c) => c ?? ''));
-  return raw.text.split('\n').map((l) => l.split(/\t|\s{2,}/));
+  if (raw.tables?.length) return { lines: raw.tables.flatMap((t) => [[t.sheetName ?? ''], t.headers, ...t.rows]).map((r) => r.map((c) => c ?? '')) };
+  return { lines: raw.text.split('\n').map((l) => l.split(/\t|\s{2,}/)) };
 }
 
 type Row = ParsedStatement['lines'][number] & { picked: boolean; duplicate: boolean };
@@ -44,10 +54,11 @@ export function ImportStatementDialog({ entries, onClose, onSave }: { entries: M
     setBusy(true);
     setMessage('');
     try {
-      const parsed = parseStatement(await fileLines(file));
+      const { lines, problem } = await fileLines(file);
+      const parsed = problem ? null : parseStatement(lines);
       if (!parsed) {
         setRows(null);
-        setMessage('No income or expense lines were found in this file. It needs headings like “INCOME” / “EXPENSES” with a description and an amount on each line.');
+        setMessage(problem ?? `No income or expense lines were found in “${file.name}”. It needs headings like “INCOME” / “EXPENSES” with a description and an amount on each line.`);
         return;
       }
       const d = parsed.date ?? '';
